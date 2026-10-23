@@ -2,13 +2,20 @@ package cart
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
+	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	"github.com/akarso/shopanda/internal/application/hooks"
+	appinventory "github.com/akarso/shopanda/internal/application/inventory"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -28,46 +35,94 @@ type AddItemOptions struct {
 
 // Service orchestrates cart use cases.
 type Service struct {
-	carts      domainCart.CartRepository
-	prices     pricing.PriceRepository
-	promotions promotion.PromotionRepository
-	coupons    promotion.CouponRepository
-	pipeline   pricing.Pipeline
-	extensions extensionValueWriter
-	hooks      *hooks.Registry
-	log        logger.Logger
-	bus        *event.Bus
+	carts           domainCart.CartRepository
+	prices          pricing.PriceRepository
+	promotions      promotion.PromotionRepository
+	coupons         promotion.CouponRepository
+	variants        catalog.VariantRepository
+	products        catalog.ProductRepository
+	stock           inventory.StockRepository
+	unitPrices      appPricing.UnitPriceSources
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
+	pipeline        pricing.Pipeline
+	extensions      extensionValueWriter
+	hooks           *hooks.Registry
+	log             logger.Logger
+	bus             *event.Bus
 }
 
 type extensionValueWriter interface {
 	ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error
 	UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error)
 	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
+	DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error
 	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
 }
 
 // NewService creates a cart application service.
+// components is required: dynamic bundle prices are resolved from it, and a
+// nil source would let production forget the rollup. prices, variants,
+// products, and stock are required for the same reason. stock caps a line
+// to ResolveAvailableQty.
 func NewService(
 	carts domainCart.CartRepository,
 	prices pricing.PriceRepository,
 	promotions promotion.PromotionRepository,
 	coupons promotion.CouponRepository,
+	variants catalog.VariantRepository,
+	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
+	stock inventory.StockRepository,
 	pipeline pricing.Pipeline,
 	log logger.Logger,
 	bus *event.Bus,
 	extensions extensionValueWriter,
 	hookRegistry *hooks.Registry,
 ) *Service {
+	if prices == nil || variants == nil || products == nil || components == nil || stock == nil {
+		panic("cart: unit price sources require prices, variants, products, bundle components, and stock")
+	}
 	return &Service{
 		carts:      carts,
 		prices:     prices,
 		promotions: promotions,
 		coupons:    coupons,
+		variants:   variants,
+		products:   products,
+		stock:      stock,
+		unitPrices: appPricing.UnitPriceSources{
+			Prices:     prices,
+			Variants:   variants,
+			Products:   products,
+			Components: components,
+		},
 		pipeline:   pipeline,
 		extensions: extensions,
 		hooks:      hookRegistry,
 		log:        log,
 		bus:        bus,
+	}
+}
+
+// WithVisibilityFacts enables the four-axis Purchasable check on top of
+// ActiveForPurchase. Nil facts leaves the axis gate off (catalog.visibility.enforce false).
+func (s *Service) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *Service {
+	s.visibilityFacts = facts
+	s.visibilityOpts = opts
+	return s
+}
+
+func (s *Service) priceSources() appPricing.UnitPriceSources {
+	return s.unitPrices
+}
+
+func (s *Service) stockSources() appinventory.AvailableQtySources {
+	return appinventory.AvailableQtySources{
+		Stock:      s.stock,
+		Variants:   s.variants,
+		Products:   s.products,
+		Components: s.unitPrices.Components,
 	}
 }
 
@@ -140,6 +195,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	}
 	if guestCart.CustomerID != "" {
 		if guestCart.CustomerID == customerID {
+			if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+				return nil, err
+			}
 			return guestCart, nil
 		}
 		return nil, nil
@@ -150,6 +208,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
 	}
 	if customerCart != nil && customerCart.MergedGuestID == guestCart.ID {
+		if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+			return nil, err
+		}
 		return customerCart, nil
 	}
 	if customerCart == nil {
@@ -175,7 +236,111 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	return s.mergeIntoCustomerCart(ctx, guestCart, customerCart)
 }
 
+// unclaimableGuestLines checks every guest line before any cart or extension
+// mutation. into is the customer cart when merging and nil when assigning.
+// The check uses the quantity the line would have after the claim, so a
+// merge that adds guest units onto an existing customer line is dropped
+// when that total exceeds available quantity. Lines whose variant is gone,
+// whose product is no longer purchasable, or whose resulting quantity is
+// above available are returned so the claim can drop them instead of
+// failing: a failed claim leaves the guest cookie in place and every later
+// login retries and fails again. Infrastructure errors still abort the claim.
+func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart, into *domainCart.Cart) (map[string]struct{}, error) {
+	dropped := make(map[string]struct{})
+	for _, item := range guestCart.Items {
+		lineQty, qtyErr := guestLineQtyForClaim(into, item.VariantID, item.Quantity)
+		if qtyErr != nil {
+			if apperror.Is(qtyErr, apperror.CodeValidation) {
+				dropped[item.VariantID] = struct{}{}
+				continue
+			}
+			return nil, qtyErr
+		}
+		err := s.ensureVariantPurchasable(ctx, item.VariantID, guestCart.Currency, lineQty)
+		if err == nil {
+			continue
+		}
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			dropped[item.VariantID] = struct{}{}
+			continue
+		}
+		return nil, err
+	}
+	if len(dropped) > 0 {
+		variantIDs := make([]string, 0, len(dropped))
+		for _, item := range guestCart.Items {
+			if _, ok := dropped[item.VariantID]; ok {
+				variantIDs = append(variantIDs, item.VariantID)
+			}
+		}
+		s.log.Warn("cart.guest.claim.lines_dropped", map[string]interface{}{
+			"guest_cart_id": guestCart.ID,
+			"variant_ids":   variantIDs,
+		})
+	}
+	return dropped, nil
+}
+
+func (s *Service) deleteGuestLineExtensions(ctx context.Context, guestCartID, variantID string) error {
+	if s.extensions == nil {
+		return nil
+	}
+	if err := s.extensions.DeleteAllForTarget(ctx, domainext.CartItemTarget(guestCartID, variantID)); err != nil {
+		return fmt.Errorf("cart service: claim guest cart: delete guest extensions: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) finishAssignedGuestCleanup(ctx context.Context, cart *domainCart.Cart) error {
+	if s.extensions == nil || cart == nil {
+		return nil
+	}
+	keepVariantIDs := make([]string, 0, len(cart.Items))
+	for _, item := range cart.Items {
+		keepVariantIDs = append(keepVariantIDs, item.VariantID)
+	}
+	if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cart.ID, keepVariantIDs); err != nil {
+		return fmt.Errorf("cart service: claim guest cart: purge orphan extensions: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) finishMergedGuestCleanup(ctx context.Context, guestCartID string) error {
+	guestCart, err := s.carts.FindByID(ctx, guestCartID)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: finish merge cleanup find guest: %w", err)
+	}
+	if guestCart == nil {
+		return nil
+	}
+	for _, item := range guestCart.Items {
+		if err := s.deleteGuestLineExtensions(ctx, guestCartID, item.VariantID); err != nil {
+			return err
+		}
+	}
+	if err := s.carts.Delete(ctx, guestCartID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
+	dropped, err := s.unclaimableGuestLines(ctx, guestCart, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Drop lines in memory first; delete their extension rows only after Save
+	// succeeds. Extension deletes autocommit separately from cart Save — doing
+	// them earlier would leave the DB cart unchanged but wipe custom values if
+	// recalculate/Save fails (retry would then find the line without extensions).
+	for variantID := range dropped {
+		if err := guestCart.RemoveItem(variantID); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot drop unavailable guest cart item", err)
+		}
+	}
 	if err := guestCart.SetCustomerID(customerID); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
 	}
@@ -185,6 +350,9 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	if err := s.carts.Save(ctx, guestCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
 	}
+	if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+		return nil, err
+	}
 	s.log.Info("cart.guest.claimed", map[string]interface{}{
 		"cart_id":     guestCart.ID,
 		"customer_id": customerID,
@@ -193,18 +361,23 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
+	// Validate every guest line before copying extensions so a late failure
+	// cannot leave earlier guest targets half-migrated. Guest extension deletes
+	// wait until after customer cart Save so a failed Save leaves guest values
+	// intact (same ordering as assignGuestCart).
+	dropped, err := s.unclaimableGuestLines(ctx, guestCart, customerCart)
+	if err != nil {
+		return nil, err
+	}
 	for _, item := range guestCart.Items {
+		if _, skip := dropped[item.VariantID]; skip {
+			continue
+		}
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
 		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
 			return nil, err
-		}
-		if s.extensions != nil {
-			guestTarget := domainext.CartItemTarget(guestCart.ID, item.VariantID)
-			if err := s.extensions.DeleteAllForTarget(ctx, guestTarget); err != nil {
-				return nil, fmt.Errorf("cart service: merge guest cart: delete guest extensions: %w", err)
-			}
 		}
 	}
 	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
@@ -217,8 +390,8 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	if err := s.carts.Save(ctx, customerCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
 	}
-	if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
-		return nil, fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+		return nil, err
 	}
 
 	s.log.Info("cart.guest.merged", map[string]interface{}{
@@ -255,6 +428,7 @@ func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *do
 
 // AddItem adds an item to the cart and recalculates pricing.
 func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int, opts AddItemOptions) (*domainCart.Cart, error) {
+	ctx = appPricing.WithUnitPriceCache(ctx)
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: add item: find: %w", err)
@@ -264,6 +438,14 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	}
 	if c.CustomerID != customerID {
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
+	}
+
+	lineQty, err := resultingLineQty(c, variantID, quantity)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, lineQty); err != nil {
+		return nil, err
 	}
 
 	if len(opts.Extensions) > 0 {
@@ -342,6 +524,19 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 
 	if err := s.invokeCartItemHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
 		return nil, err
+	}
+
+	currentQty := 0
+	for _, item := range c.Items {
+		if item.VariantID == variantID {
+			currentQty = item.Quantity
+			break
+		}
+	}
+	if quantity > currentQty {
+		if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, quantity); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := c.UpdateItemQuantity(variantID, quantity); err != nil {
@@ -429,6 +624,7 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 // recalculate runs the pricing pipeline over the cart's items and writes
 // the computed prices back onto the cart.
 func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
+	ctx = appPricing.WithUnitPriceCache(ctx)
 	if len(c.Items) == 0 {
 		return nil
 	}
@@ -482,7 +678,13 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		}
 	}
 
-	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
+	// Existing lines are repriced even after the product is archived. Add and
+	// quantity increases still use the active-only scope in ensureVariantPurchasable.
+	priceCtx := catalog.WithIncludeNonActiveProducts(ctx)
+	if err := s.pipeline.Execute(priceCtx, &pctx); err != nil {
+		if customer, ok := s.bundlePriceCustomerError(priceCtx, err); ok {
+			return customer
+		}
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
 
@@ -499,30 +701,200 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	return nil
 }
 
-// lookupPrice fetches the base price for a variant in the cart's currency,
-// scoped to the current store when available.
+func resultingLineQty(c *domainCart.Cart, variantID string, add int) (int, error) {
+	if add < 1 {
+		return 0, apperror.Validation("quantity must be positive")
+	}
+	current := 0
+	if c != nil {
+		for _, item := range c.Items {
+			if item.VariantID == variantID {
+				current = item.Quantity
+				break
+			}
+		}
+	}
+	if current > math.MaxInt-add {
+		return 0, apperror.Validation("requested quantity exceeds available stock")
+	}
+	return current + add, nil
+}
+
+// guestLineQtyForClaim is the quantity ensureVariantPurchasable must see.
+// Assign (into == nil) checks the guest line alone. Merge checks the sum
+// with the customer's existing line so a claim cannot raise that line
+// above the available quantity.
+func guestLineQtyForClaim(into *domainCart.Cart, variantID string, guestQty int) (int, error) {
+	if into == nil {
+		if guestQty < 1 {
+			return 0, apperror.Validation("quantity must be positive")
+		}
+		return guestQty, nil
+	}
+	return resultingLineQty(into, variantID, guestQty)
+}
+
+func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, currency string, lineQty int) error {
+	v, err := s.variants.FindByID(ctx, variantID)
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: lookup variant: %w", err)
+	}
+	if v == nil {
+		return apperror.NotFound("variant not found")
+	}
+	p, err := s.products.FindByID(ctx, v.ProductID)
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: lookup product: %w", err)
+	}
+	if !catalog.ActiveForPurchase(p) {
+		return apperror.Validation("product is not available for purchase")
+	}
+	if p.Type == catalog.TypeGrouped {
+		return apperror.Validation(catalog.GroupedNotPurchasableMessage)
+	}
+	// Listing HasPrice is a global-row flag. A dynamic bundle can be sellable
+	// from a store-scoped component price that flag never sees. Other purchasable
+	// axes still apply; the price gate is ResolveUnitPrice in the cart currency
+	// and store.
+	if p.Type == catalog.TypeBundle && p.PricingMode == catalog.PricingModeDynamic {
+		if err := s.allowDynamicBundlePurchase(ctx, p); err != nil {
+			return err
+		}
+		if err := s.requireDynamicBundlePrice(ctx, variantID, currency); err != nil {
+			return err
+		}
+		return appinventory.RejectQtyAboveAvailable(ctx, s.stockSources(), p.ID, variantID, lineQty)
+	}
+	ok, err := catalog.AllowWithFacts(ctx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
+	}
+	if !ok {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	return appinventory.RejectQtyAboveAvailable(ctx, s.stockSources(), p.ID, variantID, lineQty)
+}
+
+// allowDynamicBundlePurchase applies the purchasable axis without the listing
+// HasPrice bit. Status, stock, store assignment, category, and a forced hidden
+// mode still deny. A forced visible mode still allows the axis; ResolveUnitPrice
+// remains the price gate.
+func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Product) error {
+	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
+		return nil
+	}
+	m, err := s.visibilityFacts.LoadMany(ctx, []string{p.ID})
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
+	}
+	snap, ok := m[p.ID]
+	if !ok {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	inputs := snap.Inputs
+	inputs.HasPrice = true
+	if !snap.Modes.Resolve(snap.Status, inputs, s.visibilityOpts).Purchasable {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	return nil
+}
+
+func (s *Service) requireDynamicBundlePrice(ctx context.Context, variantID, currency string) error {
+	var storeID string
+	if st := store.FromContext(ctx); st != nil {
+		storeID = st.ID
+	}
+	_, err := appPricing.ResolveUnitPrice(ctx, s.priceSources(), variantID, currency, storeID)
+	if err == nil {
+		return nil
+	}
+	if appPricing.IsMissingUnitPrice(err) || apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+		return catalogapp.BundleCustomerError(err)
+	}
+	return fmt.Errorf("cart service: purchasability: dynamic bundle price: %w", err)
+}
+
+// lookupPrice fetches the unit price for a variant in the cart's currency,
+// scoped to the current store when available. It uses the same resolver as
+// BasePriceStep so a dynamic bundle sum cannot disagree with recalculate.
 func (s *Service) lookupPrice(ctx context.Context, variantID, currency string) (shared.Money, error) {
 	var storeID string
 	if st := store.FromContext(ctx); st != nil {
 		storeID = st.ID
 	}
-	p, err := s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, storeID)
+	amount, err := appPricing.ResolveUnitPrice(ctx, s.priceSources(), variantID, currency, storeID)
 	if err != nil {
+		if customer, ok := s.bundlePriceCustomerError(ctx, err); ok {
+			return shared.Money{}, customer
+		}
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) {
+			return shared.Money{}, err
+		}
 		return shared.Money{}, fmt.Errorf("cart service: lookup price: %w", err)
 	}
-	// Fall back to global price when store-scoped price not found.
-	if p == nil && storeID != "" {
-		p, err = s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, "")
-		if err != nil {
-			return shared.Money{}, fmt.Errorf("cart service: lookup price (fallback): %w", err)
+	return amount, nil
+}
+
+// bundlePriceCustomerError maps a bundle missing unit price, or a failure
+// already wrapped as catalog.BundleCannotBeReservedMessage, onto that
+// customer message. A missing price for any other product type uses
+// appPricing.PriceNotAvailableMessage and does not name the variant.
+// Component and bundle ids stay on Unwrap. Other failures return ok false.
+func (s *Service) bundlePriceCustomerError(ctx context.Context, err error) (error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	if appPricing.IsMissingUnitPrice(err) {
+		isBundle, lookupErr := s.missingUnitPriceIsBundle(ctx, err)
+		if lookupErr != nil {
+			return lookupErr, true
 		}
+		if isBundle {
+			return catalogapp.BundleCustomerError(err), true
+		}
+		return apperror.Wrap(apperror.CodeValidation, appPricing.PriceNotAvailableMessage, err), true
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		return nil, false
+	}
+	if appErr.Message == catalog.BundleCannotBeReservedMessage {
+		return err, true
+	}
+	return nil, false
+}
+
+// missingUnitPriceIsBundle is true when the missing row belongs to a bundle.
+// ResolveUnitPrice records the type it already loaded. A legacy stored lookup
+// does not, so this falls back to one variant and one product read. A failed
+// read is returned so the caller does not treat it as a non-bundle missing price.
+func (s *Service) missingUnitPriceIsBundle(ctx context.Context, err error) (bool, error) {
+	var missing *appPricing.MissingUnitPriceError
+	if !errors.As(err, &missing) || missing == nil {
+		return false, nil
+	}
+	if typ, ok := missing.KnownProductType(); ok {
+		return typ == catalog.TypeBundle, nil
+	}
+	if s.variants == nil || s.products == nil || missing.VariantID == "" {
+		return false, nil
+	}
+	v, lookupErr := s.variants.FindByID(ctx, missing.VariantID)
+	if lookupErr != nil {
+		return false, lookupErr
+	}
+	if v == nil {
+		return false, nil
+	}
+	p, lookupErr := s.products.FindByID(ctx, v.ProductID)
+	if lookupErr != nil {
+		return false, lookupErr
 	}
 	if p == nil {
-		return shared.Money{}, apperror.Validation(
-			fmt.Sprintf("no price for variant %s in %s", variantID, currency),
-		)
+		return false, nil
 	}
-	return p.Amount, nil
+	return p.Type == catalog.TypeBundle, nil
 }
 
 // ApplyCoupon validates a coupon code, associates it with the cart, and

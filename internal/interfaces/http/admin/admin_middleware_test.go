@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
@@ -138,6 +139,83 @@ func TestRequirePermission_Denied(t *testing.T) {
 
 func TestRequirePermission_Guest(t *testing.T) {
 	mw := admin.RequirePermission(rbac.ProductsRead)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("expected handler not to be called")
+	}
+}
+
+func TestRequireAnyPermission_Granted(t *testing.T) {
+	id, err := identity.NewIdentity("user-1", identity.RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.RequireAnyPermission(rbac.SettingsWrite, rbac.ProductsRead)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("expected handler to be called")
+	}
+}
+
+func TestRequireAnyPermission_Denied(t *testing.T) {
+	id, err := identity.NewIdentity("user-1", identity.RoleSupport)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.RequireAnyPermission(rbac.SettingsWrite, rbac.CacheClearAll)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if called {
+		t.Error("expected handler not to be called")
+	}
+}
+
+func TestRequireAnyPermission_Guest(t *testing.T) {
+	mw := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +382,75 @@ func TestAdminContextMiddleware_RoleSupport(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_StorefrontPath_NoIncludeNonActive(t *testing.T) {
+	id, err := identity.NewIdentity("cust-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.AdminContextMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if catalog.IncludeNonActiveProducts(r.Context()) {
+			t.Fatal("storefront path must not set IncludeNonActiveProducts")
+		}
+		if catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("storefront path must not set BypassProductVisibility")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/api/v1/products/widget", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_AdminAPI_IncludesNonActiveProducts(t *testing.T) {
+	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.AdminContextMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !catalog.IncludeNonActiveProducts(r.Context()) {
+			t.Fatal("expected IncludeNonActiveProducts on /api/v1/admin paths")
+		}
+		if !catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("expected BypassProductVisibility on /api/v1/admin paths")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_AdministratorPrefix_NoOperatorScope(t *testing.T) {
+	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.AdminContextMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if catalog.IncludeNonActiveProducts(r.Context()) || catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("/api/v1/administrator must not inherit admin product scope")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/api/v1/administrator/products", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}

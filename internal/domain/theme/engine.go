@@ -13,7 +13,8 @@ import (
 type Option func(*loadOptions)
 
 type loadOptions struct {
-	slots SlotSource
+	slots    SlotSource
+	fragment FragmentFunc
 }
 
 // WithSlotSource enables slot template markers backed by source.
@@ -43,6 +44,9 @@ func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine,
 	layoutFile := resolved.LayoutFile
 
 	funcMap := slotFuncMap(cfg.slots)
+	for k, v := range fragmentFuncMap(cfg.fragment) {
+		funcMap[k] = v
+	}
 	pages := make(map[string]*template.Template, len(resolved.PageFiles))
 	for name, pf := range resolved.PageFiles {
 		t, err := parsePageTemplate(layoutFile, resolved.PartialFiles, pf, resolved.Layout, funcMap)

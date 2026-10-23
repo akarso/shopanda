@@ -72,6 +72,32 @@ func TestExtensionValueRepo_UpsertAndListByTarget(t *testing.T) {
 	}
 }
 
+func TestExtensionValueRepo_ListTargetIDsByTypeAndIDPrefix(t *testing.T) {
+	repo := setupExtensionValueRepo(t)
+	ctx := context.Background()
+	cartTarget := func(variantID string) domainext.Target {
+		return domainext.CartItemTarget("cart-1", variantID)
+	}
+	if err := repo.Upsert(ctx, sampleExtensionValue(cartTarget("var-1"), "acme.note", "a")); err != nil {
+		t.Fatalf("Upsert var-1: %v", err)
+	}
+	if err := repo.Upsert(ctx, sampleExtensionValue(cartTarget("var-2"), "acme.note", "b")); err != nil {
+		t.Fatalf("Upsert var-2: %v", err)
+	}
+	other := domainext.Target{Type: domainext.TargetProduct, ID: "cart-1:var-1"}
+	if err := repo.Upsert(ctx, sampleExtensionValue(other, "acme.note", "c")); err != nil {
+		t.Fatalf("Upsert product: %v", err)
+	}
+
+	got, err := repo.ListTargetIDsByTypeAndIDPrefix(ctx, domainext.TargetCartItem, "cart-1:%")
+	if err != nil {
+		t.Fatalf("ListTargetIDsByTypeAndIDPrefix: %v", err)
+	}
+	if len(got) != 2 || got[0] != "cart-1:var-1" || got[1] != "cart-1:var-2" {
+		t.Fatalf("target ids = %v, want [cart-1:var-1 cart-1:var-2]", got)
+	}
+}
+
 func TestExtensionValueRepo_Delete(t *testing.T) {
 	repo := setupExtensionValueRepo(t)
 	ctx := context.Background()

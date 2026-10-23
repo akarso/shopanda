@@ -8,7 +8,7 @@ A conversation about a concrete use case — a sellable "card" product (simple o
 
 - **No product-type concept at all.** `catalog.Product` has only a lifecycle `Status` (draft/active/archived); there's no simple/virtual/bundle/grouped/configurable/downloadable distinction anywhere in the domain, API, or admin.
 - **No product-to-product relationship** other than `Variant` (SKU/attribute variation of one product, not a separate sellable product) and category assignment. Nothing lets one product reference another as a component, a sibling, or a dependency.
-- **Visibility/purchasability is barely enforced today**, and where it exists it's a single implicit gate, not a real model: `internal/infrastructure/postgres/product_repo.go`'s `List`/`FindByID`/`FindByCategoryID` run with **no status filter at all** — a `draft`/`archived` product is returned by the public product API and is addable to cart, because `cart.Service.AddItem` never checks product status either. Only the search index and the sitemap filter on `Status = active` today.
+- **Visibility/purchasability was barely enforced before Track B.** Core product reads and cart add historically applied **no status filter** — draft/archived products were publicly readable and addable. PR-1054 closed that gap (active-only storefront reads + cart/checkout gates). The remaining Track B work is a four-axis visibility/purchasability model (PR-1055+), not a single `Status` flag.
 - **Zero-price products can't be created.** `pricing.NewPrice` rejects any amount that isn't strictly positive — a card that should be sellable at 0 hits a validation error before there's even a visibility question to answer.
 
 This phase closes all four gaps as one coherent piece of work: the type field and visibility model are the foundation everything else (bundle, grouped, linked, downloadable) is built on, not four independent patches.
@@ -25,11 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**Planned.** Not started — picked up after Phase 11 finishes. Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing) having shipped first.
+**In progress.** PR-1048–1065 are done — Track B (visibility & purchasability) is complete; Track C has bundle and grouped domain models, pricing rollup, stock rollup, order-line explosion, and per-SKU Omnibus from catalog price history (CSV and admin price PUT; dynamic headlines exempt; sale-time `Record` stays off). VAT stays order-level (PR-1076). Next: PR-1066 (bundle/grouped admin API + CSV + GUI). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
-| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | In progress |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **Planned** |
+| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1065 done — Omnibus is per-SKU catalog history, dynamic headlines exempt, VAT still order-level; next PR-1066; ids collide with Phase 11 — use phase folder) |
+| Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |

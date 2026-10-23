@@ -187,6 +187,7 @@
         "/admin/operations/jobs": { title: "Jobs", render: renderJobsGrid, auth: true },
         "/admin/operations/schedules": { title: "Schedules", render: renderSchedulesGrid, auth: true },
         "/admin/operations/search": { title: "Search", render: renderSearchReindexPage, auth: true },
+        "/admin/operations/cache": { title: "Cache", render: renderCacheAdminPage, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
@@ -405,6 +406,8 @@
         var gridBox = document.getElementById("products-grid");
         var gridMsg = document.getElementById("products-grid-msg");
         var canReindex = userHasPermission("search.reindex");
+        // Required path: grid + products only. Type labels load after render so a
+        // slow/failed forms request cannot block rows that are already available.
         Promise.all([
             api("/admin/grids/product.grid"),
             api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
@@ -445,6 +448,11 @@
                         if ((col.name === "created_at" || col.name === "updated_at") && val) {
                             val = String(val).substring(0, 10);
                         }
+                        if (col.name === "type") {
+                            var typeRaw = val == null ? "" : String(val);
+                            html += '<td data-product-type-cell="' + esc(typeRaw) + '">' + esc(typeRaw) + '</td>';
+                            continue;
+                        }
                         html += '<td>' + esc(val == null ? '' : val) + '</td>';
                     }
                     var rowActions = '<a href="/admin/products/' + esc(p.id) + '" data-link>Edit</a>';
@@ -460,8 +468,26 @@
             var newBtn = document.getElementById("new-product-btn");
             if (newBtn) newBtn.addEventListener("click", function() { navigateTo("/admin/products/new"); });
             bindReindexRowActions(gridBox, "product-row-reindex", "products", gridMsg);
+            loadProductTypeGridLabels(gridBox);
         }).catch(function (err) {
             gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load products.')) + '</p>';
+        });
+    }
+
+    function loadProductTypeGridLabels(gridBox) {
+        api("/admin/forms/product.form").then(function (formResponse) {
+            var apiHelpers = productTypeSectionsAPI();
+            var form = formResponse && formResponse.data && formResponse.data.form;
+            var labels = apiHelpers && apiHelpers.labelsFromForm
+                ? apiHelpers.labelsFromForm(form)
+                : productTypeLabelsFromFormFallback(form);
+            if (apiHelpers && apiHelpers.applyTypeCellLabels) {
+                apiHelpers.applyTypeCellLabels(gridBox, labels);
+            } else {
+                applyProductTypeCellLabelsFallback(gridBox, labels);
+            }
+        }).catch(function () {
+            // Labels optional — leave raw type slugs rendered with the grid.
         });
     }
 
@@ -1233,10 +1259,14 @@
             '<h3>Reviews</h3>' +
             '<div id="product-reviews-msg"></div>' +
             '<div id="product-reviews-body"></div>' +
-            '</section>';
+            '</section>' +
+            // Type-scoped sections from product.form schema (PR-1053). Later tracks
+            // register via RegisterProductFormSection; visibility follows the type selector.
+            '<div id="product-type-sections-host"></div>';
 
         var msg = document.getElementById("product-form-msg");
         var form = document.getElementById("product-form");
+        var typeSectionsHost = document.getElementById("product-type-sections-host");
         var activeScope = {
             storeID: adminScope.store_id || '',
             language: adminScope.language || '',
@@ -1256,8 +1286,12 @@
             var schema = results[0] && results[0].data && results[0].data.form;
             var product = null;
             var translations = {};
+            var visibilityPayload = null;
+            var visibilityError = null;
             if (productID) {
                 product = normalizeProduct(results[1] && results[1].data && results[1].data.product);
+                visibilityPayload = results[1] && results[1].data && results[1].data.visibility;
+                visibilityError = results[1] && results[1].data && results[1].data.visibility_error;
                 if (activeScope.language && results[2] && results[2].data && results[2].data.entries) {
                     translations = results[2].data.entries;
                 }
@@ -1274,6 +1308,15 @@
             html += renderProductMediaField(product);
             html += '<button type="submit">' + (productID ? 'Save Product' : 'Create Product') + '</button>';
             form.innerHTML = html;
+
+            if (typeSectionsHost) {
+                typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
+                setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
+            }
+            setupProductTypeSectionSwitch(form, container, {
+                confirmOnChange: !!productID,
+                originalType: product && product.type ? String(product.type) : "simple"
+            });
 
             setupProductMediaPicker(form, product);
 
@@ -1309,6 +1352,260 @@
         }).catch(function () {
             msg.innerHTML = '<p role="alert">Failed to load product form.</p>';
         });
+    }
+
+    // Product type section visibility (PR-1053) — helpers in product_type_sections.js.
+    // Sections render into #product-type-sections-host (outside #product-form).
+    // Body content must use its own save APIs; it is not part of collectProductPayload.
+    function productTypeSectionsAPI() {
+        return (typeof ShopandaProductTypeSections !== "undefined") ? ShopandaProductTypeSections : null;
+    }
+
+    function syncProductTypeSections(root, selectedType) {
+        var target = root || document;
+        var api = productTypeSectionsAPI();
+        if (api && api.syncSections) {
+            api.syncSections(target, selectedType);
+            return;
+        }
+        // Fallback if product_type_sections.js failed to load — do not leave
+        // sections stuck at display:none (PR-1053 CR).
+        if (typeof console !== "undefined" && console.warn) {
+            console.warn("ShopandaProductTypeSections missing; using inline section visibility fallback");
+        }
+        syncProductTypeSectionsFallback(target, selectedType);
+    }
+
+    function syncProductTypeSectionsFallback(root, selectedType) {
+        if (!root || typeof root.querySelectorAll !== "function") {
+            return;
+        }
+        var selected = String(selectedType || "simple");
+        var nodes = root.querySelectorAll("[data-product-type-section]");
+        for (var i = 0; i < nodes.length; i++) {
+            var raw = nodes[i].getAttribute("data-product-type-section") || "";
+            var types = String(raw).split(",").map(function (s) {
+                return String(s || "").trim();
+            }).filter(function (s) {
+                return s.length > 0;
+            });
+            var show = types.length === 0 || types.indexOf(selected) !== -1;
+            nodes[i].style.display = show ? "" : "none";
+        }
+    }
+
+    function renderProductTypeSections(sections) {
+        if (!sections || !sections.length) {
+            return "";
+        }
+        var html = "";
+        for (var i = 0; i < sections.length; i++) {
+            var s = sections[i] || {};
+            var id = String(s.id || "");
+            if (!id) {
+                continue;
+            }
+            var types = Array.isArray(s.types) ? s.types.join(",") : "";
+            html += '<section id="product-section-' + esc(id) + '" data-product-type-section="' + esc(types) + '" data-product-type-section-id="' + esc(id) + '" style="display:none; margin-top:2rem;">' +
+                "<h3>" + esc(s.title || id) + "</h3>" +
+                '<div data-product-type-section-body="' + esc(id) + '"></div>' +
+                "</section>";
+        }
+        return html;
+    }
+
+    // Product visibility section (PR-1059) — helpers in product_visibility_section.js.
+    // Unlike other type-scoped sections, "visibility" is registered with empty
+    // Types (type-agnostic — see product_schema.go), is always visible, and is
+    // the one deliberate exception to "sections use their own save APIs": its
+    // four mode selects are picked up by collectProductPayload below, because
+    // VisibilityModes is a core Product field, not auxiliary section data.
+    function productVisibilitySectionAPI() {
+        return (typeof ShopandaProductVisibilitySection !== "undefined") ? ShopandaProductVisibilitySection : null;
+    }
+
+    function setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form) {
+        var api = productVisibilitySectionAPI();
+        if (!api || !typeSectionsHost) {
+            return;
+        }
+        var body = typeSectionsHost.querySelector('[data-product-type-section-body="visibility"]');
+        if (!body) {
+            // Section not registered on this deployment (schema out of sync); skip.
+            return;
+        }
+        var modes = api.modesFromProduct(product);
+        var state = api.stateFromVisibilityPayload(visibilityPayload, visibilityError);
+        body.innerHTML = api.renderSectionHTML(modes, state);
+        api.bindAxisChange(document, state);
+        // Status freshness (PR-1059 CR): re-render badges/failures using the
+        // form's *selected* status (not the persisted one) whenever it
+        // changes, so a merchant previewing a status change before saving
+        // sees the correct outcome immediately.
+        if (form) {
+            api.bindStatusChange(document, form, state);
+        }
+        typeSectionsHost._shopandaVisibilityState = state;
+    }
+
+    // Guard async visibility refresh after variant price save: an in-flight GET for
+    // product A must not update the form if the merchant navigated to product B.
+    function productEditPathID() {
+        var m = location.pathname.match(/^\/admin\/products\/([^/]+)$/);
+        return m ? decodeURIComponent(m[1]) : "";
+    }
+
+    function productEditSessionStillValid(expectedProductID, form, host, state) {
+        if (!expectedProductID || expectedProductID !== productEditPathID()) return false;
+        if (!form || !form.isConnected) return false;
+        if (document.getElementById("product-form") !== form) return false;
+        var liveHost = document.getElementById("product-type-sections-host");
+        if (!liveHost || liveHost !== host) return false;
+        if (liveHost._shopandaVisibilityState !== state) return false;
+        return true;
+    }
+
+    function refreshProductVisibilityFactsAfterSave(productID, form, host, state) {
+        if (!host) {
+            host = document.getElementById("product-type-sections-host");
+        }
+        if (!state && host) {
+            state = host._shopandaVisibilityState;
+        }
+        var visibilityAPI = productVisibilitySectionAPI();
+        if (!productID || !visibilityAPI || !state || !form) {
+            return;
+        }
+        if (!productEditSessionStillValid(productID, form, host, state)) {
+            return;
+        }
+        api("/admin/products/" + encodeURIComponent(productID)).then(function (body) {
+            if (!productEditSessionStillValid(productID, form, host, state)) {
+                return;
+            }
+            if (body && body.error) {
+                return;
+            }
+            var data = body && body.data;
+            if (!data || !data.visibility) {
+                return;
+            }
+            var codes = data.visibility.input_failure_codes;
+            if (!Array.isArray(codes)) {
+                codes = [];
+            }
+            visibilityAPI.refreshLivePreview(document, form, state, codes);
+        }).catch(function () {
+            // Preview refresh is best-effort; price save already succeeded.
+        });
+    }
+
+    function setupProductTypeSectionSwitch(form, root, opts) {
+        if (!form) {
+            return;
+        }
+        opts = opts || {};
+        var previousType = opts.originalType ? String(opts.originalType) : "simple";
+        function currentType() {
+            var el = form.elements.type;
+            return el && el.value ? el.value : "simple";
+        }
+        syncProductTypeSections(root || document, currentType());
+        var typeEl = form.elements.type;
+        if (typeEl && !typeEl.getAttribute("data-product-type-switch-bound")) {
+            typeEl.setAttribute("data-product-type-switch-bound", "1");
+            typeEl.addEventListener("change", function () {
+                var api = productTypeSectionsAPI();
+                var resolved;
+                if (api && api.resolveTypeChange) {
+                    resolved = api.resolveTypeChange({
+                        confirmOnChange: !!opts.confirmOnChange,
+                        previousType: previousType,
+                        nextType: typeEl.value,
+                        confirmFn: function (message) { return window.confirm(message); }
+                    });
+                } else {
+                    resolved = resolveTypeChangeFallback({
+                        confirmOnChange: !!opts.confirmOnChange,
+                        previousType: previousType,
+                        nextType: typeEl.value,
+                        confirmFn: function (message) { return window.confirm(message); }
+                    });
+                }
+                typeEl.value = resolved.type;
+                previousType = resolved.previousType;
+                syncProductTypeSections(root || document, currentType());
+            });
+        }
+    }
+
+    function resolveTypeChangeFallback(opts) {
+        opts = opts || {};
+        var previous = String(opts.previousType || "simple");
+        var next = String(opts.nextType || "simple");
+        if (opts.confirmOnChange && next !== previous) {
+            var ok = typeof opts.confirmFn === "function" ? opts.confirmFn(
+                "Changing type can alter shipping (virtual/downloadable skip physical shipping) and which type-specific panels apply. Continue?"
+            ) : true;
+            if (!ok) {
+                return { type: previous, previousType: previous, cancelled: true };
+            }
+            return { type: next, previousType: next, cancelled: false };
+        }
+        return { type: next, previousType: previous, cancelled: false };
+    }
+
+    function productTypeLabelsFromFormFallback(form) {
+        var map = {};
+        if (!form || !Array.isArray(form.fields)) {
+            return map;
+        }
+        for (var i = 0; i < form.fields.length; i++) {
+            var field = form.fields[i];
+            if (!field || field.name !== "type") {
+                continue;
+            }
+            var options = field.options || [];
+            for (var j = 0; j < options.length; j++) {
+                var o = options[j] || {};
+                var key = String(o.value == null ? "" : o.value);
+                if (key) {
+                    map[key] = o.label != null && o.label !== "" ? String(o.label) : key;
+                }
+            }
+        }
+        return map;
+    }
+
+    function applyProductTypeCellLabelsFallback(root, labels) {
+        if (!root || typeof root.querySelectorAll !== "function") {
+            return;
+        }
+        var cells = root.querySelectorAll("[data-product-type-cell]");
+        for (var i = 0; i < cells.length; i++) {
+            var raw = cells[i].getAttribute("data-product-type-cell");
+            var key = raw == null ? "" : String(raw);
+            cells[i].textContent = (labels && Object.prototype.hasOwnProperty.call(labels, key)) ? labels[key] : key;
+        }
+    }
+
+    // Inline fallback when product_type_sections.js failed to load.
+    function productTypeSelectNeedsUnknownOption(options, selectedValue) {
+        var api = productTypeSectionsAPI();
+        if (api && api.selectNeedsUnknownOption) {
+            return api.selectNeedsUnknownOption(options, selectedValue);
+        }
+        var selected = String(selectedValue || "");
+        if (!selected) {
+            return false;
+        }
+        var list = options || [];
+        for (var i = 0; i < list.length; i++) {
+            if (String(list[i].value) === selected) {
+                return false;
+            }
+        }
+        return true;
     }
 
     function saveProductTranslations(productID, activeScope, fields, form, msg) {
@@ -1643,9 +1940,13 @@
             return '<label><input type="checkbox" name="' + esc(name) + '" ' + checked + '> ' + label + '</label>';
         }
         if (field.type === "select") {
-            var opts = '<label>' + label + '<select name="' + esc(name) + '">';
+            var opts = '<label>' + label + '<select name="' + esc(name) + '"' + (field.required ? ' required' : '') + '>';
             var selected = String(value);
             var options = field.options || [];
+            if (name === "type" && productTypeSelectNeedsUnknownOption(options, selected)) {
+                // Preserve corrupt/legacy type on save instead of coercing to first option.
+                opts += '<option value="' + esc(selected) + '" selected>' + esc(selected) + ' (unknown)</option>';
+            }
             for (var i = 0; i < options.length; i++) {
                 var o = options[i];
                 var isSel = String(o.value) === selected ? ' selected' : '';
@@ -1679,7 +1980,10 @@
                 v = el.value;
             }
 
-            if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status") {
+            var api = productTypeSectionsAPI();
+            if (api && api.assignProductField) {
+                api.assignProductField(payload, f.name, v);
+            } else if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status" || f.name === "type") {
                 payload[f.name] = v;
             } else {
                 payload.attributes[f.name] = v;
@@ -1691,6 +1995,12 @@
         }
         if (Object.keys(payload.attributes).length === 0) {
             delete payload.attributes;
+        }
+        // Visibility selects render into #product-type-sections-host, a sibling
+        // of #product-form (not a descendant) — see setupProductVisibilitySection.
+        var visibilityAPI = productVisibilitySectionAPI();
+        if (visibilityAPI && document.getElementById(visibilityAPI.selectID(visibilityAPI.AXES[0].key))) {
+            payload.visibility_modes = visibilityAPI.collectModes(document);
         }
         return payload;
     }
@@ -1780,7 +2090,7 @@
 
         function loadVariants() {
             var list = document.getElementById("variant-list");
-            var variantsPromise = api("/products/" + encodeURIComponent(productID) + "/variants");
+            var variantsPromise = api("/admin/products/" + encodeURIComponent(productID) + "/variants");
             var fieldsPromise = userHasPermission("extensions.read")
                 ? api("/admin/extensions/fields?target_type=variant")
                 : Promise.resolve(null);
@@ -1856,7 +2166,7 @@
             html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
             html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
             if (currency) {
-                html += '<td><input data-field="price" type="number" step="1" min="1" aria-label="Store price for ' + variantLabel + '"><span class="variant-price-scope-hint settings-scope-note"></span> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
+                html += '<td><input data-field="price" type="number" step="1" min="0" aria-label="Store price for ' + variantLabel + '"><span class="variant-price-scope-hint settings-scope-note"></span> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
             } else {
                 html += '<td><span class="settings-scope-note">Select a currency context to edit price.</span></td>';
             }
@@ -1908,7 +2218,7 @@
 
         if (currency) {
             loadVariantPrices(container, productID);
-            bindVariantPriceSave(container, productID);
+            bindVariantPriceSave(container, productID, document.getElementById("product-form"));
         }
         if (hasExtensions) {
             bindVariantExtensions(container, extensionFields);
@@ -2083,7 +2393,7 @@
         }
     }
 
-    function bindVariantPriceSave(container, productID) {
+    function bindVariantPriceSave(container, productID, form) {
         var buttons = container.querySelectorAll('.variant-price-save-btn');
         for (var j = 0; j < buttons.length; j++) {
             buttons[j].addEventListener("click", function (e) {
@@ -2097,6 +2407,10 @@
                     }
                     return;
                 }
+                var sessionProductID = productID;
+                var sessionForm = form;
+                var sessionHost = document.getElementById("product-type-sections-host");
+                var sessionState = sessionHost && sessionHost._shopandaVisibilityState;
                 api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price", {
                     method: "PUT",
                     body: JSON.stringify({ amount: Number(input.value) })
@@ -2114,6 +2428,9 @@
                     }
                     if (msg) {
                         msg.innerHTML = '<p>Price saved.</p>';
+                    }
+                    if (productEditSessionStillValid(sessionProductID, sessionForm, sessionHost, sessionState)) {
+                        refreshProductVisibilityFactsAfterSave(sessionProductID, sessionForm, sessionHost, sessionState);
                     }
                 }).catch(function () {
                     if (msg) {
@@ -2144,8 +2461,10 @@
             name: pick(raw, "name", "Name"),
             slug: pick(raw, "slug", "Slug"),
             description: pick(raw, "description", "Description"),
+            type: pick(raw, "type", "Type") || "simple",
             status: pick(raw, "status", "Status"),
             attributes: pick(raw, "attributes", "Attributes") || {},
+            visibilityModes: pick(raw, "visibility_modes", "VisibilityModes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),
             updated_at: pick(raw, "updated_at", "UpdatedAt")
         };
@@ -3573,7 +3892,8 @@
                     'shipping.read', 'shipping.write',
                     'extensions.read', 'extensions.write',
                     'jobs.read', 'jobs.write',
-                    'search.reindex'
+                    'search.reindex',
+                    'cache.read', 'cache.write', 'cache.clear_all', 'cache.purge_url'
                 ]
             },
             {
@@ -3672,6 +3992,8 @@
                         }
                         loadContextSwitcherData().then(function () {
                             refreshJobsNavVisibility();
+                            refreshSearchNavVisibility();
+                            refreshCacheNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
@@ -3980,6 +4302,16 @@
     function refreshSearchNavVisibility() {
         var visible = userHasPermission("search.reindex");
         var link = document.querySelector('.admin-sidebar a[href="/admin/operations/search"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
+        }
+    }
+
+    // refreshCacheNavVisibility mirrors refreshSearchNavVisibility, gated
+    // on cache.read (admin-role-only by default — see role_permissions.go).
+    function refreshCacheNavVisibility() {
+        var visible = userHasPermission("cache.read");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/operations/cache"]');
         if (link && link.parentElement) {
             link.parentElement.style.display = visible ? "" : "none";
         }
@@ -6191,7 +6523,7 @@
                             "<td>" + esc(item.sku || "") + "</td>" +
                             "<td>" + esc(item.product_name || "") + "</td>" +
                             "<td>" + esc(item.variant_name || "") + "</td>" +
-                            '<td><input data-field="price" type="number" step="1" min="1" aria-label="Price for ' + esc(item.sku || item.variant_id || "variant") + '" style="width:7rem"' +
+                            '<td><input data-field="price" type="number" step="1" min="0" aria-label="Price for ' + esc(item.sku || item.variant_id || "variant") + '" style="width:7rem"' +
                             (canWrite ? "" : " disabled") + "></td>" +
                             '<td class="bulk-price-scope"><span class="settings-scope-note">Loading…</span></td>';
                         if (canWrite) {
@@ -9939,10 +10271,10 @@
     // the same POST twice — the backend's status guard would reject a
     // second retry/cancel/trigger as a conflict, which would otherwise
     // show as a spurious error banner for what was actually a successful
-    // first click. Re-enables regardless of outcome: on success the
-    // caller typically reloads/replaces the surrounding DOM anyway, so
-    // restoring the (about to be discarded) button is harmless.
-    function withButtonBusy(btn, busyLabel, startAction) {
+    // first click. Re-enables regardless of outcome, then runs optional
+    // afterRestore so a caller that owns disabled state (cache all-clear
+    // type-to-confirm) can re-apply it after this helper's restore.
+    function withButtonBusy(btn, busyLabel, startAction, afterRestore) {
         if (btn.disabled) {
             return;
         }
@@ -9952,6 +10284,9 @@
         var restore = function () {
             btn.disabled = false;
             btn.textContent = originalLabel;
+            if (typeof afterRestore === "function") {
+                afterRestore();
+            }
         };
         startAction().then(restore, restore);
     }
@@ -10597,6 +10932,241 @@
         container.innerHTML = html;
     }
 
+    function formatCacheCount(n) {
+        if (n == null) {
+            return "—";
+        }
+        return String(n);
+    }
+
+    function formatCacheBytes(n) {
+        if (n == null) {
+            return "—";
+        }
+        var units = ["B", "KiB", "MiB", "GiB"];
+        var v = Number(n);
+        if (!isFinite(v) || v < 0) {
+            return "—";
+        }
+        var i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v = v / 1024;
+            i++;
+        }
+        var shown = i === 0 ? String(Math.round(v)) : v.toFixed(1);
+        return shown + " " + units[i];
+    }
+
+    function renderCacheAdminPage(container) {
+        if (!userHasPermission("cache.read")) {
+            container.innerHTML = '<h2>Cache</h2><p role="alert">Your account does not have cache access.</p>';
+            return;
+        }
+
+        var cacheUI = window.ShopandaCacheAdminUI;
+        if (!cacheUI) {
+            container.innerHTML = '<h2>Cache</h2><p role="alert">Cache admin UI failed to load.</p>';
+            return;
+        }
+        var canWrite = userHasPermission("cache.write");
+        var canClearAll = userHasPermission("cache.clear_all");
+        var modes = cacheUI.modeOptions(canWrite, canClearAll);
+        var modeLabels = { prefix: "Prefix", tag: "Tag", key: "Key", all: "All (full flush)" };
+        var modeOptionsHtml = "";
+        for (var mi = 0; mi < modes.length; mi++) {
+            modeOptionsHtml += '<option value="' + modes[mi] + '">' + modeLabels[modes[mi]] + "</option>";
+        }
+
+        var clearForm = "";
+        if (modes.length > 0) {
+            clearForm =
+                "<h3>Clear cache</h3>" +
+                '<form id="cache-clear-form">' +
+                '<label>Mode <select name="mode" id="cache-clear-mode">' + modeOptionsHtml + "</select></label> " +
+                '<span id="cache-clear-value-field" class="cache-clear-value-field"><label>Value <input type="text" name="value" id="cache-clear-value" autocomplete="off"></label></span>' +
+                '<div id="cache-clear-all-confirm" class="cache-confirm-all" hidden>' +
+                '<p id="cache-clear-all-help">This flushes the entire L2 store and this API process\'s L1. Other replicas keep their L1 until TTL. Type <strong>CLEAR ALL</strong> to enable the button — a single click is not enough.</p>' +
+                '<label>Confirmation <input type="text" name="confirm" id="cache-clear-confirm" autocomplete="off" placeholder="CLEAR ALL" aria-describedby="cache-clear-all-help"></label>' +
+                "</div> " +
+                '<button type="submit" id="cache-clear-submit">Clear</button>' +
+                "</form>" +
+                '<div id="cache-clear-msg"></div>';
+        }
+
+        container.innerHTML =
+            "<h2>Cache</h2>" +
+            '<p class="settings-scope-note">L2 occupancy is not a live hit rate. Postgres may mark the count approximate. A full flush clears L1 only in this API process; other replicas keep their L1 until invalidation or TTL. The CLI cannot clear this process\'s L1. This screen follows compiled role defaults, not database grants or revokes of cache permissions.</p>' +
+            '<div id="cache-stats-msg"></div>' +
+            '<div id="cache-stats-cards" class="stats-cards"><p>Loading…</p></div>' +
+            "<h3>L1 stores (this process)</h3>" +
+            '<div id="cache-l1"></div>' +
+            "<h3>Full-page cache (this process)</h3>" +
+            '<p class="settings-scope-note">Hit rate is hits/(hits+misses); bypasses are separate. Backend Get errors are <code>shopanda_fpc_backend_get_errors_total</code> (and this process&rsquo;s <code>backend_get_errors</code>), not a request outcome. <code>pages_stored</code> tracks keys this process stored with their expiry (hard TTL refill of the same key does not inflate it). Counters are lifetime for this API process only. Tag-invalidation totals here exclude purges that ran on a worker process — scrape <code>shopanda_fpc_purge_total</code> on both serve and worker for the full picture. Prefer Prometheus for historical rates.</p>' +
+            '<div id="cache-fpc"></div>' +
+            '<p><button type="button" id="cache-stats-refresh">Refresh stats</button></p>' +
+            clearForm;
+
+        var statsMsg = document.getElementById("cache-stats-msg");
+        var statsCards = document.getElementById("cache-stats-cards");
+        var l1Box = document.getElementById("cache-l1");
+        var fpcBox = document.getElementById("cache-fpc");
+        var refreshBtn = document.getElementById("cache-stats-refresh");
+        var statsGate = cacheUI.newStatsLoadGate();
+
+        function formatHitRate(rate) {
+            if (rate == null || !isFinite(Number(rate))) {
+                return "—";
+            }
+            return (Number(rate) * 100).toFixed(1) + "%";
+        }
+
+        function renderStats(snap) {
+            var l2 = (snap && snap.l2) || {};
+            var approx = l2.approximate ? ' <span class="badge badge-approximate">approximate</span>' : "";
+            statsCards.innerHTML =
+                '<article class="stat-card"><header>L2 backend</header><p>' + esc(l2.backend || "—") + "</p></article>" +
+                '<article class="stat-card"><header>L2 keys</header><p>' + esc(formatCacheCount(l2.keys)) + approx + "</p></article>" +
+                '<article class="stat-card"><header>L2 tag rows</header><p>' + esc(formatCacheCount(l2.tag_rows)) + "</p></article>" +
+                '<article class="stat-card"><header>L2 memory</header><p>' + esc(formatCacheBytes(l2.memory_used_bytes)) + "</p></article>";
+
+            var l1 = cacheUI.normalizeL1(snap && snap.l1);
+            if (l1 == null) {
+                l1Box.innerHTML = '<p role="alert">Failed to load L1 stats.</p>';
+            } else {
+                var html = "<table><thead><tr><th>Name</th><th>Entries</th><th>Hits</th><th>Misses</th></tr></thead><tbody>";
+                if (l1.length === 0) {
+                    html += '<tr><td colspan="4">No L1 stores registered in this process.</td></tr>';
+                } else {
+                    for (var i = 0; i < l1.length; i++) {
+                        var row = l1[i];
+                        html += "<tr>" +
+                            "<td>" + esc(row.name || "") + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.entries)) + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.hits)) + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.misses)) + "</td>" +
+                            "</tr>";
+                    }
+                }
+                html += "</tbody></table>";
+                l1Box.innerHTML = html;
+            }
+
+            var fpc = snap && snap.fpc;
+            if (!fpc) {
+                fpcBox.innerHTML = "<p>Full-page cache metrics are not wired in this process (FPC disabled or observer not attached).</p>";
+                return;
+            }
+            var purges = fpc.purges || {};
+            var fpcHtml =
+                '<div class="stats-cards">' +
+                '<article class="stat-card"><header>Pages stored (est.)</header><p>' + esc(formatCacheCount(fpc.pages_stored)) + "</p></article>" +
+                '<article class="stat-card"><header>Backend Get errors</header><p>' + esc(formatCacheCount(fpc.backend_get_errors)) + "</p></article>" +
+                '<article class="stat-card"><header>Keys purged (tag)</header><p>' + esc(formatCacheCount(purges.tag_invalidation)) + "</p></article>" +
+                '<article class="stat-card"><header>Keys purged (URL)</header><p>' + esc(formatCacheCount(purges.manual_url)) + "</p></article>" +
+                "</div>" +
+                "<table><thead><tr><th>Route</th><th>Hits</th><th>Misses</th><th>Bypasses</th><th>Hit rate</th></tr></thead><tbody>";
+            var routes = Array.isArray(fpc.routes) ? fpc.routes : [];
+            if (routes.length === 0) {
+                fpcHtml += '<tr><td colspan="5">No FPC requests recorded yet in this process.</td></tr>';
+            } else {
+                for (var ri = 0; ri < routes.length; ri++) {
+                    var rr = routes[ri] || {};
+                    fpcHtml += "<tr>" +
+                        "<td>" + esc(rr.route || "") + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.hits)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.misses)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.bypasses)) + "</td>" +
+                        "<td>" + esc(formatHitRate(rr.hit_rate)) + "</td>" +
+                        "</tr>";
+                }
+            }
+            fpcHtml += "</tbody></table>";
+            fpcBox.innerHTML = fpcHtml;
+        }
+
+        function loadStats() {
+            var req = statsGate.start();
+            statsMsg.innerHTML = "";
+            return api("/admin/cache/stats").then(function (body) {
+                if (!req.isCurrent()) {
+                    return;
+                }
+                if (body && body.error) {
+                    statsCards.innerHTML = "";
+                    l1Box.innerHTML = "";
+                    fpcBox.innerHTML = "";
+                    statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load cache stats.")) + "</p>";
+                    return;
+                }
+                var snap = body && body.data;
+                if (!snap) {
+                    statsCards.innerHTML = "";
+                    l1Box.innerHTML = "";
+                    fpcBox.innerHTML = "";
+                    statsMsg.innerHTML = '<p role="alert">Failed to load cache stats.</p>';
+                    return;
+                }
+                renderStats(snap);
+            }).catch(function (err) {
+                if (!req.isCurrent()) {
+                    return;
+                }
+                statsCards.innerHTML = "";
+                l1Box.innerHTML = "";
+                fpcBox.innerHTML = "";
+                statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load cache stats.")) + "</p>";
+            });
+        }
+
+        refreshBtn.addEventListener("click", function () {
+            withButtonBusy(refreshBtn, "Refreshing…", function () {
+                return loadStats();
+            });
+        });
+
+        var form = document.getElementById("cache-clear-form");
+        if (form) {
+            var clearMsg = document.getElementById("cache-clear-msg");
+            cacheUI.bindClearForm({
+                form: form,
+                modeSelect: document.getElementById("cache-clear-mode"),
+                valueField: document.getElementById("cache-clear-value-field"),
+                valueInput: document.getElementById("cache-clear-value"),
+                confirmBox: document.getElementById("cache-clear-all-confirm"),
+                confirmInput: document.getElementById("cache-clear-confirm"),
+                submitBtn: document.getElementById("cache-clear-submit")
+            }, {
+                withBusy: withButtonBusy,
+                loadStats: loadStats,
+                onMessage: function (kind, text) {
+                    if (kind === "error") {
+                        clearMsg.innerHTML = '<p role="alert">' + esc(text || "Clear failed.") + "</p>";
+                    } else {
+                        clearMsg.innerHTML = "<p>" + esc(text || "") + "</p>";
+                    }
+                },
+                clear: function (payload) {
+                    return api("/admin/cache/clear", { method: "POST", body: JSON.stringify(payload) }).then(function (body) {
+                        if (body && body.error) {
+                            return { error: extractErrorMessage(body, "Clear failed.") };
+                        }
+                        var data = body && body.data;
+                        var bits = ["Cleared " + ((data && data.mode) || "cache")];
+                        if (data && data.target) {
+                            bits.push("(" + data.target + ")");
+                        }
+                        if (data && data.deleted != null) {
+                            bits.push("— deleted " + data.deleted);
+                        }
+                        return { message: bits.join(" ") };
+                    });
+                }
+            });
+        }
+
+        loadStats();
+    }
+
     // --- Logout ---
 
     function handleLogout(e) {
@@ -10643,6 +11213,7 @@
             refreshCustomerGroupsNavVisibility();
             refreshJobsNavVisibility();
             refreshSearchNavVisibility();
+            refreshCacheNavVisibility();
             handleRoute();
         });
     }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -243,8 +244,33 @@ func TestStorefrontCheckoutErrorMessage_SanitizesServerErrors(t *testing.T) {
 
 func TestStorefrontCheckoutErrorMessage_PreservesClientErrors(t *testing.T) {
 	err := apperror.Validation("Select a shipping method to continue.")
-	if got := storefrontCheckoutErrorMessage(err); got != err.Error() {
-		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want %q", got, err.Error())
+	if got := storefrontCheckoutErrorMessage(err); got != "Select a shipping method to continue." {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want the customer message", got)
+	}
+	wrapped := apperror.Wrap(apperror.CodeValidation, "bundle cannot be reserved", apperror.New(apperror.CodeConflict, "insufficient stock"))
+	if got := storefrontCheckoutErrorMessage(wrapped); got != "bundle cannot be reserved" {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want the outer customer message", got)
+	}
+}
+
+func TestStorefrontCartCustomerMessage_SanitizesServerErrors(t *testing.T) {
+	err := errors.New("db credentials leaked")
+	if got := storefrontCartCustomerMessage(err, http.StatusInternalServerError); got != "Sorry, something went wrong. Please try again later." {
+		t.Fatalf("storefrontCartCustomerMessage() = %q", got)
+	}
+	if got := storefrontCartCustomerMessage(apperror.New(apperror.CodeInternal, "stock row lock failed"), http.StatusBadGateway); got != "Sorry, something went wrong. Please try again later." {
+		t.Fatalf("storefrontCartCustomerMessage() = %q", got)
+	}
+}
+
+func TestStorefrontCartCustomerMessage_PreservesClientErrors(t *testing.T) {
+	err := apperror.Validation("only 2 available")
+	if got := storefrontCartCustomerMessage(err, http.StatusUnprocessableEntity); got != "only 2 available" {
+		t.Fatalf("storefrontCartCustomerMessage() = %q, want the customer message", got)
+	}
+	notFound := apperror.NotFound("cart item not found")
+	if got := storefrontCartCustomerMessage(notFound, http.StatusNotFound); got != "cart item not found" {
+		t.Fatalf("storefrontCartCustomerMessage() = %q, want the customer message", got)
 	}
 }
 

@@ -105,7 +105,7 @@ func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([
 		limit = search.MaxSuggestLimit
 	}
 
-	const q = `SELECT name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
+	const q = `SELECT id, name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
 	escaped := escapeLike(prefix)
 	rows, err := e.db.QueryContext(ctx, q, escaped+"%", limit)
 	if err != nil {
@@ -115,14 +115,15 @@ func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([
 
 	var suggestions []search.Suggestion
 	for rows.Next() {
-		var name, slug string
-		if err := rows.Scan(&name, &slug); err != nil {
+		var id, name, slug string
+		if err := rows.Scan(&id, &name, &slug); err != nil {
 			return nil, fmt.Errorf("search_engine: suggest scan: %w", err)
 		}
 		suggestions = append(suggestions, search.Suggestion{
-			Text: name,
-			Type: "product",
-			URL:  "/products/" + slug,
+			Text:      name,
+			Type:      "product",
+			URL:       "/products/" + slug,
+			ProductID: id,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -290,20 +291,25 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 				),
 				0
 			) AS price,
-			EXISTS(
-				SELECT 1
-				FROM variants v
-				LEFT JOIN stock s ON s.variant_id = v.id
-				LEFT JOIN LATERAL (
-					SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
-					FROM reservations r
-					WHERE r.variant_id = v.id
-					  AND r.status = 'active'
-					  AND r.expires_at > now()
-				) reserved ON TRUE
-				WHERE v.product_id = sub.id
-				  AND COALESCE(s.quantity, 0) - COALESCE(reserved.reserved_qty, 0) > 0
-			) AS in_stock
+			CASE
+				WHEN sub.type = 'grouped' THEN FALSE
+				WHEN sub.type = 'bundle' AND sub.stock_mode = 'dynamic' THEN
+					%s
+				ELSE EXISTS(
+					SELECT 1
+					FROM variants v
+					LEFT JOIN stock s ON s.variant_id = v.id
+					LEFT JOIN LATERAL (
+						SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
+						FROM reservations r
+						WHERE r.variant_id = v.id
+						  AND r.status = 'active'
+						  AND r.expires_at > now()
+					) reserved ON TRUE
+					WHERE v.product_id = sub.id
+					  AND COALESCE(s.quantity, 0) - COALESCE(reserved.reserved_qty, 0) > 0
+				)
+			END AS in_stock
 		FROM (
 			SELECT DISTINCT ON (p.id)
 				p.id,
@@ -312,6 +318,8 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 				p.description,
 				p.created_at,
 				p.attributes,
+				p.type,
+				p.stock_mode,
 				%s AS sort_key
 			FROM products p %s
 			WHERE %s
@@ -320,6 +328,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		ORDER BY %s
 		LIMIT %s OFFSET %s`,
 		strings.Join(priceFilter, " AND "), priceOrder,
+		dynamicBundleQuantityPositiveSQL("sub.id"),
 		sortExpr, joinClause, whereClause, sortExpr, orderBy, limitArg, offsetArg)
 
 	rows, err := e.db.QueryContext(ctx, mainQ, args...)

@@ -151,6 +151,12 @@ func run() error {
 			return runJobsRetry(os.Stdout, cfg, log, os.Args[2:])
 		case "jobs:cancel":
 			return runJobsCancel(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:stats":
+			return runCacheStats(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:clear":
+			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:purge-url":
+			return runCachePurgeURL(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -231,16 +237,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
 	}
-	// buildServeHandler may open rt.rateLimiterRedisClient (rate_limit.driver=
-	// redis) even on a path that ultimately still returns an error (e.g. a
-	// later middleware fails to construct) — registered here, right after rt
-	// exists, so every return below closes it, not just the normal-shutdown
-	// path after ListenAndServe.
-	defer func() {
-		if rt.rateLimiterRedisClient != nil {
-			_ = rt.rateLimiterRedisClient.Close()
-		}
-	}()
+	if rt.rateLimitClose != nil {
+		defer rt.rateLimitClose()
+	}
 
 	handler, err := buildServeHandler(cfg, log, rt, conn)
 	if err != nil {
@@ -726,6 +725,9 @@ Commands:
   jobs:show <id>       Show a job's full detail ([--json])
   jobs:retry <id>      Retry a failed job
   jobs:cancel <id>     Cancel a pending job
+  cache:stats          Show cache occupancy ([--json])
+  cache:clear          Clear cache (--prefix=<p> | --tag=<t> | --key=<k> | --all)
+  cache:purge-url <p>  Purge full-page cache keys for a storefront path
   schedule:list        List registered scheduled tasks ([--json])
   schedule:trigger <n> Trigger a scheduled task immediately
   schedule:enable <n>  Re-enable a scheduled task
@@ -766,29 +768,29 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup
 // handler. It returns the configured worker, the job queue (needed by
 // notification services), and the cache instance.
-func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugin.App, metricsRecorder metrics.Recorder) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
+func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugin.App, metricsRecorder metrics.Recorder) (*jobs.Worker, jobs.Queue, cache.Cache, *cacheApp.FPCObserver, error) {
 	if metricsRecorder == nil {
 		metricsRecorder = metrics.Noop()
 	}
 	jobQueue, err := resolveJobQueue(app, conn, cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second).WithMetrics(metricsRecorder)
 
 	mailer, err := resolveMailer(app, cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	appCache, err := resolveCache(app, conn, cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	ed, ok := appCache.(cacheApp.ExpiredDeleter)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
+		return nil, nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
 	}
 	jobWorker.Register(cacheApp.NewCleanupHandler(ed, log))
 
@@ -796,19 +798,19 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	notification.RegisterTemplates(mailTemplates)
 	cartRepo, err := postgres.NewCartRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	customerRepo, err := postgres.NewCustomerRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	variantRepo, err := postgres.NewVariantRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	productRepo, err := postgres.NewProductRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	configRepo := postgres.NewConfigRepo(conn)
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
@@ -825,13 +827,13 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 
 	auditLogRepo, err := postgres.NewAuditLogRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	jobWorker.Register(adminApp.NewRetentionHandler(auditLogRepo, configRepo, log))
 
 	reservationRepo, err := postgres.NewReservationRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	reservationExpiryHandler := inventoryApp.NewReservationExpiryHandler(reservationRepo, log)
 	// app.Bus is nil for a process that never wired one (see runWorker's own
@@ -844,27 +846,32 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 
 	merchantWebhookRepo, err := postgres.NewWebhookEndpointRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	jobWorker.Register(webhookApp.NewDeliverHandler(merchantWebhookRepo, webhookApp.NewDefaultHTTPPoster(), log).WithMetrics(metricsRecorder))
 
 	if err := integrationApp.RegisterSyncJobHandlers(app, jobWorker); err != nil {
-		return nil, nil, nil, fmt.Errorf("sync job handlers: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("sync job handlers: %w", err)
 	}
 
 	searchEngine, err := resolveSearchEngine(app, conn, cfg)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	searchIndexRunRepo, err := postgres.NewSearchIndexRunRepo(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	searchProductSource, err := postgres.NewSearchProductSource(conn)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log))
+	fpcObs := cacheApp.NewFPCObserver(metricsRecorder)
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+		WithObserver(fpcObs).
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
+	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log).
+		WithListingCacheInvalidator(fpcInvalidation))
 
 	// ReconcileHandler's ReindexJobFinder queries the "jobs" table directly
 	// (not through the jobs.Queue port) — meaningful only when that table
@@ -883,7 +890,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if cfg.Queue.Driver == "postgres" {
 		reindexJobFinder, err := postgres.NewReindexJobFinder(conn)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		jobWorker.Register(searchApp.NewReconcileHandler(searchIndexRunRepo, reindexJobFinder, log))
 	} else {
@@ -892,7 +899,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		})
 	}
 
-	return jobWorker, jobQueue, appCache, nil
+	return jobWorker, jobQueue, appCache, fpcObs, nil
 }
 
 func runWorker(cfg *config.Config, log logger.Logger) error {
@@ -955,7 +962,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
-	jobWorker, jobQueue, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
+	jobWorker, jobQueue, appCache, fpcObs, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		shutdownTracing()
 		return err
@@ -977,6 +984,14 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// inventory.EventStockUpdated here, and without a subscriber on this
 	// bus (wireServeRuntime's copy lives in the serve process) those
 	// restores would never enqueue a reindex.
+	//
+	// FPCInvalidationSubscriber likewise must live on this bus (PR-1046):
+	// stock restores would otherwise leave tagged full-page entries stale
+	// until TTL while only serve's bus ran DeleteByTag.
+	cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+		WithObserver(fpcObs).
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce).
+		Register(bus)
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {

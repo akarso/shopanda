@@ -398,8 +398,9 @@ func TestCacheStoreDB_TagDeleteAfterExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteByTag after expiry: %v", err)
 	}
+	// Expired row is still in cache until swept; DeleteByTag removes it.
 	if n != 1 {
-		t.Errorf("DeleteByTag count = %d, want 1 (the tag row exists regardless of the value's own expiry)", n)
+		t.Errorf("DeleteByTag count = %d, want 1 (expired cache row still deleted)", n)
 	}
 	ok, err = store.Get("expired_tagged", &got)
 	if err != nil || ok {
@@ -474,7 +475,7 @@ func TestCacheStoreDB_TagDeleteExpiredSweepsOrphans(t *testing.T) {
 	}
 }
 
-func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
+func TestCacheStoreDB_TagDeleteByTagCountExcludesOrphans(t *testing.T) {
 	db, store := setupCacheStore(t)
 	ctx := context.Background()
 	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
@@ -488,8 +489,8 @@ func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteByTag: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the orphaned tag row)", n)
+	if n != 1 {
+		t.Fatalf("DeleteByTag count = %d, want 1 (orphaned tag row has no value to delete)", n)
 	}
 
 	var got string
@@ -540,5 +541,76 @@ func TestCacheStoreDB_TagDeleteByTagOnlyTouchesOwnTagRows(t *testing.T) {
 	}
 	if newTagRows != 1 {
 		t.Fatalf("new-tag rows for racy-key = %d, want 1 (must survive a DeleteByTag for a different tag on the same key)", newTagRows)
+	}
+}
+
+func TestCacheStoreDB_StatsAndFlushAll(t *testing.T) {
+	db, store := setupCacheStore(t)
+	ctx := context.Background()
+	if err := store.Set("a", "1", time.Minute); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "b", "2", time.Minute, "t1"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	st, err := store.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.Backend != "postgres" || st.Keys != 2 {
+		t.Fatalf("stats = %+v, want backend=postgres keys=2", st)
+	}
+	if st.TagRows == nil || *st.TagRows != 1 {
+		t.Fatalf("tag_rows = %v, want 1", st.TagRows)
+	}
+	if st.Approximate {
+		t.Fatal("small-table Stats must use COUNT(*), not reltuples")
+	}
+
+	n, err := store.FlushAll(ctx)
+	if err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("FlushAll deleted %d, want 2 value keys", n)
+	}
+
+	st, err = store.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats after flush: %v", err)
+	}
+	if st.Keys != 0 {
+		t.Fatalf("keys after flush = %d, want 0", st.Keys)
+	}
+	if st.TagRows == nil || *st.TagRows != 0 {
+		t.Fatalf("tag_rows after flush = %v, want 0", st.TagRows)
+	}
+
+	var cacheN, tagN int
+	if err := db.QueryRow(`SELECT count(*) FROM cache`).Scan(&cacheN); err != nil {
+		t.Fatalf("count cache: %v", err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags`).Scan(&tagN); err != nil {
+		t.Fatalf("count cache_tags: %v", err)
+	}
+	if cacheN != 0 || tagN != 0 {
+		t.Fatalf("tables after flush cache=%d tags=%d, want 0/0", cacheN, tagN)
+	}
+}
+
+func TestCacheStoreDB_StatsApproximateOnCountTimeout(t *testing.T) {
+	_, store := setupCacheStore(t)
+	postgres.SetStatsCountTimeout(store, 0)
+	if err := store.Set("a", "1", time.Minute); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	st, err := store.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if !st.Approximate {
+		t.Fatalf("stats = %+v, want approximate=true after COUNT timeout", st)
 	}
 }

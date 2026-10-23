@@ -74,7 +74,7 @@ Compare against the blocked ranges in ["Outbound webhooks (SSRF)"](#outbound-web
 - `store=memory` only: restarting the affected instance clears lockout state — but for **every** locked-out key on that instance, not just the one you meant to clear.
 - `store=cache`: technically clearable by deleting the backend cache key directly (`auth:lockout:` + SHA-256 of `"<ip>|<lowercased, trimmed email>"` — the email **must** be lowercased and trimmed exactly as the app does before hashing, or the deletion silently targets the wrong key: no error, key just isn't found, and the user stays locked out with no indication anything went wrong). This needs direct cache access and manually computing the hash — no supported tool does this for you, and this is not a safe first move under incident pressure. Prefer waiting it out (default 15 minutes) unless the situation genuinely can't wait.
 
-For general `429`/`rate_limited` (not login-specific): whether this is per-process depends on `rate_limit.driver` — per-process (not shared across instances) on the default `memory` driver, shared across every instance on `redis` (PR-1041). If a shared NAT/proxy is causing false positives across unrelated clients, set `rate_limit.trusted_proxies` so `ClientIP` reflects the real client — see ["Rate limiting and login lockout"](#rate-limiting-and-login-lockout) below.
+For general `429`/`rate_limited` (not login-specific): with `rate_limit.driver=memory` (default) this is per-process and not shared across instances; `rate_limit.driver=redis` shares a sliding window of burst/rate seconds (capacity = burst) across instances. Redis errors default to fail-open (`rate_limit.on_error=open`) so an outage does not 429 the fleet — watch `shopanda_ratelimit_backend_errors_total`. If a shared NAT/proxy is causing false positives, set `rate_limit.trusted_proxies` so `ClientIP` is the rightmost untrusted hop — see ["Rate limiting and login lockout"](#rate-limiting-and-login-lockout) below.
 
 ### A permission-catalog or category-nav change isn't taking effect on some instances
 
@@ -84,10 +84,83 @@ For general `429`/`rate_limited` (not login-specific): whether this is per-proce
 - Permission catalog (`adminrole.Service.Catalog()`, the roles editor's "assignable permissions" list — the permission *definitions*, not any role's assignments) — 30s TTL, but that TTL is **not** the actual staleness bound here: `rbac.Registry` (what it caches) is frozen after plugin `Init()` and never mutates again, so a stale catalog means a **new plugin version** shipped a permission and the OLD process just hasn't restarted yet — every TTL expiry just recomputes the SAME stale, pre-upgrade catalog. The real fix is restarting/redeploying that instance, not waiting; check `plugin.init.summary` in that instance's own startup logs to confirm.
 - Category tree (`storefront.StorefrontHandler`'s nav) — 45s TTL, same as before PR-1040, and this one genuinely does bound the staleness (the underlying data actually changes at runtime). A category create/update/delete evicts this **immediately, but only in the process that handled that admin request** — see below for why.
 
-**Fix:** there is no manual per-instance L1-flush endpoint or CLI command today. Two things are true simultaneously, and neither is a bug:
+**Fix:** HTTP `POST /api/v1/admin/cache/clear` with `{"all": true}` clears L1 only in the API process that handled the request. Other replicas keep their L1 until an in-process invalidation event or TTL expiry. The CLI cannot clear an API process's L1 (`app cache:clear --all` is a separate process: it flushes L2 only and has no L1 of its own). Two things remain true, and neither is a bug:
 - **Within the process that made the change**, the category tree cache evicts immediately (subscribed directly to the category create/update/delete events) — if you're still seeing stale nav from that SAME instance past the eviction, it's not L1; look elsewhere.
-- **On every OTHER instance/replica**, only the TTL above bounds the staleness — `internal/platform/event.Bus` is in-process only (no Redis pub/sub, no network I/O; every replica runs its own independent instance), so the eviction signal from one instance's write never reaches another instance's memory. Waiting out the TTL (worst case ~45s) is the only remediation; there is nothing to "flush" remotely. See `docs/guides/DEVELOPER.md`'s "When it's safe to use the L1 (in-process) cache" for the full design reasoning.
+- **On every OTHER instance/replica**, only the TTL above bounds the staleness unless you also POST `{"all": true}` to that replica — `internal/platform/event.Bus` is in-process only (no Redis pub/sub, no network I/O; every replica runs its own independent instance), so the eviction signal from one instance's write never reaches another instance's memory. Waiting out the TTL (worst case ~45s) is the usual remediation; a full-clear on one replica does not flush the others. See `docs/guides/DEVELOPER.md`'s "When it's safe to use the L1 (in-process) cache" for the full design reasoning.
 - The permission catalog case above is different: there is no write to wait out, so don't wait — restart/redeploy the stale instance.
+
+### A shopper reports seeing someone else's data
+
+**Symptom:** a storefront page (PDP, category, search, CMS, home) shows another customer's name, cart, order, or a CSRF token that isn't theirs. Treat this as the same severity class as SSRF/lockout — shared HTML was served from the full-page cache (PR-1044).
+
+**Check:**
+- Confirm the route is on the FPC allowlist (`/`, `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`). Off-allowlist routes are never stored; if the leak is on `/cart`, `/checkout`, or `/account`, it is not FPC.
+- If `SHOPANDA_DEV_MODE=true` or `cache.full_page.expose_header=true`, inspect `X-Shopanda-Cache: HIT` on the leaked response.
+- Dump the cached body (or a HIT response) and search for `csrf_token` values, customer IDs, and display names. Cached shells must be generic: guest vs authenticated chrome only, no per-customer data. Personal bits belong in fragments (PR-1045).
+- Confirm vary is only store/language/currency/`guest|authenticated` — a key that includes a session or customer ID is a bug (and also destroys hit rate).
+
+**Fix:** disable immediately with `SHOPANDA_CACHE_FULL_PAGE_ENABLED=false` (or `cache.full_page.enabled: false`) and restart `serve` (FPC is off by default). Flush stored pages: `POST /api/v1/admin/cache/clear` `{"prefix":"fpc:"}` or `{"all": true}` (the latter also clears this process's L1). Do not re-enable until the leaked field is moved to a fragment (`{{fragment "…"}}` / `/fragments/…`) or the route is removed from the allowlist. See `docs/guides/DEVELOPER.md` "Full-page cache" and "Fragments (ESI-equivalent)".
+
+### Signed-in logout returns 403 with full-page cache on
+
+Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` (which also mints `shopanda_csrf` when missing). A 403 on logout usually means the fragment never ran or the cookie was blocked.
+
+**Check:**
+- Browser network: `/fragments/csrf` is 200 and sets/refreshes `shopanda_csrf`; the logout form’s hidden input is non-empty before submit.
+- Theme includes `hx-get="/fragments/csrf"` **inside** the logout form — a path mention elsewhere on the page is not enough; FPC refuses logout forms without that in-form hole.
+- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
+
+### Cache appears stale after a product/price/content change
+
+**Symptom:** storefront PDP/PLP/CMS/home still shows old price, name, or copy after an admin save, even though the DB is correct. Full-page cache (PR-1044) is serving a HIT; tag invalidation (PR-1046) should have purged it.
+
+**Check:**
+- Confirm FPC is enabled (`cache.full_page.enabled` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED`). If off, the stale page is not FPC.
+- Confirm the change path publishes an event the FPC subscriber listens to: product create/update, price upsert, stock update, category create/update/delete, CMS page create/update/delete. Content-block-only edits have **no** domain event today — tag purge will not fire for those.
+- Logs: look for `cache.fpc_invalidation.done` (or `.error`) with the expected `product:` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` tag around the save time. Missing log ⇒ event not published or subscriber not registered. Product/category create also purges the shared listing/navigation shells so new entities are not stuck behind an old PLP/nav HIT until TTL.
+- Immediate remediation while investigating:
+  - Prefer tag clear for “everything that rendered this entity”: `POST /api/v1/admin/cache/clear` `{"tag":"product:<id>"}` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` (`cache.write`).
+  - `purge-url` deletes the **exact** path (+ filtered query) × store × language × guest/auth keys (store defaults, `?lang=` if present, and `en`). Bare `/products` does **not** clear `?page=2`, `?sort=…`, or other listing variants — pass the full query (including `attr_*` codes that were on the allowlist when cached), or use tag/prefix clear. Accept-Language-only variants still need an explicit `?lang=` on the purge path. API: `POST /api/v1/admin/cache/purge-url` `{"path":"/products/the-slug"}` (`cache.purge_url`); CLI: `app cache:purge-url /products/the-slug`.
+  - Nuclear: `{"prefix":"fpc:"}` or `{"all": true}`.
+
+**Fix:** restore event publishing / tag wiring on the write path if a tag was never written or an event never fired. Purge-by-URL is a path-scoped escape hatch, not a whole-PLP broom; do not leave a known miss permanently on TTL alone.
+
+### Full-page cache hit rate unexpectedly low
+
+**Symptom:** `shopanda_fpc_requests_total` hit rate (`hit / (hit+miss)`) looks poor for allowlisted routes, or **Operations → Cache → Full-page cache** hit rates look poor after traffic.
+
+**Check:**
+- Use the hit/(hit+miss) definition — do **not** treat rising `bypass` (logged-in SkipStore, unsafe HTML, attr-allowlist errors) as an FPC regression.
+- Vary-key cardinality: keys include store × language × currency × auth. Unexpected `?lang=` / `Accept-Language` values or many stores multiply keys and lower per-key hit rate.
+- TTL too short (`cache.full_page.ttl` / per-route `route_ttl`) — pages expire before reuse (soft expiry becomes miss after delete).
+- Allowlist coverage: only templates in the FPC allowlist are cached; everything else never appears in these counters.
+- Rising `shopanda_fpc_backend_get_errors_total` (or process-local `backend_get_errors` / Get-failure logs): cache backend issues — fix Redis/Postgres, not TTL. Request outcomes stay hit/miss/bypass when a page was still served.
+
+**Fix:** tighten language/store vary inputs, raise TTL if product freshness allows, add missing templates to the allowlist deliberately, and fix bypass causes (logs: `storefront.fpc.*`).
+
+### A cacheable-looking page never gets cached
+
+**Symptom:** a public GET storefront page always shows `X-Shopanda-Cache: BYPASS` (when exposed) or never appears as an FPC key under `fpc:v1:`.
+
+**Check:**
+- Is the route on the allowlist (`/`, `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`)? Fail-closed: forgotten == deliberately excluded from the outside.
+- Deny prefixes (`/cart`, `/checkout`, `/account`, `/fragments`, …) win even if someone adds the template.
+- FPC enabled? `cache.full_page.enabled`.
+- Response actually storable (200 HTML, under size cap, no CSRF/PII holes, CSP nonce storable)?
+
+**Fix:** add the template only if it is safe to share; otherwise keep it uncached. Do not lower safety checks to force a HIT.
+
+### Stale content despite tag invalidation
+
+**Symptom:** same as “Cache appears stale…” but logs show `cache.fpc_invalidation.done` and/or `shopanda_fpc_purge_total{trigger="tag_invalidation"}` is rising on **serve and/or worker** scrapes (keys deleted — not soft-TTL).
+
+**Check:**
+- Did the **entity's tag** attach when the page was stored? A render that omits `product:` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` leaves a page that purge-by-tag cannot find — confirm tags on write (storefront `AddPageTags`).
+- Search lag: event-time purge can refill from a still-stale index before reindex finishes; post-index purge (`AfterProductsIndexed`) should clear again — check reindex job completion.
+- Wrong vary key still serving (other language/auth) — purge-url language expand or tag clear.
+- Serve admin “Keys purged (tag)” can stay near zero while the worker scrape shows healthy tag deletes — always check both processes.
+
+**Fix:** fix tag attachment on the render path; wait for / trigger reindex; use tag clear or purge-url for the exact vary.
 
 ## Planning
 
@@ -110,18 +183,19 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 ## Rate limiting and login lockout
 
-- HTTP rate limiting is **on by default** (`SHOPANDA_RATE_LIMIT_ENABLED=true`). The default budget is **10 requests/second** with a **burst of 20**. Rejected requests return `429` / `rate_limited`.
-- **`rate_limit.driver` (PR-1041) decides whether that budget is shared across instances:**
-  - `memory` (default, unchanged from before PR-1041) — each application process enforces its own independent in-process token bucket. The *effective* limit scales with instance count instead of staying fixed, without anyone configuring that on purpose — correct for one instance, or behind a gateway/WAF that already enforces a global ceiling; silently wrong otherwise.
-  - `redis` — a sliding-window counter (Redis sorted sets, not a fixed-window `INCR`+`EXPIRE`, so a client can't get 2x the limit by timing requests around a window boundary) shared by every instance pointed at the same Redis backend, via `rate_limit.redis.url` (falls back to `REDIS_URL`). This is the actual fix for "limits are not shared across instances" — choose it for any multi-instance deployment without a gateway-level limiter in front. On a Redis error, a check **fails open** (allows the request) rather than taking the whole API down over a transient store blip — same reasoning as the login-lockout store below. A briefly unreachable Redis at *startup* (e.g. mid-rolling-restart) does not block `serve` from starting either — connecting is lazy; the first real check fails open the same way.
+- HTTP rate limiting is **on by default** (`SHOPANDA_RATE_LIMIT_ENABLED=true`). Default budget is **10 requests/second** with a **burst of 20** (both drivers). Rejected requests return `429` / `rate_limited`.
+  - `rate_limit.driver=memory` (default): in-process token bucket. Limits are **not** shared across instances — use a gateway/WAF, or switch to redis, for a global HTTP ceiling.
+  - `rate_limit.driver=redis`: shared sliding window of burst/rate seconds (microsecond scores) with capacity burst (10/20 → 20 / 2s; 15/20 → 20 / ~1.333s). Requires Redis 5+ (single-node `redis://` / `rediss://` only — Cluster/Sentinel are not supported). Uses a **dedicated** Redis client (200ms I/O, no retries, pool `min(10*GOMAXPROCS, 64)` or `rate_limit.redis.pool_size`) from `rate_limit.redis.url` if set, else `cache.redis.url` — not the cache pool. Keys live under `<prefix>-rl:` where prefix is `rate_limit.redis.key_prefix`, else `cache.redis.key_prefix`, else `shopanda`. When `cache.driver=redis`, `cache.redis.key_prefix` must be non-empty. Uses Redis `TIME` and a per-process random member ID. Circuit: ≥20 requests with ≥50% errors in a 2s window (20×100ms buckets), **or** ≥5 errors within those 2s with no successes (so an admin replica or off-peak pod still opens the circuit). Either trip starts a 5s hold; when it expires exactly one request probes Redis, and a **failed probe starts a new 5s hold**. Traffic slower than five errors per 2s (e.g. one request every 3s) never fills the quiet trigger — each request pays the 200ms timeout. A short Redis stall (e.g. 300ms `BGSAVE`) at high RPS does not trip as long as errors stay below 50% of the window (successes in the same window also block the quiet 5-error rule). At about 3–9 req/s a 300ms stall with nothing succeeding in the same 2s can fill five all-error samples and trip; that is the trade-off for covering quiet instances. Client disconnects (`context.Canceled` / HTTP/2 `RST_STREAM`, and HTTP/1.1 half-close / `nc -N`) write status 499 (no 429 body, no `ratelimit.rejected` log, no token) so HTTP metrics record 4xx rather than 2xx — they do not admit unmetered work or trip the circuit (a Redis timeout that returns after the client is already gone is still Canceled — no backend-error metric, no circuit sample). A successful half-open probe still closes the circuit if that client has gone, so live traffic does not stay on the outage fallback. Redis I/O runs on `WithoutCancel` so a disconnect cannot abort the script. The **memory** driver ignores the request context, so the same half-close is admitted and counted there. `on_error`: `open` (default, admit), `closed` (deny), `local` (in-process token bucket — recommended for auth; per-instance, so N replicas admit N× the configured budget during an outage). If Redis is down at startup and **global** `on_error` is not `closed`, serve starts with the circuit open (`ratelimit.redis.unavailable`, including `fail_closed_routes` when any `per_route` is `closed`) instead of crash-looping. Per-route `closed` still 429s for the 5s hold. This limiter fail-open does **not** apply when `cache.driver=redis`: the cache plugin still PINGs via `ConnectURL` and refuses to start. Backend errors increment `shopanda_ratelimit_backend_errors_total` (`limiter` = `default` or `route:<path_prefix>`, `reason=error|circuit_open|pool_timeout`) — **sum over `limiter`** for a factory-wide outage. Redis errors are sampled in logs (≤1/10s). Fail-closed outage 429s omit `client_ip`; local-fallback denials keep it.
+  - **Redis connections:** each `serve` instance opens a limiter pool of `min(10*GOMAXPROCS, 64)` (override with `rate_limit.redis.pool_size`) **plus**, when `cache.driver=redis`, the cache client's own pool (`10*GOMAXPROCS`, not capped here). Example: 8 cores with a CPU limit → limiter 64 + cache 80 = 144/instance; 15 instances ≈ 2,160, under Redis's default `maxclients` of 10,000. A 64-core host **without** a CPU limit: limiter 64 + cache 640 = 704/instance; 15 instances ≈ 10,560 — raise `maxclients` or set both pools explicitly. Go 1.26+ respects cgroup CPU limits for `GOMAXPROCS`.
   - **Switching from `memory` to `redis` with unchanged rate/burst values does not preserve burst-recovery timing**, only the peak burst size and steady-state average rate. A token bucket (`memory`) refills continuously — e.g. the default rate=10/burst=20 admits one more request ~100ms after exhausting the burst. The sliding-window counter (`redis`) instead requires the *oldest* of the burst's entries to age out of the window (here, 2 seconds) before admitting a new one — for a true simultaneous burst, that's a ~2-second wait, not ~100ms. If a deployment's config was tuned around the `memory` driver's fast recovery, switching to `redis` unchanged can produce unexpected `429`s on traffic the `memory` driver would have allowed.
-- **Auth gets its own, tighter budget — already true via the dedicated lockout mechanism below, and the same split is recommended for the general limiter too:** configure `rate_limit.per_route` with a path prefix over auth routes (e.g. `/api/v1/auth`) at roughly **1/10th** the general API rate/burst. This is a documented recommendation, not a new enforced mechanism — `rate_limit.per_route` already supports it.
-- **Probe traffic gets its own budget, by design, not an oversight:** `/readyz` has a dedicated per-IP limiter (`ReadyProbeLimitMiddleware`) that sits outside the main `RateLimitMiddleware` chain entirely (probes must not be blocked by a hung DB, which the main middleware stack can touch via store/auth lookups) and stays **memory-only regardless of `rate_limit.driver`** — each instance's own liveness/readiness must be checked independently of every other instance's, so a per-instance budget is the *correct* model here, not a gap to fix. Two other automated-traffic paths were audited for the same treatment and don't need a separate mechanism: inbound payment webhooks (`internal/interfaces/http/payment_webhook.go`) and plugin integration routes (`plugin.App.Integration(...).RegisterRoute`, mounted at `/api/v1/integrations/{plugin}/…`) both ride the same router `RateLimitMiddleware` already covers — give either its own `rate_limit.per_route` entry if one ever gets noisy, the same escape hatch auth uses. Outbound webhook delivery (`webhookDeliverHandler`) is not inbound HTTP traffic at all — rate limiting doesn't apply to requests this server *sends*.
+- **Auth vs general API:** `defaults()` has **no** auth `per_route`. The example used to cap all of `/api/v1/auth` at 5/s burst 10. That is now split: `/api/v1/auth/login` (burst 2), `/login/mfa` (burst 5, own prefix), `/register`, and `/password-reset` with `on_error: local` so a Redis outage does not refuse logins. Two rapid login attempts then a 429 is expected. `/auth/me` and `/logout` use the default 10/s burst 20 (looser than the old auth-wide cap). Copying the example into an existing deploy is a real policy change — tune before regenerating.
+- **Probes and automated traffic:** `/healthz` is unmetered (static 200, no DB). `/readyz` sits outside `RateLimitMiddleware` and always uses an **in-process** per-IP limiter (this instance's DB pool, never Redis). Payment webhook callbacks (`POST /api/v1/payments/webhook/*`) stay on the **default** limiter — provider source IPs are shared, so a dedicated tight `per_route` false-positives on legitimate delivery bursts. Put a webhook ceiling on the gateway if you need one.
 - Failed password logins are throttled by **IP + normalized email** (`auth.lockout`). After `max_failures` within the lockout window, login returns `429` (`too many login attempts, try again later`). Wrong-password responses remain uniform `unauthorized` before the threshold.
 - **Reserve-before-verify:** each login atomically increments the counter before password comparison, so a concurrent batch for the same IP+email cannot evaluate more than `max_failures` guesses. A successful login clears the reservation (and prior failures) via compare-and-subtract.
 - **Sliding window:** each reserved/failed attempt refreshes the full `auth.lockout.window` TTL. Continued failures can extend lockout; quiet time of one full window after the last failure is when lockout ends (or a successful login clears the counter).
-- **Multi-instance lockout:** `auth.lockout.store=cache` (default) shares counters via cache (postgres/redis) using atomic `Incr` (sliding window TTL). `store=memory` is single-instance only; startup logs a warning if selected. This mechanism (and its own store choice) is unchanged by PR-1041 — see PR-1041.md's "Out Of Scope" for why: it already does sliding-window-correct atomic counting, unlike the general limiter's pre-PR-1041 memory-only default.
-- Behind a reverse proxy, set `rate_limit.trusted_proxies` in YAML (CIDR / IP list; see `configs/config.example.yaml`) so ClientIP for rate limit + lockout is not the proxy address. No env mapping for trusted proxies. The same list gates HSTS (`Strict-Transport-Security`) via `X-Forwarded-Proto: https`.
+- **Multi-instance lockout:** `auth.lockout.store=cache` (default) shares counters via cache (postgres/redis) using atomic `Incr` (sliding window TTL). `store=memory` is single-instance only; startup logs a warning if selected.
+- Behind a reverse proxy, set `rate_limit.trusted_proxies` in YAML (CIDR / IP list; see `configs/config.example.yaml`) so ClientIP for rate limit **and login lockout** is not the proxy address. **Migration:** list every hop that writes `X-Forwarded-For`, including CDN/edge ranges — if only the load balancer is listed, the rightmost untrusted hop is the CDN edge and every shopper behind that POP shares one bucket (and one lockout key). All `X-Forwarded-For` header lines are joined, then walked from the right; `ip:port` and `[v6]:port` hops are accepted (Azure Application Gateway and some other proxies append a port). The first invalid entry falls back to the peer. No env mapping for trusted proxies. The same list gates HSTS (`Strict-Transport-Security`) via `X-Forwarded-Proto: https`.
+- If `cache.driver=redis`, `cache.redis.key_prefix` must be non-empty (startup rejects empty/whitespace). An empty prefix would make `SCAN`/`FlushAll` match the whole Redis DB (queues, limiter keys, other apps).
 
 ## Secure-by-default config (startup)
 
@@ -134,6 +208,66 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 - If PgBouncer (or similar) sits in front of PostgreSQL in **transaction-pooling mode**, set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Otherwise pgx defaults to server-side prepared statement caching, which does not survive that pooling mode — symptom: `prepared statement "..." already exists` / `does not exist` errors under load.
 - Leave unset for a direct connection to PostgreSQL — it trades away a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md) ("Consider connection pooling").
+
+## Catalog visibility enforcement (PR-1057)
+
+Storefront axis gates (`VisibleInCatalog` / `VisibleInSearch` / `VisibleIndividually`) are **off by default**.
+
+**Enable only after a deliberate choice:**
+
+```yaml
+catalog:
+  visibility:
+    enforce: true
+```
+
+Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
+
+**Why default off:** migration `086` set every product’s modes to `auto`. AutoBasis requires a stock row with `quantity > 0` and at least one price. With enforce on, OOS products, products with no stock row, and products with no price drop from listings, search, suggest, carousels, and the sitemap, and their PDP / variants / reviews return **404**. That is intentional AutoBasis behaviour, not a soft “hide from PLP only” rule.
+
+**Cart and checkout (PR-1058):** the same flag turns on the `Purchasable` axis for cart mutations and checkout. The product `Status` check (PR-1054) applies whether enforce is on or off.
+
+| Path | Behaviour when `Purchasable` resolves false |
+| --- | --- |
+| Add to cart, quantity increase | 422 `product is not currently purchasable` |
+| Quantity decrease, remove line | Allowed, so customers can clear blocked lines |
+| Guest cart claim on login | Blocked lines are **dropped** and the rest merge; logged as `cart.guest.claim.lines_dropped` (`guest_cart_id`, `variant_ids`) |
+| Checkout (`validate_cart`) | 422 naming the first blocked variant; the order is not created |
+
+- With mode `auto`, a product that goes out of stock or loses its last price becomes non-purchasable, so existing carts holding it fail checkout until the line is removed. That includes carts already mid-checkout.
+- A product with no visibility snapshot (e.g. non-active) is denied (fail-closed).
+- A visibility-facts DB error returns 500 and aborts the claim or checkout; it never drops lines.
+- Admin API contexts bypass the axis but not the `Status` check.
+- Frequent `cart.guest.claim.lines_dropped` warnings after enabling usually mean OOS products are still sitting in guest carts. Expected; no action needed unless volume is surprising.
+
+**Admin GUI (PR-1059):** the product edit form in `/admin` now exposes all four `VisibilityModes` (catalog/search/individually/purchasable) as per-axis selects, independent of whether `catalog.visibility.enforce` is on — this is always available so merchants can set up modes ahead of enabling enforcement. A single axis can be changed at a time: `visibility_modes` in the save request is a **partial** merge, so `{"catalog": "hidden"}` alone does not touch the other three axes.
+
+Each axis shows a storefront-facing badge — **Auto — visible/hidden**, **Forced visible**, **Forced visible — not live (product inactive)**, or **Forced hidden**. There is no per-badge "Would be …" prefix (PR-1059 CR — simplified copy); instead, when `catalog.visibility.enforce` is off, one section-level caption reads **"Enforcement off — preview"**, since the gate described isn't actually live yet. A second section-level caption, **"Preview as of form status (save to persist modes)."**, is always shown: the main form's `status` select has its own `change` listener that re-renders every axis badge **and failure list** from the **currently selected** status, so an operator can preview the effect of a pending (unsaved) status change before saving — this recompute (PR-1059 CR round 3) is driven entirely by the GET payload's `input_failure_codes` (the same `AutoBasisFailureCodes` list with `status_inactive` always excluded), combined client-side with whichever status is currently selected, so switching the status select away from the saved value never leaves a stale badge or a stale/missing `status_inactive` failure-list entry behind. The **"not live (product inactive)"** case matters operationally: forcing an axis `visible` on a draft/archived product does **not** put it on the storefront — `LoadMany` is active-only regardless of the forced mode — so the badge always reflects that effective (public-gate) truth, not the raw override.
+
+Auto axes with a failing `AutoBasis` list the specific stable failure code(s) under that axis (`status_inactive`, `no_stock`, `no_price`, `no_store_assignment` (reserved — unreachable today), `no_category`), shown as merchant-facing text. This is read against `LoadManyAnyStatus`, so it explains draft/archived products too, not just active ones — useful for pre-launch QA before flipping a product to `active`. If the visibility-facts read itself fails — including a missing snapshot, e.g. a product deleted concurrently with the GET (PR-1059 CR round 3 — this used to silently omit the whole `visibility`/`visibility_error` pair) — the product page still loads (200) with an explicit **"Visibility facts unavailable — reload to retry"** banner in place of every badge and a `visibility_error` noted in the API response — this is a display-degradation, not a product-read failure, and is unrelated to the fail-closed/500 behavior described above for the cart/checkout enforcement path. Do not confuse this with the unrelated "pending" state (no payload, no error) shown as `"<Mode> — computed after save"` for a not-yet-saved create — operators should expect a reload-to-retry prompt whenever `visibility_error` is present, and the pending state only for a genuine not-yet-saved create.
+
+**Before enabling in production:**
+
+1. Decide whether OOS/unpriced PDPs should 404, or force display axes to `visible` (leave `purchasable` as `auto`/`hidden`) for SEO-critical SKUs.
+2. Spot-check a few OOS and unpriced products under enforce in staging.
+3. After enable, stock and price events purge `fpc:listing` as well as `product:{id}` so restocked/priced products can reappear on cached PLPs. FPC keys include the enforce flag, so pages cached while enforce was off are not reused after the flip (no manual FPC flush required for correctness).
+
+**Deep / sparse REST listings:** `GET /api/v1/products` and category product lists return `meta.has_more`, `meta.truncated`, and (when more may exist) `meta.next_after`.
+
+- **Always resume with `?after=<next_after>&limit=N`**. When `after` is set, `offset` is ignored. Do **not** advance `offset` by `len(products)`.
+- `truncated: true` means the scan budget stopped early (short or empty page, or mid-skip); continue with `after` — the cursor carries any remaining skip.
+- Empty `products` with `has_more: false` is end of catalog. `has_more: true` can still yield one trailing empty page when only hidden rows remain.
+- Cursor resume depth is capped at 100000 repository rows. At that limit `meta.depth_limited` is true, `has_more` is false, and `next_after` is omitted — the server never issues a cursor it would reject. Classic `offset` is not capped the same way and can still go deeper until keyset pagination lands. Tampered / over-cap `after` values return 422.
+
+Stock/price events purge `fpc:listing` only while enforce is on — every order can invalidate PLP caches. Prefer enabling enforce during a low-traffic window, or accept lower FPC hit rates until threshold-crossing invalidation lands.
+
+Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-1057). Offset-based cursors can drift when products are inserted or deleted between requests.
+
+## Admin product type
+
+- Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.
+- Changing a live SKU between physical and `virtual`/`downloadable` changes whether **new** checkouts require a shipping method (derived in cart validation). Carts already mid-checkout keep the shipping requirement cached from when they last validated.
+- `bundle` / `grouped` / `configurable` / `downloadable` can be stored before their Phase 12 tracks fully ship; expect incomplete storefront/admin behavior until those PRs land.
 
 ## Admin store credit issuance
 
@@ -151,6 +285,18 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - Every list/get/retry/cancel call is written to the admin audit log (`job.list`, `job.read`, `job.retry`, `job.cancel`; `ResourceType: "job"`), same as payments/returns/store credit.
 - No bulk operations yet (e.g. "retry all failed of type X") — single-job actions only.
 - **CLI equivalents** (PR-1032, for deploy scripts/CI that shouldn't need HTTP + auth): `app jobs:list [--type=X] [--status=Y] [--limit=N] [--offset=N] [--json]`, `app jobs:show <id> [--json]`, `app jobs:retry <id>`, `app jobs:cancel <id>` — same `jobsApp.Service` calls as the HTTP routes above, same retry/cancel status rules, non-zero exit on any failure. `jobs:retry`/`jobs:cancel` write to the same admin audit log the HTTP routes do (`job.retry`/`job.cancel`), with `AdminID` set to `cli:<os-user>` (there's no authenticated admin session in a CLI invocation) instead of a real admin user ID — check the audit log's `admin_id` column for that prefix when tracing a CLI-initiated action. `jobs:list` defaults to the same limit/offset the HTTP route does and prints a "there may be more" hint when a page comes back full, instead of silently truncating.
+
+## Admin cache (stats / clear)
+
+Cache occupancy/clear also has an admin GUI under **Operations → Cache** (PR-1043). Purge-by-URL is API/CLI only today (`POST /api/v1/admin/cache/purge-url`, `app cache:purge-url`).
+
+- `GET /api/v1/admin/cache/stats` is gated by `cache.read`. `POST /api/v1/admin/cache/clear` targeted clears (`{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}`) are gated by `cache.write`; `{"all": true}` requires the distinct `cache.clear_all` permission — a full flush is a bigger blast radius (every cache consumer pays a cold-cache penalty at once, including the storefront full-page cache) than a targeted clear. `POST /api/v1/admin/cache/purge-url` requires `cache.purge_url` (FPC path escape hatch). All four permissions are admin-only (`RoleAdmin`) by default, same as `jobs.read`. 403 is a well-formed selector the caller is not allowed to run; 422 is an invalid body (missing/empty/whitespace selector, `{"all": false}`, more than one selector, or a non-cacheable purge path).
+- **Stats** are approximate occupancy, not a live hit/miss rate for L2. Postgres runs `COUNT(*)` with a 1.5s statement cap, then falls back to `pg_class.reltuples` (planner estimate; can lag `ANALYZE`). When that fallback is used, the payload sets `l2.approximate: true` — treat `keys`/`tag_rows` as a stale estimate, not an exact count. Expired rows the cleanup job has not swept yet are included. Redis reports `DBSIZE` of the configured database (the whole DB, not just this store's key prefix) and `used_memory` from `INFO memory` when present. L1 (this process's permission catalog and, when the storefront is enabled, category-nav tree) reports entry count plus process-lifetime hit/miss counters — no backend round trip. Successful HTTP `cache.stats` calls are **not** audit-logged (the endpoint is polled); failures still are. CLI `cache:stats` is not audited.
+- **Clear by prefix/tag/key** calls the same `DeleteByPrefix` / `DeleteByTag` / `Delete` the rest of the app uses. An empty/whitespace selector is rejected so `{"prefix":""}` cannot sneak a full-table wipe past `cache.clear_all`. Prefix is a **literal** string — Redis glob metacharacters (`*`, `?`, `[`, `\`) are escaped, so `{"prefix":"*"}` with only `cache.write` deletes keys that literally start with `*`, not the whole store. Exactly one selector is required. Targeted prefix/key clears do not return a `deleted` count (tag/`all` do).
+- **Clear all** scan-and-deletes L2, then clears this process's L1 stores. On Redis it **never** calls `FLUSHDB`/`FLUSHALL` — only keys under `cache.redis.key_prefix` are removed, so rate-limit ZSETs and queues sharing the instance are left alone. Empty prefix is refused at FlushAll (and rejected at config load). Redis SCAN is not a point-in-time snapshot: a concurrent `SetWithTags` during a flush can leave tag-index orphans that `cache.cleanup` (`DeleteExpired`) later reclaims. `deleted` is **value keys** only (Postgres `cache` rows; Redis keys that are not `tag:` / `__keytags:` / `__purge:`). Postgres FlushAll is an exact delete of both tables in one statement — on a large UNLOGGED cache it can stall the admin request and contend with writers. Other API replicas keep their own L1 until TTL (seconds) or their own in-process invalidation events; the CLI process has no L1 at all.
+- Every **clear** (including targeted) is written to the admin audit log (`cache.clear`; `ResourceType: "cache"`) with the mode and target.
+- **When cached content looks stale:** first try a targeted clear of the entity prefix (`product:<id>:`) or tag; use `--all` / `{"all": true}` only when you need a cold cache everywhere. Then wait out L1 TTL on other replicas (permission catalog 30s, storefront category tree 45s) or restart those processes.
+- **CLI equivalents:** `app cache:stats [--json]`, `app cache:clear --prefix=<p> | --tag=<t> | --key=<k> | --all` — same `cache.AdminService` as the HTTP routes. **The CLI has no RBAC** (same pattern as `jobs:retry` / `jobs:cancel`): anyone who can run the binary as the deploy user can `cache:clear --all`. That is an ops trust boundary, not HTTP `cache.clear_all` parity. `cache:clear` writes `cache.clear` to the audit log with `AdminID` `cli:<os-user>`. `cache:stats` from the CLI will show empty L1 (this is a separate process, not `serve`).
 
 ## Admin schedules (list/trigger/enable/disable)
 
@@ -220,6 +366,11 @@ If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cann
 | `shopanda_checkout_result_total` | counter | `outcome` (`success`/`failed`/`succeeded_event_failed`) | One increment per `checkout.Workflow.Execute` call (panics count as `failed`). `succeeded_event_failed` is every step succeeding but the final `checkout.completed` event publish failing — a downstream/event-bus problem on an otherwise-successful order, not a checkout failure. |
 | `shopanda_job_failures_total` | counter | `job_type` | Incremented on handler error or "handler not found"; not incremented on success. |
 | `shopanda_webhook_deliveries_total` | counter | `outcome` (`success`/`failed`) | Skipped deliveries (inactive/unsubscribed endpoint, malformed job payload) are not counted — they were never attempted. |
+| `shopanda_ratelimit_backend_errors_total` | counter | `limiter` (`default` or `route:<path_prefix>`), `reason` (`error`, `circuit_open`, or `pool_timeout`) | Incremented on a Redis limiter error, a pool wait timeout, and on each request while the circuit is open (`reason=circuit_open`). One factory-wide outage is spread across limiter names — **sum over `limiter`**. Not incremented on a normal 429 or on a client disconnect. |
+| `shopanda_fpc_requests_total` | counter | `route`, `outcome` (`hit`/`miss`/`bypass`) | `route` is an FPC allowlist template (e.g. `/products/{slug}`), never a raw path. Counted only for requests that enter the FPC wrapper. Terminal disposition only — backend Get failures use `shopanda_fpc_backend_get_errors_total`, not an outcome label. |
+| `shopanda_fpc_render_duration_seconds` | histogram | `route` | Miss-path render time (what a hit avoids). |
+| `shopanda_fpc_purge_total` | counter | `trigger` (`tag_invalidation`/`manual_url`/`unknown`) | **Keys deleted**, not soft-TTL observations. Soft expiry deletes the key and surfaces as a miss. Scrape serve **and** worker — tag invalidation often runs on the worker bus. |
+| `shopanda_fpc_backend_get_errors_total` | counter | _(none)_ | FPC requests that observed a cache backend Get failure (at most one increment per request). Prefer this over the process-local admin `backend_get_errors` for historical/cluster rates. |
 
 **Example Grafana/PromQL queries** (no dashboards ship — build your own from these):
 
@@ -237,6 +388,19 @@ sum(rate(shopanda_checkout_result_total{outcome="failed"}[5m]))
 
 # Job failures by type
 sum(rate(shopanda_job_failures_total[15m])) by (job_type)
+
+# FPC hit rate by route template (exclude bypass from denominator)
+sum(rate(shopanda_fpc_requests_total{outcome="hit"}[5m])) by (route)
+  / sum(rate(shopanda_fpc_requests_total{outcome=~"hit|miss"}[5m])) by (route)
+
+# FPC miss render p95
+histogram_quantile(0.95, sum(rate(shopanda_fpc_render_duration_seconds_bucket[5m])) by (le, route))
+
+# FPC keys deleted by trigger (sum across serve+worker scrapes)
+sum(rate(shopanda_fpc_purge_total[15m])) by (trigger)
+
+# FPC backend Get failures (sum across serve scrapes)
+sum(rate(shopanda_fpc_backend_get_errors_total[5m]))
 ```
 
 **Historical note:** the OpenTelemetry tracing gap noted here through PR-1023 is closed by PR-1024 — see the next section.
@@ -317,5 +481,13 @@ The grace/cancel split is **hardcoded**, not configurable: remainder is `min(Dra
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
+- Omnibus reads catalog `price_history` for the SKU on the page. Exploding a kit onto order lines does not change that, and checkout does not `Record`. History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
+
+| Surface | History used |
+| --- | --- |
+| Fixed kit PDP/PLP | Parent variant's `price_history` |
+| Dynamic kit PDP/PLP | No block (the headline sum is not one SKU's prior-30-day price) |
+| Leaf / component PDP/PLP | That variant's `price_history` |
+| Admin price PUT and CSV price import | Append a snapshot for the variant just written. PUT fails closed if the history repo is unwired. |
 - [Runtime modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
 - [Commercial B2B module](docs/COMMERCIAL.md) — license-gated `plugins/b2b`

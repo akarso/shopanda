@@ -38,6 +38,8 @@ type Store[T any] struct {
 	// generation counts invalidations (Clear/Delete) — see GetOrLoad's
 	// own comment for why it needs one.
 	generation uint64
+	hits       int64
+	misses     int64
 }
 
 // New returns an empty Store bounded to maxEntries, with every entry
@@ -68,16 +70,19 @@ func (s *Store[T]) Get(key string) (T, bool) {
 	defer s.mu.Unlock()
 	el, ok := s.items[key]
 	if !ok {
+		s.misses++
 		var zero T
 		return zero, false
 	}
 	e := el.Value.(*entry[T])
 	if time.Now().After(e.expiresAt) {
 		s.removeElementLocked(el)
+		s.misses++
 		var zero T
 		return zero, false
 	}
 	s.order.MoveToFront(el)
+	s.hits++
 	return e.value, true
 }
 
@@ -194,6 +199,22 @@ func (s *Store[T]) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.order.Len()
+}
+
+// Snapshot is L1 occupancy plus process-lifetime hit/miss counters
+// (PR-1042). Hits/misses are not reset by Clear — they are how an
+// operator tells whether this store is earning its keep.
+type Snapshot struct {
+	Entries int
+	Hits    int64
+	Misses  int64
+}
+
+// Snapshot returns a consistent copy of Len plus hit/miss counters.
+func (s *Store[T]) Snapshot() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Snapshot{Entries: s.order.Len(), Hits: s.hits, Misses: s.misses}
 }
 
 // removeElementLocked removes el from both the LRU list and the index.

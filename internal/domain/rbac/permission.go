@@ -55,4 +55,18 @@ const (
 	// catalog-adjacent operation an operator might grant separately from
 	// general job control (retry/cancel of arbitrary job types).
 	SearchReindex Permission = "search.reindex"
+
+	// CacheRead/CacheWrite/CacheClearAll gate cache admin (PR-1042).
+	// Stats is CacheRead; targeted clear (prefix/tag/key) is CacheWrite;
+	// FlushAll is CacheClearAll — a full flush is a bigger blast radius
+	// (every cache consumer pays a cold-cache penalty at once) than a
+	// targeted clear, so it is a distinct permission. Admin-only, same
+	// as AuditRead / JobsRead.
+	// CachePurgeURL (PR-1046) is the full-page-cache escape hatch that
+	// deletes concrete vary keys for one storefront path — distinct from
+	// general cache.write so FPC ops can be granted without broad clears.
+	CacheRead     Permission = "cache.read"
+	CacheWrite    Permission = "cache.write"
+	CacheClearAll Permission = "cache.clear_all"
+	CachePurgeURL Permission = "cache.purge_url"
 )

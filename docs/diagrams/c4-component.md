@@ -22,9 +22,9 @@ C4Component
         Boundary(interfaces, "Interfaces Layer (HTTP Handlers)") {
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")
             Component(productHandler, "ProductHandler", "HTTP", "List, Get products (public)")
-            Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin)")
+            Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin). A type change locks the product row, counts bundle and grouped rows (including illicit rows whose stored type does not match), and fails closed when a composition repo or tx starter is unwired.")
             Component(productTranslationAdmin, "ProductTranslationAdminHandler", "HTTP", "Read/write per-language product translations for active language scope (admin)")
-            Component(productPriceAdmin, "ProductPriceAdminHandler", "HTTP", "Read/write store-scoped variant prices for active store+currency scope (admin)")
+            Component(productPriceAdmin, "ProductPriceAdminHandler", "HTTP", "Read/write store-scoped variant prices for active store+currency scope (admin). PUT records a price_history snapshot on the same transaction as the upsert and fails closed when the history repo is unwired.")
             Component(pageAdmin, "PageAdminHandler", "HTTP", "Create/Update/Delete CMS pages with explicit language scope and audit (admin, content.* permissions)")
             Component(variantHandler, "VariantHandler", "HTTP", "CRUD variants")
             Component(cartHandler, "CartHandler", "HTTP", "Create, Get, AddItem, UpdateItem, RemoveItem")
@@ -43,11 +43,12 @@ C4Component
             Component(customerAdmin, "CustomerAdminHandler", "HTTP", "Customer list, detail, delete (admin)")
             Component(auditLogAdmin, "AuditLogAdminHandler", "HTTP", "Audit log list + CSV/JSON export (admin, audit.read)")
             Component(jobAdmin, "JobAdminHandler", "HTTP", "List, Get, Retry, Cancel background jobs (admin, jobs.read/jobs.write)")
+            Component(cacheAdmin, "CacheAdminHandler", "HTTP", "Stats, clear (prefix/tag/key/all), and FPC purge-url (admin, cache.read/cache.write/cache.clear_all/cache.purge_url)")
             Component(scheduleAdmin, "ScheduleAdminHandler", "HTTP", "List, Trigger, Enable, Disable scheduled tasks (admin, jobs.read/jobs.write)")
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled)")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled). Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 
@@ -67,7 +68,7 @@ C4Component
             Component(attrExporter, "AttributeExporter", "Go", "Exports attribute & group definitions from config store to CSV")
             Component(catImporter, "CategoryImporter", "Go", "CSV category import: topological sort, parent resolution, upsert")
             Component(catExporter, "CategoryExporter", "Go", "Exports category tree to CSV in parent-before-child order")
-            Component(priceImporter, "PriceImporter", "Go", "CSV price import: SKU lookup, currency validation, upsert per variant+currency")
+            Component(priceImporter, "PriceImporter", "Go", "CSV price import: SKU lookup, currency validation, upsert per variant+currency, and a price_history snapshot on that same transaction when history is configured")
             Component(priceExporter, "PriceExporter", "Go", "Paginated price export to CSV with SKU resolution")
             Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
             Component(auditor, "Auditor", "Go", "Structured admin audit logging with best-effort DB persistence")
@@ -81,6 +82,8 @@ C4Component
             Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")
             Component(reindexReconcileHandler, "ReconcileHandler", "Go", "Handles search.reindex.reconcile jobs: sweeps search_index_runs stuck processing past a staleness threshold, corrects any whose underlying job already reached a terminal status")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
+            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert and rejects a non-active product unless IncludeNonActiveProducts is set. Remove does not lock product rows. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows (including illicit rows); it fails closed when the repo or tx starter is unwired.")
+            Component(groupedService, "GroupedService", "Go", "Grouped display membership (PR-1061): list, add, and remove member links. No quantity. A member may belong to more than one group. Add locks both product rows FOR UPDATE before insert-ignore and rejects a non-active product unless IncludeNonActiveProducts is set. Remove deletes one link and does not lock product rows. Members must be leaf types (simple, virtual, downloadable) and stay independently purchasable — membership does not affect Purchasable or visibility. ValidateComposition is service-only. Fail-closed type-change guards live on ProductAdminHandler, not here.")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -100,6 +103,7 @@ C4Component
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
             Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL and tag invalidation (cache_tags): implements Cache port")
             Component(localCacheStore, "LocalCache Store[T]", "Go, generics", "Bounded, TTL+LRU, process-local (L1) cache sitting in front of Cache (L2); NOT a Cache implementation. Used by AdminRole's permission catalog (30s TTL) and StorefrontHandler's category tree (45s TTL). Evicted synchronously via direct domain events (e.g. catalog.EventCategoryUpdated) over the same-process EventBus — the TTL, not the broadcast, is the actual cross-replica staleness bound")
+            Component(redisRateLimiter, "Redis Sliding-Window Limiter", "Go, Redis ZSET", "Opt-in HTTP rate-limit backend when rate_limit.driver=redis. Dedicated Redis client (200ms I/O, pool min(10*GOMAXPROCS, 64)). Shared window burst/rate seconds (µs scores) via Redis TIME + Lua. Rate-based circuit (20×100ms buckets). Fail-open by default. Not used for /readyz (in-process only).")
             Component(pgConfigRepo, "PostgresConfigRepo", "Go, pgx", "DB-backed config storage: implements config.Repository port")
         }
 
@@ -225,6 +229,9 @@ C4Component
     Rel(configSeeder, seedRegistry, "Registered as seeder")
     Rel(catalogSeeder, seedRegistry, "Registered as seeder")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
+    Rel(bundleService, postgresRepos, "Reads products and writes bundle_components")
+    Rel(groupedService, postgresRepos, "Reads products and writes grouped_members")
+    Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components and grouped_members")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")
     Rel(eventBus, localCacheStore, "Synchronous eviction on a subscribed domain event (catalog.EventCategory*)")
@@ -244,6 +251,9 @@ C4Component
     Rel(pgConfigRepo, postgres, "Config key-value queries", "pgx")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(jobAdmin, postgresJobQueue, "List/Get/Retry/Cancel via jobs.Reader and jobs.Admin ports")
+    Rel(cacheAdmin, pgCacheStore, "Stats/Clear via cache.Cache (Stats, FlushAll, Delete, DeleteByPrefix, DeleteByTag)")
+    Rel(storefrontHandler, pgCacheStore, "Full-page cache: Get/SetWithTags of allowlisted rendered HTML (route template + store/language/currency/auth_state)")
+    Rel(cacheAdmin, localCacheStore, "Reports L1 occupancy/hit-miss; FlushAll clears this process's L1 stores")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(cronScheduler, postgresSchedulerStore, "Upserts registrations at Start; checks enable override every tick")
     Rel(scheduleAdmin, postgresSchedulerStore, "List/Trigger/SetEnabled via scheduler.Catalog port")
@@ -273,6 +283,8 @@ C4Component
     Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
     Rel(corePostgresPlugins, postgresJobQueue, "Provides default job queue")
     Rel(coreMeilisearch, meilisearch, "Indexes/queries products; indexes categories in a second index", "HTTP")
+    Rel(middleware, redisRateLimiter, "Uses when rate_limit.driver=redis")
+    Rel(redisRateLimiter, redis, "Sliding-window ZSET counters (shared HTTP ceiling)", "Redis protocol")
     Rel(coreRedisCache, redis, "Key-value cache with TTL and per-tag Redis SETs", "Redis protocol")
     Rel(coreRedisQueue, redis, "Job enqueue/dequeue", "Redis protocol")
     Rel(coreRabbitMQ, rabbitmq, "AMQP job dispatch", "AMQP")

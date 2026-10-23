@@ -215,6 +215,26 @@ func (s *stubCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
 	return n, nil
 }
 
+func (s *stubCache) Stats(context.Context) (cache.Stats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := int64(len(s.entries))
+	var tags int64
+	for _, members := range s.tags {
+		tags += int64(len(members))
+	}
+	return cache.Stats{Backend: "stub", Keys: keys, TagRows: &tags}, nil
+}
+
+func (s *stubCache) FlushAll(context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := int64(len(s.entries))
+	s.entries = make(map[string]stubEntry)
+	s.tags = make(map[string]map[string]struct{})
+	return n, nil
+}
+
 // --- tests run against the stub to verify behaviour expectations ---
 
 func TestCacheStore_SetAndGet(t *testing.T) {
@@ -341,6 +361,31 @@ func TestCacheStore_NoTTL(t *testing.T) {
 	}
 	if got != "persisted" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestStubCache_StatsAndFlushAll(t *testing.T) {
+	c := newStubCache()
+	if err := c.Set("a", "1", 0); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := c.SetWithTags(context.Background(), "b", "2", 0, "t"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	st, err := c.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.Backend != "stub" || st.Keys != 2 {
+		t.Fatalf("stats = %+v, want 2 keys", st)
+	}
+	n, err := c.FlushAll(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("FlushAll = (%d, %v), want (2, nil)", n, err)
+	}
+	st, err = c.Stats(context.Background())
+	if err != nil || st.Keys != 0 {
+		t.Fatalf("stats after flush = %+v err=%v", st, err)
 	}
 }
 

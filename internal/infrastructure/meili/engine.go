@@ -251,9 +251,10 @@ func (e *Engine) Suggest(ctx context.Context, prefix string, limit int) ([]searc
 	for _, raw := range resp.Hits {
 		if doc, ok := docFromHit(raw); ok {
 			suggestions = append(suggestions, search.Suggestion{
-				Text: doc.Name,
-				Type: "product",
-				URL:  "/products/" + doc.Slug,
+				Text:      doc.Name,
+				Type:      "product",
+				URL:       "/products/" + doc.Slug,
+				ProductID: doc.ID,
 			})
 		}
 	}

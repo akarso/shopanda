@@ -107,6 +107,39 @@ func (s *ValueService) ValidateBatch(ctx context.Context, target domainext.Targe
 	return err
 }
 
+// DeleteOrphanCartItemExtensions removes cart_item extension rows for cartID whose variant is not in keepVariantIDs.
+func (s *ValueService) DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error {
+	cartID = strings.TrimSpace(cartID)
+	if cartID == "" {
+		return domainext.ValidationErr("cart id must not be empty")
+	}
+	keep := make(map[string]struct{}, len(keepVariantIDs))
+	for _, variantID := range keepVariantIDs {
+		variantID = strings.TrimSpace(variantID)
+		if variantID == "" {
+			continue
+		}
+		keep[variantID] = struct{}{}
+	}
+	targetIDs, err := s.repo.ListTargetIDsByTypeAndIDPrefix(ctx, domainext.TargetCartItem, cartID+":%")
+	if err != nil {
+		return err
+	}
+	for _, targetID := range targetIDs {
+		_, variantID, ok := domainext.ParseCartItemTargetID(targetID)
+		if !ok {
+			continue
+		}
+		if _, keepIt := keep[variantID]; keepIt {
+			continue
+		}
+		if err := s.DeleteAllForTarget(ctx, domainext.CartItemTarget(cartID, variantID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteAllForTarget removes all stored values for target.
 func (s *ValueService) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))

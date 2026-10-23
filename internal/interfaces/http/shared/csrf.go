@@ -65,6 +65,13 @@ func CSRFToken(r *http.Request) string {
 	return cookie.Value
 }
 
+// EnsureCSRFToken returns the existing CSRF cookie or mints a new one (Set-Cookie).
+// Used by CSRFMiddleware and by /fragments/csrf so cacheable pages can obtain a
+// token without visiting /account/* or /checkout/*.
+func EnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
+	return shopandaEnsureCSRFToken(w, r, trusted)
+}
+
 func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
 	if cookie, err := r.Cookie(shopandaCSRFCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value, nil

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,40 @@ end
 return 1
 `)
 
+// flushAllDelScript DELs every KEY and returns how many of those keys
+// were value keys that actually existed (not tag:/__keytags:/__purge:).
+// ARGV[1] is the store prefix. Counting after DEL avoids counting a
+// value that expired between SCAN and this call.
+var flushAllDelScript = goredis.NewScript(`
+local prefix = ARGV[1]
+local n = 0
+for i = 1, #KEYS do
+  local full = KEYS[i]
+  local logical = string.sub(full, #prefix + 1)
+  local isIndex = string.sub(logical, 1, 4) == 'tag:'
+    or string.sub(logical, 1, 10) == '__keytags:'
+    or string.sub(logical, 1, 8) == '__purge:'
+  if redis.call('DEL', full) == 1 and not isIndex then
+    n = n + 1
+  end
+end
+return n
+`)
+
+// deleteByTagMembersScript DELs value+__keytags pairs atomically and
+// returns how many value keys were removed. Separate DEL commands would
+// let a concurrent SetWithTags recreate value+reverse between them, then
+// lose the new reverse index to the second DEL. KEYS alternate
+// valueKey, revKey, valueKey, revKey, ...
+var deleteByTagMembersScript = goredis.NewScript(`
+local n = 0
+for i = 1, #KEYS, 2 do
+  n = n + redis.call('DEL', KEYS[i])
+  redis.call('DEL', KEYS[i + 1])
+end
+return n
+`)
+
 // Logger is the optional structured logger used for recoverable cache errors
 // (per-tag prune skips, purge-key EXPIRE/restore failures). Nil is a no-op.
 type Logger interface {
@@ -80,6 +115,9 @@ type CacheStore struct {
 	// afterTagRename is a test-only hook, scoped to this instance so
 	// parallel tests cannot leak into another store's DeleteByTag.
 	afterTagRename func()
+	// beforeFlushDel is a test-only hook, scoped to this instance, run
+	// immediately before each FlushAll DEL batch.
+	beforeFlushDel func()
 }
 
 // Config holds Redis cache connection settings.
@@ -101,6 +139,12 @@ func New(cfg Config) (*CacheStore, error) {
 	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix), log: cfg.Logger}, nil
 }
 
+// Client returns the underlying Redis client.
+func (s *CacheStore) Client() *goredis.Client { return s.client }
+
+// Prefix returns the store's normalized key prefix (empty or trailing ":").
+func (s *CacheStore) Prefix() string { return s.prefix }
+
 func (s *CacheStore) logError(evtName string, err error, fields map[string]interface{}) {
 	if s.log == nil {
 		return
@@ -110,6 +154,25 @@ func (s *CacheStore) logError(evtName string, err error, fields map[string]inter
 
 func (s *CacheStore) key(k string) string {
 	return s.prefix + k
+}
+
+// escapeRedisScanGlob makes SCAN MATCH treat s as a literal prefix.
+// Redis glob metacharacters are *, ?, [, and \.
+func escapeRedisScanGlob(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '*', '?', '[', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func scanMatchLiteralPrefix(literal string) string {
+	return escapeRedisScanGlob(literal) + "*"
 }
 
 // tagKey is the Redis SET that holds cache keys associated with tag.
@@ -272,9 +335,13 @@ func (s *CacheStore) Delete(key string) error {
 // __keytags: set) — the same cleanup Delete does for a single key, so a
 // key later repopulated by a plain Set doesn't retain a stale tag
 // association that a later DeleteByTag would wrongly act on.
+// An empty store prefix plus an empty selector is refused (SCAN *).
 func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
-	match := s.key(prefix) + "*"
-	iter := s.client.Scan(ctx, 0, match, 100).Iterator()
+	if s.prefix == "" && prefix == "" {
+		return fmt.Errorf("redis cache: delete by prefix refused: empty key prefix would SCAN the whole Redis DB")
+	}
+	want := s.key(prefix)
+	iter := s.client.Scan(ctx, 0, scanMatchLiteralPrefix(want), 100).Iterator()
 	fullKeys := make([]string, 0, deleteByPrefixBatchSize)
 	flush := func() error {
 		if len(fullKeys) == 0 {
@@ -287,7 +354,14 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 		return nil
 	}
 	for iter.Next(ctx) {
-		fullKeys = append(fullKeys, iter.Val())
+		full := iter.Val()
+		// MATCH glob plus a literal HasPrefix filter: miniredis (and some
+		// Redis builds) do not honour backslash-escapes in SCAN MATCH, so
+		// an unescaped "*" / "?" / "[" prefix must not wipe the store.
+		if !strings.HasPrefix(full, want) {
+			continue
+		}
+		fullKeys = append(fullKeys, full)
 		if len(fullKeys) >= deleteByPrefixBatchSize {
 			if err := flush(); err != nil {
 				return err
@@ -349,10 +423,12 @@ func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl
 // DeleteByTag snapshot-isolates the tag set with RENAME, then SSCAN+DEL
 // members so a concurrent SADD creates a new set at the original key
 // instead of having its membership destroyed. SSCAN avoids blocking Redis
-// with a single O(N) SMEMBERS of a large tag. The purge key is given a
-// TTL immediately; any failure after RENAME merges remaining members back
-// onto the live tag key (independent of the caller's context) so a retry
-// can still invalidate them.
+// with a single O(N) SMEMBERS of a large tag. The returned count is how
+// many value keys Del actually removed (TTL-evicted members are not
+// counted). The purge key is given a TTL immediately; any failure after
+// RENAME merges remaining members back onto the live tag key
+// (independent of the caller's context) so a retry can still invalidate
+// them.
 func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err error) {
 	tag = cache.NormalizeTag(tag)
 	if tag == "" {
@@ -403,14 +479,17 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	// key this call is about to delete, is instead left for DeleteExpired
 	// to sweep — the same accepted, already-tested eventual-consistency
 	// path as any other orphan (see its own doc comment).
-	keys := make([]string, 0, deleteByPrefixBatchSize)
+	// Pairs of valueKey, revKey for deleteByTagMembersScript.
+	keys := make([]string, 0, deleteByPrefixBatchSize*2)
 	flush := func() error {
 		if len(keys) == 0 {
 			return nil
 		}
-		if err := s.client.Del(ctx, keys...).Err(); err != nil {
-			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+		deleted, delErr := deleteByTagMembersScript.Run(ctx, s.client, keys).Int64()
+		if delErr != nil {
+			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, delErr)
 		}
+		n += deleted
 		keys = keys[:0]
 		return nil
 	}
@@ -418,8 +497,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	for iter.Next(ctx) {
 		member := iter.Val()
 		keys = append(keys, s.key(member), s.keyTagsKey(member))
-		n++
-		if len(keys) >= deleteByPrefixBatchSize {
+		if len(keys) >= deleteByPrefixBatchSize*2 {
 			if err = flush(); err != nil {
 				return n, err
 			}
@@ -503,10 +581,14 @@ func isNoSuchKey(err error) bool {
 // Cost is proportional to total tag-set membership (Lua EXISTS+SREM
 // batches, not a TOCTOU pair of round trips per member).
 func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {
-	iter := s.client.Scan(ctx, 0, s.prefix+"tag:*", tagScanCount).Iterator()
+	tagPrefix := s.prefix + "tag:"
+	iter := s.client.Scan(ctx, 0, scanMatchLiteralPrefix(tagPrefix), tagScanCount).Iterator()
 	var pruned int64
 	for iter.Next(ctx) {
 		tagKey := iter.Val()
+		if !strings.HasPrefix(tagKey, tagPrefix) {
+			continue
+		}
 		n, err := s.pruneTagSet(ctx, tagKey)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -605,6 +687,91 @@ func (s *CacheStore) pruneStaleBatch(ctx context.Context, tagKey, tagName string
 	n, err := sremIfMissingScript.Run(ctx, s.client, []string{tagKey}, args...).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("redis cache: srem if missing: %w", err)
+	}
+	return n, nil
+}
+
+// Stats reports Redis DBSIZE as Keys (the whole configured database, not
+// prefix-scoped — that's what operators asked for as an approximate
+// occupancy signal) plus used_memory from INFO memory when present.
+func (s *CacheStore) Stats(ctx context.Context) (cache.Stats, error) {
+	dbsize, err := s.client.DBSize(ctx).Result()
+	if err != nil {
+		return cache.Stats{}, fmt.Errorf("redis cache: stats dbsize: %w", err)
+	}
+	st := cache.Stats{Backend: "redis", Keys: dbsize}
+	info, err := s.client.Info(ctx, "memory").Result()
+	if err != nil {
+		return st, nil
+	}
+	if mem, ok := parseRedisUsedMemory(info); ok {
+		st.MemoryUsedBytes = &mem
+	}
+	return st, nil
+}
+
+func parseRedisUsedMemory(info string) (int64, bool) {
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if !strings.HasPrefix(line, "used_memory:") {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimPrefix(line, "used_memory:"), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+// FlushAll scan-and-deletes every key under this store's prefix,
+// including tag:/__keytags:/__purge: indexes. It never calls FLUSHDB or
+// FLUSHALL. The returned count is value keys actually removed by DEL
+// (not index keys, and not keys that expired between SCAN and DEL).
+// SCAN is cursor-based, not a point-in-time snapshot: a concurrent
+// SetWithTags can leave tag-index orphans that DeleteExpired later
+// reclaims. An empty prefix is refused — MATCH * would delete every
+// key in the configured Redis DB.
+func (s *CacheStore) FlushAll(ctx context.Context) (int64, error) {
+	if s.prefix == "" {
+		return 0, fmt.Errorf("redis cache: flush all refused: empty key prefix would SCAN the whole Redis DB")
+	}
+	iter := s.client.Scan(ctx, 0, scanMatchLiteralPrefix(s.prefix), tagScanCount).Iterator()
+	var n int64
+	batch := make([]string, 0, deleteByPrefixBatchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if s.beforeFlushDel != nil {
+			s.beforeFlushDel()
+		}
+		deleted, err := flushAllDelScript.Run(ctx, s.client, batch, s.prefix).Int64()
+		if err != nil {
+			return fmt.Errorf("redis cache: flush all: %w", err)
+		}
+		n += deleted
+		batch = batch[:0]
+		return nil
+	}
+	for iter.Next(ctx) {
+		full := iter.Val()
+		if !strings.HasPrefix(full, s.prefix) {
+			continue
+		}
+		batch = append(batch, full)
+		if len(batch) >= deleteByPrefixBatchSize {
+			if err := flush(); err != nil {
+				return n, err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return n, fmt.Errorf("redis cache: flush all scan: %w", err)
+	}
+	if err := flush(); err != nil {
+		return n, err
 	}
 	return n, nil
 }

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
@@ -17,6 +19,8 @@ import (
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
@@ -26,14 +30,53 @@ import (
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 )
 
+func init() {
+	sql.Register("shopanda-admin-fake-tx", adminFakeTxDriver{})
+}
+
+type adminFakeTxDriver struct{}
+
+func (adminFakeTxDriver) Open(string) (driver.Conn, error) { return adminFakeTxConn{}, nil }
+
+type adminFakeTxConn struct{}
+
+func (adminFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (adminFakeTxConn) Close() error                        { return nil }
+func (adminFakeTxConn) Begin() (driver.Tx, error)           { return adminFakeTx{}, nil }
+
+type adminFakeTx struct{}
+
+func (adminFakeTx) Commit() error   { return nil }
+func (adminFakeTx) Rollback() error { return nil }
+
+var (
+	adminFakeTxOnce sync.Once
+	adminFakeTxDB   *sql.DB
+)
+
+func adminFakeTxDBConn() *sql.DB {
+	adminFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-admin-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		adminFakeTxDB = db
+	})
+	return adminFakeTxDB
+}
+
 // --- mock for admin tests ---
 
 type mockAdminProductRepo struct {
 	findByIDFn                 func(ctx context.Context, id string) (*catalog.Product, error)
-	listFn                     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
+	listFn                     func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	createFn                   func(ctx context.Context, p *catalog.Product) error
 	updateFn                   func(ctx context.Context, p *catalog.Product) error
 	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
+	lockForUpdateFn            func(ctx context.Context, id string) (catalog.Type, error)
+	lockedType                 catalog.Type
+	lockedPricingMode          catalog.PricingMode
+	lockedStockMode            catalog.StockMode
 }
 
 type mockAdminProductRepoWithoutCategoryLookup struct {
@@ -51,9 +94,9 @@ func (m *mockAdminProductRepo) FindBySlug(ctx context.Context, slug string) (*ca
 	return nil, nil
 }
 
-func (m *mockAdminProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
+func (m *mockAdminProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 	if m.listFn != nil {
-		return m.listFn(ctx, offset, limit)
+		return m.listFn(ctx, filter)
 	}
 	return nil, nil
 }
@@ -82,6 +125,111 @@ func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, 
 }
 func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
+func (m *mockAdminProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
+	if m.lockForUpdateFn != nil {
+		return m.lockForUpdateFn(ctx, id)
+	}
+	p, err := m.FindByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", apperror.NotFound("product not found")
+	}
+	return p.Type, nil
+}
+
+func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+	typ, err := m.LockForUpdate(ctx, id)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if m.lockedType != "" {
+		typ = m.lockedType
+	}
+	product, err := m.FindByID(ctx, id)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	pricing := catalog.PricingMode("")
+	stock := catalog.StockMode("")
+	explode := false
+	if product != nil {
+		pricing = product.PricingMode
+		stock = product.StockMode
+		explode = product.ExplodeOrderLines
+	}
+	if m.lockedPricingMode != "" {
+		pricing = m.lockedPricingMode
+	}
+	if m.lockedStockMode != "" {
+		stock = m.lockedStockMode
+	}
+	return typ, pricing, stock, explode, nil
+}
+
+type mockBundleComponentGuard struct {
+	bundleCount    int
+	componentCount int
+}
+
+var _ catalog.BundleComponentRepository = (*mockBundleComponentGuard)(nil)
+
+func (m *mockBundleComponentGuard) ListByBundleID(context.Context, string) ([]catalog.BundleComponent, error) {
+	return []catalog.BundleComponent{}, nil
+}
+
+func (m *mockBundleComponentGuard) CountByBundleID(context.Context, string) (int, error) {
+	return m.bundleCount, nil
+}
+
+func (m *mockBundleComponentGuard) CountByComponentID(context.Context, string) (int, error) {
+	return m.componentCount, nil
+}
+
+func (m *mockBundleComponentGuard) Upsert(context.Context, *catalog.BundleComponent) error {
+	return nil
+}
+
+func (m *mockBundleComponentGuard) Remove(context.Context, string, string) error {
+	return nil
+}
+
+func (m *mockBundleComponentGuard) WithTx(_ *sql.Tx) catalog.BundleComponentRepository {
+	return m
+}
+
+type mockGroupedMemberGuard struct {
+	groupCount  int
+	memberCount int
+}
+
+var _ catalog.GroupedMemberRepository = (*mockGroupedMemberGuard)(nil)
+
+func (m *mockGroupedMemberGuard) ListByGroupID(context.Context, string) ([]catalog.GroupedMember, error) {
+	return []catalog.GroupedMember{}, nil
+}
+
+func (m *mockGroupedMemberGuard) CountByGroupID(context.Context, string) (int, error) {
+	return m.groupCount, nil
+}
+
+func (m *mockGroupedMemberGuard) CountByMemberID(context.Context, string) (int, error) {
+	return m.memberCount, nil
+}
+
+func (m *mockGroupedMemberGuard) Insert(context.Context, *catalog.GroupedMember) error {
+	return nil
+}
+
+func (m *mockGroupedMemberGuard) Remove(context.Context, string, string) error {
+	return nil
+}
+
+func (m *mockGroupedMemberGuard) WithTx(_ *sql.Tx) catalog.GroupedMemberRepository {
+	return m
+}
+
 func (m *mockAdminProductRepoWithoutCategoryLookup) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	if m.findByIDFn != nil {
 		return m.findByIDFn(ctx, id)
@@ -93,7 +241,7 @@ func (m *mockAdminProductRepoWithoutCategoryLookup) FindBySlug(_ context.Context
 	return nil, nil
 }
 
-func (m *mockAdminProductRepoWithoutCategoryLookup) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockAdminProductRepoWithoutCategoryLookup) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 
@@ -160,7 +308,7 @@ func TestProductAdminHandler_Get_OK(t *testing.T) {
 			if id != "p1" {
 				t.Fatalf("id = %q, want %q", id, "p1")
 			}
-			return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
 			if productID != "p1" {
@@ -219,7 +367,7 @@ func TestProductAdminHandler_Get_NotFound(t *testing.T) {
 func TestProductAdminHandler_Get_MissingCategoryLookupCapability(t *testing.T) {
 	repo := &mockAdminProductRepoWithoutCategoryLookup{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
@@ -254,12 +402,12 @@ func TestProductAdminHandler_Get_MissingCategoryLookupCapability(t *testing.T) {
 
 func TestProductAdminHandler_List_OK(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{
 				{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive},
@@ -296,7 +444,7 @@ func TestProductAdminHandler_List_OK(t *testing.T) {
 
 func TestProductAdminHandler_List_Empty(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 			return nil, nil
 		},
 	}
@@ -311,14 +459,124 @@ func TestProductAdminHandler_List_Empty(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_List_FilterByType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != catalog.TypeBundle {
+				t.Errorf("type = %q, want bundle", filter.Type)
+			}
+			return []catalog.Product{{ID: "b1", Name: "Bundle", Slug: "bundle", Type: catalog.TypeBundle}}, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=bundle", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_FilterByTypeWithPagination(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != catalog.TypeVirtual {
+				t.Errorf("type = %q, want virtual", filter.Type)
+			}
+			if filter.Offset != 5 {
+				t.Errorf("offset = %d, want 5", filter.Offset)
+			}
+			if filter.Limit != 3 {
+				t.Errorf("limit = %d, want 3", filter.Limit)
+			}
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=virtual&offset=5&limit=3", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_FilterByType_AuditDetails(t *testing.T) {
+	sink := &auditSink{}
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			return []catalog.Product{}, nil
+		},
+	}
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=simple", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	entry := sink.Last(t)
+	if got := entry.context["detail_type"]; got != "simple" {
+		t.Errorf("detail_type = %v, want simple", got)
+	}
+}
+
+func TestProductAdminHandler_List_InvalidTypeFilter(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
+			t.Fatal("List must not be called for invalid type filter")
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=kit", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_EmptyTypeQueryIgnored(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != "" {
+				t.Errorf("type = %q, want empty (whitespace query ignored)", filter.Type)
+			}
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=%20%20", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestProductAdminHandler_List_Pagination(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 10 {
-				t.Errorf("offset = %d, want 10", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 10 {
+				t.Errorf("offset = %d, want 10", filter.Offset)
 			}
-			if limit != 5 {
-				t.Errorf("limit = %d, want 5", limit)
+			if filter.Limit != 5 {
+				t.Errorf("limit = %d, want 5", filter.Limit)
 			}
 			return nil, nil
 		},
@@ -336,7 +594,7 @@ func TestProductAdminHandler_List_Pagination(t *testing.T) {
 
 func TestProductAdminHandler_List_AuditIncludesScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
 	}
@@ -390,7 +648,7 @@ func TestProductAdminHandler_List_AuditIncludesScopeContext(t *testing.T) {
 
 func TestProductAdminHandler_List_AuditOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
 	}
@@ -480,8 +738,721 @@ func TestProductAdminHandler_Create_OK(t *testing.T) {
 	if created.Status != catalog.StatusDraft {
 		t.Errorf("status = %q, want draft", created.Status)
 	}
+	if created.Type != catalog.TypeSimple {
+		t.Errorf("type = %q, want simple (default)", created.Type)
+	}
 	if created.ID == "" {
 		t.Error("product ID should be generated")
+	}
+}
+
+func TestProductAdminHandler_Create_PricingMode(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{})
+
+	body := jsonBody(t, map[string]interface{}{
+		"name":         "Kit",
+		"slug":         "kit",
+		"type":         "bundle",
+		"pricing_mode": "dynamic",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.PricingMode != catalog.PricingModeDynamic || created.Type != catalog.TypeBundle {
+		t.Fatalf("created = %+v, want bundle/dynamic", created)
+	}
+
+	body = jsonBody(t, map[string]interface{}{
+		"name":         "Plain",
+		"slug":         "plain",
+		"type":         "simple",
+		"pricing_mode": "dynamic",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bundle") {
+		t.Fatalf("body = %s, want bundle-only rejection", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Create_StockMode(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{}).
+		WithVariantStock(adminOwnStock{})
+
+	body := jsonBody(t, map[string]interface{}{
+		"name":       "Kit",
+		"slug":       "kit",
+		"type":       "bundle",
+		"stock_mode": "dynamic",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.StockMode != catalog.StockModeDynamic || created.Type != catalog.TypeBundle {
+		t.Fatalf("created = %+v, want bundle/dynamic stock", created)
+	}
+
+	body = jsonBody(t, map[string]interface{}{
+		"name":       "Plain",
+		"slug":       "plain",
+		"type":       "simple",
+		"stock_mode": "dynamic",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bundle") {
+		t.Fatalf("body = %s, want bundle-only rejection", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_OmittedStockModeKeepsLocked(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedStockMode: catalog.StockModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"name": "Renamed"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.StockMode != catalog.StockModeDynamic {
+		t.Fatalf("stock mode = %+v, want locked dynamic", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeOffBundleOmitsStockMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedStockMode: catalog.StockModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple || updated.StockMode != catalog.StockModeFixed {
+		t.Fatalf("updated = %+v, want simple with stock mode fixed", updated)
+	}
+}
+
+type adminOwnStock struct {
+	qty map[string]int
+}
+
+func (m adminOwnStock) GetStock(_ context.Context, variantID string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{VariantID: variantID, Quantity: m.qty[variantID]}, nil
+}
+func (adminOwnStock) SetStock(context.Context, *inventory.StockEntry) error   { return nil }
+func (adminOwnStock) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+func (adminOwnStock) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (adminOwnStock) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (adminOwnStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+func (m adminOwnStock) WithTx(*sql.Tx) inventory.StockRepository { return m }
+
+func TestProductAdminHandler_Update_DynamicRejectsOwnStock(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	stock := adminOwnStock{qty: map[string]int{"v1": 4}}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
+		WithVariantStock(stock)
+
+	body := map[string]interface{}{"stock_mode": "dynamic"}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "remove bundle stock") {
+		t.Fatalf("body = %s, want own-stock rejection", rec.Body.String())
+	}
+	if updated != nil {
+		t.Fatalf("updated = %+v, want no write while stock exists", updated)
+	}
+
+	stock.qty["v1"] = 0
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status after clearing stock = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.StockMode != catalog.StockModeDynamic {
+		t.Fatalf("updated = %+v, want dynamic stock", updated)
+	}
+}
+
+// txVisibleStock reports quantity 0 on the unbound connection and the
+// in-transaction quantity only from GetStockForUpdate. A mode flip that
+// reads stock outside the product-update transaction would allow dynamic.
+type txVisibleStock struct {
+	inTx         int
+	forUpdateHit int
+}
+
+func (txVisibleStock) GetStock(context.Context, string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{Quantity: 0}, nil
+}
+func (txVisibleStock) SetStock(context.Context, *inventory.StockEntry) error   { return nil }
+func (txVisibleStock) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+func (txVisibleStock) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (txVisibleStock) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (txVisibleStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+func (s *txVisibleStock) WithTx(tx *sql.Tx) inventory.StockRepository {
+	if tx == nil {
+		return s
+	}
+	return &txVisibleStockBound{src: s}
+}
+
+type txVisibleStockBound struct {
+	src *txVisibleStock
+}
+
+func (b *txVisibleStockBound) GetStock(context.Context, string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{Quantity: 0}, nil
+}
+func (b *txVisibleStockBound) GetStockForUpdate(context.Context, string) (inventory.StockEntry, error) {
+	b.src.forUpdateHit++
+	return inventory.StockEntry{Quantity: b.src.inTx}, nil
+}
+func (txVisibleStockBound) SetStock(context.Context, *inventory.StockEntry) error { return nil }
+func (txVisibleStockBound) SetStocks(context.Context, []inventory.StockEntry) error {
+	return nil
+}
+func (txVisibleStockBound) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (txVisibleStockBound) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (txVisibleStockBound) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+
+func TestProductAdminHandler_Update_DynamicOwnStockReadsTxQuantity(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	stock := &txVisibleStock{inTx: 4}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
+		WithVariantStock(stock)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"stock_mode": "dynamic"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "remove bundle stock") {
+		t.Fatalf("body = %s, want own-stock rejection from the transaction quantity", rec.Body.String())
+	}
+	if updated != nil {
+		t.Fatalf("updated = %+v, want no write while the locked stock row is positive", updated)
+	}
+	if stock.forUpdateHit != 1 {
+		t.Fatalf("GetStockForUpdate calls = %d, want 1", stock.forUpdateHit)
+	}
+}
+
+func TestProductAdminHandler_Update_PricingMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{})
+	body := jsonBody(t, map[string]interface{}{"pricing_mode": "dynamic"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("mode = %+v, want dynamic", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_DynamicOnSimpleRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Plain", Slug: "plain", Status: catalog.StatusDraft,
+				Type: catalog.TypeSimple, PricingMode: catalog.PricingModeFixed,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"pricing_mode": "dynamic"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bundle") {
+		t.Fatalf("body = %s, want bundle-only rejection", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_OmittedModeKeepsLockedPricingMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedPricingMode: catalog.PricingModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"name": "Renamed"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("mode = %+v, want locked dynamic", updated)
+	}
+	if updated.Name != "Renamed" {
+		t.Fatalf("name = %q, want Renamed", updated.Name)
+	}
+	if updated.Type != catalog.TypeBundle {
+		t.Fatalf("type = %q, want bundle", updated.Type)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsesLockedPricingMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedPricingMode: catalog.PricingModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "bundle"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("mode = %+v, want locked dynamic", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeOffBundleOmitsMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeDynamic,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple || updated.PricingMode != catalog.PricingModeFixed {
+		t.Fatalf("updated = %+v, want simple/fixed", updated)
+	}
+}
+
+type adminOwnPriceVariants struct {
+	variants []catalog.Variant
+}
+
+func (adminOwnPriceVariants) FindByID(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (adminOwnPriceVariants) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (adminOwnPriceVariants) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
+func (m adminOwnPriceVariants) ListByProductID(_ context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
+	var matched []catalog.Variant
+	for _, variant := range m.variants {
+		if variant.ProductID == productID {
+			matched = append(matched, variant)
+		}
+	}
+	if offset >= len(matched) {
+		return nil, nil
+	}
+	end := offset + limit
+	if limit <= 0 || end > len(matched) {
+		end = len(matched)
+	}
+	return matched[offset:end], nil
+}
+func (adminOwnPriceVariants) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (adminOwnPriceVariants) Create(context.Context, *catalog.Variant) error { return nil }
+func (adminOwnPriceVariants) Update(context.Context, *catalog.Variant) error { return nil }
+func (m adminOwnPriceVariants) WithTx(*sql.Tx) catalog.VariantRepository     { return m }
+
+type adminOwnPrices struct {
+	rows map[string][]pricing.Price
+}
+
+func (adminOwnPrices) FindByVariantCurrencyAndStore(context.Context, string, string, string) (*pricing.Price, error) {
+	return nil, nil
+}
+func (adminOwnPrices) FindByVariantsCurrencyAndStore(context.Context, []string, string, string) (map[string]*pricing.Price, error) {
+	return nil, nil
+}
+func (m adminOwnPrices) ListByVariantID(_ context.Context, variantID string) ([]pricing.Price, error) {
+	return m.rows[variantID], nil
+}
+func (adminOwnPrices) List(context.Context, int, int) ([]pricing.Price, error) { return nil, nil }
+func (adminOwnPrices) Upsert(context.Context, *pricing.Price) error            { return nil }
+
+func TestProductAdminHandler_Update_DynamicRejectsOwnPrices(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Plain", Slug: "plain", Status: catalog.StatusActive,
+		Type: catalog.TypeSimple, PricingMode: catalog.PricingModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			cp := *p
+			existing = &cp
+			return nil
+		},
+	}
+	prices := adminOwnPrices{rows: map[string][]pricing.Price{
+		"v1": {{ID: "pr1", VariantID: "v1"}},
+	}}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, prices)
+
+	body := map[string]interface{}{"type": "bundle", "pricing_mode": "dynamic"}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "remove bundle prices") {
+		t.Fatalf("body = %s, want own-price rejection", rec.Body.String())
+	}
+	if updated != nil {
+		t.Fatalf("updated = %+v, want no write while prices exist", updated)
+	}
+
+	delete(prices.rows, "v1")
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status after delete = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeBundle || updated.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("updated = %+v, want bundle/dynamic", updated)
+	}
+}
+
+func TestProductAdminHandler_Create_DynamicWithoutVariantPricesFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Create must not run when the own-price check is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", jsonBody(t, map[string]interface{}{
+		"name": "Kit", "slug": "kit", "type": "bundle", "pricing_mode": "dynamic",
+	}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_DynamicWithoutVariantPricesFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+				Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the own-price check is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"pricing_mode": "dynamic"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Create_WithType(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "E-book",
+		"slug": "e-book",
+		"type": "virtual",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual", created)
+	}
+}
+
+func TestProductAdminHandler_Create_WhitespaceTypeDefaultsSimple(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Plain",
+		"slug": "plain",
+		"type": "   ",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple (whitespace treated as omit)", created)
+	}
+}
+
+func TestProductAdminHandler_Create_InvalidType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Create must not be called for invalid type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Bad",
+		"slug": "bad",
+		"type": "kit",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
 	}
 }
 
@@ -778,12 +1749,14 @@ func TestProductAdminHandler_Create_AuditFailureOmitsPartialScopeContext(t *test
 
 func TestProductAdminHandler_Update_OK(t *testing.T) {
 	existing := &catalog.Product{
-		ID:          "p1",
-		Name:        "Widget",
-		Slug:        "widget",
-		Description: "old",
-		Status:      catalog.StatusDraft,
-		Attributes:  map[string]interface{}{},
+		ID:              "p1",
+		Name:            "Widget",
+		Slug:            "widget",
+		Description:     "old",
+		Status:          catalog.StatusDraft,
+		Type:            catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+		Attributes:      map[string]interface{}{},
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -796,7 +1769,7 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name":        "Updated Widget",
@@ -824,6 +1797,567 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_Update_Type(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeDownloadable {
+		t.Fatalf("type = %#v, want downloadable", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeBundleWithComponentsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeBundle,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "used as a bundle component") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsesLockedGroupedType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeGrouped, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeIllicitGroupedRowsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeSimple, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeIllicitBundleRowsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeSimple, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsesLockedType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeBundle, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeBundleWithZeroComponentsAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeBundle,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsComponentAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeWithoutBundleRepoFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the bundle repo is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeWithoutGroupedRepoFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the grouped repo is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeGroupedWithMembersRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeGrouped,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsedAsMemberRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "bundle"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "used as a grouped member") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeGroupedWithZeroMembersAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeGrouped,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsMemberAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeDownloadable {
+		t.Fatalf("type = %#v, want downloadable", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_OmitTypePreserves(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeVirtual,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"name": "Renamed"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual preserved", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_EmptyTypeRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not be called for empty type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{})
+
+	body := jsonBody(t, map[string]interface{}{"type": "  "})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "type must not be empty") {
+		t.Fatalf("body = %s, want type must not be empty", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not be called for invalid type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "kit"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
+	}
+}
+
 func TestProductAdminHandler_Update_NotFound(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
@@ -845,7 +2379,7 @@ func TestProductAdminHandler_Update_NotFound(t *testing.T) {
 func TestProductAdminHandler_Update_InvalidStatus(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -860,10 +2394,43 @@ func TestProductAdminHandler_Update_InvalidStatus(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_Update_InvalidType(t *testing.T) {
+	sink := &auditSink{}
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.Type("kit"),
+			}, nil
+		},
+	}
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"description": "x"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
+	}
+	last := sink.Last(t)
+	if last.context["result"] != "error" {
+		t.Errorf("audit result = %v, want error", last.context["result"])
+	}
+	errMsg, _ := last.context["error"].(string)
+	if !strings.Contains(errMsg, `"kit"`) {
+		t.Errorf("audit error = %q, want quoted kit", errMsg)
+	}
+}
+
 func TestProductAdminHandler_Update_EmptyName(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -882,7 +2449,7 @@ func TestProductAdminHandler_Update_EmptyName(t *testing.T) {
 func TestProductAdminHandler_Update_EmptySlug(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -901,7 +2468,7 @@ func TestProductAdminHandler_Update_EmptySlug(t *testing.T) {
 func TestProductAdminHandler_Update_InvalidBody(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -917,12 +2484,14 @@ func TestProductAdminHandler_Update_InvalidBody(t *testing.T) {
 
 func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 	existing := &catalog.Product{
-		ID:          "p1",
-		Name:        "Widget",
-		Slug:        "widget",
-		Description: "desc",
-		Status:      catalog.StatusDraft,
-		Attributes:  map[string]interface{}{},
+		ID:              "p1",
+		Name:            "Widget",
+		Slug:            "widget",
+		Description:     "desc",
+		Status:          catalog.StatusDraft,
+		Type:            catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+		Attributes:      map[string]interface{}{},
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -935,7 +2504,7 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	// Only update description — name, slug, status stay the same.
 	body := jsonBody(t, map[string]interface{}{"description": "new desc"})
@@ -963,13 +2532,16 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{
+				ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return apperror.Internal("db down")
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"name": "X"})
 	rec := httptest.NewRecorder()
@@ -984,14 +2556,17 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "active"})
 	rec := httptest.NewRecorder()
@@ -1033,11 +2608,11 @@ func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", bytes.NewReader([]byte("bad")))
@@ -1081,14 +2656,17 @@ func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "active"})
 	rec := httptest.NewRecorder()
@@ -1138,11 +2716,11 @@ func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) 
 func TestProductAdminHandler_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "invalid"})
 	rec := httptest.NewRecorder()
@@ -1230,7 +2808,10 @@ func TestProductAdminHandler_Create_EmitsEvent(t *testing.T) {
 func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{
+				ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
 	}
@@ -1242,7 +2823,7 @@ func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 		return nil
 	})
 
-	h := admin.NewProductAdminHandler(repo, bus)
+	h := admin.NewProductAdminHandler(repo, bus).WithTxStarter(adminFakeTxDBConn())
 	body := jsonBody(t, map[string]interface{}{"name": "New Name"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
@@ -1309,12 +2890,12 @@ func TestAdminGuard_GuestUnauthorized(t *testing.T) {
 
 func TestAdminGuard_SupportListAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
@@ -1361,7 +2942,7 @@ func TestAdminGuardWithAudit_ProductGetForbidden(t *testing.T) {
 func TestAdminGuardWithAudit_ProductGetAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
 			return []string{"cat-1"}, nil
@@ -1459,12 +3040,12 @@ func TestAdminGuard_Integration_CustomerToken(t *testing.T) {
 
 func TestAdminGuard_Integration_SupportTokenListAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},

@@ -62,12 +62,27 @@ func (m *mockStorefrontRepo) FindBySlug(ctx context.Context, slug string) (*cata
 }
 
 func (m *mockStorefrontRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	var p *catalog.Product
+	var err error
 	if m.findByIDFn != nil {
-		return m.findByIDFn(ctx, id)
+		p, err = m.findByIDFn(ctx, id)
+	} else {
+		p = &catalog.Product{ID: id, Status: catalog.StatusActive, Type: catalog.TypeSimple}
 	}
-	return nil, nil
+	if err != nil || p == nil {
+		return p, err
+	}
+	if p.Status == "" {
+		cp := *p
+		cp.Status = catalog.StatusActive
+		if cp.Type == "" {
+			cp.Type = catalog.TypeSimple
+		}
+		return &cp, nil
+	}
+	return p, nil
 }
-func (m *mockStorefrontRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockStorefrontRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (m *mockStorefrontRepo) Create(_ context.Context, _ *catalog.Product) error { return nil }
@@ -122,7 +137,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a><form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title>{{ if .Layout.CSPEnabled }}<meta name="csp-nonce" content="{{ .Layout.CSPNonce }}">{{ end }}</head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}{{ if .Layout.UseFragments }}{{ fragment "greeting" }}{{ else }}<strong>{{ .Layout.AccountName }}</strong>{{ end }}<a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a>{{ if .Layout.AccountLogoutURL }}<form action="{{ .Layout.AccountLogoutURL }}" method="post">{{ if .Layout.UseFragments }}{{ fragment "csrf" }}{{ else }}<input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">{{ end }}<button type="submit">Log out</button></form>{{ end }}{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,12 +162,17 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	cmsPage := `{{ define "title" }}{{ .Title }}{{ end }}{{ define "content" }}<h1>{{ .Title }}</h1><div>{{ .Content }}</div>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "page.html"), []byte(cmsPage), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	cart := `{{ define "title" }}Cart{{ end }}{{ define "content" }}<section id="cart-page"><h1>Shopping Cart</h1>{{ range .Items }}<article><h2>{{ .ProductName }}</h2><span>{{ .UnitPriceText }}</span><form action="/cart/update" method="post"><input type="hidden" name="variant_id" value="{{ .VariantID }}"><input type="number" name="quantity" value="{{ .Quantity }}"></form><form action="/cart/remove" method="post"><input type="hidden" name="variant_id" value="{{ .VariantID }}"><button type="submit">Remove</button></form><strong>{{ .LineTotalText }}</strong></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}<div>{{ .Summary.SubtotalText }}</div></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "cart.html"), []byte(cart), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	checkoutAddress := `{{ define "title" }}Checkout: Address{{ end }}{{ define "content" }}<section><h1>Checkout</h1><form action="/checkout/shipping" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="contact_email" value="{{ .ContactEmail }}"><input name="first_name" value="{{ .Address.FirstName }}"><input name="last_name" value="{{ .Address.LastName }}"><input name="street" value="{{ .Address.Street }}"><input name="city" value="{{ .Address.City }}"><input name="postcode" value="{{ .Address.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><button type="submit">Continue to Shipping</button></form>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	checkoutAddress := `{{ define "title" }}Checkout: Address{{ end }}{{ define "content" }}<section><h1>Checkout</h1><form action="{{ .PrimaryAction }}" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="contact_email" value="{{ .ContactEmail }}"><input name="first_name" value="{{ .Address.FirstName }}"><input name="last_name" value="{{ .Address.LastName }}"><input name="street" value="{{ .Address.Street }}"><input name="city" value="{{ .Address.City }}"><input name="postcode" value="{{ .Address.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><button type="submit">{{ if eq .PrimaryAction "/checkout/payment" }}Continue to Payment{{ else }}Continue to Shipping{{ end }}</button></form>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}{{ range .Progress }}<span data-progress="{{ .Label }}">{{ .Label }}</span>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "checkout_address.html"), []byte(checkoutAddress), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +247,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	engine, err := themeapp.Load(dir)
+	engine, err := themeapp.Load(dir, theme.WithFragment(storefront.FragmentTemplateFunc(false)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +328,9 @@ func newStorefrontRouter(h *storefront.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /categories/{slug}", h.Category())
 	router.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
 	router.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
+	router.HandleFunc("GET /fragments/csrf", h.CSRFFragment())
+	router.HandleFunc("GET /fragments/greeting", h.GreetingFragment())
+	router.HandleFunc("GET /fragments/recently-viewed", h.RecentlyViewedFragment())
 	router.HandleFunc("GET /fragments/search-suggest", h.SearchSuggestFragment())
 	router.HandleFunc("GET /products", h.Products())
 	router.HandleFunc("GET /products/{slug}", h.Product())
@@ -318,6 +341,7 @@ func newStorefrontRouter(h *storefront.StorefrontHandler) http.Handler {
 	router.HandleFunc("POST /fragments/cart/update", h.UpdateCart())
 	router.HandleFunc("POST /fragments/cart/remove", h.RemoveCartItem())
 	router.HandleFunc("GET /search", h.Search())
+	router.HandleFunc("GET /pages/{slug}", h.CMSPage())
 	return router.Handler()
 }
 

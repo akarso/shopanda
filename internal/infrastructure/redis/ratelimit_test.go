@@ -1,18 +1,22 @@
-package redis_test
+package redis
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/goleak"
 )
 
-// setupRateLimiter connects a RateLimiter to a fresh miniredis instance.
-func setupRateLimiter(t *testing.T, scope string, rate float64, burst int) (*miniredis.Miniredis, *goredis.Client, *inredis.RateLimiter) {
+func setupLimiterFactory(t *testing.T) (*miniredis.Miniredis, *goredis.Client, *LimiterFactory) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -22,296 +26,901 @@ func setupRateLimiter(t *testing.T, scope string, rate float64, burst int) (*min
 
 	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-
-	lim, err := inredis.NewRateLimiter(client, "test", scope, rate, burst, nil)
-	if err != nil {
-		t.Fatalf("NewRateLimiter: %v", err)
-	}
-	return mr, client, lim
+	factory := NewLimiterFactory(client, "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	return mr, client, factory
 }
 
-func TestRateLimiter_AllowsUpToBurstThenRejects(t *testing.T) {
-	_, _, lim := setupRateLimiter(t, "default", 10, 3)
-
-	for i := 0; i < 3; i++ {
-		if !lim.Allow("k") {
-			t.Fatalf("request %d should be allowed (burst=3)", i+1)
+func hangingLimiterClient(t *testing.T) *goredis.Client {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				time.Sleep(30 * time.Second)
+				_ = c.Close()
+			}(c)
 		}
-	}
-	if lim.Allow("k") {
-		t.Error("4th request should be rejected (burst exhausted)")
-	}
-}
-
-func TestRateLimiter_IndependentKeys(t *testing.T) {
-	_, _, lim := setupRateLimiter(t, "default", 10, 1)
-
-	if !lim.Allow("a") {
-		t.Error("key a should be allowed")
-	}
-	if !lim.Allow("b") {
-		t.Error("key b should be allowed (independent budget from a)")
-	}
-	if lim.Allow("a") {
-		t.Error("key a should now be rejected")
-	}
-	if lim.Allow("b") {
-		t.Error("key b should now be rejected")
-	}
-}
-
-// TestRateLimiter_IndependentScopesShareNoBudget pins that two limiters
-// with different scopes (e.g. "default" vs "route:/api/v1/auth") on the
-// SAME Redis backend never share a client's budget — required so a
-// per-route override doesn't silently steal from (or get stolen from by)
-// the default limiter.
-func TestRateLimiter_IndependentScopesShareNoBudget(t *testing.T) {
-	_, client, limA := setupRateLimiter(t, "default", 10, 1)
-	limB, err := inredis.NewRateLimiter(client, "test", "route:/api/v1/auth", 10, 1, nil)
+	}()
+	client, err := NewLimiterClient("redis://"+ln.Addr().String(), 0)
 	if err != nil {
-		t.Fatalf("NewRateLimiter: %v", err)
+		t.Fatalf("NewLimiterClient: %v", err)
 	}
-
-	if !limA.Allow("shared-ip") {
-		t.Fatal("limA first request should be allowed")
-	}
-	if !limB.Allow("shared-ip") {
-		t.Error("limB should have its own independent budget for the same client key")
-	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }
 
-// TestRateLimiter_SlidingWindowAdmitsAsOldEntriesExpire pins the actual
-// point of a sliding-window LOG over a naive fixed-window counter: a
-// request is admitted again as soon as the OLDEST entry ages out of the
-// window, not only at a fixed window boundary — so a client can never
-// get 2x the limit by timing requests around a boundary edge.
-func TestRateLimiter_SlidingWindowAdmitsAsOldEntriesExpire(t *testing.T) {
-	// window = burst/rate = 2/2 = 1 second.
-	mr, _, lim := setupRateLimiter(t, "default", 2, 2)
+func allow(lim ratelimit.Allow, key string) bool {
+	return lim.Allow(context.Background(), key).Allowed
+}
 
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	mr.SetTime(base)
+func spec(name string, rate float64, burst int) ratelimit.Spec {
+	return ratelimit.Spec{Name: name, Rate: rate, Burst: burst}
+}
 
-	if !lim.Allow("k") { // t=0ms, count=1
+func TestSlidingWindow_BurstAndReject(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	// rate=1 burst=2 → 2s window, capacity 2
+	lim := factory.New(spec("default", 1, 2))
+
+	if !allow(lim, "1.2.3.4") {
 		t.Fatal("request 1 should be allowed")
 	}
-	mr.SetTime(base.Add(400 * time.Millisecond))
-	if !lim.Allow("k") { // t=400ms, count=2 (burst reached)
+	if !allow(lim, "1.2.3.4") {
 		t.Fatal("request 2 should be allowed (burst=2)")
 	}
-	mr.SetTime(base.Add(700 * time.Millisecond))
-	if lim.Allow("k") { // t=700ms: both prior entries (0ms, 400ms) still within the 1s window
-		t.Error("request 3 should be rejected — burst exhausted within the window")
+	if allow(lim, "1.2.3.4") {
+		t.Fatal("request 3 should be rejected")
 	}
-	// The FIRST entry (t=0ms) ages out of the window once we're past
-	// t=1000ms, freeing exactly one slot — a fixed-window counter would
-	// instead wait for the whole window to reset before admitting again.
-	mr.SetTime(base.Add(1001 * time.Millisecond))
-	if !lim.Allow("k") {
-		t.Error("request at t=1001ms should be allowed — the t=0ms entry has aged out of the 1s window")
-	}
-	// The slot is used again immediately; a second one is not free yet
-	// (the t=400ms entry doesn't age out until t=1400ms).
-	if lim.Allow("k") {
-		t.Error("immediate follow-up request should be rejected — only one slot freed so far")
+	if !allow(lim, "9.9.9.9") {
+		t.Fatal("independent key should be allowed")
 	}
 }
 
-func TestRateLimiter_ConcurrentRequestsNearLimitDoNotOverAdmit(t *testing.T) {
-	const burst = 20
-	mr, _, lim := setupRateLimiter(t, "default", 1000, burst)
-	// Freeze the shared backend's own clock (see TestRateLimiter_TimeComesFromRedisNotCallerClock
-	// for why Allow's timing now comes from Redis, not a per-caller Go
-	// clock) so this test isolates the atomicity guarantee — concurrent
-	// racing Allow calls at a SINGLE point in time must not over-admit —
-	// from real wall-clock window sliding. rate=1000/burst=20 gives only
-	// a 20ms window; with 100 goroutines racing a real, unfrozen clock,
-	// genuine scheduling/lock-contention delay across that many
-	// concurrent script executions can let early entries legitimately
-	// age out before later ones run, admitting MORE than 20 over the
-	// test's own (longer than 20ms) real execution time — a correct
-	// sliding window doing its job, not an atomicity bug, but it would
-	// make this specific test flaky/wrong for what it's meant to prove.
-	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+func TestSlidingWindow_SubMillisecondRate(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(start)
+	// 2000/1 → 500µs. A millisecond-rounded window would be 1ms and would
+	// still reject at 600µs.
+	lim := factory.New(spec("fast", 2000, 1))
+	if !allow(lim, "ip") {
+		t.Fatal("first request should be allowed")
+	}
+	if allow(lim, "ip") {
+		t.Fatal("second request should be rejected immediately")
+	}
+	mr.SetTime(start.Add(400 * time.Microsecond))
+	if allow(lim, "ip") {
+		t.Fatal("400µs later should still be rejected")
+	}
+	mr.SetTime(start.Add(600 * time.Microsecond))
+	if !allow(lim, "ip") {
+		t.Fatal("after the 500µs window the next request should be allowed")
+	}
+}
 
-	const workers = 100
-	var admitted int64
+func TestSlidingWindow_CanceledSuccessfulProbeClosesCircuit(t *testing.T) {
+	old := circuitHold
+	circuitHold = 40 * time.Millisecond
+	t.Cleanup(func() { circuitHold = old })
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	client.AddHook(delayHook{60 * time.Millisecond})
+	factory := NewLimiterFactory(client, "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+	factory.OpenCircuit()
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	d := lim.Allow(ctx, "probe")
+	if !d.Canceled || d.BackendError {
+		t.Fatalf("canceled successful probe = %+v, want Canceled without BackendError", d)
+	}
+
+	start := time.Now()
+	live := lim.Allow(context.Background(), "live")
+	if live.BackendError {
+		t.Fatal("circuit must close after a successful probe even if that client disconnected")
+	}
+	if !live.Allowed {
+		t.Fatal("live request should hit healthy Redis")
+	}
+	if time.Since(start) < 40*time.Millisecond {
+		t.Fatal("live request skipped Redis; circuit was still treating Redis as down")
+	}
+}
+
+type delayHook struct{ d time.Duration }
+
+func (h delayHook) DialHook(next goredis.DialHook) goredis.DialHook { return next }
+
+func (h delayHook) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
+	return func(ctx context.Context, cmd goredis.Cmder) error {
+		time.Sleep(h.d)
+		return next(ctx, cmd)
+	}
+}
+
+func (h delayHook) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
+	return next
+}
+
+func TestSlidingWindow_HonorsRateViaWindow(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(start)
+	// 10/20 → 2s window, capacity 20 — not 20/s
+	lim := factory.New(spec("default", 10, 20))
+	for i := 0; i < 20; i++ {
+		if !allow(lim, "ip") {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
+	}
+	if allow(lim, "ip") {
+		t.Fatal("request 21 should be rejected")
+	}
+	mr.SetTime(start.Add(time.Second))
+	if allow(lim, "ip") {
+		t.Fatal("1s later should still be rejected (2s window)")
+	}
+	mr.SetTime(start.Add(2*time.Second + time.Millisecond))
+	if !allow(lim, "ip") {
+		t.Fatal("after the 2s window the next request should be allowed")
+	}
+}
+
+func TestSlidingWindow_RejectsAroundFixedWindowBoundary(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(start)
+	lim := factory.New(spec("boundary", 1, 1))
+
+	if !allow(lim, "ip") {
+		t.Fatal("first request should be allowed")
+	}
+	mr.SetTime(start.Add(999 * time.Millisecond))
+	if allow(lim, "ip") {
+		t.Fatal("request 999ms later should still be rejected (sliding window)")
+	}
+	mr.SetTime(start.Add(1001 * time.Millisecond))
+	if !allow(lim, "ip") {
+		t.Fatal("request after the window elapsed should be allowed")
+	}
+}
+
+func TestSlidingWindow_TwoInstancesShareLimit(t *testing.T) {
+	_, client, _ := setupLimiterFactory(t)
+	a := NewLimiterFactory(client, "shopanda", nil)
+	b := NewLimiterFactory(client, "shopanda", nil)
+	limA := a.New(spec("default", 1, 2))
+	limB := b.New(spec("default", 1, 2))
+
+	if !allow(limA, "ip") || !allow(limB, "ip") {
+		t.Fatal("first two admits (one per instance) should share the burst of 2")
+	}
+	if allow(limA, "ip") || allow(limB, "ip") {
+		t.Fatal("third admit from either instance should be rejected")
+	}
+}
+
+func TestSlidingWindow_TwoFactoriesNoMemberCollision(t *testing.T) {
+	_, client, _ := setupLimiterFactory(t)
+	a := NewLimiterFactory(client, "shopanda", nil)
+	b := NewLimiterFactory(client, "shopanda", nil)
+	limA := a.New(spec("default", 1, 2))
+	limB := b.New(spec("default", 1, 2))
+
+	if !allow(limA, "ip") {
+		t.Fatal("A1")
+	}
+	if !allow(limB, "ip") {
+		t.Fatal("B1")
+	}
+	if allow(limA, "ip") {
+		t.Fatal("A2 should be rejected — unique members must increment the count")
+	}
+}
+
+func TestSlidingWindow_NamedLimitersIsolated(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	def := factory.New(spec("default", 1, 1))
+	route := factory.New(spec("route:/api/v1/auth/login", 1, 1))
+
+	if !allow(def, "ip") {
+		t.Fatal("default first should be allowed")
+	}
+	if allow(def, "ip") {
+		t.Fatal("default second should be rejected")
+	}
+	if !allow(route, "ip") {
+		t.Fatal("route limiter should not share the default key")
+	}
+}
+
+func TestSlidingWindow_KeyTTLSet(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 1, 1))
+	if !allow(lim, "ip") {
+		t.Fatal("allow")
+	}
+	ttl := mr.TTL("shopanda-rl:default:ip")
+	if ttl <= 0 {
+		t.Fatalf("TTL = %v, want > 0", ttl)
+	}
+}
+
+func TestSlidingWindow_FailOpenByDefault(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("down", 10, 10))
+	mr.Close()
+	if !allow(lim, "ip") {
+		t.Fatal("Allow should admit when Redis is down (fail-open)")
+	}
+}
+
+func TestSlidingWindow_FailClosed(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	lim := factory.New(ratelimit.Spec{Name: "down", Rate: 10, Burst: 10, OnError: ratelimit.OnErrorClosed})
+	mr.Close()
+	if allow(lim, "ip") {
+		t.Fatal("Allow should deny when Redis is down and on_error=closed")
+	}
+}
+
+func TestSlidingWindow_CancelledContextDenied(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	open := factory.New(spec("open", 10, 10))
+	local := factory.New(ratelimit.Spec{Name: "local", Rate: 1, Burst: 1, OnError: ratelimit.OnErrorLocal})
+	closed := factory.New(ratelimit.Spec{Name: "closed", Rate: 10, Burst: 10, OnError: ratelimit.OnErrorClosed})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, lim := range []ratelimit.Allow{open, local, closed} {
+		d := lim.Allow(ctx, "ip")
+		if d.Allowed || d.BackendError || !d.Canceled {
+			t.Fatalf("cancelled context must deny uncounted, got %+v", d)
+		}
+	}
+}
+
+func TestSlidingWindow_CancelledContextDoesNotTripCircuit(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	var backendHits atomic.Int64
+	factory.SetErrorObserver(func(_, _ string) { backendHits.Add(1) })
+	lim := factory.New(spec("ctx", 10, 10))
+	for i := 0; i < 50; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = lim.Allow(ctx, "ip")
+	}
+	if backendHits.Load() != 0 {
+		t.Fatalf("cancellations recorded %d backend errors", backendHits.Load())
+	}
+	d := lim.Allow(context.Background(), "ip")
+	if d.BackendError {
+		t.Fatal("cancellations must not trip the circuit")
+	}
+	if !d.Allowed {
+		t.Fatal("live Redis should admit after cancellations")
+	}
+}
+
+func TestSlidingWindow_CancelledContextDoesNotConsumeLocal(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	lim := factory.New(ratelimit.Spec{Name: "auth", Rate: 1, Burst: 1, OnError: ratelimit.OnErrorLocal})
+	mr.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if lim.Allow(ctx, "ip").Allowed {
+		t.Fatal("cancelled must deny")
+	}
+	if !allow(lim, "ip") {
+		t.Fatal("local fallback budget must still have its first token")
+	}
+}
+
+func TestSlidingWindow_DisconnectDuringRedisIsCanceled(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	var backendHits atomic.Int64
+	factory.SetErrorObserver(func(_, _ string) { backendHits.Add(1) })
+	lim := factory.New(spec("default", 10, 10))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	d := lim.Allow(ctx, "ip")
+	if !d.Canceled || d.Allowed {
+		t.Fatalf("disconnect during Redis must be Canceled, got %+v", d)
+	}
+	if d.BackendError {
+		t.Fatal("gone client is not a backend error / fail-open admit")
+	}
+	if backendHits.Load() != 0 {
+		t.Fatal("disconnect during a Redis timeout must not record a backend error")
+	}
+}
+
+func TestSlidingWindow_DisconnectDuringRedisDoesNotTripCircuit(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	var backendHits atomic.Int64
+	factory.SetErrorObserver(func(_, _ string) { backendHits.Add(1) })
+	lim := factory.New(spec("default", 10, 10))
+	var wg sync.WaitGroup
+	wg.Add(circuitLowErrors)
+	for i := 0; i < circuitLowErrors; i++ {
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+			d := lim.Allow(ctx, "ip")
+			if !d.Canceled || d.BackendError {
+				t.Errorf("disconnect during Redis = %+v, want Canceled", d)
+			}
+		}()
+	}
+	wg.Wait()
+	if backendHits.Load() != 0 {
+		t.Fatalf("disconnects recorded %d backend errors", backendHits.Load())
+	}
+	start := time.Now()
+	d := lim.Allow(context.Background(), "ip")
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("circuit must still talk to Redis after disconnect-timeouts")
+	}
+	if !d.Allowed || !d.BackendError {
+		t.Fatalf("live timeout = %+v, want fail-open (circuit still closed)", d)
+	}
+}
+
+func TestSlidingWindow_ConcurrentDoesNotOverAdmit(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("race", 10, 10))
+
+	const workers = 50
+	var admitted atomic.Int64
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			if lim.Allow("hot-key") {
-				atomic.AddInt64(&admitted, 1)
+			if allow(lim, "ip") {
+				admitted.Add(1)
 			}
 		}()
 	}
 	wg.Wait()
-
-	if got := atomic.LoadInt64(&admitted); got != burst {
-		t.Fatalf("admitted = %d, want exactly %d (concurrent requests must not over-admit past the burst)", got, burst)
+	if got := admitted.Load(); got != 10 {
+		t.Fatalf("admitted = %d, want 10", got)
 	}
 }
 
-// TestRateLimiter_CrossReplicaMembersDoNotCollide pins the code review
-// fix: two independently-constructed RateLimiter instances (standing in
-// for two real replicas, each with its own process, each starting its
-// own seq counter at 0) sharing ONE Redis backend, the SAME scope, and
-// the SAME client key must still enforce a combined limit — not double
-// it. Without a per-instance random component in the ZSET member, both
-// instances' first call at an identical millisecond produce the exact
-// same member string ("<ms>-1"), so the second ZADD overwrites the
-// first entry's score instead of adding a new one: only one ZSET entry
-// would exist for two real admitted requests, silently undercounting
-// traffic and letting more through than the shared burst allows. Forcing
-// an identical time on the shared miniredis backend (mr.SetTime, which
-// also drives what redis.call('TIME') returns inside the script — see
-// TestRateLimiter_TimeComesFromRedisNotCallerClock) reproduces the worst
-// case deterministically instead of depending on two real goroutines
-// happening to race within the same millisecond.
-func TestRateLimiter_CrossReplicaMembersDoNotCollide(t *testing.T) {
-	const burst = 2
-	mr, client, replicaA := setupRateLimiter(t, "default", 1000, burst)
-	replicaB, err := inredis.NewRateLimiter(client, "test", "default", 1000, burst, nil)
+func TestLimiterFactory_OwnedClose(t *testing.T) {
+	mr, err := miniredis.Run()
 	if err != nil {
-		t.Fatalf("NewRateLimiter: %v", err)
+		t.Fatalf("miniredis.Run: %v", err)
 	}
-
-	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	admitted := 0
-	for i := 0; i < burst+1; i++ {
-		if replicaA.Allow("shared-key") {
-			admitted++
-		}
-		if replicaB.Allow("shared-key") {
-			admitted++
-		}
+	t.Cleanup(mr.Close)
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	factory := NewOwnedLimiterFactory(client, "p", nil)
+	if err := factory.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	if admitted != burst {
-		t.Fatalf("admitted across both replicas = %d, want exactly %d (burst shared across replicas, not doubled by member collisions)", admitted, burst)
+	if err := client.Ping(context.Background()).Err(); err == nil {
+		t.Fatal("Ping succeeded after Close; owned client should be closed")
 	}
 }
 
-// TestRateLimiter_TimeComesFromRedisNotCallerClock pins the code review
-// fix: scoring and pruning must use ONE authoritative clock (the Redis
-// server's own, via redis.call('TIME') inside the script), not each
-// caller's local wall clock. Without this, a "fast" replica (its own
-// clock running ahead of a "slow" replica's) computes its own window
-// start further into the future than the slow replica intended, and can
-// prune the slow replica's still-valid entries before they've actually
-// aged out from the slow replica's own perspective — undercounting real
-// admitted traffic and admitting more than the configured shared burst.
-// This test cannot directly simulate two different client-side clocks
-// any more (there's no client-side clock left to skew — that's the
-// point of the fix), so it instead proves the mechanism the fix relies
-// on: advancing ONLY the shared Redis backend's own clock (mr.SetTime)
-// changes Allow's sliding-window behavior exactly as documented, with no
-// client-side clock involved in the decision at all.
-func TestRateLimiter_TimeComesFromRedisNotCallerClock(t *testing.T) {
-	// window = burst/rate = 1/1 = 1 second.
-	mr, _, lim := setupRateLimiter(t, "default", 1, 1)
-
-	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if !lim.Allow("k") {
-		t.Fatal("first request should be allowed")
+func TestRateLimitPrefix(t *testing.T) {
+	if got := RateLimitPrefix("shopanda"); got != "shopanda-rl:" {
+		t.Fatalf("got %q", got)
 	}
-	if lim.Allow("k") {
-		t.Error("second request should be rejected — burst=1 exhausted, Redis clock unchanged")
+	if got := RateLimitPrefix("shopanda:"); got != "shopanda-rl:" {
+		t.Fatalf("got %q", got)
 	}
-
-	// Advance ONLY the shared Redis backend's clock (never the caller's
-	// own time.Now) past the window — Allow must observe this and admit
-	// again, proving the decision is driven by the server's clock.
-	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 1, 1e6, time.UTC)) // +1.001s
-	if !lim.Allow("k") {
-		t.Error("request after the Redis backend's own clock advanced past the window should be allowed")
+	if got := RateLimitPrefix(""); got != "shopanda-rl:" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestRateLimiter_FailsOpenOnRedisError(t *testing.T) {
-	mr, client, lim := setupRateLimiter(t, "default", 10, 1)
-	// Exhaust the real budget once to prove the limiter is otherwise wired
-	// correctly, then break the connection so the NEXT check must fail open.
-	if !lim.Allow("k") {
-		t.Fatal("first request should be allowed")
+func TestSlidingWindow_FractionalRateMatchesAverage(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(start)
+	// 15/20 → 4/3s window (1333333µs), capacity 20 ≈ 15/s
+	lim := factory.New(spec("default", 15, 20))
+	window := ratelimit.Window(15, 20)
+	for i := 0; i < 20; i++ {
+		if !allow(lim, "ip") {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
 	}
+	if allow(lim, "ip") {
+		t.Fatal("request 21 should be rejected")
+	}
+	mr.SetTime(start.Add(window - time.Microsecond))
+	if allow(lim, "ip") {
+		t.Fatal("just inside the window should still be rejected")
+	}
+	mr.SetTime(start.Add(window + time.Microsecond))
+	if !allow(lim, "ip") {
+		t.Fatal("after the window the next request should be allowed")
+	}
+}
+
+func TestSlidingWindow_OnErrorLocal(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	lim := factory.New(ratelimit.Spec{Name: "auth", Rate: 1, Burst: 1, OnError: ratelimit.OnErrorLocal})
 	mr.Close()
-	_ = client.Close()
-
-	if !lim.Allow("k") {
-		t.Error("Allow should fail OPEN (return true) when Redis is unreachable, not take down the request path")
+	if !allow(lim, "ip") {
+		t.Fatal("first local fallback should admit")
+	}
+	if allow(lim, "ip") {
+		t.Fatal("local fallback should enforce burst=1")
 	}
 }
 
-// TestRateLimiter_SubMillisecondWindowStillEnforcesBurst pins the code
-// review fix: rate=2000/burst=1 computes a window of burst/rate=0.5ms —
-// positive in nanoseconds (so the old "window <= 0" guard never caught
-// it), but time.Duration.Milliseconds() truncates it to 0 regardless. A
-// windowMs of 0 passed to the script makes windowStartMs == nowMs, so
-// ZREMRANGEBYSCORE prunes every entry (including ones just added this
-// same millisecond), ZCARD always reads back 0, every check is admitted,
-// and PEXPIRE with a 0 TTL deletes the key immediately — the limiter
-// silently stops enforcing anything for that rate/burst combination
-// instead of erroring or degrading to a coarser (but still real) limit.
-func TestRateLimiter_SubMillisecondWindowStillEnforcesBurst(t *testing.T) {
-	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 500us
-	// Freeze the clock: the effective window here is microseconds-scale
-	// (see NewRateLimiter), tiny enough that real elapsed time between
-	// two sequential Allow calls (each a real round trip, how ever fast)
-	// can exceed it and legitimately expire the first entry before the
-	// second call runs — a false pass for what this test means to prove.
-	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	if !lim.Allow("k") {
-		t.Fatal("first request should be allowed")
+func TestNewLimiterClient_AppliesTimeouts(t *testing.T) {
+	c, err := NewLimiterClient("redis://127.0.0.1:1", 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if lim.Allow("k") {
-		t.Error("second immediate request should be rejected (burst=1) — a sub-millisecond window must not silently disable the limit")
+	t.Cleanup(func() { _ = c.Close() })
+	opt := c.Options()
+	if !opt.ContextTimeoutEnabled {
+		t.Fatal("ContextTimeoutEnabled")
+	}
+	if opt.DialTimeout != slidingWindowAllow || opt.ReadTimeout != slidingWindowAllow || opt.WriteTimeout != slidingWindowAllow {
+		t.Fatalf("timeouts = dial %v read %v write %v, want %v", opt.DialTimeout, opt.ReadTimeout, opt.WriteTimeout, slidingWindowAllow)
+	}
+	if opt.MaxRetries != 0 {
+		t.Fatalf("MaxRetries = %d, want 0 (disabled; NewClient maps -1 → 0)", opt.MaxRetries)
+	}
+	if opt.PoolSize != DefaultLimiterPoolSize() {
+		t.Fatalf("PoolSize = %d, want %d", opt.PoolSize, DefaultLimiterPoolSize())
 	}
 }
 
-// TestRateLimiter_SubMillisecondWindowPreservesConfiguredRate pins the
-// code review fix: rate=2000/burst=1 needs a real 500us window, and the
-// configured rate must actually be honored at that resolution — not
-// silently rounded up to a coarser one. An earlier version of this fix
-// tracked the window in whole milliseconds only, so a 500us window got
-// clamped up to 1ms; that made the FIRST entry (still valid for another
-// ~500us on the real, configured window) look like it hadn't aged out
-// until a full millisecond had passed, silently halving the effective
-// admitted rate from 2000/sec to ~1000/sec for anyone using this exact
-// config. Microsecond-resolution scoring (see slidingWindowScript's own
-// doc comment) closes that gap: a request 600us after the first — past
-// the true 500us window, but still within a naive 1ms one — must be
-// admitted.
-func TestRateLimiter_SubMillisecondWindowPreservesConfiguredRate(t *testing.T) {
-	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 500us
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	mr.SetTime(base)
-
-	if !lim.Allow("k") {
-		t.Fatal("first request should be allowed")
-	}
-
-	mr.SetTime(base.Add(600 * time.Microsecond))
-	if !lim.Allow("k") {
-		t.Error("request 600us after the first should be allowed — the real 500us window must be honored, not rounded up to 1ms (which would silently halve the configured rate)")
+func TestSlidingWindow_RetryAfter(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 20))
+	d := lim.Allow(context.Background(), "ip")
+	if d.RetryAfter != 2*time.Second {
+		t.Fatalf("RetryAfter = %v, want 2s", d.RetryAfter)
 	}
 }
 
-func TestNewRateLimiter_RejectsInvalidArgs(t *testing.T) {
-	_, client, _ := setupRateLimiter(t, "default", 10, 1)
+func TestSlidingWindow_SlowRedisTimeout(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
 
-	if _, err := inredis.NewRateLimiter(nil, "test", "default", 10, 1, nil); err == nil {
-		t.Error("expected error for nil client")
+	start := time.Now()
+	d := lim.Allow(context.Background(), "ip")
+	elapsed := time.Since(start)
+	if elapsed < 150*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("slow Redis Allow took %v, want ~200ms (production limiter client)", elapsed)
 	}
-	if _, err := inredis.NewRateLimiter(client, "test", "", 10, 1, nil); err == nil {
-		t.Error("expected error for empty scope")
+	if !d.Allowed || !d.BackendError {
+		t.Fatalf("decision = %+v, want fail-open after timeout", d)
 	}
-	if _, err := inredis.NewRateLimiter(client, "test", "default", 0, 1, nil); err == nil {
-		t.Error("expected error for non-positive rate")
+}
+
+func tripWithHangingAllows(lim ratelimit.Allow) {
+	var wg sync.WaitGroup
+	wg.Add(circuitMinRequests)
+	for i := 0; i < circuitMinRequests; i++ {
+		go func() {
+			defer wg.Done()
+			_ = lim.Allow(context.Background(), "ip")
+		}()
 	}
-	if _, err := inredis.NewRateLimiter(client, "test", "default", 10, 0, nil); err == nil {
-		t.Error("expected error for non-positive burst")
+	wg.Wait()
+}
+
+func TestSlidingWindow_CircuitBreakerTripsOnTimeouts(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+
+	start := time.Now()
+	tripWithHangingAllows(lim)
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("concurrent trip took %v, want ~200ms", elapsed)
 	}
+	start = time.Now()
+	d := lim.Allow(context.Background(), "ip")
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("circuit-open Allow took %v, want immediate fallback", time.Since(start))
+	}
+	if !d.Allowed || !d.BackendError {
+		t.Fatalf("decision = %+v, want fail-open backend error", d)
+	}
+}
+
+func TestSlidingWindow_CircuitRecoversAfterHold(t *testing.T) {
+	old := circuitHold
+	circuitHold = 80 * time.Millisecond
+	t.Cleanup(func() { circuitHold = old })
+
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 10))
+	factory.OpenCircuit()
+	time.Sleep(100 * time.Millisecond)
+	d := lim.Allow(context.Background(), "ip")
+	if !d.Allowed || d.BackendError {
+		t.Fatalf("probe after hold should hit Redis, got %+v", d)
+	}
+}
+
+func TestSlidingWindow_CircuitOpenIncrementsObserver(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	var circuitHits atomic.Int64
+	factory.SetErrorObserver(func(_, reason string) {
+		if reason == errReasonCircuit {
+			circuitHits.Add(1)
+		}
+	})
+	lim := factory.New(spec("default", 10, 10))
+	tripWithHangingAllows(lim)
+	_ = lim.Allow(context.Background(), "ip")
+	if circuitHits.Load() < 1 {
+		t.Fatal("observer should fire with reason=circuit_open while the circuit is held")
+	}
+}
+
+func TestSlidingWindow_ErrorRateTripsCircuit(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 100, 100))
+	for i := 0; i < circuitMinRequests/2; i++ {
+		if !allow(lim, fmt.Sprintf("ok-%d", i)) {
+			t.Fatalf("success %d", i)
+		}
+		factory.recordError("default", errors.New("timeout"), errReasonError, false)
+	}
+	start := time.Now()
+	d := lim.Allow(context.Background(), "ok")
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("error-rate trip should skip Redis, took %v", time.Since(start))
+	}
+	if !d.BackendError {
+		t.Fatalf("want fallback after %d req at ≥50%% errors, got %+v", circuitMinRequests, d)
+	}
+}
+
+func TestSlidingWindow_LowErrorRateDoesNotTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 100, 100))
+	for i := 0; i < 100; i++ {
+		if !allow(lim, fmt.Sprintf("ok-%d", i)) {
+			t.Fatalf("success %d", i)
+		}
+		if i%20 == 0 {
+			factory.recordError("default", errors.New("blip"), errReasonError, false)
+		}
+	}
+	d := lim.Allow(context.Background(), "fresh")
+	if d.BackendError {
+		t.Fatal("5% errors at high volume must not trip the circuit")
+	}
+}
+
+func TestSlidingWindow_PoolTimeoutReason(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				time.Sleep(30 * time.Second)
+				_ = c.Close()
+			}(c)
+		}
+	}()
+	client, err := NewLimiterClient("redis://"+ln.Addr().String(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	factory := NewLimiterFactory(client, "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	var poolHits atomic.Int64
+	factory.SetErrorObserver(func(_, reason string) {
+		if reason == errReasonPoolTimeout {
+			poolHits.Add(1)
+		}
+	})
+	lim := factory.New(spec("default", 100, 100))
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			_ = lim.Allow(context.Background(), "ip")
+		}()
+	}
+	wg.Wait()
+	if poolHits.Load() < 1 {
+		t.Fatal("expected at least one pool_timeout when concurrent Allows exceed PoolSize=2")
+	}
+}
+
+func TestSlidingWindow_HalfOpenSingleProbe(t *testing.T) {
+	old := circuitHold
+	circuitHold = 50 * time.Millisecond
+	t.Cleanup(func() { circuitHold = old })
+
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+	tripWithHangingAllows(lim)
+	time.Sleep(70 * time.Millisecond)
+
+	var other time.Duration
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(20 * time.Millisecond)
+		start := time.Now()
+		_ = lim.Allow(context.Background(), "b")
+		other = time.Since(start)
+	}()
+	start := time.Now()
+	_ = lim.Allow(context.Background(), "a")
+	probe := time.Since(start)
+	wg.Wait()
+	if probe < 100*time.Millisecond {
+		t.Fatalf("probe took %v, want ~200ms", probe)
+	}
+	if other > 50*time.Millisecond {
+		t.Fatalf("non-probe took %v, want immediate fallback", other)
+	}
+}
+
+func TestSlidingWindow_SlowRedisNoGoroutineLeak(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var acceptWG, connWG sync.WaitGroup
+	acceptWG.Add(1)
+	go func() {
+		defer acceptWG.Done()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			connWG.Add(1)
+			go func(c net.Conn) {
+				defer connWG.Done()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+				}
+				_ = c.Close()
+			}(c)
+		}
+	}()
+	client, err := NewLimiterClient("redis://"+ln.Addr().String(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory := NewOwnedLimiterFactory(client, "shopanda", nil)
+	lim := factory.New(spec("default", 10, 10))
+	for i := 0; i < 3; i++ {
+		_ = lim.Allow(context.Background(), "ip")
+	}
+	if err := factory.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(done)
+	_ = ln.Close()
+	acceptWG.Wait()
+	connWG.Wait()
+}
+
+func TestLimiterPoolSize_CappedAt64(t *testing.T) {
+	if got := limiterPoolSize(1); got != 10 {
+		t.Fatalf("GOMAXPROCS=1: got %d want 10", got)
+	}
+	if got := limiterPoolSize(8); got != 64 {
+		t.Fatalf("GOMAXPROCS=8: got %d want 64", got)
+	}
+	if got := limiterPoolSize(0); got != 8 {
+		t.Fatalf("GOMAXPROCS=0: got %d want 8", got)
+	}
+}
+
+func TestBackendReason_UsesErrorsIsOnly(t *testing.T) {
+	if got := backendReason(errors.New("redis: connection pool timeout")); got != errReasonError {
+		t.Fatalf("string match = %q, want %q", got, errReasonError)
+	}
+	if got := backendReason(fmt.Errorf("wrap: %w", goredis.ErrPoolTimeout)); got != errReasonPoolTimeout {
+		t.Fatalf("wrapped ErrPoolTimeout = %q, want %q", got, errReasonPoolTimeout)
+	}
+}
+
+func TestSlidingWindow_StallUnderLoadDoesNotTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 1000, 1000))
+	// 80 successes then 20 concurrent timeouts ≈ 20% errors — a 300ms
+	// stall at high RPS, without treating consecutive timeouts as a trip.
+	for i := 0; i < 80; i++ {
+		factory.recordSuccess(false)
+	}
+	var wg sync.WaitGroup
+	wg.Add(20)
+	for i := 0; i < 20; i++ {
+		go func() {
+			defer wg.Done()
+			factory.recordError("default", errors.New("timeout"), errReasonError, false)
+		}()
+	}
+	wg.Wait()
+	d := lim.Allow(context.Background(), "fresh")
+	if d.BackendError {
+		t.Fatal("20% errors from a stall must not trip the circuit")
+	}
+}
+
+func TestSlidingWindow_LowTrafficAllErrorsTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 10))
+	for i := 0; i < circuitLowErrors; i++ {
+		factory.recordError("default", errors.New("timeout"), errReasonError, false)
+	}
+	start := time.Now()
+	d := lim.Allow(context.Background(), "ip")
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("low-traffic trip should skip Redis, took %v", time.Since(start))
+	}
+	if !d.BackendError {
+		t.Fatalf("5 errors and no successes must open the circuit, got %+v", d)
+	}
+}
+
+func TestSlidingWindow_LowTrafficFourErrorsDoNotTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 10))
+	for i := 0; i < circuitLowErrors-1; i++ {
+		factory.recordError("default", errors.New("timeout"), errReasonError, false)
+	}
+	d := lim.Allow(context.Background(), "ip")
+	if d.BackendError {
+		t.Fatal("4 errors in a quiet window must not trip")
+	}
+}
+
+func TestSlidingWindow_LowTrafficMixedDoesNotTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 10))
+	factory.recordSuccess(false)
+	for i := 0; i < circuitLowErrors; i++ {
+		factory.recordError("default", errors.New("timeout"), errReasonError, false)
+	}
+	d := lim.Allow(context.Background(), "ip")
+	if d.BackendError {
+		t.Fatal("5 errors plus a success (not 100% of a quiet window) must not trip")
+	}
+}
+
+func TestSlidingWindow_LowTrafficErrorsSpacedBeyondWindowDoNotTrip(t *testing.T) {
+	_, _, factory := setupLimiterFactory(t)
+	lim := factory.New(spec("default", 10, 10))
+	gap := time.Duration(circuitBucketCount)*circuitBucket + 100*time.Millisecond
+	for i := 0; i < circuitLowErrors; i++ {
+		if i > 0 {
+			time.Sleep(gap)
+		}
+		factory.recordError("default", errors.New("timeout"), errReasonError, false)
+	}
+	d := lim.Allow(context.Background(), "ip")
+	if d.BackendError {
+		t.Fatal("errors spaced more than 2s apart must not trip the circuit")
+	}
+}
+
+func TestSlidingWindow_FailedProbeReleasesSlot(t *testing.T) {
+	old := circuitHold
+	circuitHold = 50 * time.Millisecond
+	t.Cleanup(func() { circuitHold = old })
+
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+	factory.OpenCircuit()
+	time.Sleep(70 * time.Millisecond)
+
+	start := time.Now()
+	_ = lim.Allow(context.Background(), "a")
+	first := time.Since(start)
+	if first < 100*time.Millisecond {
+		t.Fatalf("first probe took %v, want ~200ms", first)
+	}
+
+	start = time.Now()
+	d := lim.Allow(context.Background(), "b")
+	held := time.Since(start)
+	if held > 50*time.Millisecond {
+		t.Fatalf("after failed probe Allow took %v, want immediate hold", held)
+	}
+	if !d.BackendError {
+		t.Fatal("failed probe must re-arm the 5s hold")
+	}
+
+	time.Sleep(70 * time.Millisecond)
+	start = time.Now()
+	_ = lim.Allow(context.Background(), "c")
+	third := time.Since(start)
+	if third < 100*time.Millisecond {
+		t.Fatalf("probe after re-armed hold took %v; probing stuck?", third)
+	}
+}
+
+func BenchmarkSlidingWindow_Allow(b *testing.B) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(mr.Close)
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	b.Cleanup(func() { _ = client.Close() })
+	factory := NewLimiterFactory(client, "shopanda", nil)
+	b.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("bench", 1_000_000, 1_000_000))
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = lim.Allow(context.Background(), "ip")
+		}
+	})
+}
+
+func BenchmarkLimiterFactory_NoteParallel(b *testing.B) {
+	factory := NewLimiterFactory(nil, "shopanda", nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			factory.note(false)
+		}
+	})
 }

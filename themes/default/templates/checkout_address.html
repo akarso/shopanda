@@ -5,7 +5,7 @@
     <div class="page-intro">
         <span class="eyebrow">Checkout</span>
         <h1>Address</h1>
-        <p>Confirm who this order is for before shipping and payment are selected.</p>
+        <p>Confirm who this order is for before continuing to payment{{ if ne .PrimaryAction "/checkout/payment" }} and shipping{{ end }}.</p>
     </div>
 
     {{slot_container "checkout.progress"}}
@@ -21,7 +21,7 @@
     <div class="checkout-grid">
         {{slot_container "checkout.panel"}}
         <section class="checkout-panel">
-            <form class="checkout-form" action="/checkout/shipping" method="post">
+            <form class="checkout-form" action="{{ .PrimaryAction }}" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 {{ if .ErrorMessage }}
                 <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
@@ -63,7 +63,7 @@
                 </div>
                 <div class="checkout-actions">
                     <a class="chip" href="/cart">Back to cart</a>
-                    <button type="submit">Continue to Shipping</button>
+                    <button type="submit">{{ if eq .PrimaryAction "/checkout/payment" }}Continue to Payment{{ else }}Continue to Shipping{{ end }}</button>
                 </div>
             </form>
         </section>

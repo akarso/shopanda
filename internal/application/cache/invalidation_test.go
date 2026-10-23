@@ -7,6 +7,7 @@ import (
 	"time"
 
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
+	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -53,6 +54,14 @@ func (m *mockCache) SetWithTags(_ context.Context, key string, value any, ttl ti
 	return m.Set(key, value, ttl)
 }
 func (m *mockCache) DeleteByTag(_ context.Context, _ string) (int64, error) { return 0, nil }
+func (m *mockCache) Stats(context.Context) (cache.Stats, error) {
+	return cache.Stats{Backend: "mock", Keys: int64(len(m.entries))}, nil
+}
+func (m *mockCache) FlushAll(context.Context) (int64, error) {
+	n := int64(len(m.entries))
+	m.entries = make(map[string]bool)
+	return n, nil
+}
 
 // --- mock logger ---
 

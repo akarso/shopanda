@@ -58,6 +58,31 @@ func TestPriceHistoryRepo_RecordAndLowestSince(t *testing.T) {
 	}
 }
 
+func TestPriceHistoryRepo_Record_ZeroAmount(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM price_history")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM price_history") })
+
+	repo, err := postgres.NewPriceHistoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceHistoryRepo: %v", err)
+	}
+	ctx := context.Background()
+	vid := seedVariant(t, db)
+	s := mustNewPriceSnapshot(t, vid, 0)
+	if err := repo.Record(ctx, &s); err != nil {
+		t.Fatalf("Record zero amount: %v", err)
+	}
+	got, err := repo.LowestSince(ctx, vid, "USD", "", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("LowestSince: %v", err)
+	}
+	if got == nil || !got.Amount.IsZero() {
+		t.Fatalf("got = %#v, want zero amount snapshot", got)
+	}
+}
+
 func TestPriceHistoryRepo_LowestSince_ReturnsMin(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

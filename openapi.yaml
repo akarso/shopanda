@@ -339,6 +339,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/VisibilityAfter"
       responses:
         "200":
           description: OK
@@ -359,7 +360,11 @@ paths:
                       updated_at: "2026-01-01T00:00:00Z"
                   blocks: []
                   filters: {}
-                  meta: {}
+                  meta:
+                    truncated: false
+                    has_more: true
+                    depth_limited: false
+                    next_after: "eyJvIjoxMH0"
                 error: null
 
   /api/v1/products/{id}:
@@ -515,6 +520,7 @@ paths:
         - $ref: "#/components/parameters/CategoryId"
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/VisibilityAfter"
       responses:
         "200":
           description: OK
@@ -528,6 +534,10 @@ paths:
                     - id: "p1"
                       name: Widget
                       slug: widget
+                  meta:
+                    truncated: false
+                    has_more: false
+                    depth_limited: false
                 error: null
 
   # ── Search ─────────────────────────────────────────────
@@ -1170,6 +1180,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ProductType"
       responses:
         "200":
           description: OK
@@ -1180,23 +1191,29 @@ paths:
               example:
                 data:
                   products:
-                    - id: "p1"
-                      name: Widget
-                      slug: widget
-                      description: A fine widget
-                      status: active
-                      attributes: {}
-                      created_at: "2026-01-01T00:00:00Z"
-                      updated_at: "2026-01-01T00:00:00Z"
+                    - ID: "p1"
+                      Name: Widget
+                      Slug: widget
+                      Description: A fine widget
+                      Status: active
+                      Type: simple
+                      Attributes: {}
+                      CreatedAt: "2026-01-01T00:00:00Z"
+                      UpdatedAt: "2026-01-01T00:00:00Z"
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
     post:
       operationId: adminCreateProduct
       tags: ["Admin: Products"]
       summary: Create a product
+      description: >-
+        Optional `type` defaults to `simple`. Product responses already include
+        exported field `Type` (Go JSON name) from PR-1049.
       security:
         - bearerAuth: []
       requestBody:
@@ -1215,14 +1232,20 @@ paths:
               example:
                 data:
                   product:
-                    id: "p1"
-                    name: Widget
-                    slug: widget
-                    description: A fine widget
-                    status: draft
-                    attributes: {}
-                    created_at: "2026-01-01T00:00:00Z"
-                    updated_at: "2026-01-01T00:00:00Z"
+                    ID: "p1"
+                    Name: Widget
+                    Slug: widget
+                    Description: A fine widget
+                    Status: draft
+                    Type: simple
+                    VisibilityModes:
+                      Catalog: auto
+                      Search: auto
+                      Individually: auto
+                      Purchasable: auto
+                    Attributes: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -1232,6 +1255,91 @@ paths:
           $ref: "#/components/responses/Validation"
 
   /api/v1/admin/products/{id}:
+    get:
+      operationId: adminGetProduct
+      tags: ["Admin: Products"]
+      summary: Get a product (admin)
+      description: >-
+        Includes `category_ids` and, when the server has
+        `ProductAdminHandler.WithVisibilityFacts` wired (PR-1059 CR — true in
+        this deployment), a `visibility` object explaining the four
+        VisibilityAxes against AutoBasis facts (status/stock/price/store/
+        category). `visibility` is omitted only when facts are not wired at
+        all (`WithVisibilityFacts` not called). Both a transient facts-load
+        error and a missing snapshot (`VisibilityFactsRepo`'s facts query
+        joins live product/variant/stock/price rows — there is no
+        asynchronous "first refresh" step, so the only way `FindByID` above
+        finds the product but the facts query does not is a concurrent
+        delete between the two reads) instead set `visibility_error` and
+        still return the product with a 200 — this endpoint never 500s
+        because the informational visibility explanation failed to load.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductGetResponse"
+              example:
+                data:
+                  product:
+                    ID: "p1"
+                    Name: Widget
+                    Slug: widget
+                    Description: A fine widget
+                    Status: draft
+                    Type: simple
+                    VisibilityModes:
+                      Catalog: visible
+                      Search: auto
+                      Individually: auto
+                      Purchasable: auto
+                    Attributes: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
+                  category_ids: []
+                  visibility:
+                    enforced: true
+                    status: draft
+                    auto_basis: false
+                    failure_codes: [status_inactive]
+                    input_failure_codes: []
+                    axes:
+                      catalog:
+                        mode: visible
+                        override: true
+                        resolved: true
+                        effective: false
+                        failure_codes: []
+                      search:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                      individually:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                      purchasable:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       operationId: adminUpdateProduct
       tags: ["Admin: Products"]
@@ -1259,6 +1367,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
 
   # ── Admin: Variants ────────────────────────────────────
   /api/v1/admin/products/{id}/variants:
@@ -1829,6 +1939,189 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  # ── Admin: Cache ───────────────────────────────────────
+  /api/v1/admin/cache/stats:
+    get:
+      operationId: adminCacheStats
+      tags: ["Admin: Cache"]
+      summary: Cache occupancy stats (admin)
+      description: >-
+        Approximate per-tier occupancy. L2 is the configured cache.Cache
+        backend (Postgres `COUNT(*)` of `cache` / `cache_tags` with a
+        1.5s cap, then `pg_class.reltuples`; Redis `DBSIZE` of the
+        configured database plus `INFO memory` when available). When
+        Postgres used the `reltuples` fallback, `l2.approximate` is
+        true. L1 is this process's in-memory stores (permission
+        catalog, storefront category nav) with hit/miss counters. L2
+        hit/miss is not tracked here. When full-page cache observability
+        is wired, `fpc` carries this process's hit/miss/bypass-by-route
+        counters (hit_rate = hits/(hits+misses)), pages_stored estimate,
+        backend_get_errors, and keys-deleted purge counts (PR-1047).
+        Successful HTTP stats calls are not audit-logged (the endpoint
+        is polled); failures are.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  l2:
+                    backend: postgres
+                    keys: 42
+                    tag_rows: 10
+                    approximate: true
+                  l1:
+                    - name: rbac.catalog
+                      entries: 1
+                      hits: 100
+                      misses: 2
+                    - name: storefront.category_nav
+                      entries: 1
+                      hits: 50
+                      misses: 1
+                  fpc:
+                    pages_stored: 12
+                    backend_get_errors: 0
+                    purges:
+                      tag_invalidation: 3
+                      manual_url: 1
+                    routes:
+                      - route: /products/{slug}
+                        hits: 80
+                        misses: 20
+                        bypasses: 2
+                        hit_rate: 0.8
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/cache/clear:
+    post:
+      operationId: adminCacheClear
+      tags: ["Admin: Cache"]
+      summary: Clear cache entries (admin)
+      description: >-
+        Exactly one selector: `prefix`, `tag`, `key`, or `all: true`.
+        Empty/whitespace selectors and `all: false` are omitted (422 if
+        that leaves no selector). Targeted clears require `cache.write`.
+        A full flush (`all: true`) requires the distinct `cache.clear_all`
+        permission. Redis flush scan-and-deletes keys under the store
+        prefix (never `FLUSHDB`); `deleted` is value-key count only.
+        Prefix is a literal string (Redis glob metacharacters are
+        escaped). This process's L1 stores are cleared only on `all`.
+        Every clear is audit-logged. 403 is a well-formed body the
+        caller is not permitted to run; 422 is an invalid selector.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prefix:
+                  type: string
+                tag:
+                  type: string
+                key:
+                  type: string
+                all:
+                  type: boolean
+            examples:
+              prefix:
+                value: { prefix: "product:123:" }
+              tag:
+                value: { tag: "cms:7" }
+              key:
+                value: { key: "product:123:en:EUR" }
+              all:
+                value: { all: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  mode: tag
+                  target: "cms:7"
+                  deleted: 12
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/cache/purge-url:
+    post:
+      operationId: adminCachePurgeURL
+      tags: ["Admin: Cache"]
+      summary: Purge full-page cache keys for a storefront path (admin)
+      description: >-
+        Escape hatch when tag invalidation missed a page (PR-1046). Deletes
+        the concrete FPC keys for `path` across every store's
+        store/language/currency vary dimension × guest and authenticated
+        auth-state — a handful of keys, not a wildcard scan. Requires
+        `cache.purge_url` (distinct from `cache.write`). Path must be an
+        allowlisted storefront route (`/`, `/products/{slug}`, …). Optional
+        query string is filtered like FPC storage (listing params plus any
+        `attr_*` keys present in the URL). Bare `/products` does not clear
+        paginated/sorted variants — pass the exact query or prefer
+        `POST /admin/cache/clear` with `tag`. `deleted` counts keys that
+        actually existed before delete (not the expand-list length); a
+        mid-loop backend error may leave other vary keys live. Always
+        audit-logged.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  example: /products/widget
+            examples:
+              pdp:
+                value: { path: "/products/widget" }
+              listing:
+                value: { path: "/products?page=2&sort=name" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  path: /products/widget
+                  keys:
+                    - "fpc:v1:…"
+                  deleted: 2
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
   # ── Admin: Search ──────────────────────────────────────
   /api/v1/admin/search/reindex:
     post:
@@ -2205,6 +2498,29 @@ components:
         type: integer
         default: 20
         maximum: 100
+    VisibilityAfter:
+      name: after
+      in: query
+      description: >
+        Opaque resume cursor from meta.next_after on the previous listing
+        response. When set, the offset parameter is ignored. Pass after (not
+        an advanced offset) when meta.truncated is true and next_after is
+        present. has_more may produce one trailing empty page when only
+        hidden rows remain. Cursors are position-based and can drift if
+        products are inserted or deleted between requests. Cursor resume
+        depth is capped at 100000 repository rows (classic offset is not
+        capped the same way): past that limit meta.depth_limited is true,
+        has_more is false, and next_after is omitted. Tampered or over-cap
+        cursors return 422.
+      schema:
+        type: string
+    ProductType:
+      name: type
+      in: query
+      description: Optional product type filter (admin list).
+      schema:
+        type: string
+        enum: [simple, virtual, bundle, grouped, configurable, downloadable]
     ProductId:
       name: id
       in: path
@@ -2251,6 +2567,30 @@ components:
         error:
           $ref: "#/components/schemas/ErrorBody"
 
+    VisibilityListMeta:
+      type: object
+      description: Pagination meta for visibility-filtered product listings.
+      properties:
+        truncated:
+          type: boolean
+          description: >
+            Scan budget stopped before the page was filled; continue with
+            after when next_after is present.
+        has_more:
+          type: boolean
+          description: >
+            More repository rows may exist. May produce one trailing empty
+            page when only hidden rows remain.
+        depth_limited:
+          type: boolean
+          description: >
+            Cursor resume reached the 100000-row depth cap. next_after is
+            omitted; classic offset may still reach deeper rows until keyset
+            pagination.
+        next_after:
+          type: string
+          description: Opaque resume cursor for the after query parameter.
+
     ErrorBody:
       type: object
       nullable: true
@@ -2294,6 +2634,164 @@ components:
           type: string
           format: password
 
+    VisibilityModesInput:
+      type: object
+      description: >-
+        Partial per-axis visibility override modes (PR-1055/PR-1059 CR). No
+        property is required — every axis is independently optional on both
+        create and update. "auto" resolves the axis from AutoBasis
+        (status/quantity/price/store/category facts); "visible"/"hidden"
+        force the axis regardless of those facts. An omitted axis keeps its
+        current/default value: on create, DefaultVisibilityAxes() (all auto)
+        for that axis; on update, the product's existing mode for that axis
+        (merge, not replace — sending only `{"catalog":"hidden"}` changes
+        catalog alone and leaves search/individually/purchasable untouched).
+        Omit the whole object to leave every axis at its current/default
+        value. Any present-but-invalid mode value is rejected with 422. An
+        explicit JSON `null` for one axis (e.g. `{"catalog": null}`) is
+        treated the same as omitting that axis entirely — it keeps the
+        stored/default mode, not an error — because each axis unmarshals
+        into a `*string` and JSON `null` leaves that pointer `nil`, exactly
+        like a key that was never sent.
+      properties:
+        catalog:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        search:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        individually:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        purchasable:
+          type: string
+          nullable: true
+          description: >-
+            "visible" here is a sellability override (force on sale), not
+            display-only — see internal/domain/catalog/visibility.go.
+          enum: [auto, visible, hidden]
+
+    VisibilityAxisExplanation:
+      type: object
+      description: >-
+        How one visibility axis resolved (PR-1059 CR) — mirrors
+        catalog.AxisExplanation. "resolved" is the domain-level ResolveAxis
+        result (ignores product status); "effective" is the public-gate
+        EffectiveAxis result (storefront truth — always false for a
+        non-active product, even when the mode is forced visible).
+        `failure_codes` is only populated when `mode` is "auto" and
+        `auto_basis` (on the parent AdminProductVisibility object) is false;
+        a forced axis has nothing to explain.
+      properties:
+        mode:
+          type: string
+          enum: [auto, visible, hidden]
+        override:
+          type: boolean
+          description: True when mode is not "auto" (a merchant override).
+        resolved:
+          type: boolean
+        effective:
+          type: boolean
+        failure_codes:
+          type: array
+          items:
+            type: string
+            enum: [status_inactive, no_stock, no_price, no_store_assignment, no_category]
+
+    AdminProductVisibility:
+      type: object
+      description: >-
+        The `visibility` object on `GET /api/v1/admin/products/{id}`
+        (PR-1059 CR). Informational only — never a gate. `enforced` mirrors
+        `catalog.visibility.enforce` (whether the public axis gate is
+        actually live); when false, `effective` on each axis still reports
+        what *would* happen if enforce were on. `failure_codes` is the
+        top-level AutoBasisFailureCodes list for the product's **saved**
+        status (status → stock → price → store → category, in check order);
+        `axes.<name>.failure_codes` repeats the same list only for axes
+        currently in "auto" mode with `auto_basis` false. `input_failure_codes`
+        (PR-1059 CR round 3) is `catalog.AutoBasisInputFailureCodes` — the
+        same list with `status_inactive` always excluded (stock → price →
+        store → category only). The admin SPA uses `input_failure_codes` as
+        the source of truth for a *live* status preview: when the form's
+        status select changes (before saving), it recomputes `auto_basis`/
+        `failure_codes` client-side from `{selected status, input_failure_codes}`
+        instead of re-fetching this payload, since `input_failure_codes`
+        never changes with the form's status — only the saved product's
+        underlying stock/price/store/category facts do.
+      properties:
+        enforced:
+          type: boolean
+        status:
+          type: string
+          enum: [draft, active, archived]
+        auto_basis:
+          type: boolean
+        failure_codes:
+          type: array
+          items:
+            type: string
+            enum: [status_inactive, no_stock, no_price, no_store_assignment, no_category]
+        input_failure_codes:
+          type: array
+          description: >-
+            failure_codes with status_inactive always excluded — see this
+            schema's description.
+          items:
+            type: string
+            enum: [no_stock, no_price, no_store_assignment, no_category]
+        axes:
+          type: object
+          properties:
+            catalog:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            search:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            individually:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            purchasable:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+
+    AdminProductGetData:
+      type: object
+      description: >-
+        `data` payload for `GET /api/v1/admin/products/{id}` (PR-1059 CR).
+      properties:
+        product:
+          type: object
+          description: >-
+            `catalog.Product`, Go-serialized with no JSON tags — field names
+            are the exported Go struct field names verbatim (PascalCase: `ID`,
+            `Name`, `Slug`, `Description`, `Status`, `Type`, `PricingMode`,
+            `StockMode`, `ExplodeOrderLines`, `VisibilityModes`, `Attributes`,
+            `CreatedAt`, `UpdatedAt`), not
+            the snake_case used by the rest of this response's `data` keys.
+        category_ids:
+          type: array
+          items:
+            type: string
+        visibility:
+          $ref: "#/components/schemas/AdminProductVisibility"
+        visibility_error:
+          type: string
+          description: >-
+            Set instead of `visibility` when the visibility-facts read
+            failed or the snapshot was missing (see this operation's
+            description). The product itself is still returned with a 200.
+
+    AdminProductGetResponse:
+      type: object
+      description: Envelope specialized with AdminProductGetData's typed `data`.
+      properties:
+        data:
+          $ref: "#/components/schemas/AdminProductGetData"
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
     CreateProductRequest:
       type: object
       required: [name, slug, description]
@@ -2304,6 +2802,39 @@ components:
           type: string
         description:
           type: string
+        type:
+          type: string
+          description: Product taxonomy; omit to default to simple.
+          enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        pricing_mode:
+          type: string
+          description: >-
+            Bundle price source. `fixed` uses the bundle's own price row.
+            `dynamic` sums required component prices when the product is priced
+            and is stored only for `type=bundle`. Omit to default to `fixed`.
+            Sending `dynamic` for any other type is rejected with 422.
+            An unknown token is rejected.
+          enum: [fixed, dynamic]
+        stock_mode:
+          type: string
+          description: >-
+            Bundle stock source. `fixed` uses the bundle's own stock row.
+            `dynamic` is the minimum of floor(component stock / required
+            quantity) across required components and is stored only for
+            `type=bundle`. Omit to default to `fixed`. Sending `dynamic` for
+            any other type is rejected with 422. An unknown token is rejected.
+            Grouped parents have no parent stock.
+          enum: [fixed, dynamic]
+        explode_order_lines:
+          type: boolean
+          description: >-
+            When true, checkout writes one order line per required component
+            and drops the bundle parent line. Allowed only when `type` is
+            `bundle` and both `pricing_mode` and `stock_mode` are `dynamic`.
+            Omit to default to false. Sending true for any other combination
+            is rejected with 422.
+        visibility_modes:
+          $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
           type: object
           additionalProperties: true
@@ -2320,6 +2851,36 @@ components:
         status:
           type: string
           enum: [active, draft, archived]
+        type:
+          type: string
+          enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        pricing_mode:
+          type: string
+          description: >-
+            Same values as create. Omitted on a bundle keeps the mode read
+            from the locked row. Changing `type` off `bundle` while omitting
+            this field stores `fixed`. Sending `dynamic` for a non-bundle is
+            rejected with 422.
+          enum: [fixed, dynamic]
+        stock_mode:
+          type: string
+          description: >-
+            Same values as create. Omitted on a bundle keeps the mode read
+            from the locked row. Changing `type` off `bundle` while omitting
+            this field stores `fixed`. Sending `dynamic` for a non-bundle is
+            rejected with 422.
+          enum: [fixed, dynamic]
+        explode_order_lines:
+          type: boolean
+          description: >-
+            Same rule as create. Omitted on a bundle keeps the flag read from
+            the locked row while the product remains a bundle with both
+            pricing_mode and stock_mode dynamic. Omitting the field stores
+            false when `type` changes off `bundle`, or when a pricing_mode or
+            stock_mode change leaves the bundle ineligible to explode. Sending
+            true without both dynamic modes is rejected with 422.
+        visibility_modes:
+          $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
           type: object
           additionalProperties: true

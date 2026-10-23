@@ -70,6 +70,111 @@ func TestRegisterFormField_UnknownForm(t *testing.T) {
 	}
 }
 
+func TestRegisterFormSection_Appends(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{
+		Fields: []admin.Field{{Name: "name", Type: "text", Label: "Name"}},
+	})
+
+	err := r.RegisterFormSection("product.form", admin.FormSection{
+		ID: "bundle-components", Title: "Bundle components", Types: []string{"bundle"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterFormSection: %v", err)
+	}
+
+	f, _ := r.Form("product.form")
+	if len(f.Sections) != 1 {
+		t.Fatalf("Sections len = %d, want 1", len(f.Sections))
+	}
+	if f.Sections[0].ID != "bundle-components" {
+		t.Errorf("Sections[0].ID = %q, want bundle-components", f.Sections[0].ID)
+	}
+	if len(f.Sections[0].Types) != 1 || f.Sections[0].Types[0] != "bundle" {
+		t.Errorf("Sections[0].Types = %v, want [bundle]", f.Sections[0].Types)
+	}
+}
+
+func TestRegisterFormSection_UnknownForm(t *testing.T) {
+	r := admin.NewRegistry()
+	err := r.RegisterFormSection("missing", admin.FormSection{ID: "x"})
+	if err == nil {
+		t.Fatal("expected error for unknown form")
+	}
+}
+
+func TestRegisterFormSection_EmptyID(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	if err := r.RegisterFormSection("product.form", admin.FormSection{Title: "X"}); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestRegisterFormSection_DuplicateID(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	sec := admin.FormSection{ID: "bundle-components", Title: "Bundle"}
+	if err := r.RegisterFormSection("product.form", sec); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if err := r.RegisterFormSection("product.form", sec); err == nil {
+		t.Fatal("expected duplicate id error")
+	}
+}
+
+func TestRegisterFormSection_EmptyTypeToken(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	err := r.RegisterFormSection("product.form", admin.FormSection{
+		ID: "x", Types: []string{"bundle", "  "},
+	})
+	if err == nil {
+		t.Fatal("expected error for blank types entry")
+	}
+}
+
+func TestRegisterFormSection_TrimsTypeTokens(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	err := r.RegisterFormSection("product.form", admin.FormSection{
+		ID: "bundle-components", Types: []string{" bundle ", "grouped"},
+	})
+	if err != nil {
+		t.Fatalf("RegisterFormSection: %v", err)
+	}
+	f, _ := r.Form("product.form")
+	if len(f.Sections[0].Types) != 2 || f.Sections[0].Types[0] != "bundle" || f.Sections[0].Types[1] != "grouped" {
+		t.Fatalf("Types = %v, want [bundle grouped]", f.Sections[0].Types)
+	}
+}
+
+func TestRegisterFormSection_CloneIsolation(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	types := []string{"bundle"}
+	meta := map[string]interface{}{"k": "v"}
+	if err := r.RegisterFormSection("product.form", admin.FormSection{
+		ID: "bundle-components", Title: "Bundle", Types: types, Meta: meta,
+	}); err != nil {
+		t.Fatalf("RegisterFormSection: %v", err)
+	}
+	types[0] = "mutated"
+	meta["k"] = "mutated"
+	f, _ := r.Form("product.form")
+	if f.Sections[0].Types[0] != "bundle" {
+		t.Errorf("Types mutated after register: %v", f.Sections[0].Types)
+	}
+	if f.Sections[0].Meta["k"] != "v" {
+		t.Errorf("Meta mutated after register: %v", f.Sections[0].Meta)
+	}
+	f.Sections[0].Types[0] = "again"
+	f2, _ := r.Form("product.form")
+	if f2.Sections[0].Types[0] != "bundle" {
+		t.Errorf("Form() did not clone Types: %v", f2.Sections[0].Types)
+	}
+}
+
 func TestRegisterGrid_and_Retrieve(t *testing.T) {
 	r := admin.NewRegistry()
 	r.RegisterGrid("product.grid", admin.Grid{

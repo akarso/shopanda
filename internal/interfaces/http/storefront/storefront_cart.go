@@ -128,14 +128,14 @@ func (h *StorefrontHandler) Cart() http.HandlerFunc {
 }
 
 func (h *StorefrontHandler) CartCountFragment() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withFragmentCacheControl(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(h.cartLabelBestEffort(r, "Cart (0)")))
-	}
+	})
 }
 
 func (h *StorefrontHandler) MiniCartFragment() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withFragmentCacheControl(func(w http.ResponseWriter, r *http.Request) {
 		page, err := h.buildCartPageResponse(r)
 		if err != nil {
 			h.log.Error("storefront.mini_cart.build_failed", err, map[string]interface{}{"path": r.URL.Path})
@@ -154,7 +154,7 @@ func (h *StorefrontHandler) MiniCartFragment() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(buf.Bytes())
-	}
+	})
 }
 
 func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
@@ -203,7 +203,7 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 					"quantity":    quantity,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, storefrontCartCustomerMessage(err, status), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, strings.TrimSpace(r.FormValue("redirect_to")), false, false)
@@ -248,7 +248,7 @@ func (h *StorefrontHandler) UpdateCart() http.HandlerFunc {
 					"quantity":    quantity,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, storefrontCartCustomerMessage(err, status), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, "/cart", true, true)
@@ -291,7 +291,7 @@ func (h *StorefrontHandler) RemoveCartItem() http.HandlerFunc {
 					"variant_id":  variantID,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, storefrontCartCustomerMessage(err, status), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, "/cart", true, true)
@@ -661,6 +661,16 @@ func storefrontSafeRedirectPath(raw, fallback string) string {
 		return fallback
 	}
 	return "/cart"
+}
+
+// storefrontCartCustomerMessage is the shopper-facing cart mutation text.
+// HTTP 500 and above use the same generic line as checkout. Lower statuses
+// keep customerErrorText (validation, not found).
+func storefrontCartCustomerMessage(err error, status int) string {
+	if status >= http.StatusInternalServerError {
+		return "Sorry, something went wrong. Please try again later."
+	}
+	return customerErrorText(err)
 }
 
 func (h *StorefrontHandler) logStorefrontCartError(event string, err error, r *http.Request, ctx map[string]interface{}) {

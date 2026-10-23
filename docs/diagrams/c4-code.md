@@ -303,6 +303,24 @@ classDiagram
         +ListProductIDs(ctx, collID) []string
     }
 
+    class BundleComponentRepository {
+        <<interface>>
+        +ListByBundleID(ctx, bundleID) []BundleComponent
+        +CountByBundleID(ctx, bundleID) int
+        +CountByComponentID(ctx, componentID) int
+        +Upsert(ctx, component) error
+        +Remove(ctx, bundleID, componentID) error
+    }
+
+    class GroupedMemberRepository {
+        <<interface>>
+        +ListByGroupID(ctx, groupID) []GroupedMember
+        +CountByGroupID(ctx, groupID) int
+        +CountByMemberID(ctx, memberID) int
+        +Insert(ctx, member) error
+        +Remove(ctx, groupID, memberID) error
+    }
+
     class PricingStep {
         <<interface>>
         +Name() string
@@ -379,6 +397,8 @@ classDiagram
 
     class PostgresProductRepo {
         -db *sql.DB
+        -tx *sql.Tx
+        +LockForUpdate(ctx, id) Type
     }
     class PostgresCartRepo {
         -db *sql.DB
@@ -391,6 +411,16 @@ classDiagram
     }
     class PostgresCollectionRepo {
         -db *sql.DB
+    }
+    class PostgresBundleComponentRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) BundleComponentRepository
+    }
+    class PostgresGroupedMemberRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) GroupedMemberRepository
     }
     class ManualPayProvider {
     }
@@ -502,6 +532,7 @@ classDiagram
         -grids map~string, *Grid~
         +RegisterForm(name, form)
         +RegisterFormField(formName, field) error
+        +RegisterFormSection(formName, section) error
         +RegisterGrid(name, grid)
         +RegisterGridColumn(gridName, column) error
         +RegisterAction(gridName, action) error
@@ -511,6 +542,18 @@ classDiagram
     class Form {
         +string Name
         +[]Field Fields
+        +[]FormSection Sections
+    }
+    class FormSection {
+        +string ID
+        +string Title
+        +[]string Types
+        +map Meta
+    }
+    class ProductSchemaRegistrar {
+        +RegisterProductSchemas(r)
+        +RegisterProductFormSection(r, section) error
+        +ProductTypeLabel(t) string
     }
     class Field {
         +string Name
@@ -564,9 +607,13 @@ classDiagram
     }
     class RateLimitMiddleware {
         <<middleware>>
-        -defaultLimiter *Limiter
+        -defaultLimiter Allow
         -routeLimiters []routeLimiter
         +ServeHTTP(w, r)
+    }
+    class Allow {
+        <<interface>>
+        +Allow(ctx, key) Decision
     }
     class Limiter {
         -mu sync.Mutex
@@ -574,7 +621,14 @@ classDiagram
         -rate float64
         -burst int
         +NewLimiter(rate, burst) *Limiter
-        +Allow(key) bool
+        +Allow(ctx, key) Decision
+    }
+    class SlidingWindowLimiter {
+        -factory *LimiterFactory
+        -name string
+        -limit int
+        -window Duration
+        +Allow(ctx, key) Decision
     }
 
     class SearchHandler {
@@ -611,6 +665,8 @@ classDiagram
     OrderRepository <|.. PostgresOrderRepo : implements
     CategoryRepository <|.. PostgresCategoryRepo : implements
     CollectionRepository <|.. PostgresCollectionRepo : implements
+    BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
+    GroupedMemberRepository <|.. PostgresGroupedMemberRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
@@ -622,7 +678,9 @@ classDiagram
     StoreAdminHandler --> StoreRepository : uses
     StoreMiddleware --> StoreRepository : resolves store by domain
     StoreMiddleware --> StoreAdminHandler : passes resolved store context
-    RateLimitMiddleware --> Limiter : checks per-IP token buckets
+    Allow <|.. Limiter : memory driver
+    Allow <|.. SlidingWindowLimiter : redis driver
+    RateLimitMiddleware --> Allow : checks per-IP budget
     ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
@@ -639,7 +697,9 @@ classDiagram
     AdminRegistry --> Form : manages
     AdminRegistry --> Grid : manages
     Form --> Field : contains
+    Form --> FormSection : contains
     Grid --> Column : contains
+    ProductSchemaRegistrar --> AdminRegistry : RegisterProductFormSection validates catalog.Type then RegisterFormSection
     Grid --> Action : contains
     EmailSendHandler --> Mailer : sends via
     NotificationService --> Templates : renders

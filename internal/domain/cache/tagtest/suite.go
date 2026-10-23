@@ -85,7 +85,7 @@ func Run(t *testing.T, c cache.Cache) {
 		assertMiss(t, c, key)
 	})
 
-	t.Run("DeleteByTagCountIsSnapshotSize", func(t *testing.T) {
+	t.Run("DeleteByTagCountIsValuesDeleted", func(t *testing.T) {
 		if err := c.SetWithTags(ctx, "tagtest:count:a", "a", time.Hour, "count-tag"); err != nil {
 			t.Fatalf("SetWithTags a: %v", err)
 		}
@@ -97,7 +97,7 @@ func Run(t *testing.T, c cache.Cache) {
 			t.Fatalf("DeleteByTag: %v", err)
 		}
 		if n != 2 {
-			t.Fatalf("DeleteByTag count = %d, want 2 (snapshot of both live keys)", n)
+			t.Fatalf("DeleteByTag count = %d, want 2 (both live values deleted)", n)
 		}
 		assertMiss(t, c, "tagtest:count:a")
 		assertMiss(t, c, "tagtest:count:b")

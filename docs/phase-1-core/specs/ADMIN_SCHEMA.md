@@ -49,10 +49,28 @@ Represents create/edit UI.
 
 ```go id="u1x9b7"
 type Form struct {
-    Name   string
-    Fields []Field
+    Name     string
+    Fields   []Field
+    Sections []FormSection // optional; type-scoped panels (PR-1053)
+}
+
+type FormSection struct {
+    ID    string
+    Title string
+    Types []string // opaque visibility tokens (trimmed); empty = always visible
+    Meta  map[string]interface{}
 }
 ```
+
+Product form convention (PR-1053): register type-specific panels with
+`application/admin.RegisterProductFormSection` (validates `Types` against
+`catalog.Type`) or `Registry.RegisterFormSection("product.form", …)` for opaque
+tokens. `RegisterFormSection` rejects empty/duplicate `ID` and blank `Types`
+entries. The admin SPA renders each section and shows it only when the product
+**Type** selector matches a value in `Types` (`data-product-type-section`; empty
+`types: []` = always visible). Section bodies live **outside** `#product-form`
+and must use their own save APIs — they are not collected by
+`collectProductPayload`. Fill bodies via `[data-product-type-section-body="<id>"]`.
 
 ---
 
@@ -143,12 +161,13 @@ Central place for schemas.
 
 ```go id="s2o7yk"
 func RegisterForm(name string, form Form)
-func RegisterFormField(formName string, field Field)
+func RegisterFormField(formName string, field Field) error
+func RegisterFormSection(formName string, section FormSection) error
 
 func RegisterGrid(name string, grid Grid)
-func RegisterGridColumn(gridName string, column Column)
+func RegisterGridColumn(gridName string, column Column) error
 
-func RegisterAction(gridName string, action Action)
+func RegisterAction(gridName string, action Action) error
 ```
 
 ---

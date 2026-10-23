@@ -27,8 +27,18 @@ func (m *stubSitemapProductRepo) FindByID(_ context.Context, _ string) (*catalog
 func (m *stubSitemapProductRepo) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *stubSitemapProductRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
-	return m.products, m.err
+func (m *stubSitemapProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	includeNonActive := filter.IncludeNonActive || catalog.IncludeNonActiveProducts(ctx)
+	out := make([]catalog.Product, 0, len(m.products))
+	for _, p := range m.products {
+		if includeNonActive || p.Status == catalog.StatusActive {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 func (m *stubSitemapProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
 	return nil, nil
@@ -188,6 +198,40 @@ func TestSitemapHandler_InactivePageExcluded(t *testing.T) {
 	}
 	if len(urlset.URLs) != 0 {
 		t.Errorf("urls = %d, want 0 (inactive page excluded)", len(urlset.URLs))
+	}
+}
+
+func TestSitemapHandler_IndividuallyHiddenExcluded(t *testing.T) {
+	now := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+	modes := catalog.DefaultVisibilityAxes()
+	hiddenInd := modes
+	hiddenInd.Individually = catalog.VisibilityModeHidden
+	catalogOnly := modes
+	catalogOnly.Catalog = catalog.VisibilityModeHidden // still individually visible
+	products := []catalog.Product{
+		{ID: "p-ind-hidden", Name: "NoPDP", Slug: "no-pdp", Status: catalog.StatusActive, VisibilityModes: hiddenInd, UpdatedAt: now},
+		{ID: "p-ok", Name: "OK", Slug: "ok", Status: catalog.StatusActive, VisibilityModes: catalogOnly, UpdatedAt: now},
+	}
+	facts := enforceFacts{
+		"p-ind-hidden": enforceSnap(hiddenInd),
+		"p-ok":         enforceSnap(catalogOnly),
+	}
+	h := storefront.NewSitemapHandler("https://shop.test",
+		&stubSitemapProductRepo{products: products},
+		&stubSitemapCategoryRepo{},
+		&stubSitemapPageRepo{},
+	).WithVisibilityFacts(facts)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/sitemap.xml", nil)
+	h.Serve().ServeHTTP(rec, req)
+
+	var urlset sitemapURLSet
+	if err := xml.Unmarshal(rec.Body.Bytes(), &urlset); err != nil {
+		t.Fatalf("XML parse: %v", err)
+	}
+	if len(urlset.URLs) != 1 || urlset.URLs[0].Loc != "https://shop.test/products/ok" {
+		t.Fatalf("urls=%v, want only individually-visible product", urlset.URLs)
 	}
 }
 

@@ -87,6 +87,30 @@ func TestReturn_RejectFromRequested(t *testing.T) {
 	}
 }
 
+func TestReturn_StoredStatusSurvivesTransition(t *testing.T) {
+	ret, err := returns.NewReturn("r1", "o1", "c1", "defect", "EUR", []returns.Item{
+		mustItem(t, "v1", 1, 500),
+	})
+	if err != nil {
+		t.Fatalf("NewReturn: %v", err)
+	}
+	if ret.StoredStatus() != returns.StatusRequested {
+		t.Fatalf("stored = %q, want requested", ret.StoredStatus())
+	}
+	if err := ret.Approve(); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if ret.Status() != returns.StatusApproved || ret.StoredStatus() != returns.StatusRequested {
+		t.Fatalf("status=%q stored=%q, want approved and stored requested", ret.Status(), ret.StoredStatus())
+	}
+	if err := ret.SetStatusFromDB(string(returns.StatusReceived)); err != nil {
+		t.Fatalf("SetStatusFromDB: %v", err)
+	}
+	if ret.StoredStatus() != returns.StatusReceived {
+		t.Fatalf("stored = %q, want received", ret.StoredStatus())
+	}
+}
+
 func TestReturn_CannotApproveTwice(t *testing.T) {
 	ret, _ := returns.NewReturn("r1", "o1", "", "defect", "EUR", []returns.Item{
 		mustItem(t, "v1", 1, 500),

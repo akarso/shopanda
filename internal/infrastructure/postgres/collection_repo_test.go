@@ -247,7 +247,7 @@ func TestCollectionRepo_AddProduct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("AddProduct: %v", err)
@@ -288,7 +288,7 @@ func TestCollectionRepo_AddProduct_Duplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("first AddProduct: %v", err)
@@ -329,7 +329,7 @@ func TestCollectionRepo_RemoveProduct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("AddProduct: %v", err)

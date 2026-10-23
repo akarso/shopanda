@@ -224,6 +224,8 @@
 .badge-done       { background: #d4edda; color: #155724; }
 .badge-completed  { background: #d4edda; color: #155724; }
 
+.badge-approximate { background: #e9ecef; color: #495057; text-transform: none; }
+
 .reindex-progress-track {
     background: #e9ecef;
     border-radius: 4px;
@@ -394,6 +396,23 @@
     margin: 0;
     color: var(--pico-muted-color);
     font-size: 0.85rem;
+}
+
+.cache-confirm-all {
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid #f2c870;
+    background: #fff4df;
+    border-radius: 4px;
+}
+
+.cache-clear-value-field[hidden],
+.cache-confirm-all[hidden] {
+    display: none;
+}
+
+.cache-confirm-all p {
+    margin: 0 0 0.5rem;
 }
 
 .settings-scope-badge {

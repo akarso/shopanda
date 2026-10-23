@@ -1,25 +1,27 @@
-package extension_test
+package extension
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/akarso/shopanda/internal/domain/extension"
-)
-
-func TestCartItemTargetID(t *testing.T) {
-	got := extension.CartItemTargetID("cart-1", "var-1")
-	want := "cart-1:var-1"
-	if got != want {
-		t.Fatalf("CartItemTargetID = %q, want %q", got, want)
+func TestParseCartItemTargetID(t *testing.T) {
+	tests := []struct {
+		in          string
+		cartID      string
+		variantID   string
+		ok          bool
+	}{
+		{"cart-1:var-1", "cart-1", "var-1", true},
+		{" cart-1 : var-2 ", "cart-1", "var-2", true},
+		{"cart-1:var:with:colons", "cart-1", "var:with:colons", true},
+		{"", "", "", false},
+		{"nocolon", "", "", false},
+		{":var-1", "", "", false},
+		{"cart-1:", "", "", false},
 	}
-}
-
-func TestCartItemTarget(t *testing.T) {
-	target := extension.CartItemTarget("cart-1", "var-1")
-	if target.Type != extension.TargetCartItem {
-		t.Fatalf("Type = %q, want cart_item", target.Type)
-	}
-	if target.ID != "cart-1:var-1" {
-		t.Fatalf("ID = %q, want cart-1:var-1", target.ID)
+	for _, tt := range tests {
+		cartID, variantID, ok := ParseCartItemTargetID(tt.in)
+		if ok != tt.ok || cartID != tt.cartID || variantID != tt.variantID {
+			t.Fatalf("ParseCartItemTargetID(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tt.in, cartID, variantID, ok, tt.cartID, tt.variantID, tt.ok)
+		}
 	}
 }

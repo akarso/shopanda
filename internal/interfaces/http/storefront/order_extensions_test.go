@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -62,6 +63,23 @@ func (m *orderTestExtensionValueRepo) UpsertBatch(_ context.Context, values []do
 		}
 	}
 	return nil
+}
+
+func (m *orderTestExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	prefix := strings.TrimSuffix(idPrefix, "%")
+	seen := make(map[string]struct{})
+	var out []string
+	for _, value := range m.values {
+		if value.TargetType != targetType || !strings.HasPrefix(value.TargetID, prefix) {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	return out, nil
 }
 
 func (m *orderTestExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {

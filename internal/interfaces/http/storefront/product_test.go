@@ -20,8 +20,9 @@ import (
 // --- mock repository ---
 
 type mockProductRepo struct {
-	findByIDFn func(ctx context.Context, id string) (*catalog.Product, error)
-	listFn     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
+	findByIDFn       func(ctx context.Context, id string) (*catalog.Product, error)
+	listFn           func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
+	findByCategoryFn func(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error)
 }
 
 func (m *mockProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
@@ -32,8 +33,8 @@ func (m *mockProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog
 	return nil, nil
 }
 
-func (m *mockProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
-	return m.listFn(ctx, offset, limit)
+func (m *mockProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+	return m.listFn(ctx, filter)
 }
 
 func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error {
@@ -43,7 +44,10 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
-func (m *mockProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+func (m *mockProductRepo) FindByCategoryID(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error) {
+	if m.findByCategoryFn != nil {
+		return m.findByCategoryFn(ctx, categoryID, offset, limit)
+	}
 	return nil, nil
 }
 func (m *mockProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
@@ -99,7 +103,7 @@ func parseBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfac
 
 func TestProductHandler_List_OK(t *testing.T) {
 	repo := &mockProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{
 				{ID: "p1", Name: "Widget"},
 				{ID: "p2", Name: "Gadget"},
@@ -128,9 +132,9 @@ func TestProductHandler_List_OK(t *testing.T) {
 func TestProductHandler_List_DefaultPagination(t *testing.T) {
 	var capturedOffset, capturedLimit int
 	repo := &mockProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			capturedOffset = offset
-			capturedLimit = limit
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			capturedOffset = filter.Offset
+			capturedLimit = filter.Limit
 			return nil, nil
 		},
 	}
@@ -185,7 +189,7 @@ func TestProductHandler_List_InvalidLimit(t *testing.T) {
 
 func TestProductHandler_List_WithPipeline(t *testing.T) {
 	repo := &mockProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{{ID: "p1", Name: "W"}}, nil
 		},
 	}
@@ -211,7 +215,7 @@ func TestProductHandler_List_WithPipeline(t *testing.T) {
 
 func TestProductHandler_List_RepoError(t *testing.T) {
 	repo := &mockProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return nil, apperror.Internal("db down")
 		},
 	}

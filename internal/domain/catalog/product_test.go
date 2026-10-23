@@ -28,6 +28,13 @@ func TestNewProduct(t *testing.T) {
 	if p.Status != catalog.StatusDraft {
 		t.Errorf("Status = %q, want draft", p.Status)
 	}
+	if p.Type != catalog.TypeSimple {
+		t.Errorf("Type = %q, want simple", p.Type)
+	}
+	wantModes := catalog.DefaultVisibilityAxes()
+	if p.VisibilityModes != wantModes {
+		t.Errorf("VisibilityModes = %+v, want %+v", p.VisibilityModes, wantModes)
+	}
 	if p.Attributes == nil {
 		t.Error("Attributes should be initialised")
 	}
@@ -60,6 +67,72 @@ func TestStatus_IsValid(t *testing.T) {
 				t.Errorf("Status(%q).IsValid() = %v, want %v", tc.status, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestType_IsValid(t *testing.T) {
+	tests := []struct {
+		productType catalog.Type
+		want        bool
+	}{
+		{catalog.TypeSimple, true},
+		{catalog.TypeVirtual, true},
+		{catalog.TypeBundle, true},
+		{catalog.TypeGrouped, true},
+		{catalog.TypeConfigurable, true},
+		{catalog.TypeDownloadable, true},
+		{catalog.Type("kit"), false},
+		{catalog.Type(""), false},
+	}
+	for _, tc := range tests {
+		name := string(tc.productType)
+		if name == "" {
+			name = "(empty)"
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := tc.productType.IsValid(); got != tc.want {
+				t.Errorf("Type(%q).IsValid() = %v, want %v", tc.productType, got, tc.want)
+			}
+		})
+	}
+	if len(catalog.AllTypes()) != 6 {
+		t.Errorf("AllTypes() len = %d, want 6", len(catalog.AllTypes()))
+	}
+}
+
+func TestType_RequiresPhysicalShipping(t *testing.T) {
+	tests := []struct {
+		productType catalog.Type
+		want        bool
+	}{
+		{catalog.TypeSimple, true},
+		{catalog.TypeVirtual, false},
+		{catalog.TypeBundle, true},
+		{catalog.TypeGrouped, true},
+		{catalog.TypeConfigurable, true},
+		{catalog.TypeDownloadable, false},
+		{catalog.Type(""), true},
+		{catalog.Type("kit"), true},
+	}
+	for _, tc := range tests {
+		name := string(tc.productType)
+		if name == "" {
+			name = "(empty)"
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := tc.productType.RequiresPhysicalShipping(); got != tc.want {
+				t.Errorf("RequiresPhysicalShipping() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !catalog.AnyRequiresPhysicalShipping(nil) {
+		t.Error("AnyRequiresPhysicalShipping(nil) = false, want true (fail closed)")
+	}
+	if catalog.AnyRequiresPhysicalShipping([]catalog.Type{catalog.TypeVirtual, catalog.TypeDownloadable}) {
+		t.Error("digital-only AnyRequiresPhysicalShipping = true, want false")
+	}
+	if !catalog.AnyRequiresPhysicalShipping([]catalog.Type{catalog.TypeVirtual, catalog.TypeSimple}) {
+		t.Error("mixed AnyRequiresPhysicalShipping = false, want true")
 	}
 }
 

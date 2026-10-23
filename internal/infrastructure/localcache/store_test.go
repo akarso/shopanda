@@ -27,6 +27,29 @@ func TestStore_MissingKey(t *testing.T) {
 	}
 }
 
+func TestStore_HitMissCounters(t *testing.T) {
+	s := localcache.New[string](10, time.Minute)
+	s.Set("k1", "v1")
+	if _, ok := s.Get("k1"); !ok {
+		t.Fatal("expected hit")
+	}
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("expected miss")
+	}
+	snap := s.Snapshot()
+	if snap.Entries != 1 || snap.Hits != 1 || snap.Misses != 1 {
+		t.Fatalf("snapshot = %+v, want entries=1 hits=1 misses=1", snap)
+	}
+	s.Clear()
+	snap = s.Snapshot()
+	if snap.Entries != 0 {
+		t.Fatalf("entries after Clear = %d, want 0", snap.Entries)
+	}
+	if snap.Hits != 1 || snap.Misses != 1 {
+		t.Fatalf("Clear must not reset hit/miss counters: %+v", snap)
+	}
+}
+
 func TestStore_Overwrite(t *testing.T) {
 	s := localcache.New[string](10, time.Minute)
 	s.Set("k1", "first")

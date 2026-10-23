@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +21,7 @@ import (
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -51,6 +51,7 @@ import (
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -75,6 +76,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -91,10 +93,8 @@ type serveRuntime struct {
 	jobQueue  jobs.Queue
 	appCache  cache.Cache
 
-	// rateLimiterRedisClient is set by buildServeHandler when
-	// rate_limit.driver=redis (nil otherwise) — see resolveRateLimiterFactory.
-	// Closed on shutdown in runServe alongside the other runtime resources.
-	rateLimiterRedisClient io.Closer
+	rateLimitFactory ratelimit.Factory
+	rateLimitClose   func()
 
 	metricsRecorder metrics.Recorder
 
@@ -114,14 +114,17 @@ type serveRuntime struct {
 	returnService         *returnsApp.Service
 	extensionValueService *extensionApp.ValueService
 	setupService          *setupApp.Service
+	bundleService         *catalogApp.BundleService
+	groupedService        *catalogApp.GroupedService
 
-	menuResolver   *cmsApp.MenuResolver
-	blockResolver  *cmsApp.BlockResolver
-	shippingReg    *shipping.ProviderRegistry
-	payRegistry    *payment.ProviderRegistry
-	slotRegistry   *slotsApp.Registry
-	assetRegistry  *assetsApp.Registry
-	attributeStore *adminApp.AttributeStore
+	menuResolver    *cmsApp.MenuResolver
+	blockResolver   *cmsApp.BlockResolver
+	visibilityFacts catalog.VisibilityFactsSource
+	shippingReg     *shipping.ProviderRegistry
+	payRegistry     *payment.ProviderRegistry
+	slotRegistry    *slotsApp.Registry
+	assetRegistry   *assetsApp.Registry
+	attributeStore  *adminApp.AttributeStore
 
 	log logger.Logger
 
@@ -183,6 +186,9 @@ type serveRuntime struct {
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
 	storeCreditAccount             *storefront.StoreCreditAccountHandler
 	jobAdmin                       *admin.JobAdminHandler
+	cacheAdmin                     *admin.CacheAdminHandler
+	cacheAdminService              *cacheApp.AdminService
+	fpcObs                         *cacheApp.FPCObserver
 	searchAdmin                    *admin.SearchAdminHandler
 	scheduleAdmin                  *admin.ScheduleAdminHandler
 	schedulerStore                 *postgres.SchedulerStore
@@ -253,7 +259,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
-	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
+	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo, conn)
 	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
@@ -290,10 +296,19 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
-	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
+	jobWorker, jobQueue, appCache, fpcObs, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		return nil, err
 	}
+	rateLimitFactory, rateLimitClose, err := resolveRateLimitFactory(cfg, log, metricsRecorder)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil && rateLimitClose != nil {
+			rateLimitClose()
+		}
+	}()
 	if err := integrationApp.RegisterSyncJobEventTriggers(pluginApp, bus, jobQueue, log); err != nil {
 		return nil, fmt.Errorf("sync job event triggers: %w", err)
 	}
@@ -385,7 +400,41 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	menuResolver := cmsApp.NewMenuResolver(repos.categoryRepo, repos.pageRepo)
 
+	// visibilityOpts is the shared, zero-value VisibilityOptions for every
+	// AutoBasis caller (public gate below, admin GUI, cart/checkout). No
+	// config key feeds RequireCategory today — see PR-1059.md.
+	visibilityOpts := catalog.VisibilityOptions{}
+
+	// Axis gates stay off until catalog.visibility.enforce (default false).
+	var visibilityFacts catalog.VisibilityFactsSource
+	var visibilityFactsRepo *postgres.VisibilityFactsRepo
+	if cfg.Catalog.Visibility.Enforce {
+		factsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("visibility facts: %w", err)
+		}
+		visibilityFactsRepo = factsRepo
+		visibilityFacts = factsRepo
+		log.Info("catalog.visibility.enforce_enabled", nil)
+	}
+
+	// Admin visibility facts (PR-1059): informational (the "why hidden"
+	// explanation on the product edit form), not a gate — wired unconditionally
+	// so merchants can audit modes before enabling enforce. Reuse the repo
+	// above when enforce already created one; otherwise construct a second
+	// instance (same underlying SQL, different method called per caller).
+	adminVisibilityFacts := visibilityFactsRepo
+	if adminVisibilityFacts == nil {
+		factsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("admin visibility facts: %w", err)
+		}
+		adminVisibilityFacts = factsRepo
+	}
 	blockResolver := cmsApp.NewBlockResolver(repos.productRepo)
+	if visibilityFacts != nil {
+		blockResolver = blockResolver.WithVisibilityFacts(visibilityFacts)
+	}
 
 	contentTranslator := translation.NewContentTranslator(repos.contentTranslationRepo, log)
 
@@ -442,6 +491,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
 	cacheInvalidation.Register(bus)
 
+	// Wire product/price/stock/category/CMS changes → full-page cache tag purge (PR-1046).
+	// Reuse setupWorker's FPCObserver so reindex listing invalidation, this
+	// bus subscriber, storefront, and admin stats share one process mirror (PR-1047).
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+		WithObserver(fpcObs).
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
+	fpcInvalidation.Register(bus)
+
 	// Wire product/price/stock/category-assignment changes → search index
 	// updates (PR-1036), queued and debounced via reindexService.Trigger —
 	// replaces the previous inline bus.OnAsync(catalog.EventProduct*, ...)
@@ -457,10 +514,13 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	baseURL := cfg.Server.PublicBaseURL
 
 	// Composition pipelines (core SEO steps + plugin steps).
+	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo, conn)
+	groupedService := catalogApp.NewGroupedService(repos.productRepo, repos.groupedMemberRepo, conn)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
-	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo))
+	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo).
+		WithBundleStockRollup(repos.productRepo, repos.bundleComponentRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	pdp.AddStep(composition.NewPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
 	pdp.AddStep(composition.NewWeeeStep(repos.configRepo))
@@ -494,8 +554,17 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, fmt.Errorf("tax calculator: %w", err)
 	}
+	unitPrices := appPricing.UnitPriceSources{
+		Prices:     repos.priceRepo,
+		Variants:   repos.variantRepo,
+		Products:   repos.productRepo,
+		Components: repos.bundleComponentRepo,
+	}
+	if unitPrices.Prices == nil || unitPrices.Variants == nil || unitPrices.Products == nil || unitPrices.Components == nil {
+		return nil, fmt.Errorf("pricing: catalog-aware base price requires prices, variants, products, and bundle components")
+	}
 	corePricingSteps := []pricing.PricingStep{
-		appPricing.NewBasePriceStep(repos.priceRepo),
+		appPricing.NewBasePriceStep(unitPrices),
 		appPricing.NewCatalogPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
 		appPricing.NewCartPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
 		appPricing.NewTaxStep(taxCalculator),
@@ -522,16 +591,20 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
+	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
+		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
-	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo)
+	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo).
+		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
-	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
-		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))
-	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
+	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo, repos.productRepo, repos.variantRepo, repos.bundleComponentRepo,
+		checkoutApp.WithStockEventPublishing(bus), checkoutApp.WithLogger(log))
+	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService, repos.productRepo, repos.bundleComponentRepo, repos.priceRepo).
+		WithReservations(repos.reservationRepo).
+		WithStockEventPublishing(bus, log)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
@@ -612,6 +685,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	adminApp.RegisterProductSchemas(adminRegistry)
 	adminApp.RegisterPageSchemas(adminRegistry)
 
+	// Visibility axes section (PR-1059): type-agnostic — Types: nil, so it
+	// is always visible regardless of product type.
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "visibility", Title: "Visibility", Types: nil,
+	}); err != nil {
+		return nil, fmt.Errorf("register visibility form section: %w", err)
+	}
+
 	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
 	discoveryFacetSync := newDiscoveryFacetSyncer(attributeStore, searchEngine)
@@ -641,12 +722,22 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	sharedAuditor.SetAuditLogRepository(repos.auditLogRepo)
 
 	// Handlers.
-	productHandler := storefront.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator)
-	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log)
+	productHandler := storefront.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator).
+		WithVisibilityFacts(visibilityFacts)
+	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log).
+		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
+		WithBundleComponents(repos.bundleComponentRepo).
+		WithGroupedMembers(repos.groupedMemberRepo).
+		WithVariantPrices(repos.variantRepo, repos.priceRepo).
+		WithVariantStock(repos.stockRepo).
+		WithTxStarter(conn)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
-	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus)
+	productPriceAdmin.WithTxStarter(conn)
+	productPriceAdmin.WithHistory(repos.priceHistoryRepo) // catalog price change → price_history (same as CSV import)
+	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
+		WithVisibilityFacts(visibilityFacts)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
 	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService)
@@ -686,11 +777,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
-	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log)
+	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log).
+		WithTxStarter(conn)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
-	reviewHandler := storefront.NewReviewHandler(reviewService)
-	reviewAccount := storefront.NewReviewAccountHandler(reviewService)
+	reviewHandler := storefront.NewReviewHandler(reviewService).
+		WithVisibilityGate(repos.productRepo, visibilityFacts)
+	reviewAccount := storefront.NewReviewAccountHandler(reviewService).
+		WithVisibilityGate(repos.productRepo, visibilityFacts)
 	reviewAdmin := admin.NewReviewAdminHandler(reviewService, sharedAuditor)
 	eprExporter := exporter.NewEprExporter(repos.productRepo, repos.variantRepo, repos.configRepo)
 	eprReportAdmin := admin.NewEprReportHandler(eprExporter)
@@ -699,11 +793,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	paymentAdmin := admin.NewPaymentAdminHandler(repos.paymentRepo, sharedAuditor)
 
 	shippingRates := storefront.NewShippingRatesHandler(shippingReg.Providers()...)
-	categoryHandler := storefront.NewCategoryHandler(repos.categoryRepo, repos.productRepo)
+	categoryHandler := storefront.NewCategoryHandler(repos.categoryRepo, repos.productRepo).
+		WithVisibilityFacts(visibilityFacts)
 	categoryAdmin := admin.NewCategoryAdminHandlerWithAuditor(repos.categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(repos.categoryRepo, repos.productRepo, repos.productRepo, sharedAuditor)
 	categoryProductAssignmentAdmin.SetBus(bus) // PR-1036: category assignment change → search index update
-	searchHandler := storefront.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
+	searchHandler := storefront.NewSearchHandler(searchEngine).
+		WithAdvancedSearchAttributes(attributeStore).
+		WithVisibilityFacts(visibilityFacts)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
@@ -764,7 +861,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	extensionSlotAdmin := admin.NewExtensionSlotAdminHandler(slotRegistry)
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)
 	extensionPortAdmin := admin.NewExtensionPortAdminHandler(portSnapshot)
-	inventoryAdmin := admin.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor)
+	inventoryAdmin := admin.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor).
+		WithProducts(repos.productRepo).
+		WithTxStarter(conn)
 	inventoryAdmin.SetBus(bus) // PR-1036: stock adjustment → search index update
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
@@ -795,10 +894,20 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
 	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
 	jobAdmin := admin.NewJobAdminHandler(jobsService, sharedAuditor)
+	cacheAdminService := cacheApp.NewAdminService(appCache, []cacheApp.L1Source{{
+		Name: "rbac.catalog",
+		Snap: func() (int, int64, int64) {
+			s := adminRoleService.CatalogCacheSnapshot()
+			return s.Entries, s.Hits, s.Misses
+		},
+		Clear: adminRoleService.ClearCatalogCache,
+	}}).WithFPCObserver(fpcObs)
+	cacheAdmin := admin.NewCacheAdminHandler(cacheAdminService, sharedAuditor).WithStores(repos.storeRepo)
 	searchAdmin := admin.NewSearchAdminHandler(reindexService, searchIndexRunRepo, searchProductSource, searchCategorySource, searchEngine, sharedAuditor)
 	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
-	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
+	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo).
+		WithVisibilityFacts(visibilityFacts)
 	robotsHandler := storefront.NewRobotsHandler(baseURL)
 
 	specPath := filepath.Join(filepath.Dir(config.FindConfigFile()), "openapi.yaml")
@@ -825,6 +934,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		jobWorker:                      jobWorker,
 		jobQueue:                       jobQueue,
 		appCache:                       appCache,
+		rateLimitFactory:               rateLimitFactory,
+		rateLimitClose:                 rateLimitClose,
 		metricsRecorder:                metricsRecorder,
 		searchEngine:                   searchEngine,
 		tokenParser:                    tokenParser,
@@ -839,8 +950,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		returnService:                  returnService,
 		extensionValueService:          extensionValueService,
 		setupService:                   setupService,
+		bundleService:                  bundleService,
+		groupedService:                 groupedService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
+		visibilityFacts:                visibilityFacts,
 		shippingReg:                    shippingReg,
 		payRegistry:                    payRegistry,
 		slotRegistry:                   slotRegistry,
@@ -905,6 +1019,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeCreditAdmin:               storeCreditAdmin,
 		storeCreditAccount:             storeCreditAccount,
 		jobAdmin:                       jobAdmin,
+		cacheAdmin:                     cacheAdmin,
+		cacheAdminService:              cacheAdminService,
+		fpcObs:                         fpcObs,
 		searchAdmin:                    searchAdmin,
 		scheduleAdmin:                  scheduleAdmin,
 		schedulerStore:                 schedulerStore,

@@ -2,24 +2,24 @@
 
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
-| PR-1048 | — | planned | [Allow zero-price products](PR-1048.md) |
-| PR-1049 | A | planned | [`Type` field + migration](PR-1049.md) |
-| PR-1050 | A | planned | [Type-driven shipping/tax requirements](PR-1050.md) |
-| PR-1051 | A | planned | [Admin API type field support](PR-1051.md) |
-| PR-1052 | A | planned | [CSV import/export: type field](PR-1052.md) |
-| PR-1053 | A | planned | [Admin GUI: type selector + type-specific sections](PR-1053.md) |
-| PR-1054 | B | planned | [Enforce `Status = active` in core read paths](PR-1054.md) |
-| PR-1055 | B | planned | [Four-axis visibility model](PR-1055.md) |
-| PR-1056 | B | planned | [Admin vs. public/storefront API split](PR-1056.md) |
-| PR-1057 | B | planned | [Enforce visibility in storefront read paths](PR-1057.md) |
-| PR-1058 | B | planned | [Cart/checkout purchasability gate + hook point](PR-1058.md) |
-| PR-1059 | B | planned | [Visibility admin GUI](PR-1059.md) |
-| PR-1060 | C | planned | [Bundle domain model](PR-1060.md) |
-| PR-1061 | C | planned | [Grouped domain model](PR-1061.md) |
-| PR-1062 | C | planned | [Bundle/grouped pricing rollup](PR-1062.md) |
-| PR-1063 | C | planned | [Stock rollup per type](PR-1063.md) |
-| PR-1064 | C | planned | [Order line explosion + returns integration](PR-1064.md) |
-| PR-1065 | C | planned | [Omnibus/VAT per component line](PR-1065.md) |
+| PR-1048 | — | done | [Allow zero-price products](PR-1048.md) |
+| PR-1049 | A | done | [`Type` field + migration](PR-1049.md) |
+| PR-1050 | A | done | [Type-driven shipping/tax requirements](PR-1050.md) |
+| PR-1051 | A | done | [Admin API type field support](PR-1051.md) |
+| PR-1052 | A | done | [CSV import/export: type field](PR-1052.md) |
+| PR-1053 | A | done | [Admin GUI: type selector + type-specific sections](PR-1053.md) |
+| PR-1054 | B | done | [Enforce `Status = active` in core read paths](PR-1054.md) |
+| PR-1055 | B | done | [Four-axis visibility model](PR-1055.md) |
+| PR-1056 | B | done | [Admin vs. public/storefront API split](PR-1056.md) |
+| PR-1057 | B | done | [Enforce visibility in storefront read paths](PR-1057.md) |
+| PR-1058 | B | done | [Cart/checkout purchasability gate + hook point](PR-1058.md) |
+| PR-1059 | B | done | [Visibility admin GUI](PR-1059.md) |
+| PR-1060 | C | done | [Bundle domain model](PR-1060.md) |
+| PR-1061 | C | done | [Grouped domain model](PR-1061.md) |
+| PR-1062 | C | done | [Bundle/grouped pricing rollup](PR-1062.md) |
+| PR-1063 | C | done | [Stock rollup per type](PR-1063.md) |
+| PR-1064 | C | done | [Order line explosion + returns integration](PR-1064.md) |
+| PR-1065 | C | done | [Omnibus catalog history for kits](PR-1065.md) |
 | PR-1066 | C | planned | [Bundle/grouped admin API + CSV + GUI](PR-1066.md) |
 | PR-1067 | D | planned | [`LinkedProduct` catalog eligibility](PR-1067.md) |
 | PR-1068 | D | planned | [`RequiresLinkedParent` purchasability gate](PR-1068.md) |
@@ -43,4 +43,4 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
 **Ordering rule:** PR-1048 ships standalone, first. Track A (PR-1049–1053) before everything else — `Type` is referenced by every later track. Track B (PR-1054–1059) before Tracks C/D/E — bundle, linked-child, and downloadable salability rules are all built on `Purchasable`. Tracks C, D, and E have no dependency on each other. Track F (PR-1079–1083) depends on C/D/E being substantially complete and on Phase 11 Track B (search indexing) already having shipped.
 
-Continues Phase 11's PR numbering (highest prior: PR-1047).
+Continues Phase 11's PR numbering as originally planned (highest prior at draft time: PR-1047). **Collision:** Phase 11 later shipped its own PR-1048 / PR-1049 under `docs/phase-11-jobs-search-cache/prs/` for different work. Phase 12 roadmap ids stay as written; disambiguate by phase folder. Consider renumbering Track A+ before implementing PR-1049.

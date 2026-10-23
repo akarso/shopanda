@@ -19,7 +19,7 @@ func testLogger() logger.Logger { return logger.NewWithWriter(io.Discard, "error
 type stubProductRepo struct {
 	findByIDFn         func(ctx context.Context, id string) (*catalog.Product, error)
 	findBySlugFn       func(ctx context.Context, slug string) (*catalog.Product, error)
-	listFn             func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
+	listFn func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	findByCategoryIDFn func(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error)
 }
 
@@ -37,9 +37,9 @@ func (s *stubProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog
 	return nil, nil
 }
 
-func (s *stubProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
+func (s *stubProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 	if s.listFn != nil {
-		return s.listFn(ctx, offset, limit)
+		return s.listFn(ctx, filter)
 	}
 	return nil, nil
 }
@@ -106,7 +106,7 @@ func testResolver(t *testing.T) *cgraphql.Resolver {
 				}
 				return nil, nil
 			},
-			listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {
+			listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 				return []catalog.Product{product}, nil
 			},
 		},

@@ -24,6 +24,13 @@ func (h *StorefrontHandler) WithLayeredNavAttributes(lister LayeredNavAttributeL
 }
 
 func (h *StorefrontHandler) layeredNavAttributes(ctx context.Context) ([]catalog.Attribute, error) {
+	if bag := fpcAttrBagFrom(ctx); bag != nil {
+		return bag.layered, nil
+	}
+	return h.fetchLayeredNavAttributes(ctx)
+}
+
+func (h *StorefrontHandler) fetchLayeredNavAttributes(ctx context.Context) ([]catalog.Attribute, error) {
 	if h.layeredNavAttrs == nil {
 		return nil, nil
 	}

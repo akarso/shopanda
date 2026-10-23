@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strings"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -71,6 +73,31 @@ func (m *mockExtensionValueRepo) Delete(_ context.Context, target domainext.Targ
 	}
 	delete(m.values, key)
 	return nil
+}
+
+// ListTargetIDsByTypeAndIDPrefix satisfies domainext.ValueRepository.
+// Callers pass SQL LIKE patterns (e.g. cartID+":%"); strip a trailing "%"
+// before prefix compare so the mock matches postgres LIKE semantics for that
+// production pattern (same approach as memValueRepo in application/extension).
+func (m *mockExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	prefix := strings.TrimSuffix(idPrefix, "%")
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, value := range m.values {
+		if value.TargetType != targetType {
+			continue
+		}
+		if !strings.HasPrefix(value.TargetID, prefix) {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func registerExtensionField(t *testing.T, reg *extensionapp.Registry, def domainext.FieldDef) {

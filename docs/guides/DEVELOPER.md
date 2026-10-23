@@ -25,6 +25,8 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
 - [Jobs admin API](#jobs-admin-api)
+- [Cache admin API](#cache-admin-api)
+- [Full-page cache](#full-page-cache)
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
@@ -181,6 +183,21 @@ Rules:
 - The permission catalog is the exception: `rbac.Registry` is frozen after plugin `Init()` and never mutates again, so the ONLY way its L1 entry can go stale is a new plugin version shipping a new/changed permission — and an old, un-restarted replica's TTL just keeps re-populating the SAME stale, pre-upgrade registry snapshot forever; waiting out the TTL there does not converge to the new value. Deployment/restart, not the TTL, is the actual bound for that case.
 
 (A generic `cache.Cache`-level broadcast — a `Store` subscribing directly to any `DeleteByTag`/`DeleteByPrefix` on the shared L2 backend, rather than to the specific domain event that caused it — was considered and deliberately not built: neither current L1 consumer needs it, and this repo does not pre-build for a hypothetical future consumer. Add it if and when an actual L1-over-L2 use site needs it.)
+
+### HTTP rate-limit backends
+
+`rate_limit.driver` swaps the HTTP limiter backend without changing middleware:
+
+| Driver | Implementation | Shared across instances? |
+| --- | --- | --- |
+| `memory` (default) | `ratelimit.Limiter` token bucket | No — each process has its own buckets |
+| `redis` | Redis ZSET sliding window (`TIME` + Lua; Redis 5+) | Yes — window `burst/rate` seconds (µs scores), capacity burst |
+
+Both satisfy `ratelimit.Allow` (`Allow(ctx, key) Decision`) / `ratelimit.Factory`. Serve always opens a dedicated Redis client (200ms I/O, retries disabled, pool `min(10*GOMAXPROCS, 64)`) from `rate_limit.redis.url`, else `cache.redis.url` (single-node only). Keys use `<prefix>-rl:` (`rate_limit.redis.key_prefix`, else `cache.redis.key_prefix`, else `shopanda`). When `cache.driver=redis`, the cache prefix must be non-empty. Redis errors follow `on_error` (`open`/`closed`/`local`) after ≥20 requests at ≥50% errors in 2s, or ≥5 all-error requests within those 2s, with a single-probe half-open (failed probes re-arm the 5s hold). An already-cancelled request sets `Decision.Canceled`; middleware writes 499 (no 429) so metrics record 4xx. Redis I/O uses `WithoutCancel`. The memory driver ignores `ctx`. `/readyz` is always in-process. `/healthz` is unmetered. Limiter fail-open at boot does not cover `cache.driver=redis` (`ConnectURL` still PINGs).
+
+`ClientIP` joins every `X-Forwarded-For` line, walks from the right, accepts `ip:port` / `[v6]:port`, and stops at the first invalid hop. `trusted_proxies` must include CDN/edge ranges — this also keys auth lockout. There is no auth `per_route` in `defaults()`.
+
+Adding `RateLimitBackendError(limiter, reason string)` to `metrics.Recorder` is a breaking change for any out-of-repo recorder implementation (none in this repository). `reason` is `error`, `circuit_open`, or `pool_timeout`. `limiter` is `default` or `route:<path_prefix>` (not the CR1 `per_route` umbrella).
 
 ### Startup behavior
 
@@ -682,6 +699,75 @@ The embedded admin SPA stores its JWT in browser local storage and sends it as a
 
 Both endpoints are Postgres-queue-only, the same limitation as the read endpoints above: a broker-backed queue driver (Redis, RabbitMQ, etc.) has no queryable/updatable job table, so `serve` fails startup with a clear error if the configured queue driver doesn't support this rather than silently omitting the routes.
 
+## Cache admin API
+
+`GET /api/v1/admin/cache/stats` — gated by `cache.read` — returns approximate L2 occupancy (Postgres `COUNT(*)` of `cache`/`cache_tags` with a 1.5s cap, then `pg_class.reltuples` with `l2.approximate: true`; Redis `DBSIZE` + `INFO memory`) plus this process's L1 stores (RBAC catalog, storefront category nav) with hit/miss counters. L2 hit/miss is not tracked here (see PR-1042 out of scope / PR-1047). The admin UI is **Operations → Cache** (`/admin/operations/cache`); `curl` and `app cache:stats` remain available. Successful HTTP stats are not audit-logged (polled); failures are.
+
+The Cache screen (like Jobs/Search) gates nav and form modes with the SPA's compiled `adminRoleDefinitions()`, not DB-effective permissions. A role granted `cache.*` only in `role_permissions` still has no Cache UI; an admin whose DB grants were revoked still sees it and is rejected at the API. That is a panel-wide limitation until `/auth/me` returns the effective permission list.
+
+Confirm-UX for the GUI lives in `internal/interfaces/http/admin/cache_admin_ui_test.js` and is invoked from `TestCacheAdminUI_Node`. That requires Node 22 on `PATH` (same major as the CI unit job). See [Continuous Integration](#continuous-integration).
+
+`POST /api/v1/admin/cache/clear` — body exactly one of `{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}` / `{"all": true}`. Empty/whitespace selectors are omitted. Targeted clears require `cache.write`; `all` requires the distinct `cache.clear_all` permission. Prefix is literal (Redis glob characters are escaped). Redis `all` scan-and-deletes under the store prefix, never `FLUSHDB`, and refuses an empty prefix; `deleted` is value keys only. SCAN is best-effort (not a snapshot). Every clear is audit-logged. CLI: `app cache:clear --prefix=<p> | --tag=<t> | --key=<k> | --all` — the CLI has **no RBAC** (ops trust boundary, same as jobs CLI).
+
+`POST /api/v1/admin/cache/purge-url` — `{"path":"/products/…"}` (PR-1046). Requires `cache.purge_url` (also backfilled in migration `080` — compiled `role_permissions.go` alone is not enough after `InitEffectivePermissions`). Deletes concrete FPC keys for that path (+ filtered query, including `attr_*` present in the URL) across every store's store/language/currency × guest/authenticated — not a wildcard scan and not every listing variant of bare `/products`. Prefer `{"tag":"product:…"}` to clear a whole PLP surface. `deleted` is existing-key removals only. CLI: `app cache:purge-url <path>`.
+
+A custom `Cache` implementation must implement `Stats` and `FlushAll` in addition to the PR-1039 tag methods.
+
+## Full-page cache
+
+The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache.Cache` after `html/template` execution (PR-1044). This is **opt-in per route template**, not opt-out per path.
+
+**Allowlist** (anything else is never stored): `/` (home), `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`. Defined in `internal/application/cache` (`Allowlisted`). Adding a new storefront route does **not** cache it until that template is added to the allowlist.
+
+**Denylist** (independent second check): `/cart`, `/checkout`, `/account`, `/admin`, `/fragments`, `/api`, `/setup`. A template on the allowlist still will not cache if the request path matches a denylist prefix (`Cacheable` requires both).
+
+**Reviewer checklist before allowlisting a route:**
+
+- No **filled** CSRF token in the cached body. Cacheable layouts set `Layout.UseFragments` (and clear `Layout.CSRFToken`) so themes can switch to `{{fragment "csrf"}}` / `{{fragment "greeting"}}`. Store is refused if the request token appears or a filled `csrf_token` input is present. Merchandising copy that mentions “csrf_token” is fine. Logout forms may remain in the shell with an empty token field.
+- No session, cart contents, customer ID, or display name in the body. Use fragments (`cart-count`, `mini-cart`, `greeting`, …). Authenticated chrome may differ from guest (`auth_state` is in the vary key) but must stay generic ("Account", not "Alice") until the greeting fragment swaps in. Store is refused if the HTML contains the current customer ID or display name (case-insensitive for the name).
+- Do not enable FPC on a storefront that SSR-bakes B2B/group prices or other customer-scoped composition into the page — two authenticated customers share one entry. Keep those bits in fragments.
+- Vary key is `{store, language, currency, auth_state}` plus path + **filtered** query (`q`, `page`, `per_page`, `sort`, `view`, `category`, and only `attr_*` codes in the active layered-nav / advanced-search set). Home/PDP/CMS drop query entirely. Tracking params and unknown `attr_*` are dropped. Repeated values keep the **original first** value (`page=2&page=1` keys and renders as page 2 — matching `url.Values.Get`). **Handlers under FPC see this scrubbed `RawQuery`** — a future PDP/CMS query that changes HTML (`?variant=`, preview flags) needs an explicit FilterQuery hook, not an ad-hoc `r.URL.Query()` read. If the attr allowlist cannot be loaded, FPC **BYPASS**es (does not treat “no attrs” as authoritative, which would HIT an unfiltered shell while the URL still shows filters). The loaded attr set is stashed on the request so the listing handler does not fetch it twice on MISS. HIT still reads the allowlist once to build the key (process-level cache is a PR-1046/perf follow-up).
+- Tag every cached entry (`SetWithTags`) with the product/category/CMS/page IDs it rendered so tag invalidation can purge precisely. Include **every category ID in the layout tree** (nav / breadcrumbs / subcategory links), not only the viewed category — otherwise `/categories` can omit tags for empty categories shown in chrome. PDPs also tag assigned category IDs via `ListCategoryIDsByProduct` (skipped when FPC is off / no tag bag; a repo that does not implement it logs `storefront.fpc.pdp_category_tags_unavailable` once).
+- Best-effort 200s with missing content (content-block or category-nav load failure) still render for shoppers but are **not stored** (`SkipStore` → `BYPASS`).
+- When CSP nonces are enabled, HIT responses **rotate** the stored nonce in both HTML and `Content-Security-Policy` so a shared entry never replays a reusable nonce.
+- Authenticated FPC responses keep `Cache-Control: no-store` (Phase 10 middleware). Only guest hits/misses set `public, max-age=<remaining TTL>`.
+
+**Invalidation (PR-1046):** `FPCInvalidationSubscriber` listens async for product create/update, price upsert, stock update, category create/update/delete, and CMS page create/update/delete, then `DeleteByTag` on `product:` / `category:` / `page:`. Content-block-only edits have no event yet — use purge-url or clear by tag. Concurrent misses for the same key are coalesced in-process (`MissCoalescer`, ~2s wait then render-anyway); cross-instance locking is not built.
+
+**Config:** `cache.full_page.enabled` defaults **false** (omitting the YAML block keeps that default). With PR-1045 fragments in the default theme, opt in safely via `cache.full_page.enabled: true` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED=true`. Custom themes must use `{{fragment "csrf"}}` (and greeting/cart helpers as needed) or keep personalized bits off allowlisted routes. `ttl` (default `5m`), optional `route_ttl` map, `expose_header` (or `SHOPANDA_DEV_MODE`) for `X-Shopanda-Cache`. When disabled, allowlisted pages render normally (live cart label, display name, CSRF in logout).
+
+## Fragments (ESI-equivalent)
+
+Shopanda has no edge/CDN ESI resolver. PR-1045 provides the same effect at the app level: the cached shell contains an htmx placeholder; the browser fetches a small always-fresh HTML snippet.
+
+**Template helper:** `{{fragment "name"}}` (optional second arg = element id). Storefront registers it via `theme.WithFragment(storefront.FragmentTemplateFunc(…))` alongside slots. Every placeholder **must** ship a skeleton (loading state) — empty holes that pop in after load are not acceptable.
+
+| Name | Endpoint | Skeleton / notes |
+| --- | --- | --- |
+| `csrf` | `GET /fragments/csrf` | Empty `<input name="csrf_token">`; swaps to the real token |
+| `greeting` | `GET /fragments/greeting` | Generic "Account"; signed-in name for authenticated requests |
+| `cart-count` | `GET /fragments/cart-count` | `Cart (0)`; also refreshes on `cart-updated` |
+| `mini-cart` / `minicart` | `GET /fragments/mini-cart` | "Loading cart…"; `innerHTML` into `.mini-cart-shell` |
+| `recently-viewed` | `GET /fragments/recently-viewed` | Loading copy; cookie history written on PDP view |
+
+All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the Phase 10 `CacheControlMiddleware` denylist). Never cache fragment responses.
+
+**CSRF fragment is authoritative:** `GET /fragments/csrf` mints a `shopanda_csrf` cookie when missing (same as account/checkout middleware), so logout on allowlisted pages works without first visiting `/account/*`. Authenticated FPC shells still require JavaScript/htmx so the empty skeleton is replaced before logout POST — treat JS as required for signed-in cached chrome.
+
+**Custom themes + FPC:** each logout `<form>` must contain a working htmx hole (`hx-get="/fragments/csrf"`) inside that form. A path string (or hole) elsewhere on the page is not enough — FPC `BYPASS`es. Prefer `Layout.UseFragments` + `{{fragment "csrf"}}` (default theme pattern).
+
+**Wishlist:** the default theme has no wishlist UI — no fragment shipped. Add one the same way as recently-viewed when the theme gains the surface.
+
+### Adding a fragment (worked example: recently viewed)
+
+1. **Data source** — cookie `shopanda_recently_viewed` (URL-escaped product IDs, max 8). Prefer cookies/session for shopper-private lists; do not put this into the FPC body.
+2. **Endpoint** — `RecentlyViewedFragment` in `fragment.go`, wrapped with `withFragmentCacheControl`. Optional `?add=<productID>` records a view on the fragment request (so FPC HIT PDPs still update history).
+3. **Helper registration** — add the name to `fragmentPaths` / `fragmentSkeletons` in `internal/interfaces/http/storefront/fragment_helper.go` (HTTP adapter owns routes/htmx markup; wire via `theme.WithFragment(storefront.FragmentTemplateFunc(…))`). PDP uses an explicit `hx-get="…?add={{ .Product.ID }}"` so the product id is available on HIT.
+4. **Theme placement** — skeleton must be non-empty (see `themes/default/templates/product.html`).
+5. **Tests** — assert `Cache-Control: no-store` and that two cookies/sessions produce different HTML when state differs.
+
+**Fragments vs slots:** slots inject plugin HTML at render time into the (possibly cached) page; fragments are always-live per-request holes. See [THEME_SLOTS.md](THEME_SLOTS.md).
+
 ## Integrator Platform (Phase 8)
 
 **Audience:** agencies and integrators connecting ERP, warehouse, PIM, or custom price/cart rules.
@@ -697,7 +783,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 - Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
   - `search.SearchEngine` (PR-1037): `search.Product.CategoryIDs []string` replaces the old single `CategoryID string` — a product can belong to more than one category, and the index must represent all of them, not just the first. `SearchEngine` also gained `IndexCategory(ctx, search.Category) error` / `RemoveCategory(ctx, categoryID string) error` for indexing category documents (name/slug/description/parent/product count) as their own searchable entity, alongside products. A custom `SearchEngine` implementation must implement both new methods.
-  - `cache.Cache` (PR-1039): `SetWithTags(ctx, key, value, ttl, tags ...string)` / `DeleteByTag(ctx, tag) (int64, error)` for many-to-many invalidation (keys that mention the same entity but do not share a prefix). `DeleteByPrefix` stays for keys that share a prefix by construction (`product:<id>:`). A custom `Cache` implementation must implement both new methods. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
+  - `cache.Cache` (PR-1039/PR-1042): `SetWithTags` / `DeleteByTag` for many-to-many invalidation; `Stats(ctx) (Stats, error)` / `FlushAll(ctx) (int64, error)` for the cache admin API. Redis `FlushAll` must scan-and-delete under a non-empty store prefix, never `FLUSHDB`, and return value-key deletions only. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
 - Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
 - Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
@@ -713,14 +799,15 @@ When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUG
 
 ## Roadmap and Future Work
 
-Phases 1–8 are **complete**. **Phase 9 — Integrator Backlog & Merchant Discovery** is **in progress** (PR-856+).
+Phases 1–11 are **complete**. **Phase 12 — Product Types & Composition** is **in progress** (PR-1048–1065 done; next PR-1066). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is planned and should finish before a real merchant site.
 
 | Phase | Focus |
 | --- | --- |
-| 8 (done) | Integrator platform (PR-800–855) |
-| 9 (in progress) | Integrator backlog + Phase 7 carryover; then **PRIORITY** merchant discovery (PR-900–903) |
+| 8–11 (done) | Integrator platform, merchant discovery, platform excellence, jobs/search/cache |
+| 12 (in progress) | Product types, visibility/purchasability, bundle/grouped, linked products, downloadable |
+| 13 (planned) | Plugin-owned migrations + on-demand sync enqueue |
 
-Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Phase 9 Roadmap](../phase-9-merchant-discovery/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+Full plans: [Phase 11 Roadmap](../phase-11-jobs-search-cache/ROADMAP.md) · [Phase 12 Roadmap](../phase-12-product-composition/ROADMAP.md) · [Phase 13 Roadmap](../phase-13-plugin-runtime/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
@@ -730,13 +817,13 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 
 | Check | What it runs |
 | --- | --- |
-| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip) |
+| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
 
 The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
 
-Before opening a PR, run the unit checks locally:
+Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
 
 ```bash
 export GOFLAGS=-mod=readonly
@@ -818,6 +905,129 @@ When adding an extension, prefer this order:
 5. only then consider whether the pattern should be generalized into a reusable plugin hook
 
 Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
+
+### Product visibility axes (PR-1055)
+
+Each product stores four **visibility modes** (`auto` | `visible` | `hidden`): catalog, search, individually (PDP), and purchasable. Effective booleans come from `product.Visibility(inputs, opts)`:
+
+- **`auto`** — `AutoBasis` using the product’s `Status` plus facts: quantity &gt; 0, a price row exists (including amount 0), and assigned to ≥ 1 store/view (any assignment, not request-scoped). Category is opt-in via `VisibilityOptions.RequireCategory` (default off).
+- **`visible` / `hidden`** — force that axis. `Purchasable=visible` is a sellability override, not display-only.
+- Unknown/empty modes fail closed (treat as not visible / not purchasable).
+
+All four axes share one `AutoBasis` when in `auto`. To list OOS/unpriced products while blocking sale, force display axes to `visible` and leave `Purchasable` as `auto` or `hidden`.
+
+Admin product JSON includes `VisibilityModes` and is **writable** (PR-1059): `POST /api/v1/admin/products` / `PUT /api/v1/admin/products/{id}` accept a **partial** `visibility_modes: {catalog, search, individually, purchasable}` (lowercase keys, each `auto|visible|hidden`, every key independently optional). An omitted axis keeps its current/default value — `{"catalog": "hidden"}` alone changes only that axis, on both create and update; `mergeVisibilityModes` applies present fields onto `DefaultVisibilityAxes()` (create) or the product's existing modes (update), then validates. An explicit JSON `null` for an axis (e.g. `{"catalog": null}`) behaves identically to omitting that key — each axis unmarshals into a `*string`, and JSON `null` leaves that pointer `nil` the same as a key that was never sent — so it also keeps the stored/default mode, not an error. Present-but-invalid values 422 via the same `Product.Validate()` path as every other field.
+
+**Resolved vs. effective.** `ResolveAxis(mode, auto)` is domain-level and ignores product `Status` — a forced-`visible` axis always resolves `true`. That is *not* storefront truth for a non-active product: `LoadMany` (the public gate) is active-only, so a draft/archived product is never served regardless of its forced mode. `catalog.EffectiveAxis(mode, status, auto)` is the public-gate truth (`false` whenever `status != active`); always prefer `Effective` over bare `Resolved` when describing what a merchant will actually see on the storefront.
+
+`GET /api/v1/admin/products/{id}` additionally returns a `visibility` object — informational only, not a gate. `catalog.ExplainAxes(product.VisibilityModes, product.Status, snap.Inputs, opts)` is a **domain** function and returns a struct, `catalog.AxesExplanation{Catalog, Search, Individually, Purchasable AxisExplanation}` (PR-1059 CR — was `map[string]AxisExplanation`); `AxisExplanation` itself has **no JSON tags** (it is a domain type, not an HTTP shape). `snap` comes from `catalog.VisibilityFactsAdminSource.LoadManyAnyStatus` (loads facts regardless of product `Status`, unlike the public `VisibilityFactsSource.LoadMany`, so a draft/archived product's AutoBasis failures can still be explained). `internal/interfaces/http/admin/product_admin.go` owns the wire shape: `newAdminAxisExplanation(exp)` maps each `catalog.AxisExplanation` to an `adminAxisExplanation` DTO with explicit snake_case `json` tags and an always-present `failure_codes` (never `omitempty` — empty is serialized as `[]`, not omitted, so OpenAPI examples and the real wire response match on every axis, forced or auto):
+
+```json
+{
+  "enforced": true,
+  "status": "draft",
+  "auto_basis": false,
+  "failure_codes": ["status_inactive"],
+  "input_failure_codes": [],
+  "axes": {
+    "catalog": { "mode": "visible", "override": true, "resolved": true, "effective": false, "failure_codes": [] },
+    "search": { "mode": "auto", "override": false, "resolved": false, "effective": false, "failure_codes": ["status_inactive"] },
+    "individually": { "mode": "auto", "override": false, "resolved": false, "effective": false, "failure_codes": ["status_inactive"] },
+    "purchasable": { "mode": "auto", "override": false, "resolved": false, "effective": false, "failure_codes": ["status_inactive"] }
+  }
+}
+```
+
+`enforced` mirrors `catalog.visibility.enforce` (whether the public axis gate is actually live) — `effective` always reports what *would* happen for the current mode/status, whether or not the gate is live; the SPA shows this as a single section-level caption (`"Enforcement off — preview"`), not a per-badge prefix (see below). `failure_codes` (top level) is `catalog.AutoBasisFailureCodes(status, inputs, opts)` — every failing `AutoBasis` condition as a **stable code**, in check order (`status_inactive` → `no_stock` → `no_price` → `no_store_assignment` → `no_category`), not a prose string; `no_store_assignment` is reserved and cannot appear today since every `VisibilityFactsSource` hard-codes `HasStoreAssignment=true` (no product↔store table exists yet). Each axis's `failure_codes` repeats the same list only when that axis is `auto` and `auto_basis` is `false`.
+
+**`input_failure_codes` and the live status preview (PR-1059 CR round 3).** `failure_codes`/`auto_basis` bake in the product's *saved* `status` at fetch time; they go stale the moment a merchant changes the form's status select without saving. `input_failure_codes` is `catalog.AutoBasisInputFailureCodes(snap.Inputs, opts)` — the same list with `AutoBasisCodeStatusInactive` always excluded (stock/price/store/category only), which never changes with the form's status. The admin SPA treats `input_failure_codes` as the source of truth for any *live* recompute: `product_visibility_section.js`'s `deriveAutoBasis(status, inputFailureCodes)` / `deriveFailureCodes(status, inputFailureCodes)` combine a candidate status with `input_failure_codes` client-side — `deriveAutoBasis` is `status === "active" && inputFailureCodes.length === 0`; `deriveFailureCodes` prepends `"status_inactive"` only when `status !== "active"`. `stateFromVisibilityPayload` calls these on load (so the very first render already goes through the same code path, not `payload.auto_basis`/`failure_codes` directly), and `bindStatusChange` calls them again on every `status` select change, re-rendering every axis's badge **and** failure-list content (not just visibility — `updateRowFromMode` now rebuilds the `<li>` items too) from the recomputed values.
+
+The `visibility` key is omitted entirely when no facts source is wired (`ProductAdminHandler.WithVisibilityFacts` not called). A missing snapshot (PR-1059 CR round 3 — previously silently omitted both `visibility` and `visibility_error`) now sets `visibility_error: "product not found in visibility facts"` instead: because `VisibilityFactsRepo`'s facts query joins live product/variant/stock/price rows (no asynchronous "first refresh" step), the only way `FindByID` finds the product but the facts query does not is a concurrent delete between the two reads — a real (if rare) failure worth surfacing, not a "nothing to show yet" pending state. A visibility-facts load error (e.g. the DB call itself fails) also does not 500 the request — it logs a warning and sets `visibility_error: "visibility facts unavailable"` instead, with `visibility` omitted and the product still returned. The SPA distinguishes these two "no `visibility`" cases from a true pre-save create: `visibility_error` set (either message) → an explicit "Visibility facts unavailable — reload to retry" state; no payload and no error → the pending "`<Mode>` — computed after save" state (now reserved for a genuinely not-yet-saved create, since a missing snapshot on an existing product is always an error).
+
+The admin GUI (`product.form` section `id: "visibility"`, registered in `cmd/api/wire_services.go` after `RegisterProductSchemas` — see below) renders four mode selects plus a storefront-facing badge, and, only when an axis is `auto` and `auto_basis` is `false`, the mapped failure-code list under that axis. Badge copy is deliberately short (PR-1059 CR — simplified from the original "Would be …"-prefixed sentences): `Auto — visible` / `Auto — hidden`, `Forced visible`, `Forced visible — not live (product inactive)`, `Forced hidden`. Two section-level captions replace what used to be per-badge noise: `"Enforcement off — preview"` (only when `enforced` is `false`) and `"Preview as of form status (save to persist modes)."` (always, for live state) — the latter because the main form's `status` select has its own `change` listener (`bindStatusChange`) that re-renders every badge/failure-list from the **currently selected** status, not the one the page loaded with, so merchants can preview a pending status change before saving. The badge itself is recomputed client-side on every mode or status change from `{mode, auto_basis, status}` (`effectiveForMode`, mirroring `EffectiveAxis`) — never reused from a stale per-axis `effective` that was only valid for the previously-selected mode/status. Helpers live in `product_visibility_section.js`.
+
+### Admin vs public visibility boundary (PR-1056)
+
+Public product exposure uses **two gates**, not one:
+
+1. **Status scope (PR-1054)** — repository reads are active-only by default; cart uses `ActiveForPurchase`. `AllowProduct` does **not** replace this. Forced `VisibilityModeVisible` still resolves true for draft/archived on the axis gate alone.
+2. **Axis gate (PR-1056)** — `catalog.AllowProduct` / `catalog.FilterProducts` keyed by `VisibilitySurface`.
+
+| Surface | Axis | Typical routes |
+| --- | --- | --- |
+| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs |
+| `search` | `VisibleInSearch` | REST/HTML search + suggest fragments |
+| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed |
+| `purchasable` | `Purchasable` | cart add/update + checkout (enforced in PR-1058) |
+
+The full audited map (REST + HTML/SSR + fragments, with `EnforceIn` PR-1057 vs PR-1058) is `storefront.PublicProductVisibilityRoutes()`.
+
+### Storefront visibility enforcement (PR-1057)
+
+Axis gates run only when `catalog.visibility.enforce` is true (`SHOPANDA_CATALOG_VISIBILITY_ENFORCE`). Default is **false**: migration 086 left modes at `auto`, and AutoBasis requires qty &gt; 0 plus a price row — enabling without a mode backfill 404s OOS/unpriced PDPs. See RUNBOOK.
+
+When enforce is on, public reads resolve axes with AutoBasis facts from `catalog.VisibilityFactsSource` (`postgres.VisibilityFactsRepo`): active status only, four modes, quantity &gt; 0, price row exists, category assignment. `HasStoreAssignment` is always `true` until a product↔store table exists. Missing snapshots deny. Nil facts (enforce off) skips the axis gate.
+
+| Helper | Use |
+| --- | --- |
+| `AllowWithFacts` | Single PDP / variant parent / review parent |
+| `FilterWithFacts` | Sitemap batch (individually surface — PDP URLs) |
+| `FilterIDsWithFacts` | Search hits, suggest `ProductID`s, CMS carousel IDs |
+| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=` |
+
+Listing responses include `meta.truncated`, `meta.has_more`, `meta.depth_limited`, and `meta.next_after` (when has_more). The cursor encodes DB offset plus any remaining visible skip so budget stops mid-`offset` do not jump pages. When `after` is set, query `offset` is ignored. Resume with `after`, never by bumping visible `offset`. Past 100k repository rows `depth_limited` is true and `next_after` is omitted (classic `offset` is not capped the same way).
+
+Search and suggest apply a **query-time** `VisibleInSearch` filter until PR-1079. HTML listings do **not** overfetch (page-number Offset + enlarged Limit duplicated hits). Short or **empty** HTML pages with live pagination links (index `Total`/`Facets` unchanged) are accepted until 1079. Prefer `ListVisiblePage` over post-LIMIT `FilterProducts` for paginated REST catalog listings.
+
+Admin REST (`/api/v1/admin` and `/api/v1/admin/…`) and operator paths (import/export/seed) use `catalog.WithOperatorProductReadScope` (include-non-active + bypass axis gates) so shared helpers that call `AllowProduct` stay consistent with the admin UI.
+
+### Product read scope (PR-1054)
+
+`catalog.ProductRepository` returns **active** products only unless the caller opts in:
+
+- **Storefront / cart / GraphQL** — default context; draft/archived rows are omitted (`FindBy*` returns `(nil, nil)`; `List` excludes them).
+- **Admin REST** — `AdminContextMiddleware` sets `catalog.WithOperatorProductReadScope` on `/api/v1/admin` paths so operators still see drafts and bypass axis gates.
+- **Import / export / seed / jobs** — call `catalog.WithOperatorProductReadScope(ctx)` (or set include-non-active + bypass explicitly) before reads that must see the full catalog. Product CSV import and the seed registry set this at entry; new CLI/worker paths must do the same.
+
+`cart.Service.AddItem` rejects non-active products with a validation error regardless of scope.
+
+### Product form type sections (PR-1053)
+
+The product edit form includes a **Type** selector (`product.form` field `type`). Type-specific panels (bundle components, grouped members, linked children, downloadable files) register with:
+
+```go
+adminApp.RegisterProductFormSection(registry, admin.FormSection{
+    ID: "bundle-components", Title: "Bundle components", Types: []string{"bundle"},
+})
+```
+
+`RegisterProductFormSection` validates `Types` against `catalog.Type`. Prefer it over raw `RegisterFormSection` for product panels. `RegisterFormSection` still rejects empty/duplicate IDs.
+
+### Bundle composition (PR-1060)
+
+Bundle products (`catalog.TypeBundle`) own rows in `bundle_components` (UUID FKs to `products`; bundle side cascades on delete, component side `RESTRICT` so linked products cannot be deleted until unlinked). Build links with `catalog.NewBundleComponent(bundleID, componentID, quantity)` — `Required` defaults to `true`. Domain rules: `Validate` (quantity 1–9999, non-empty IDs; it does not trim) and `ValidateComposition` (parent `bundle`; component types `simple`, `virtual`, or `downloadable` only). IDs are trimmed in `NewBundleComponent`, `BundleService.Add`, `List`, and `Remove`. `application/catalog.BundleService` `List` loads the parent and rejects non-bundle products; `Add` trims and validates, then locks both product rows (`FOR UPDATE`, sorted id order) and upserts the link in one transaction. After the lock, either product must be `active` unless the context has `catalog.IncludeNonActiveProducts` (set by `WithOperatorProductReadScope`); otherwise `Add` returns `NotFound`, the same result `List` gets from `FindByID`. `Remove` trims ids and deletes one link. It does not lock product rows. Postgres: `postgres.BundleComponentRepo` (`WithTx` binds counts and upserts to that transaction; `CountByBundleID` / `CountByComponentID` support admin type-change guards on `ProductAdminHandler.WithBundleComponents`). A payload that includes `type` locks the product and validates against the locked type, including when that value matches the earlier `FindByID`. `CountByBundleID > 0` blocks any target other than `bundle` even if the locked type is not bundle. Updates that omit `type` do not take the lock. It fails closed when the bundle repo or `WithTxStarter` is nil. Admin bundle HTTP and the `bundle-components` form section land in PR-1066 — `wire_services.go` already constructs `BundleService` for that follow-up.
+
+### Grouped membership (PR-1061)
+
+Grouped products (`catalog.TypeGrouped`) own rows in `grouped_members` (UUID FKs to `products` on both sides, both `ON DELETE CASCADE`). There is no quantity and no required flag. Build links with `catalog.NewGroupedMember(groupID, memberID)`. Domain rules: `Validate` (non-empty IDs, no self-link; it does not trim or mutate ids) and `ValidateComposition` (parent `grouped`; member types `simple`, `virtual`, or `downloadable` via `Type.IsGroupedMemberLeafType`, separate from the bundle leaf helper). `ValidateComposition` is service-only. `GroupedMemberRepository.Insert` stays on the port because `GroupedService.Add` calls it, and it does not read product types. The row-gated admin type-change guard is the safety net for a direct insert. IDs are trimmed in `NewGroupedMember` and in `GroupedService` `List`, `Add`, and `Remove`. Membership is display-only: adding or removing a row does not change the member's `Purchasable` result or visibility (PR-1055). A member stays independently purchasable on its own page and may belong to more than one group. Both foreign keys are `ON DELETE CASCADE`: deleting a member SKU silently unlinks it. A future product delete API must not return 422 for that membership. `application/catalog.GroupedService` `List` loads the parent and rejects non-grouped products; `Add` trims and validates, then locks both product rows (`FOR UPDATE`, sorted id order) and insert-ignores the link in one transaction. After the lock, either product must be `active` unless the context has `catalog.IncludeNonActiveProducts` (set by `WithOperatorProductReadScope`); otherwise `Add` returns `NotFound`, matching `List`. `Remove` trims ids and deletes one link (`NotFound` when missing). It does not lock product rows. Postgres: `postgres.GroupedMemberRepo` (`WithTx` is adapter-only and is not on the domain port; `CountByGroupID` / `CountByMemberID` support admin type-change guards on `ProductAdminHandler.WithGroupedMembers`). A payload that includes `type` locks the product and compares the requested type to the locked row, so a stale `FindByID` cannot skip the guard. Counts are row-gated: `CountByGroupID > 0` blocks any target other than `grouped`, and `CountByBundleID > 0` blocks any target other than `bundle`, even when the locked type does not match those rows. Updates that omit `type` do not take the lock. The fail-closed unwired-repo check is on `ProductAdminHandler`, not `GroupedService`. It fails closed when either composition repo or `WithTxStarter` is nil. Admin grouped HTTP and the `grouped-members` form section land in PR-1066 — `wire_services.go` already constructs `GroupedService` for that follow-up.
+
+### Bundle and grouped pricing (PR-1062)
+
+`catalog.PricingMode` is `fixed` or `dynamic`. `NewProduct` defaults to `fixed`. `dynamic` is valid only when `Type` is `bundle`. Admin create/update accept `pricing_mode`. An explicit `dynamic` token on any other type is 422. Omitting the field coerces a non-bundle to `fixed`, including a type change off bundle; that path locks the row and re-reads `pricing_mode` before applying the default. A payload that omits `type` but sends `pricing_mode` takes the same lock. Unknown tokens are rejected. Setting dynamic while any variant still has a price row is 422 (`remove bundle prices before enabling dynamic pricing`). That check returns 500 when the variant or price repository is unwired. A create with both repositories wired and no variants yet succeeds; an empty product id skips the row scan once the repositories are confirmed. The admin GUI does not expose the field yet — PR-1066 must add it to the product form.
+
+`pricing.ResolveUnitPrice` is the only base-price lookup. `BasePriceStep` (step name stays `base`) and `cart.Service` lookup both call it, so a cart add and a later recalculate cannot disagree. `cart.NewService` requires prices, variants, products, and bundle components and panics if any is nil. `cmd/api` passes those same repos to `NewBasePriceStep`. `NewBasePriceStep` panics if any of those is nil. `NewBasePriceStepLegacy` is a stored-row test helper and is not used in production. Cart add memoizes resolver results for the request, keyed by variant, currency, and store. For a dynamic bundle, `ensureVariantPurchasable` calls the resolver with the cart currency after status and visibility; a failed resolve is a validation error.
+
+- **fixed** (and any non-bundle except grouped): the variant's price row, store scope then global.
+- **dynamic bundle**: sum of required components only. Each required component must be an active leaf (`simple`, `virtual`, or `downloadable`; operator scope may include non-active) with exactly one variant; that variant's price (store then global) is multiplied by `component.Quantity`. Amount 0 is a valid sum. An empty required set is an error. More than `catalog.MaxBundleRequiredComponents` (50) required components is an error. Optional components are ignored. The sum is not written to `prices` or `price_history`. Admin price PUT locks the product (`SELECT type, pricing_mode FOR UPDATE`) and upserts the price in that transaction, so the grouped and dynamic rejections use the locked row. CSV price import and the product update that enables dynamic reject an own row. The product update fails closed when those reads are unwired. Price indication skips a stored price when the mode is dynamic. JSON-LD emits no Offer for that mode, including a stock-only Offer, until a follow-up wires this resolver into those surfaces.
+- **grouped**: not purchasable. Cart add fails with `grouped products are not purchasable` before price lookup, even when a stale price row exists. Price resolution, the admin price PUT, and the CSV price importer also reject the parent. Price a member product instead.
+
+Admin price PUT (`ProductPriceAdminHandler.Update`) requires `WithHistory`. The snapshot is recorded with `WithTx` on the same transaction as the upsert. A nil history repository, or one that does not implement `WithTx`, fails the PUT closed and does not commit the price. `cmd/api` passes `repos.priceHistoryRepo`.
+
+Listing `HasPrice` for a dynamic bundle is true only when the required count is between 1 and 50 and every required component is an active leaf with exactly one variant and a global price row (`store_id` empty; amount 0 counts). The flag is currency-agnostic: a global USD row counts for PLP, a store-only row does not. It does not match `ResolveUnitPrice` on currency. AddItem resolves the dynamic bundle in the cart currency, so a global EUR component price cannot be added to a USD cart. PDP Add is shown when a variant exists and does not consult that currency. PLP cards have no Add control. A follow-up should hide Add when `ResolveUnitPrice` fails for the request currency, because a later button keyed off `HasPrice` / `Purchasable` can show for the wrong currency. A grouped parent is never `HasPrice`. A fixed product still needs its own price row. AutoBasis only sees that bool.
+
+`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. See `docs/phase-1-core/specs/ADMIN_SCHEMA.md`.
+
+**Exception: the `visibility` section (PR-1059).** Registered with `Types: nil` (type-agnostic — applies to every product type, unlike bundle/grouped/linked/downloadable panels). Unlike every other section, its four mode selects **are** picked up by `collectProductPayload` (merged into the payload as `visibility_modes`), because `VisibilityModes` is a core `Product` field saved through the same `POST`/`PUT` as `name`/`slug`/`type` — not auxiliary section data with its own save endpoint. `admin.js`'s `setupProductVisibilitySection` renders the section body from `product_visibility_section.js` helpers and reads the GET response's `visibility` payload (above) for the computed badge/failures on load.
 
 ### Admin SPA navigation policy
 

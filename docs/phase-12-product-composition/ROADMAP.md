@@ -7,7 +7,7 @@ Phase 11 made background subsystems (jobs, search, cache) reachable by an operat
 - **Foundation before features.** `Type` (Track A) and the visibility/purchasability model (Track B) are prerequisites for bundle, grouped, linked, and downloadable — every later track's salability rules are built on `Purchasable`, not a bespoke flag per feature.
 - **One PR = one responsibility**, reviewable in ~10–20 minutes, same discipline as Phases 10–11.
 - **A single standalone fix ships first** (PR-1048, zero-price products), same pattern as Phase 11's PR-1027 — it's a real, independent bug, not something that should wait on the rest of this phase.
-- PR specs live under `prs/` (**PR-1048+**, continuing Phase 11's numbering).
+- PR specs live under `prs/` (**PR-1048+** as drafted). Phase 11 later claimed PR-1048/1049 for unrelated work — keep phase-folder disambiguation until a renumber pass.
 - Individual PR specs at this stage carry Summary/Why/Scope/Out-of-scope/Follow-up only — no `Validation (planned)` or `Documentation updates` sections yet. Those get written when a PR is actually implemented (see PR-1029's Round 4 review in Phase 11 for why a pre-filled "planned validation" section left in a *done* PR is worse than not having one).
 
 Each PR is tagged **`[oss]`** unless noted.
@@ -20,7 +20,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | --- | --- | --- |
 | Product type | Only a lifecycle `Status` (draft/active/archived); no simple/virtual/bundle/grouped/configurable/downloadable distinction anywhere. | Explicit `Type` field, enforced at creation, driving shipping/tax requirements and admin form shape. |
 | Visibility & purchasability | Effectively unenforced: core product read paths (`List`/`FindByID`/`FindByCategoryID`) apply no status filter at all; cart `AddItem` never checks product status. Only search indexing and the sitemap filter on `Status = active`. | Four independent visibility axes + a purchasable flag, computed by a documented default rule with an explicit per-axis override; enforced consistently across every public/storefront read path (REST and GraphQL) and at cart/checkout entry. |
-| Composite products | None — no bundle, no grouped, no product-to-product relationship of any kind beyond `Variant` (SKU variation of one product) and category assignment. | Bundle (fixed or dynamic pricing, required/optional components, stock rollup) and Grouped (independent siblings displayed together) as first-class types, with per-component Omnibus/VAT tracking and single-component returns. |
+| Composite products | None — no bundle, no grouped, no product-to-product relationship of any kind beyond `Variant` (SKU variation of one product) and category assignment. | Bundle (fixed or dynamic pricing, required/optional components, stock rollup) and Grouped (independent siblings displayed together) as first-class types. Omnibus is each SKU's catalog price history: a fixed kit's PDP/PLP uses the parent variant, a dynamic headline has no block, and a component's own PDP/PLP uses that variant. Order VAT stays order-level (per-line tax is PR-1076). Single-component returns. |
 | Linked products & assignment | None. | A many-to-many catalog-time eligibility relationship (which child products are assignable to which parent products/parent categories) plus an instance-level assignment record created at order/fulfillment time — the mechanism the card/ticket use case needs, generalized beyond it. |
 | Downloadable / digital fulfillment | None — every product implicitly requires shipping. | `Downloadable` type with file-asset attachment, expiring/limited download grants, and correct digital-goods VAT handling. |
 | Search / CSV / GraphQL / GUI parity | N/A until the above ship. | Every new field and relationship indexed, CSV-round-trippable, exposed with GraphQL read parity, and reachable from the admin GUI. |
@@ -65,7 +65,7 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1048 | Allow zero-price products | `pricing.NewPrice` and `pricing.NewPriceSnapshot` both reject any amount that isn't strictly positive (`internal/domain/pricing/price.go`, `price_snapshot.go`). Relax both to non-negative (mirrors `cart.Item.NewItem`, which already only rejects negative). Audit every consumer that assumes a positive price for arithmetic safety — discount percentage math, Omnibus lowest-price comparisons, any divide-by-price calculation — and add explicit zero-handling where an implicit "price > 0" assumption was silently relied on. This is a real, independent bug fix (a merchant cannot price anything at 0 today, free products or not); it ships standalone because nothing else in this phase needs to be a prerequisite for it. |
+| PR-1048 | Allow zero-price products | Relax `NewPrice` / `NewPriceSnapshot` / `NewGroupPrice` and the CSV price importer to non-negative amounts; align `price_history`, `prices`, and B2B `customer_group_prices` CHECKs (`amount >= 0`); admin price inputs `min="0"`. Audit promo math and Omnibus comparisons at 0. (Phase 11 used PR-1048 for a different change — see phase-folder specs.) |
 
 ---
 
@@ -93,8 +93,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1055 | Four-axis visibility model | New fields: `VisibleInCatalog`, `VisibleInSearch`, `VisibleIndividually` (direct PDP access), `Purchasable` — each independently computed by default (`Status = active AND quantity > 0 AND a price exists AND assigned to ≥ 1 store/view`; category assignment as a config-level toggle, off by default, since many legitimate products are intentionally uncategorized) — plus a per-axis `VisibilityMode: auto \| visible \| hidden` override for merchants who need to force a value against the computed default in either direction. |
 | PR-1056 | Admin vs. public/storefront API split | Formalize the boundary: admin API continues to see every product regardless of computed/overridden visibility (as today); a new public/storefront-read boundary (REST) enforces all four axes consistently. Audit every existing storefront-facing route for which axis it should be checking (PDP → `VisibleIndividually`, category listing → `VisibleInCatalog`, cart `AddItem` → `Purchasable`) and centralize the filtering logic in one place rather than reimplementing it per handler. |
 | PR-1057 | Enforce visibility in storefront read paths | Apply PR-1056's boundary to product listing, PDP, category listing, and sitemap generation (which already partially does this via `Status`) — consistently, not just where it happened to already exist. |
-| PR-1058 | Cart/checkout purchasability gate + hook point | `cart.Service.AddItem` rejects a non-`Purchasable` product/variant with a clear `apperror` (not just "no price found," today's incidental gate). Reuses the existing `HookCartAddItemBefore`/`HookCartValidate` plugin hook points (already wired into `AddItem`) as the extension seam Track D's "not purchasable until assigned" rule and any future plugin-driven purchasability rule build on. |
-| PR-1059 | Visibility admin GUI | Per-axis toggle + override-mode indicator (computed vs. forced) on the product edit form; a visible "why is this hidden" explanation surfaced next to the toggle when the computed default is what's driving a `hidden` state, so merchants don't have to guess which of the four conditions failed. |
+| PR-1058 | Cart/checkout purchasability gate + hook point | **done.** `cart.Service.AddItem` (and qty-increase / guest merge / checkout `ValidateCartStep`) rejects a non-`Purchasable` product/variant with a clear `apperror` (not just "no price found," today's incidental gate). Reuses the existing `HookCartAddItemBefore`/`HookCartValidate` plugin hook points (already wired into `AddItem`) as the extension seam Track D's "not purchasable until assigned" rule and any future plugin-driven purchasability rule build on. See [`prs/PR-1058.md`](prs/PR-1058.md). |
+| PR-1059 | Visibility admin GUI | **done.** Per-axis toggle + override-mode indicator (computed vs. forced) on the product edit form; a visible "why is this hidden" explanation surfaced next to the toggle when the computed default is what's driving a `hidden` state, so merchants don't have to guess which of the four conditions failed. See [`prs/PR-1059.md`](prs/PR-1059.md). |
 
 ---
 
@@ -104,13 +104,13 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1060 | Bundle domain model | `bundle_component(bundle_product_id, component_product_id, quantity, required bool)`. A bundle is one order line by default (see PR-1064 for the itemized alternative). Nesting (a bundle containing another bundle) is explicitly out of scope — see "Out of scope" below. |
-| PR-1061 | Grouped domain model | `grouped_member(group_product_id, member_product_id)` — members are fully independent, separately priced, separately orderable products; grouping only affects how they're displayed together, never their individual purchasability. This is deliberately *not* what the card/ticket use case needs (see Track D) — grouped members have no dependency on each other or on the parent. |
-| PR-1062 | Bundle/grouped pricing rollup | Bundle: `fixed` (merchant sets one price, ignoring component prices) or `dynamic` (sum of selected components, optionally minus a bundle-level discount) — both integrate into the existing pricing pipeline (`BasePriceStep` → plugin steps → `FinalizeStep`) as a bundle-aware base-price step, not a parallel pricing path. Grouped: no parent price at all, only members are priced — matches Track A's "configurable has no direct parent price either" pattern. Depends on PR-1048 (zero-price products) for the case where a dynamic bundle's selected components sum to 0. |
-| PR-1063 | Stock rollup per type | Bundle: `fixed` stock (bundle has its own inventory row, independent of components) or `dynamic` stock (derived as the minimum available quantity across required components) — merchant-configurable per bundle, matching the pricing mode split in PR-1062. Grouped: no parent stock; availability is per-member only. |
-| PR-1064 | Order line explosion + returns integration | Per-bundle config flag: sell as one order line (default) or itemize into one order line per component (needed where tax/invoice rules require per-item granularity). Itemized bundles extend the existing Returns/RMA domain (Phase 6) to support returning a single component without touching the rest of the bundle's order lines. |
-| PR-1065 | Omnibus/VAT per component line | Extend `PriceSnapshot` (lowest-30-day-price tracking for EU Omnibus) to component-level granularity when a bundle is sold itemized (PR-1064) — a component needs its own price history independent of the bundle's headline price. Groundwork shared with Track E's digital-goods VAT handling. |
-| PR-1066 | Bundle/grouped admin API + CSV + GUI | Component/member picker (admin API + CSV import/export for `bundle_component`/`grouped_member` rows) and the corresponding admin GUI section on the product edit form (wired via Track A's PR-1053 section-visibility switch). |
+| PR-1060 | Bundle domain model | **done.** `bundle_components` with component-side `ON DELETE RESTRICT`; leaf component types (`simple`, `virtual`, `downloadable`); `BundleService` + postgres repo; admin product type-change guard (fails closed if the repo is unwired). `Add` and type changes share `FOR UPDATE` on `products` in one transaction. Bundle admin HTTP in PR-1066. See [`prs/PR-1060.md`](prs/PR-1060.md). |
+| PR-1061 | Grouped domain model | **done.** `grouped_members(group_product_id, member_product_id)` — display-only membership, both FKs `ON DELETE CASCADE` (deleting a SKU silently unlinks it; a future delete API does not 422 for membership). A member may sit in many groups. `GroupedService.Add` locks both products and follows the same active-only read scope as `List` unless the caller sets operator scope. `Remove` does not lock products. Admin type changes are row-gated (illicit rows count) and fail closed if either repo is nil — that guard is on `ProductAdminHandler`, not `GroupedService`. Grouped admin HTTP in PR-1066. See [`prs/PR-1061.md`](prs/PR-1061.md). |
+| PR-1062 | Bundle/grouped pricing rollup | **done.** `pricing_mode` `fixed` or `dynamic` (explicit `dynamic` on a non-bundle is 422; omitted mode becomes `fixed` when type leaves bundle, using the locked row; enabling dynamic while an own price row exists is 422). `ResolveUnitPrice` is shared by `BasePriceStep` (name stays `base`) and cart lookup. `cart.NewService` requires the catalog price sources. Dynamic sums active single-variant leaf components (store then global) and does not write that sum. Grouped parents are not purchasable. Listing `HasPrice` is a coarse global-row check (currency-agnostic, capped at 50 required components). AddItem resolves a dynamic bundle in the cart currency. Price PUT locks the product row with the upsert. Enabling dynamic fails closed when variant prices are unwired. Price indication skips a stored price. JSON-LD omits the Offer. PDP Add is still variant-based (currency follow-up). No GUI — PR-1066 must expose `pricing_mode`. See [`prs/PR-1062.md`](prs/PR-1062.md). |
+| PR-1063 | Stock rollup per type | **done.** `stock_mode` `fixed` or `dynamic` (explicit `dynamic` on a non-bundle is 422; omitted mode becomes `fixed` when type leaves bundle, using the locked row). Dynamic available quantity is `min(floor(component stock / required quantity))` over required components; optional components are ignored; virtual and downloadable required leaves do not gate; grouped parents are never `QuantityPositive`. Checkout reserves required simple leaves and skips digital leaves; it does not reserve the bundle variant. JSON-LD `availability` uses `ResolveAvailableQty` when an Offer is built; dynamic pricing still omits the Offer. Warehouse stock sync skips a dynamic-bundle SKU (`RejectedSKUs`, nil error). A digital-only kit's line cap is `MaxDigitalBundleLineQty` (100). No GUI — PR-1066 must expose `stock_mode`. See [`prs/PR-1063.md`](prs/PR-1063.md). |
+| PR-1064 | Order line explosion + returns integration | **done.** `explode_order_lines` (default false) is allowed only on a bundle with dynamic pricing and dynamic stock. An omitted flag is stored false when the product is no longer eligible, including a mode change. Checkout still reserves as before and records `reserved_variant_qty`. When the flag is true, `CreateOrderStep` drops the parent line and writes one immutable order line per required leaf (including virtual and downloadable) with a `restockable` snapshot, merging duplicate variant ids when the unit price matches, and fails as validation if the exploded total, prices, or reserved quantities do not match what reserve held. Migration 095 backfills historical virtual and downloadable lines to `restockable = false`. Receive classifies from that snapshot, locks the return row, and commits restock with `MarkReceived` in one transaction. No GUI — PR-1066 must expose `explode_order_lines`. See [`prs/PR-1064.md`](prs/PR-1064.md). |
+| PR-1065 | Omnibus catalog history for kits | **done.** Dynamic headlines stay exempt on PDP/PLP (JSON-LD already omits the Offer). Explode does not `Record`; `CreateOrderStep` has no history dependency. Admin price PUT records a snapshot on the same transaction as the upsert and fails closed when history is unwired (same as CSV import). Fixed-kit indication uses the parent variant; a component's own PDP/PLP uses that variant. Order tax stays the pipeline total on the order (snapshot copy, not a VAT-rules check); per-line tax is PR-1076. See [`prs/PR-1065.md`](prs/PR-1065.md). |
+| PR-1066 | Bundle/grouped admin API + CSV + GUI | Component/member picker (admin API + CSV import/export for `bundle_component`/`grouped_member` rows) and the corresponding admin GUI section on the product edit form (wired via Track A's PR-1053 section-visibility switch). The product form must also send `pricing_mode` (PR-1062), `stock_mode` (PR-1063), and `explode_order_lines` (PR-1064); the GUI and product CSV do not yet. |
 
 ---
 
@@ -188,7 +188,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | Standalone (PR-1048) | 1–2 days | Small, well-understood fix; the audit-for-implicit-positive-price-assumptions part is the only real unknown. |
 | A | 1 week | Mostly plumbing once the enum and migration land. |
 | B | 1.5–2 weeks | PR-1055's default-visibility rule and PR-1056's API-surface split are the judgment-heavy parts — get the four-axis default rule reviewed carefully, it's the thing every later track depends on being right. |
-| C | 2–2.5 weeks | PR-1062–1065 (pricing/stock rollup, order-line explosion, per-component Omnibus/VAT) are individually small but each touches a different existing subsystem — expect more cross-team review than lines-of-code would suggest. |
+| C | 2–2.5 weeks | PR-1062–1065 (pricing/stock rollup, order-line explosion, catalog Omnibus history) are individually small but each touches a different existing subsystem — expect more cross-team review than lines-of-code would suggest. Per-line VAT is PR-1076, not PR-1065. |
 | D | 2.5–3 weeks | Highest-judgment track in this phase — PR-1069's instance-assignment state model and PR-1070's dual assignment-timing flow have no existing precedent in the codebase to lean on, unlike C's tracks which extend pricing/stock/tax systems that already exist. |
 | E | 1.5–2 weeks | PR-1076 (digital-goods VAT) is the part most likely to need real tax-domain review, not just engineering review. |
 | F | 1–1.5 weeks | Mechanical once A–E are done, gated on Phase 11 Track B shipping first. |
@@ -201,10 +201,22 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1048 | — | planned |
-| 1049–1053 | A | planned |
-| 1054–1059 | B | planned |
-| 1060–1066 | C | planned |
+| 1048 | — | done |
+| 1049 | A | done |
+| 1050 | A | done |
+| 1051 | A | done |
+| 1052 | A | done |
+| 1053 | A | done |
+| 1054 | B | done |
+| 1055 | B | done |
+| 1056–1059 | B | done |
+| 1060 | C | done |
+| 1061 | C | done |
+| 1062 | C | done |
+| 1063 | C | done |
+| 1064 | C | done |
+| 1065 | C | done |
+| 1066 | C | planned |
 | 1067–1073 | D | planned |
 | 1074–1078 | E | planned |
 | 1079–1083 | F | planned |
@@ -218,5 +230,5 @@ PR specs: [`prs/`](prs/).
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
-| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | In progress |
-| **Phase 12** | Product types & composition | **Planned** |
+| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1065 done — Omnibus is per-SKU catalog history, dynamic headlines exempt, VAT still order-level; next PR-1066 bundle admin; numbering collides with Phase 11 — disambiguate by phase folder) |

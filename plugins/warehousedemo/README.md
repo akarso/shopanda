@@ -19,7 +19,7 @@ Expected warehouse response:
 }
 ```
 
-Unknown SKUs are skipped and logged in the sync result; invalid rows (empty SKU, negative quantity) are skipped.
+Unknown SKUs are skipped and logged in the sync result; invalid rows (empty SKU, negative quantity) are skipped. Dynamic-bundle SKUs are skipped, listed as `rejected_skus`, and do not fail the batch.
 
 ## Enable
 

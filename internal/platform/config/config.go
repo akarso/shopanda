@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -40,10 +41,24 @@ type Config struct {
 	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
 	Payment     PaymentConfig     `yaml:"payment"`
 	Search      SearchConfig      `yaml:"search"`
+	Catalog     CatalogConfig     `yaml:"catalog"`
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	Tracing     TracingConfig     `yaml:"tracing"`
 	Dev         DevConfig         `yaml:"dev"`
 	StoreCredit StoreCreditConfig `yaml:"store_credit"`
+}
+
+// CatalogConfig holds catalog / visibility runtime options (PR-1057).
+type CatalogConfig struct {
+	Visibility CatalogVisibilityConfig `yaml:"visibility"`
+}
+
+// CatalogVisibilityConfig controls storefront axis-gate enforcement.
+// Enforce defaults to false so existing catalogs (modes=auto from migration
+// 086) do not suddenly hide OOS/unpriced products or 404 PDPs on deploy.
+// Enable after reviewing AutoBasis or forcing display axes to visible.
+type CatalogVisibilityConfig struct {
+	Enforce bool `yaml:"enforce"`
 }
 
 // StoreCreditConfig bounds how much store credit an admin can issue in a
@@ -106,27 +121,47 @@ func (w WebhooksConfig) Secret(provider string) string {
 
 // RateLimitConfig holds rate limiting settings.
 type RateLimitConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// Driver selects the limiter backend: "memory" (default) — the
-	// existing in-process token bucket, correct for one instance but
-	// independent per replica — or "redis" — a shared sliding-window
-	// counter (PR-1041), correct across every replica. See RUNBOOK.md's
-	// "Rate limiting and login lockout" section.
+	Enabled        bool                 `yaml:"enabled"`
 	Driver         string               `yaml:"driver"`
-	Redis          RedisRateLimitConfig `yaml:"redis"`
+	OnError        string               `yaml:"on_error"`
 	Default        RateLimitRule        `yaml:"default"`
 	PerRoute       []RouteRateLimitRule `yaml:"per_route"`
 	TrustedProxies []string             `yaml:"trusted_proxies"`
+	Redis          RateLimitRedisConfig `yaml:"redis"`
 }
 
-// RedisRateLimitConfig holds Redis connection settings for
-// rate_limit.driver=redis.
-type RedisRateLimitConfig struct {
+// RateLimitRedisConfig names limiter keys and the dedicated Redis pool
+// when driver=redis. Independent of cache.redis.key_prefix so postgres-
+// cache deployments do not have to set a cache prefix just to enable
+// the limiter. Only single-node redis:// URLs are supported.
+type RateLimitRedisConfig struct {
 	URL       string `yaml:"url"`
 	KeyPrefix string `yaml:"key_prefix"`
+	PoolSize  int    `yaml:"pool_size"`
 }
 
-// RateLimitRule defines a token-bucket rate: Rate tokens per second, Burst max.
+// RedisURL is rate_limit.redis.url, else cacheRedisURL. Empty if neither is set.
+func (c RateLimitConfig) RedisURL(cacheRedisURL string) string {
+	if u := strings.TrimSpace(c.Redis.URL); u != "" {
+		return u
+	}
+	return strings.TrimSpace(cacheRedisURL)
+}
+
+// RedisKeyPrefix is rate_limit.redis.key_prefix, else cachePrefix, else "shopanda".
+func (c RateLimitConfig) RedisKeyPrefix(cachePrefix string) string {
+	if p := strings.TrimSpace(c.Redis.KeyPrefix); p != "" {
+		return p
+	}
+	if p := strings.TrimSpace(cachePrefix); p != "" {
+		return p
+	}
+	return "shopanda"
+}
+
+// RateLimitRule defines a rate/burst pair. Both drivers use Rate tokens
+// per second and Burst as the cap. The redis driver maps this to a sliding
+// window of burst/rate seconds (microsecond scores) with capacity burst.
 type RateLimitRule struct {
 	Rate  float64 `yaml:"rate"`
 	Burst int     `yaml:"burst"`
@@ -137,6 +172,7 @@ type RouteRateLimitRule struct {
 	PathPrefix string  `yaml:"path_prefix"`
 	Rate       float64 `yaml:"rate"`
 	Burst      int     `yaml:"burst"`
+	OnError    string  `yaml:"on_error"`
 }
 
 type ServerConfig struct {
@@ -438,9 +474,21 @@ type MeilisearchConfig struct {
 	CategoriesIndex string `yaml:"categories_index"`
 }
 
+const DefaultFullPageCacheTTL = "5m"
+
 type CacheConfig struct {
-	Driver string           `yaml:"driver"`
-	Redis  RedisCacheConfig `yaml:"redis"`
+	Driver   string              `yaml:"driver"`
+	Redis    RedisCacheConfig    `yaml:"redis"`
+	FullPage FullPageCacheConfig `yaml:"full_page"`
+}
+
+// FullPageCacheConfig is the storefront HTML cache (PR-1044).
+// Enabled defaults false; enable once the active theme uses PR-1045 fragments.
+type FullPageCacheConfig struct {
+	Enabled      bool              `yaml:"enabled"`
+	TTL          string            `yaml:"ttl"`
+	ExposeHeader bool              `yaml:"expose_header"`
+	RouteTTL     map[string]string `yaml:"route_ttl"`
 }
 
 // RedisCacheConfig holds Redis cache connection settings.
@@ -779,6 +827,10 @@ func defaults() Config {
 		},
 		Cache: CacheConfig{
 			Driver: "postgres",
+			FullPage: FullPageCacheConfig{
+				Enabled: false,
+				TTL:     DefaultFullPageCacheTTL,
+			},
 		},
 		Queue: QueueConfig{
 			Driver: "postgres",
@@ -794,6 +846,7 @@ func defaults() Config {
 		RateLimit: RateLimitConfig{
 			Enabled: true,
 			Driver:  "memory",
+			OnError: "open",
 			Default: RateLimitRule{Rate: 10, Burst: 20},
 		},
 		Metrics: MetricsConfig{
@@ -978,6 +1031,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
 		cfg.Media.S3.PublicACL = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_CATALOG_VISIBILITY_ENFORCE"); v != "" {
+		cfg.Catalog.Visibility.Enforce = parseEnvBool(v)
+	}
 	if v := os.Getenv("SHOPANDA_SEARCH_ENGINE"); v != "" {
 		cfg.Search.Engine = v
 	}
@@ -1002,6 +1058,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CACHE_REDIS_KEY_PREFIX"); v != "" {
 		cfg.Cache.Redis.KeyPrefix = v
 	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_ENABLED"); v != "" {
+		cfg.Cache.FullPage.Enabled = parseEnvBool(v)
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_TTL"); v != "" {
+		cfg.Cache.FullPage.TTL = v
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_EXPOSE_HEADER"); v != "" {
+		cfg.Cache.FullPage.ExposeHeader = parseEnvBool(v)
+	}
 	if v := os.Getenv("SHOPANDA_QUEUE_DRIVER"); v != "" {
 		cfg.Queue.Driver = v
 	}
@@ -1011,9 +1076,6 @@ func applyEnv(cfg *Config) {
 		}
 		if cfg.Queue.Redis.URL == "" {
 			cfg.Queue.Redis.URL = v
-		}
-		if cfg.RateLimit.Redis.URL == "" {
-			cfg.RateLimit.Redis.URL = v
 		}
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
@@ -1209,6 +1271,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ENABLED"); v != "" {
 		cfg.RateLimit.Enabled = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DRIVER"); v != "" {
+		cfg.RateLimit.Driver = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ON_ERROR"); v != "" {
+		cfg.RateLimit.OnError = v
+	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			cfg.RateLimit.Default.Rate = f
@@ -1219,14 +1287,16 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
-	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DRIVER"); v != "" {
-		cfg.RateLimit.Driver = v
-	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_URL"); v != "" {
 		cfg.RateLimit.Redis.URL = v
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX"); v != "" {
 		cfg.RateLimit.Redis.KeyPrefix = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.RateLimit.Redis.PoolSize = n
+		}
 	}
 	if v := os.Getenv("SHOPANDA_DEV_EMBED_SCHEDULER"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -1336,6 +1406,7 @@ func flatten(cfg *Config) map[string]string {
 	m["media.s3.public_acl"] = strconv.FormatBool(cfg.Media.S3.PublicACL)
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
+	m["catalog.visibility.enforce"] = strconv.FormatBool(cfg.Catalog.Visibility.Enforce)
 	m["search.engine"] = cfg.Search.Engine
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
@@ -1344,6 +1415,21 @@ func flatten(cfg *Config) map[string]string {
 	m["cache.driver"] = cfg.Cache.Driver
 	m["cache.redis.url"] = cfg.Cache.Redis.URL
 	m["cache.redis.key_prefix"] = cfg.Cache.Redis.KeyPrefix
+	m["cache.full_page.enabled"] = strconv.FormatBool(cfg.Cache.FullPage.Enabled)
+	m["cache.full_page.ttl"] = cfg.Cache.FullPage.TTL
+	m["cache.full_page.expose_header"] = strconv.FormatBool(cfg.Cache.FullPage.ExposeHeader)
+	if len(cfg.Cache.FullPage.RouteTTL) > 0 {
+		keys := make([]string, 0, len(cfg.Cache.FullPage.RouteTTL))
+		for k := range cfg.Cache.FullPage.RouteTTL {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+"="+cfg.Cache.FullPage.RouteTTL[k])
+		}
+		m["cache.full_page.route_ttl"] = strings.Join(parts, ",")
+	}
 	m["queue.driver"] = cfg.Queue.Driver
 	m["queue.redis.url"] = cfg.Queue.Redis.URL
 	m["queue.redis.key_prefix"] = cfg.Queue.Redis.KeyPrefix
@@ -1393,10 +1479,12 @@ func flatten(cfg *Config) map[string]string {
 	}
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
 	m["rate_limit.driver"] = cfg.RateLimit.Driver
-	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
-	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
+	m["rate_limit.on_error"] = cfg.RateLimit.OnError
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
+	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
+	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
+	m["rate_limit.redis.pool_size"] = strconv.Itoa(cfg.RateLimit.Redis.PoolSize)
 	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)
 	m["metrics.listen"] = cfg.Metrics.Listen
 	m["tracing.enabled"] = strconv.FormatBool(cfg.Tracing.Enabled)
@@ -1449,7 +1537,7 @@ func (c *Config) String() string {
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s media.s3.bucket=%s media.s3.region=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL, c.Media.S3.Bucket, c.Media.S3.Region),
 		fmt.Sprintf("search.engine=%s", c.Search.Engine),
-		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
+		fmt.Sprintf("cache.driver=%s cache.full_page.enabled=%t cache.full_page.ttl=%s cache.full_page.expose_header=%t", c.Cache.Driver, c.Cache.FullPage.Enabled, c.Cache.FullPage.TTL, c.Cache.FullPage.ExposeHeader),
 		fmt.Sprintf("queue.driver=%s", c.Queue.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")

@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -16,12 +19,20 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+// txStockRepo binds stock reads and writes to the adjust transaction.
+type txStockRepo interface {
+	inventory.StockRepository
+	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
 // InventoryAdminHandler serves inventory admin endpoints.
 type InventoryAdminHandler struct {
-	stock    inventory.StockRepository
-	variants catalog.VariantRepository
-	auditor  *admin.Auditor
-	bus      *event.Bus // optional; nil (the default) skips publishing — see SetBus.
+	stock     inventory.StockRepository
+	variants  catalog.VariantRepository
+	products  txProductRepo
+	txStarter txStarter
+	auditor   *admin.Auditor
+	bus       *event.Bus // optional; nil (the default) skips publishing — see SetBus.
 }
 
 // NewInventoryAdminHandler creates an InventoryAdminHandler with a default auditor.
@@ -43,6 +54,14 @@ func NewInventoryAdminHandlerWithAuditor(stock inventory.StockRepository, varian
 	return &InventoryAdminHandler{stock: stock, variants: variants, auditor: auditor}
 }
 
+// WithTxStarter wires the transaction beginner used by Adjust. The handler
+// locks the product row and writes stock on that same transaction. A nil
+// starter fails closed when Adjust runs. *sql.DB satisfies this.
+func (h *InventoryAdminHandler) WithTxStarter(starter txStarter) *InventoryAdminHandler {
+	h.txStarter = starter
+	return h
+}
+
 // SetBus enables publishing inventory.EventStockUpdated on every successful
 // Adjust (PR-1036: the search index's on-save subscriber listens for it).
 // Left unset (nil), Adjust works exactly as before — no event, no error —
@@ -51,6 +70,17 @@ func NewInventoryAdminHandlerWithAuditor(stock inventory.StockRepository, varian
 // unchanged.
 func (h *InventoryAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
+}
+
+// WithProducts wires the product repository Adjust locks before SetStock.
+// Nil panics. Adjust fails closed when this was not called, and when the
+// repository cannot bind to the adjust transaction.
+func (h *InventoryAdminHandler) WithProducts(products txProductRepo) *InventoryAdminHandler {
+	if products == nil {
+		panic("InventoryAdminHandler: products must not be nil")
+	}
+	h.products = products
+	return h
 }
 
 type adjustStockRequest struct {
@@ -87,6 +117,53 @@ func (h *InventoryAdminHandler) audit(r *http.Request, action admin.AuditAction,
 		Result:       result,
 		Error:        errMsg,
 	})
+}
+
+// adjustStock locks the product row, rejects a dynamic bundle, and writes
+// stock on that same transaction. Product row first, then the stock row,
+// matching the mode-flip lock order.
+func (h *InventoryAdminHandler) adjustStock(ctx context.Context, variant *catalog.Variant, entry inventory.StockEntry) (before int, err error) {
+	if h.txStarter == nil {
+		return 0, apperror.Internal("inventory admin: transaction starter is not configured")
+	}
+	if h.products == nil {
+		return 0, apperror.Internal("inventory admin: product repository is not configured")
+	}
+	txStock, ok := h.stock.(txStockRepo)
+	if !ok {
+		return 0, fmt.Errorf("inventory admin: stock repository does not support transactions")
+	}
+
+	tx, err := h.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("inventory admin: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	locker, ok := h.products.WithTx(tx).(lockingProductRepo)
+	if !ok {
+		return 0, fmt.Errorf("inventory admin: product repository does not support row locks")
+	}
+	productType, _, stockMode, _, err := locker.LockTypeAndModes(ctx, variant.ProductID)
+	if err != nil {
+		return 0, err
+	}
+	if productType == catalog.TypeBundle && stockMode == catalog.StockModeDynamic {
+		return 0, apperror.Validation(catalog.DynamicBundleStockRejectedMessage)
+	}
+
+	boundStock := txStock.WithTx(tx)
+	current, err := boundStock.GetStock(ctx, variant.ID)
+	if err != nil {
+		return 0, fmt.Errorf("inventory admin: get stock: %w", err)
+	}
+	if err := boundStock.SetStock(ctx, &entry); err != nil {
+		return current.Quantity, fmt.Errorf("inventory admin: set stock: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return current.Quantity, fmt.Errorf("inventory admin: commit: %w", err)
+	}
+	return current.Quantity, nil
 }
 
 func toInventoryItemResponse(item inventory.InventoryListItem) adminInventoryItemResponse {
@@ -184,37 +261,36 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 			httpshared.JSONError(w, verr)
 			return
 		}
-
-		before, err := h.stock.GetStock(r.Context(), variantID)
-		if err != nil {
-			h.audit(r, admin.AuditStockUpdate, variantID, nil, err)
-			httpshared.JSONError(w, apperror.Internal("inventory read failed"))
-			return
-		}
-
 		entry, err := inventory.NewStockEntry(variantID, quantity)
 		if err != nil {
 			verr := apperror.Validation(err.Error())
 			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
-				"quantity_before": before.Quantity,
-				"quantity_after":  quantity,
+				"quantity_after": quantity,
 			}, verr)
 			httpshared.JSONError(w, verr)
 			return
 		}
 
-		if err := h.stock.SetStock(r.Context(), &entry); err != nil {
-			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
-				"quantity_before": before.Quantity,
-				"quantity_after":  quantity,
-			}, err)
+		beforeQty, err := h.adjustStock(r.Context(), variant, entry)
+		if err != nil {
+			details := map[string]interface{}{"quantity_after": quantity}
+			if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+				h.audit(r, admin.AuditStockUpdate, variantID, nil, err)
+				httpshared.JSONError(w, err)
+				return
+			}
+			h.audit(r, admin.AuditStockUpdate, variantID, details, err)
+			if strings.Contains(err.Error(), "get stock") {
+				httpshared.JSONError(w, apperror.Internal("inventory read failed"))
+				return
+			}
 			httpshared.JSONError(w, apperror.Internal("inventory update failed"))
 			return
 		}
 
 		h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
 			"sku":             variant.SKU,
-			"quantity_before": before.Quantity,
+			"quantity_before": beforeQty,
 			"quantity_after":  entry.Quantity,
 		}, nil)
 
@@ -231,7 +307,7 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 		if err != nil {
 			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
 				"sku":             variant.SKU,
-				"quantity_before": before.Quantity,
+				"quantity_before": beforeQty,
 				"quantity_after":  entry.Quantity,
 			}, err)
 			httpshared.JSONError(w, apperror.Internal("inventory read failed"))

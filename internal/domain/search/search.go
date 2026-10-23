@@ -102,9 +102,10 @@ type SearchResult struct {
 
 // Suggestion is a single autocomplete result.
 type Suggestion struct {
-	Text string // display text (product name)
-	Type string // e.g. "product"
-	URL  string // e.g. "/products/sneakers-white"
+	Text      string // display text (product name)
+	Type      string // e.g. "product"
+	URL       string // e.g. "/products/sneakers-white"
+	ProductID string // set for product suggestions; used for visibility gates (PR-1057)
 }
 
 // MaxSuggestLimit is the upper bound for autocomplete results.

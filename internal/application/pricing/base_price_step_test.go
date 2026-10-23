@@ -18,8 +18,9 @@ type priceKey struct {
 }
 
 type mockPriceRepo struct {
-	prices map[string]map[priceKey]*domain.Price // variantID → {currency,storeID}
-	err    error
+	prices  map[string]map[priceKey]*domain.Price // variantID → {currency,storeID}
+	err     error
+	upserts int
 }
 
 func (m *mockPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*domain.Price, error) {
@@ -47,6 +48,7 @@ func (m *mockPriceRepo) List(_ context.Context, _, _ int) ([]domain.Price, error
 }
 
 func (m *mockPriceRepo) Upsert(_ context.Context, _ *domain.Price) error {
+	m.upserts++
 	return nil
 }
 
@@ -76,7 +78,7 @@ type mockEntry struct {
 }
 
 func TestBasePriceStep_Name(t *testing.T) {
-	step := pricing.NewBasePriceStep(&mockPriceRepo{})
+	step := pricing.NewBasePriceStepLegacy(&mockPriceRepo{})
 	if step.Name() != "base" {
 		t.Errorf("Name() = %q, want %q", step.Name(), "base")
 	}
@@ -87,7 +89,7 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 		mockEntry{"v1", "EUR", 500, ""},
 		mockEntry{"v2", "EUR", 300, ""},
 	)
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item1, _ := domain.NewPricingItem("v1", 2, shared.MustNewMoney(0, "EUR"))
@@ -113,7 +115,7 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 
 func TestBasePriceStep_NoPriceFound(t *testing.T) {
 	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
@@ -127,7 +129,7 @@ func TestBasePriceStep_NoPriceFound(t *testing.T) {
 
 func TestBasePriceStep_RepoError(t *testing.T) {
 	repo := &mockPriceRepo{err: errors.New("db down")}
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
@@ -141,7 +143,7 @@ func TestBasePriceStep_RepoError(t *testing.T) {
 
 func TestBasePriceStep_EmptyItems(t *testing.T) {
 	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	if err := step.Apply(context.Background(), &pctx); err != nil {
@@ -154,7 +156,7 @@ func TestBasePriceStep_ReturnsStoreScopedPrice(t *testing.T) {
 		mockEntry{"v1", "EUR", 500, ""},
 		mockEntry{"v1", "EUR", 399, "store-1"},
 	)
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
@@ -173,7 +175,7 @@ func TestBasePriceStep_FallsBackToGlobalPrice(t *testing.T) {
 	repo := makeMockRepo(
 		mockEntry{"v1", "EUR", 500, ""},
 	)
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
@@ -190,7 +192,7 @@ func TestBasePriceStep_FallsBackToGlobalPrice(t *testing.T) {
 
 func TestBasePriceStep_ErrorsWhenNoPrice(t *testing.T) {
 	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
-	step := pricing.NewBasePriceStep(repo)
+	step := pricing.NewBasePriceStepLegacy(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))

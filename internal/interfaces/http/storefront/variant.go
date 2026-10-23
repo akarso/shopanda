@@ -16,14 +16,23 @@ import (
 
 // VariantHandler serves variant CRUD endpoints nested under a product.
 type VariantHandler struct {
-	products catalog.ProductRepository
-	variants catalog.VariantRepository
-	bus      *event.Bus
+	products        catalog.ProductRepository
+	variants        catalog.VariantRepository
+	bus             *event.Bus
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewVariantHandler creates a VariantHandler.
 func NewVariantHandler(products catalog.ProductRepository, variants catalog.VariantRepository, bus *event.Bus) *VariantHandler {
 	return &VariantHandler{products: products, variants: variants, bus: bus}
+}
+
+// WithVisibilityFacts enables four-axis visibility gating on public reads (PR-1057).
+// Admin paths bypass via context.
+func (h *VariantHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *VariantHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 // requireProduct verifies the parent product exists and returns it.
@@ -42,6 +51,17 @@ func (h *VariantHandler) requireProduct(w http.ResponseWriter, r *http.Request) 
 		httpshared.JSONError(w, apperror.NotFound("product not found"))
 		return nil
 	}
+	if h.visibilityFacts != nil {
+		ok, err := catalog.AllowWithFacts(r.Context(), p, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return nil
+		}
+		if !ok {
+			httpshared.JSONError(w, apperror.NotFound("product not found"))
+			return nil
+		}
+	}
 	return p
 }
 
@@ -50,7 +70,8 @@ const (
 	variantMaxLimit     = 100
 )
 
-// List handles GET /api/v1/products/{id}/variants.
+// List handles GET /api/v1/products/{id}/variants and
+// GET /api/v1/admin/products/{id}/variants (admin path includes non-active products via read scope).
 func (h *VariantHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := h.requireProduct(w, r)
@@ -105,7 +126,8 @@ func parseVariantPagination(r *http.Request) (int, int, error) {
 	return offset, limit, nil
 }
 
-// Get handles GET /api/v1/products/{id}/variants/{variantId}.
+// Get handles GET /api/v1/products/{id}/variants/{variantId} and
+// GET /api/v1/admin/products/{id}/variants/{variantId}.
 func (h *VariantHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := h.requireProduct(w, r)

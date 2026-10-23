@@ -15,7 +15,13 @@ type Item struct {
 	Name      string
 	Quantity  int
 	UnitPrice shared.Money
-	CreatedAt time.Time
+	// Restockable is snapshotted when the line is created. NewItem defaults
+	// it to true, the physical case. Virtual and downloadable products (the
+	// cart parent or an exploded leaf) are set false by checkout, as is a
+	// non-exploded dynamic-stock bundle parent (stock was reserved on the
+	// leaves). Receive trusts this flag and does not re-read the live product.
+	Restockable bool
+	CreatedAt   time.Time
 }
 
 // NewItem creates an Item with validation.
@@ -36,12 +42,13 @@ func NewItem(variantID, sku, name string, quantity int, unitPrice shared.Money) 
 		return Item{}, errors.New("order item: unit price must be non-negative")
 	}
 	return Item{
-		VariantID: variantID,
-		SKU:       sku,
-		Name:      name,
-		Quantity:  quantity,
-		UnitPrice: unitPrice,
-		CreatedAt: time.Now().UTC(),
+		VariantID:   variantID,
+		SKU:         sku,
+		Name:        name,
+		Quantity:    quantity,
+		UnitPrice:   unitPrice,
+		Restockable: true,
+		CreatedAt:   time.Now().UTC(),
 	}, nil
 }
 

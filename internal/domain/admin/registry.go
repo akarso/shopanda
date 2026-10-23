@@ -2,6 +2,7 @@ package admin
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -46,6 +47,42 @@ func (r *Registry) RegisterFormField(formName string, field Field) error {
 		return fmt.Errorf("admin: form %q not registered", formName)
 	}
 	f.Fields = append(f.Fields, cloneField(field))
+	return nil
+}
+
+// RegisterFormSection appends a visibility-scoped section to an existing form.
+// Returns an error if the form has not been registered, ID is empty, ID is a
+// duplicate on that form, or any Types entry is blank.
+// For product.form catalog-type validation, use application/admin.RegisterProductFormSection.
+func (r *Registry) RegisterFormSection(formName string, section FormSection) error {
+	id := strings.TrimSpace(section.ID)
+	if id == "" {
+		return fmt.Errorf("admin: form section id must not be empty")
+	}
+	section.ID = id
+	if len(section.Types) > 0 {
+		types := make([]string, len(section.Types))
+		for i, t := range section.Types {
+			trimmed := strings.TrimSpace(t)
+			if trimmed == "" {
+				return fmt.Errorf("admin: form section %q types[%d] must not be empty", id, i)
+			}
+			types[i] = trimmed
+		}
+		section.Types = types
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f, ok := r.forms[formName]
+	if !ok {
+		return fmt.Errorf("admin: form %q not registered", formName)
+	}
+	for _, existing := range f.Sections {
+		if existing.ID == id {
+			return fmt.Errorf("admin: form %q already has section %q", formName, id)
+		}
+	}
+	f.Sections = append(f.Sections, cloneFormSection(section))
 	return nil
 }
 
@@ -208,6 +245,16 @@ func cloneColumn(c Column) Column {
 	return c
 }
 
+func cloneFormSection(s FormSection) FormSection {
+	if s.Types != nil {
+		types := make([]string, len(s.Types))
+		copy(types, s.Types)
+		s.Types = types
+	}
+	s.Meta = cloneMeta(s.Meta)
+	return s
+}
+
 func cloneForm(f Form) Form {
 	if f.Fields != nil {
 		fields := make([]Field, len(f.Fields))
@@ -215,6 +262,13 @@ func cloneForm(f Form) Form {
 			fields[i] = cloneField(fld)
 		}
 		f.Fields = fields
+	}
+	if f.Sections != nil {
+		sections := make([]FormSection, len(f.Sections))
+		for i, s := range f.Sections {
+			sections[i] = cloneFormSection(s)
+		}
+		f.Sections = sections
 	}
 	return f
 }

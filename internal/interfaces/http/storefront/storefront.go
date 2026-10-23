@@ -11,12 +11,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	cacheapp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
@@ -71,6 +73,8 @@ type StorefrontHandler struct {
 	pages               cms.PageRepository
 	contentBlocks       cms.ContentBlockRepository
 	blockResolver       *cmsApp.BlockResolver
+	visibilityFacts     catalog.VisibilityFactsSource
+	visibilityOpts      catalog.VisibilityOptions
 	log                 logger.Logger
 	catNav              *localcache.Store[[]catalog.Category]
 	layeredNavAttrs     LayeredNavAttributeLister
@@ -78,6 +82,9 @@ type StorefrontHandler struct {
 	assets              *assetsApp.Registry
 	cspEnabled          bool
 	trustedProxies      []*net.IPNet
+	fpc                 *fpcConfig
+	fpcObs              *cacheapp.FPCObserver // set before or after WithFullPageCache
+	fpcMissingCatTags   sync.Once
 }
 
 // categoryCacheKey is the sole entry catNav ever holds — one category
@@ -116,6 +123,7 @@ type StorefrontLayoutData struct {
 	CartLabel           string
 	EnableCart          bool
 	CSRFToken           string
+	UseFragments        bool // PR-1045: cacheable chrome holes (csrf/greeting/cart)
 	AccountURL          string
 	AccountLabel        string
 	AccountName         string
@@ -267,6 +275,30 @@ func NewStorefrontHandler(
 		log:    logger.New("warn"),
 		catNav: localcache.New[[]catalog.Category](1, storefrontCategoryCacheTTL),
 	}
+}
+
+// CategoryNavCacheSnapshot returns L1 occupancy and hit/miss counters
+// for the storefront category-tree store (PR-1042 cache admin).
+func (h *StorefrontHandler) CategoryNavCacheSnapshot() localcache.Snapshot {
+	if h == nil || h.catNav == nil {
+		return localcache.Snapshot{}
+	}
+	return h.catNav.Snapshot()
+}
+
+// ClearCategoryNavCache drops the storefront category-tree L1 entry.
+// Used by cache-admin FlushAll in this process.
+func (h *StorefrontHandler) ClearCategoryNavCache() {
+	if h == nil || h.catNav == nil {
+		return
+	}
+	h.catNav.Clear()
+}
+
+// WithVisibilityFacts enables four-axis visibility gating on HTML/SSR reads (PR-1057).
+func (h *StorefrontHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *StorefrontHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 // WithCart enables storefront cart rendering and mutations using the provided
@@ -427,52 +459,54 @@ func (h *StorefrontHandler) WithAccountSecurityEmailLinks(storeBaseURL string, e
 
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return h.withFullPageCache(cacheapp.RouteHome, func(w http.ResponseWriter, r *http.Request) {
 		if !h.engine.HasTemplate("home") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
 
 		page := StorefrontHomePageData{
-			Layout: h.layoutDataBestEffort(r),
+			Layout: h.layoutForCacheablePage(r, nil),
 			Theme:  h.engine.Theme(),
 		}
-		blocks, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypeLayout, "home")
+		blocks, tags, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypeLayout, "home")
 		if err != nil {
 			h.log.Warn("storefront.content_blocks.load_failed", map[string]interface{}{
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			cacheapp.SkipStore(r.Context())
 		} else {
 			page.Blocks = blocks
+			cacheapp.AddPageTags(r.Context(), tags...)
 		}
 		h.renderPage(w, "home", page)
-	}
+	})
 }
 
 // Categories handles GET /categories and renders the root category landing page.
 func (h *StorefrontHandler) Categories() http.HandlerFunc {
-	return h.renderCategory(true)
+	return h.withFullPageCache(cacheapp.RouteCategories, h.renderCategory(true))
 }
 
 // Category handles GET /categories/{slug} and renders a category page.
 func (h *StorefrontHandler) Category() http.HandlerFunc {
-	return h.renderCategory(false)
+	return h.withFullPageCache(cacheapp.RouteCategory, h.renderCategory(false))
 }
 
 // Products handles GET /products and renders the storefront listing page.
 func (h *StorefrontHandler) Products() http.HandlerFunc {
-	return h.renderListing(false)
+	return h.withFullPageCache(cacheapp.RoutePLP, h.renderListing(false))
 }
 
 // Search handles GET /search and renders the storefront search results page.
 func (h *StorefrontHandler) Search() http.HandlerFunc {
-	return h.renderListing(true)
+	return h.withFullPageCache(cacheapp.RouteSearch, h.renderListing(true))
 }
 
 // Product handles GET /products/{slug} and renders the product page via SSR.
 func (h *StorefrontHandler) Product() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return h.withFullPageCache(cacheapp.RoutePDP, func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		if slug == "" {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -493,6 +527,17 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
+		if h.visibilityFacts != nil {
+			ok, err := catalog.AllowWithFacts(r.Context(), product, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				http.Error(w, "Not Found", http.StatusNotFound)
+				return
+			}
+		}
 
 		ctx := composition.NewProductContext(product)
 		ctx.Ctx = r.Context()
@@ -512,12 +557,14 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 
 		page := StorefrontProductPageData{
 			ProductContext: ctx,
-			Layout:         h.layoutDataBestEffort(r),
+			Layout:         h.layoutForCacheablePage(r, nil),
 			Theme:          h.engine.Theme(),
 			CartForm:       h.resolveCartForm(r, product.ID),
 		}
+		cacheapp.AddPageTags(r.Context(), cacheapp.ProductTag(product.ID))
+		h.addProductCategoryTags(r.Context(), product.ID)
 		h.renderPage(w, "product", page)
-	}
+	})
 }
 
 func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data interface{}) {
@@ -577,11 +624,23 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 		if !searchMode || params.Query != "" {
 			query := storefrontBuildSearchQuery(params, filterAttrs)
 			storefrontApplyStoreScope(&query, r)
+			// No overfetch: enlarging Limit while keeping page-number Offset
+			// duplicates hits across pages. Accept short pages until PR-1079.
 			result, err = h.search.Search(r.Context(), query)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
+		}
+
+		surface := catalog.VisibilitySurfaceCatalog
+		if searchMode {
+			surface = catalog.VisibilitySurfaceSearch
+		}
+		result, err = h.filterSearchResultVisibility(r, result, surface)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
@@ -600,7 +659,8 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			return
 		}
 
-		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode, allCategories, nil, layeredNavAttrs, advancedSearchAttrs))
+		h.addSearchResultTags(r.Context(), result)
+		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutForCacheablePage(r, allCategories), ctx, result, params, searchMode, allCategories, nil, layeredNavAttrs, advancedSearchAttrs))
 	}
 }
 
@@ -654,6 +714,11 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		result, err = h.filterSearchResultVisibility(r, result, catalog.VisibilitySurfaceCatalog)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
 		ctx.Ctx = r.Context()
@@ -671,14 +736,69 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			return
 		}
 
-		layout, err := h.layoutData(r, allCategories)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
+		layout := h.layoutForCacheablePage(r, allCategories)
+		if category != nil {
+			cacheapp.AddPageTags(r.Context(), cacheapp.CategoryTag(category.ID))
 		}
+		h.addSearchResultTags(r.Context(), result)
 
 		page := h.buildCategoryPageData(r, layout, ctx, result, params, category, allCategories, layeredNavAttrs)
 		h.renderPage(w, "category", page)
+	}
+}
+
+func (h *StorefrontHandler) filterSearchResultVisibility(r *http.Request, result search.SearchResult, surface catalog.VisibilitySurface) (search.SearchResult, error) {
+	return filterSearchHitsByVisibility(r, result, surface, h.visibilityFacts, h.visibilityOpts)
+}
+
+type productCategoryIDReader interface {
+	ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error)
+}
+
+func addCategoryTreeTags(ctx context.Context, categories []catalog.Category) {
+	if cacheapp.HasPageTagBag(ctx) {
+		cacheapp.AddPageTags(ctx, cacheapp.NavigationTag())
+	}
+	for i := range categories {
+		cacheapp.AddPageTags(ctx, cacheapp.CategoryTag(categories[i].ID))
+	}
+}
+
+func (h *StorefrontHandler) addProductCategoryTags(ctx context.Context, productID string) {
+	if !cacheapp.HasPageTagBag(ctx) {
+		return
+	}
+	reader, ok := h.repo.(productCategoryIDReader)
+	if !ok {
+		h.fpcMissingCatTags.Do(func() {
+			h.log.Warn("storefront.fpc.pdp_category_tags_unavailable", map[string]interface{}{
+				"message": "product repository does not implement ListCategoryIDsByProduct; PDP full-page entries will lack category: tags",
+			})
+		})
+		return
+	}
+	ids, err := reader.ListCategoryIDsByProduct(ctx, productID)
+	if err != nil {
+		h.log.Warn("storefront.fpc.category_tags_failed", map[string]interface{}{
+			"product_id": productID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	for _, id := range ids {
+		cacheapp.AddPageTags(ctx, cacheapp.CategoryTag(id))
+	}
+}
+
+func (h *StorefrontHandler) addSearchResultTags(ctx context.Context, result search.SearchResult) {
+	if cacheapp.HasPageTagBag(ctx) {
+		cacheapp.AddPageTags(ctx, cacheapp.ListingTag())
+	}
+	for i := range result.Products {
+		cacheapp.AddPageTags(ctx, cacheapp.ProductTag(result.Products[i].ID))
+		for _, catID := range result.Products[i].CategoryIDs {
+			cacheapp.AddPageTags(ctx, cacheapp.CategoryTag(catID))
+		}
 	}
 }
 
@@ -690,7 +810,7 @@ func (h *StorefrontHandler) layoutData(r *http.Request, categories []catalog.Cat
 		}
 		categories = allCategories
 	}
-	return h.buildLayoutData(r, categories), nil
+	return h.buildLayoutData(r, categories, false), nil
 }
 
 func (h *StorefrontHandler) layoutDataBestEffort(r *http.Request) StorefrontLayoutData {
@@ -702,10 +822,10 @@ func (h *StorefrontHandler) layoutDataBestEffort(r *http.Request) StorefrontLayo
 		"path":  r.URL.Path,
 		"error": err.Error(),
 	})
-	return h.buildLayoutData(r, nil)
+	return h.buildLayoutData(r, nil, false)
 }
 
-func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalog.Category) StorefrontLayoutData {
+func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalog.Category, cacheable bool) StorefrontLayoutData {
 	themeCfg := h.engine.Theme().Storefront
 	siteName := h.engine.Theme().Name
 	if s := store.FromContext(r.Context()); s != nil && s.Name != "" {
@@ -723,6 +843,13 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	if cartLabel == "" {
 		cartLabel = "Cart (0)"
 	}
+	if cacheable {
+		if strings.HasPrefix(strings.ToLower(cartLabel), "cart") {
+			cartLabel = "Cart"
+		}
+	} else {
+		cartLabel = h.cartLabelBestEffort(r, cartLabel)
+	}
 	customerID := storefrontCustomerID(r)
 	identity := platformAuth.IdentityFrom(r.Context())
 	accountLoginURL := "/account/login"
@@ -730,13 +857,25 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	accountProfileURL := "/account/profile"
 	accountSecurityURL := "/account/security"
 	accountLogoutURL := "/account/logout"
+	csrfToken := httpshared.CSRFToken(r)
+	if cacheable {
+		// Token and display name load via PR-1045 fragments; logout form stays
+		// in the shell with an empty csrf_token skeleton so FPC can store it.
+		csrfToken = ""
+	}
 	accountSignedIn := customerID != ""
 	accountURL := accountLoginURL
 	accountLabel := "Account"
 	accountName := "Sign in"
 	if accountSignedIn {
 		accountURL = accountProfileURL
-		accountName = h.storefrontAccountDisplayName(customerID, identity.DisplayName)
+		if cacheable {
+			accountName = "Account"
+		} else {
+			accountName = h.storefrontAccountDisplayName(customerID, identity.DisplayName)
+		}
+	} else if cacheable {
+		accountLogoutURL = ""
 	}
 	nav := h.buildPrimaryNav(r, themeCfg, accountURL)
 	storeID := ""
@@ -750,9 +889,10 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		SearchAction:        searchAction,
 		SearchQuery:         strings.TrimSpace(r.URL.Query().Get("q")),
 		CartURL:             cartURL,
-		CartLabel:           h.cartLabelBestEffort(r, cartLabel),
+		CartLabel:           cartLabel,
 		EnableCart:          h.carts != nil,
-		CSRFToken:           httpshared.CSRFToken(r),
+		CSRFToken:           csrfToken,
+		UseFragments:        cacheable,
 		AccountURL:          accountURL,
 		AccountLabel:        accountLabel,
 		AccountName:         accountName,

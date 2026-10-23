@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -11,12 +12,16 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
+	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	"github.com/akarso/shopanda/plugins/core"
 	"github.com/akarso/shopanda/plugins/maildemo"
+	"github.com/alicebob/miniredis/v2"
 )
 
 type mockDiscoveryFacetConfigurer struct {
@@ -236,5 +241,211 @@ func TestResolveMailer_CoreSMTPDefault(t *testing.T) {
 	}
 	if mailer == nil {
 		t.Fatal("resolveMailer() returned nil")
+	}
+}
+
+func TestResolveRateLimitFactory_DisabledSkipsRedis(t *testing.T) {
+	cfg := &config.Config{RateLimit: config.RateLimitConfig{Enabled: false, Driver: "redis"}}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("disabled redis driver should not dial: %v", err)
+	}
+	t.Cleanup(closeFn)
+	if !f.New(ratelimit.Spec{Name: "default", Rate: 1, Burst: 1}).Allow(context.Background(), "k").Allowed {
+		t.Fatal("memory factory should admit")
+	}
+}
+
+func TestResolveRateLimitFactory_UnknownDriver(t *testing.T) {
+	cfg := &config.Config{RateLimit: config.RateLimitConfig{Enabled: true, Driver: "memcached"}}
+	_, _, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err == nil {
+		t.Fatal("expected error for unknown driver")
+	}
+}
+
+func TestResolveRateLimitFactory_RedisMissingURL(t *testing.T) {
+	cfg := &config.Config{RateLimit: config.RateLimitConfig{Enabled: true, Driver: "redis"}}
+	_, _, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err == nil {
+		t.Fatal("expected error when redis URL is missing")
+	}
+}
+
+func TestResolveRateLimitFactory_DedicatedURLBeatsCacheURL(t *testing.T) {
+	cacheMR, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("cache miniredis: %v", err)
+	}
+	t.Cleanup(cacheMR.Close)
+	limMR, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("limiter miniredis: %v", err)
+	}
+	t.Cleanup(limMR.Close)
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Driver:  "redis",
+			Redis:   config.RateLimitRedisConfig{URL: "redis://" + limMR.Addr()},
+		},
+		Cache: config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://" + cacheMR.Addr(), KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	t.Cleanup(closeFn)
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	if got := owned.Client().Options().Addr; got != limMR.Addr() {
+		t.Fatalf("limiter Addr = %q, want dedicated %q (not cache %q)", got, limMR.Addr(), cacheMR.Addr())
+	}
+}
+
+func TestResolveRateLimitFactory_DedicatedURLWithoutCacheURL(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Driver:  "redis",
+			Redis:   config.RateLimitRedisConfig{URL: "redis://" + mr.Addr()},
+		},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	t.Cleanup(closeFn)
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	if got := owned.Client().Options().Addr; got != mr.Addr() {
+		t.Fatalf("limiter Addr = %q, want %q", got, mr.Addr())
+	}
+}
+
+func TestResolveRateLimitFactory_DedicatedClientDoesNotCloseCache(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	url := "redis://" + mr.Addr()
+	store, err := inredis.New(inredis.Config{URL: url, KeyPrefix: "shopanda"})
+	if err != nil {
+		t.Fatalf("New cache: %v", err)
+	}
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{Enabled: true, Driver: "redis"},
+		Cache:     config.CacheConfig{Redis: config.RedisCacheConfig{URL: url, KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	if owned.Client() == store.Client() {
+		t.Fatal("limiter must use a dedicated client, not the cache pool")
+	}
+	closeFn()
+	if err := store.Client().Ping(context.Background()).Err(); err != nil {
+		t.Fatalf("cache client should stay open after limiter close: %v", err)
+	}
+}
+
+func TestResolveRateLimitFactory_OwnedClientCloses(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{Enabled: true, Driver: "redis"},
+		Cache:     config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://" + mr.Addr(), KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	closeFn()
+	if err := owned.Client().Ping(context.Background()).Err(); err == nil {
+		t.Fatal("owned client should be closed")
+	}
+}
+
+func TestResolveRateLimitFactory_UnreachableRedisFailOpen(t *testing.T) {
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{Enabled: true, Driver: "redis", OnError: "open"},
+		Cache:     config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://127.0.0.1:1", KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("fail-open should start without Redis: %v", err)
+	}
+	t.Cleanup(closeFn)
+	start := time.Now()
+	d := f.New(ratelimit.Spec{Name: "default", Rate: 10, Burst: 10}).Allow(context.Background(), "k")
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("open circuit should skip Redis, took %v", time.Since(start))
+	}
+	if !d.Allowed || !d.BackendError {
+		t.Fatalf("decision = %+v, want fail-open while circuit is held", d)
+	}
+}
+
+func TestResolveRateLimitFactory_UnreachableRedisPerRouteClosed(t *testing.T) {
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Driver:  "redis",
+			OnError: "open",
+			PerRoute: []config.RouteRateLimitRule{
+				{PathPrefix: "/api/v1/auth/login", Rate: 1, Burst: 2, OnError: "closed"},
+			},
+		},
+		Cache: config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://127.0.0.1:1", KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("global open should start without Redis: %v", err)
+	}
+	t.Cleanup(closeFn)
+	start := time.Now()
+	closed := f.New(ratelimit.Spec{Name: "route:/api/v1/auth/login", Rate: 1, Burst: 2, OnError: ratelimit.OnErrorClosed}).Allow(context.Background(), "k")
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("open circuit should skip Redis, took %v", time.Since(start))
+	}
+	if closed.Allowed || !closed.BackendError {
+		t.Fatalf("per-route closed = %+v, want deny during boot hold", closed)
+	}
+	open := f.New(ratelimit.Spec{Name: "default", Rate: 10, Burst: 10}).Allow(context.Background(), "k")
+	if !open.Allowed || !open.BackendError {
+		t.Fatalf("global open = %+v, want admit during boot hold", open)
+	}
+}
+
+func TestResolveRateLimitFactory_UnreachableRedisFailClosed(t *testing.T) {
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{Enabled: true, Driver: "redis", OnError: "closed"},
+		Cache:     config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://127.0.0.1:1", KeyPrefix: "shopanda"}},
+	}
+	_, _, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err == nil {
+		t.Fatal("fail-closed should refuse to start when Redis is unreachable")
 	}
 }

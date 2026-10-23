@@ -57,7 +57,7 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 
 | Domain | Description |
 |---|---|
-| Catalog | Products, variants, categories, collections |
+| Catalog | Product types (simple, virtual, bundle, grouped, configurable, downloadable), variants, categories, collections, storefront visibility/purchasability |
 | Pricing | Deterministic pricing pipeline with discounts, taxes, and fees |
 | Taxes | Country-based VAT, inclusive and exclusive pricing modes |
 | Promotions | Catalog rules, cart rules, coupons |
@@ -75,7 +75,8 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 | CMS | Simple content pages with routing |
 | Media | Local storage by default, CDN-ready design |
 | Custom Attributes | Extension field registry for attaching typed custom data to core entities without forking core |
-| Background Jobs | PostgreSQL-backed job queue and cron scheduler, with an admin API for introspection, retry, and cancel |
+| Background Jobs | PostgreSQL-backed job queue and cron scheduler, with admin API, CLI, and GUI for list, retry, cancel, and schedule control |
+| Cache | Tag-based invalidation and optional full-page cache; Postgres UNLOGGED by default |
 | Integrations | Inbound REST + GraphQL for integrators, outbound webhooks, CSV import/export hooks, plugin SDK |
 | Admin | Schema-driven forms and grids |
 | SEO | Structured data, sitemap generation, canonical URLs |
@@ -145,7 +146,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
 
-Phases 1–10 (core engine through platform hardening) are shipped. Active development: [Phase 11 — Jobs, Search & Cache](docs/phase-11-jobs-search-cache/ROADMAP.md). See [Development history](#development-history) below for the full phase-by-phase breakdown.
+Phases 1–11 are shipped. Active development: [Phase 12 — Product Types & Composition](docs/phase-12-product-composition/ROADMAP.md). Site-ready plugin work (owned schema + on-demand jobs) is planned as [Phase 13](docs/phase-13-plugin-runtime/ROADMAP.md) and should finish before a real merchant site. See [Development history](#development-history) below for the full phase-by-phase breakdown.
 
 ## Default stack
 
@@ -157,7 +158,7 @@ Shopanda uses a minimal default stack (Tier 1 only — no optional services requ
 | **Database** | PostgreSQL | — |
 | **Queue** | PostgreSQL job queue | Redis or RabbitMQ (`queue.driver`) |
 | **Search** | PostgreSQL full-text (tsvector) | Meilisearch (`search.engine`) |
-| **Cache** | PostgreSQL UNLOGGED table | Redis (`cache.driver`) |
+| **Cache** | PostgreSQL UNLOGGED table + optional full-page cache | Redis (`cache.driver`) |
 | **Storage** | Local filesystem | S3-compatible (`storage.driver`) |
 | **Payments** | Manual (offline) | Stripe (`payment.stripe.enabled`) |
 | **Email** | SMTP + async jobs | — |
@@ -169,7 +170,7 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Project status
 
-Shopanda has shipped **10 completed development phases** (PR-1 through PR-1026) and is actively working through an 11th. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), and a merchant-discovery pass (navigation, advanced search, attribute properties) are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
+Shopanda has shipped **11 completed development phases** and is working through Phase 12 (catalog types and composition). Phase 13 (plugin-owned schema + on-demand jobs) is the planned site-ready gate before a real merchant site. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), merchant discovery (navigation, advanced search), and operator surfaces for jobs, search, and cache are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
 
 | Phase | Focus | Status |
 | --- | --- | --- |
@@ -183,7 +184,9 @@ Shopanda has shipped **10 completed development phases** (PR-1 through PR-1026) 
 | 8 | Integrator platform (ports, import pipelines, inbound/outbound integration, plugin SDK) | Shipped |
 | 9 | Integrator backlog cleanup + merchant discovery (navigation, advanced search) | Shipped |
 | 10 | Platform excellence (CI, security hardening, ops, architecture refactor) | Shipped — one integration-test item open, gated on CI running against real Postgres |
-| 11 | Jobs, search & cache admin reachability + full-page cache | **In progress** |
+| 11 | Jobs, search & cache admin reachability + full-page cache | Shipped |
+| 12 | Product types & composition | **In progress** — types and visibility shipped; bundle/grouped through pricing, stock, order lines, and Omnibus |
+| 13 | Plugin runtime (owned schema + on-demand sync jobs) | Planned — do before a real site |
 
 Full breakdown with PR-level detail: [Development history](#development-history).
 
@@ -238,14 +241,20 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:categories <file.csv>` | Export category tree to CSV |
 | `import:prices <file.csv>` | Import prices from CSV |
 | `export:prices <file.csv>` | Export prices to CSV |
+| `export:epr <file.csv>` | Export EPR packaging metadata (`--include-empty`) |
+| `export:oss <file.csv>` | Export OSS/IOSS tax report (`--summary`, `--from=YYYY-MM-DD`, `--to=YYYY-MM-DD`) |
 | `jobs:list` | List background jobs (`--type=X`, `--status=Y`, `--limit=N`, `--offset=N`, `--json`) |
 | `jobs:show <id>` | Show a job's full detail (`--json`) |
 | `jobs:retry <id>` | Retry a failed job |
 | `jobs:cancel <id>` | Cancel a pending job |
+| `cache:stats` | Show cache occupancy (`--json`) |
+| `cache:clear` | Clear cache (`--prefix=<p>`, `--tag=<t>`, `--key=<k>`, or `--all`) |
+| `cache:purge-url` | Purge full-page cache keys for a storefront path |
 | `schedule:list` | List registered scheduled tasks (`--json`) |
 | `schedule:trigger <name>` | Trigger a scheduled task immediately |
 | `schedule:enable <name>` | Re-enable a scheduled task |
 | `schedule:disable <name>` | Disable a scheduled task |
+| `plugins report` | Print registered extension points and ports (`--json`) |
 
 Run `./app help` for the live command list from the current binary.
 
@@ -258,7 +267,10 @@ Current guides live in [`docs/guides/`](docs/guides/):
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, GHCR releases (`sha-<commit>` / digest pins), bare metal, TLS, backups, and monitoring
 - [Developer Guide](docs/guides/DEVELOPER.md) — three-tier plugin model, extension points, events, pipelines, and API integration
+- [Extension Points](docs/guides/EXTENSION_POINTS.md) — which mechanism to use (events, hooks, pipelines, workflows, registries)
+- [Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md) — multi-plugin ordering and precedence
 - [Plugin Authoring Guide](PLUGINS.md) — core vs external boundaries, extension mechanisms, deferred capabilities
+- [Runbook](RUNBOOK.md) — incident response, probes, and operator troubleshooting
 
 ### Planning & Reference
 
@@ -286,7 +298,9 @@ Shopanda has been built in numbered phases, each with its own roadmap and per-PR
 | 8 — Integrator platform | [phase-8-integrator-platform/ROADMAP.md](docs/phase-8-integrator-platform/ROADMAP.md) | Shipped |
 | 9 — Integrator backlog + merchant discovery | [phase-9-merchant-discovery/README.md](docs/phase-9-merchant-discovery/README.md) | Shipped |
 | 10 — Platform excellence | [phase-10-platform-excellence/README.md](docs/phase-10-platform-excellence/README.md) | Shipped (one open integration-test item) |
-| 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | **In progress** |
+| 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | Shipped |
+| 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **In progress** |
+| 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned (do before a real site) |
 
 Additional historical specs:
 

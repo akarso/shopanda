@@ -145,8 +145,9 @@ func newStorefrontCartService() (*cartApp.Service, *storefrontCartRepoStub, *sto
 	carts := newStorefrontCartRepoStub()
 	prices := newStorefrontPriceRepoStub()
 	log := logger.NewWithWriter(io.Discard, "error")
-	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
-	service := cartApp.NewService(carts, prices, nil, nil, pipeline, log, event.NewBus(log), nil, nil)
+	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStepLegacy(prices), pricing.NewFinalizeStep())
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	service := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, log, event.NewBus(log), nil, nil)
 	return service, carts, prices
 }
 

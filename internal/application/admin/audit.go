@@ -156,6 +156,11 @@ const (
 	AuditSearchReindexTrigger AuditAction = "search_reindex.trigger"
 	AuditSearchReindexRead    AuditAction = "search_reindex.read"
 	AuditSearchReindexList    AuditAction = "search_reindex.list"
+
+	// Cache admin operations (PR-1042)
+	AuditCacheStats    AuditAction = "cache.stats"
+	AuditCacheClear    AuditAction = "cache.clear"
+	AuditCachePurgeURL AuditAction = "cache.purge_url"
 )
 
 // AuditEntry represents a single admin audit log entry.

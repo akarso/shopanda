@@ -111,7 +111,7 @@ func (m *mockProductRepo) FindByID(_ context.Context, _ string) (*catalog.Produc
 func (m *mockProductRepo) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *mockProductRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockProductRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (m *mockProductRepo) Create(_ context.Context, p *catalog.Product) error {

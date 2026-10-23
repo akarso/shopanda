@@ -432,6 +432,33 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 			},
 		},
 		{
+			name: "export warnings do not fail",
+			log:  &memLogger{},
+			opts: ioCommandOpts{
+				Kind:          ioExport,
+				Path:          filepath.Join(dir, "out-warn.csv"),
+				StartEvent:    "export.test.start",
+				CompleteEvent: "export.test.complete",
+				RowErrorEvent: "export.test.row_error",
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					if _, err := f.WriteString("name,slug,sku,description,type,variant_name\n"); err != nil {
+						return nil, err
+					}
+					return &ioOutcome{
+						Fields:       map[string]interface{}{"products": 1, "errors": 0},
+						Warnings:     []string{"omitted reserved attribute keys from CSV: type"},
+						WarningEvent: "export.products.warning",
+					}, nil
+				}
+			},
+			check: func(t *testing.T) {
+				t.Helper()
+				// mem is reset/checked below via tt.log; assert warn event in named branch
+			},
+		},
+		{
 			name: "unknown io kind",
 			opts: ioCommandOpts{
 				Kind:          ioKind("nope"),
@@ -485,6 +512,14 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				}
 				if len(mem.err) != 0 {
 					t.Fatalf("err events = %v, want none (RowErrorWarn)", mem.err)
+				}
+			}
+			if tt.name == "export warnings do not fail" {
+				if mem == nil || len(mem.warn) != 1 || mem.warn[0] != "export.products.warning" {
+					t.Fatalf("warn events = %v, want export.products.warning", mem.warn)
+				}
+				if len(mem.err) != 0 {
+					t.Fatalf("err events = %v, want none", mem.err)
 				}
 			}
 			if tt.check != nil {

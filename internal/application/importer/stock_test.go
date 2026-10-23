@@ -17,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -121,6 +122,68 @@ func (m *mockVariantRepoForStock) WithTx(_ *sql.Tx) catalog.VariantRepository {
 	return m
 }
 
+func (m *mockStockRepo) WithTx(*sql.Tx) inventory.StockRepository { return m }
+
+type permissiveStockImportProducts struct{}
+
+func (permissiveStockImportProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed}, nil
+}
+func (permissiveStockImportProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (permissiveStockImportProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (permissiveStockImportProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (permissiveStockImportProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (permissiveStockImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (permissiveStockImportProducts) WithTx(*sql.Tx) catalog.ProductRepository {
+	return permissiveStockImportProducts{}
+}
+func (permissiveStockImportProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+	return catalog.TypeSimple, catalog.PricingModeFixed, catalog.StockModeFixed, false, nil
+}
+
+type lockingStockImportProducts struct {
+	byID map[string]*catalog.Product
+}
+
+func (m lockingStockImportProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return m.byID[id], nil
+}
+func (lockingStockImportProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (lockingStockImportProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (lockingStockImportProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (lockingStockImportProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (lockingStockImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (m lockingStockImportProducts) WithTx(*sql.Tx) catalog.ProductRepository     { return m }
+func (m lockingStockImportProducts) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+	p := m.byID[id]
+	if p == nil {
+		return "", "", "", false, apperror.NotFound("product not found")
+	}
+	mode := p.StockMode
+	if mode == "" {
+		mode = catalog.StockModeFixed
+	}
+	return p.Type, catalog.PricingModeFixed, mode, p.ExplodeOrderLines, nil
+}
+
+func writingStockImporter(variants catalog.VariantRepository, stock inventory.StockRepository) *importer.StockImporter {
+	return importer.NewStockImporter(variants, stock).
+		WithProducts(permissiveStockImportProducts{}).
+		WithTxStarter(priceImportFakeTxDBConn())
+}
+
 type mockStockRepo struct {
 	entries map[string]int // variantID → quantity
 	setErr  error
@@ -187,7 +250,7 @@ func TestStockImport_Basic(t *testing.T) {
 		},
 	}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,10\nSKU-002,25\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -211,7 +274,7 @@ func TestStockImport_Basic(t *testing.T) {
 func TestStockImport_MissingColumns(t *testing.T) {
 	varRepo := &mockVariantRepoForStock{variants: map[string]*catalog.Variant{}}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,name\nSKU-001,Widget\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -226,7 +289,7 @@ func TestStockImport_MissingColumns(t *testing.T) {
 func TestStockImport_UnknownSKU(t *testing.T) {
 	varRepo := &mockVariantRepoForStock{variants: map[string]*catalog.Variant{}}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nNOSUCH,10\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -249,7 +312,7 @@ func TestStockImport_InvalidQuantity(t *testing.T) {
 		"SKU-001": {ID: "v1", SKU: "SKU-001"},
 	}}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,abc\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -269,7 +332,7 @@ func TestStockImport_NegativeQuantity(t *testing.T) {
 		"SKU-001": {ID: "v1", SKU: "SKU-001"},
 	}}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,-5\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -287,7 +350,7 @@ func TestStockImport_NegativeQuantity(t *testing.T) {
 func TestStockImport_EmptySKU(t *testing.T) {
 	varRepo := &mockVariantRepoForStock{variants: map[string]*catalog.Variant{}}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\n,10\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -310,7 +373,7 @@ func TestStockImport_SetStockError(t *testing.T) {
 	}
 	stockRepo := newMockStockRepo()
 	stockRepo.setErr = fmt.Errorf("db write failed")
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,10\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -329,7 +392,7 @@ func TestStockImport_ZeroQuantity(t *testing.T) {
 		},
 	}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,0\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -352,7 +415,7 @@ func TestStockImport_MixedValidAndInvalid(t *testing.T) {
 		},
 	}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,10\nBAD,5\nSKU-002,abc\nSKU-002,20\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -386,7 +449,7 @@ func TestStockImport_TriggersOneBatchedReindex(t *testing.T) {
 	}
 	stockRepo := newMockStockRepo()
 	queue := &stockImportFakeQueue{}
-	imp := importer.NewStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
+	imp := writingStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
 
 	csv := "sku,quantity\nSKU-001,10\nSKU-002,20\nSKU-003,30\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -422,7 +485,7 @@ func TestStockImport_NilReindexServiceIsNoop(t *testing.T) {
 		},
 	}
 	stockRepo := newMockStockRepo()
-	imp := importer.NewStockImporter(varRepo, stockRepo)
+	imp := writingStockImporter(varRepo, stockRepo)
 
 	csv := "sku,quantity\nSKU-001,10\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -451,7 +514,7 @@ func TestStockImport_ReindexesRowsCommittedBeforeALaterRowFails(t *testing.T) {
 	stockRepo := newMockStockRepo()
 	stockRepo.failAfterN = 1 // row 1 (SKU-001) succeeds, row 2 (SKU-002) fails
 	queue := &stockImportFakeQueue{}
-	imp := importer.NewStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
+	imp := writingStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
 
 	csv := "sku,quantity\nSKU-001,10\nSKU-002,20\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(csv))
@@ -481,11 +544,57 @@ func TestStockImport_TriggerErrorIsReturned(t *testing.T) {
 	stockRepo := newMockStockRepo()
 	queueErr := errors.New("queue down")
 	queue := &stockImportFakeQueue{err: queueErr}
-	imp := importer.NewStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
+	imp := writingStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
 
 	csv := "sku,quantity\nSKU-001,10\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if !errors.Is(err, queueErr) {
 		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
+	}
+}
+
+func TestStockImport_SkipsDynamicBundleUnderLock(t *testing.T) {
+	varRepo := &mockVariantRepoForStock{variants: map[string]*catalog.Variant{
+		"SKU-SIMPLE": {ID: "v1", SKU: "SKU-SIMPLE", ProductID: "simple"},
+		"SKU-BUNDLE": {ID: "v2", SKU: "SKU-BUNDLE", ProductID: "bundle"},
+	}}
+	stockRepo := newMockStockRepo()
+	products := lockingStockImportProducts{byID: map[string]*catalog.Product{
+		"simple": {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed},
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, Status: catalog.StatusActive, StockMode: catalog.StockModeDynamic},
+	}}
+	imp := importer.NewStockImporter(varRepo, stockRepo).WithProducts(products).WithTxStarter(priceImportFakeTxDBConn())
+
+	result, err := imp.Import(context.Background(), strings.NewReader("sku,quantity\nSKU-SIMPLE,4\nSKU-BUNDLE,9\n"))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Updated != 1 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want Updated=1 Skipped=1", result)
+	}
+	if stockRepo.entries["v1"] != 4 {
+		t.Fatalf("simple stock = %d, want 4", stockRepo.entries["v1"])
+	}
+	if _, wrote := stockRepo.entries["v2"]; wrote {
+		t.Fatalf("dynamic bundle stock = %d, want no write", stockRepo.entries["v2"])
+	}
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "cannot have their own stock") {
+		t.Fatalf("errors = %v, want dynamic stock rejection", result.Errors)
+	}
+}
+
+func TestStockImport_TxStarterRequired(t *testing.T) {
+	varRepo := &mockVariantRepoForStock{variants: map[string]*catalog.Variant{
+		"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: "p1"},
+	}}
+	stockRepo := newMockStockRepo()
+	imp := importer.NewStockImporter(varRepo, stockRepo).WithProducts(permissiveStockImportProducts{})
+
+	_, err := imp.Import(context.Background(), strings.NewReader("sku,quantity\nSKU-001,10\n"))
+	if err == nil || !strings.Contains(err.Error(), "transaction starter is required") {
+		t.Fatalf("err = %v, want missing transaction starter", err)
+	}
+	if stockRepo.setCalls != 0 {
+		t.Fatalf("SetStock calls = %d, want 0", stockRepo.setCalls)
 	}
 }

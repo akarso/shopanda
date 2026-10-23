@@ -12,10 +12,12 @@ const sitemapPageSize = 100
 
 // SitemapHandler serves GET /sitemap.xml.
 type SitemapHandler struct {
-	baseURL    string
-	products   catalog.ProductRepository
-	categories catalog.CategoryRepository
-	pages      cms.PageRepository
+	baseURL         string
+	products        catalog.ProductRepository
+	categories      catalog.CategoryRepository
+	pages           cms.PageRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewSitemapHandler creates a SitemapHandler.
@@ -31,6 +33,13 @@ func NewSitemapHandler(
 		categories: categories,
 		pages:      pages,
 	}
+}
+
+// WithVisibilityFacts enables four-axis visibility gating (PR-1057).
+// Sitemap entries are PDP URLs, so the gate is VisibleIndividually.
+func (h *SitemapHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *SitemapHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 type sitemapURLSet struct {
@@ -50,24 +59,30 @@ func (h *SitemapHandler) Serve() http.HandlerFunc {
 		ctx := r.Context()
 		var urls []sitemapURL
 
-		// Products (paginated, active only).
+		// Products (paginated; individually-visible when facts wired — PDP URLs).
 		offset := 0
 		for {
-			products, err := h.products.List(ctx, offset, sitemapPageSize)
+			raw, err := h.products.List(ctx, catalog.ListFilter{Offset: offset, Limit: sitemapPageSize})
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
-			for _, p := range products {
-				if p.Status != catalog.StatusActive {
-					continue
+			products := raw
+			if h.visibilityFacts != nil {
+				// Sitemap entries are PDP URLs — gate on individually, not catalog.
+				products, err = catalog.FilterWithFacts(ctx, raw, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+				if err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
 				}
+			}
+			for _, p := range products {
 				urls = append(urls, sitemapURL{
 					Loc:     h.baseURL + "/products/" + p.Slug,
 					LastMod: p.UpdatedAt.Format("2006-01-02"),
 				})
 			}
-			if len(products) < sitemapPageSize {
+			if len(raw) < sitemapPageSize {
 				break
 			}
 			offset += sitemapPageSize

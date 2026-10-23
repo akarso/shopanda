@@ -48,6 +48,7 @@ var eprCSVHeader = []string{
 
 // Export writes EPR packaging rows to w in CSV format.
 func (exp *EprExporter) Export(ctx context.Context, w io.Writer, opts EprExportOptions) (*EprResult, error) {
+	ctx = catalog.WithOperatorProductReadScope(ctx)
 	storeScheme := ""
 	if exp.config != nil {
 		scheme, err := legal.StoreSchemeRegistrationID(ctx, exp.config, opts.StoreID)
@@ -65,7 +66,7 @@ func (exp *EprExporter) Export(ctx context.Context, w io.Writer, opts EprExportO
 	result := &EprResult{}
 	offset := 0
 	for {
-		products, err := exp.products.List(ctx, offset, pageSize)
+		products, err := exp.products.List(ctx, catalog.ListFilter{Offset: offset, Limit: pageSize})
 		if err != nil {
 			return nil, fmt.Errorf("epr export: list products: %w", err)
 		}

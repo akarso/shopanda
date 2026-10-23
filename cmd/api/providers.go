@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
@@ -21,10 +23,13 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 )
 
 func newDiscoveryFacetSyncer(store *adminApp.AttributeStore, engine search.SearchEngine) *adminApp.DiscoveryFacetSyncer {
@@ -113,6 +118,84 @@ func resolveJobQueue(app *plugin.App, conn *sql.DB, cfg *config.Config) (jobs.Qu
 	default:
 		return nil, fmt.Errorf("unsupported queue.driver: %q", cfg.Queue.Driver)
 	}
+}
+
+func resolveRateLimitFactory(cfg *config.Config, log logger.Logger, rec metrics.Recorder) (ratelimit.Factory, func(), error) {
+	if !cfg.RateLimit.Enabled {
+		return ratelimit.MemoryFactory(), func() {}, nil
+	}
+	driver := cfg.RateLimit.Driver
+	if driver == "" {
+		driver = "memory"
+	}
+	switch driver {
+	case "memory":
+		log.Info("ratelimit.driver", map[string]interface{}{"driver": "memory"})
+		return ratelimit.MemoryFactory(), func() {}, nil
+	case "redis":
+		observe := func(f *inredis.LimiterFactory) {
+			if rec == nil {
+				return
+			}
+			f.SetErrorObserver(func(name, reason string) {
+				rec.RateLimitBackendError(limiterMetricLabel(name), reason)
+			})
+		}
+		url := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL)
+		if url == "" {
+			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or cache.redis.url (or SHOPANDA_RATE_LIMIT_REDIS_URL / REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
+		}
+		client, err := inredis.NewLimiterClient(url, cfg.RateLimit.Redis.PoolSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rate_limit redis: %w", err)
+		}
+		prefix := cfg.RateLimit.RedisKeyPrefix(cfg.Cache.Redis.KeyPrefix)
+		factory := inredis.NewOwnedLimiterFactory(client, prefix, log)
+		if err := inredis.PingLimiter(client, 2*time.Second); err != nil {
+			if ratelimit.FailClosed(cfg.RateLimit.OnError) {
+				_ = factory.Close()
+				return nil, nil, fmt.Errorf("rate_limit redis: %w", err)
+			}
+			fields := map[string]interface{}{"error": err.Error()}
+			var closed []string
+			for _, r := range cfg.RateLimit.PerRoute {
+				if ratelimit.FailClosed(r.OnError) {
+					closed = append(closed, r.PathPrefix)
+				}
+			}
+			if len(closed) > 0 {
+				fields["fail_closed_routes"] = closed
+			}
+			log.Warn("ratelimit.redis.unavailable", fields)
+			factory.OpenCircuit()
+		}
+		log.Info("ratelimit.driver", map[string]interface{}{
+			"driver":        "redis",
+			"key_prefix":    prefix,
+			"dedicated":     true,
+			"allow_timeout": "200ms",
+			"pool_size":     client.Options().PoolSize,
+			"url_source":    limiterURLSource(cfg),
+		})
+		observe(factory)
+		return factory, func() { _ = factory.Close() }, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported rate_limit.driver: %q", driver)
+	}
+}
+
+func limiterMetricLabel(name string) string {
+	if name == "" || name == "default" {
+		return "default"
+	}
+	return name
+}
+
+func limiterURLSource(cfg *config.Config) string {
+	if strings.TrimSpace(cfg.RateLimit.Redis.URL) != "" {
+		return "rate_limit.redis.url"
+	}
+	return "cache.redis.url"
 }
 
 func resolveCache(app *plugin.App, conn *sql.DB, cfg *config.Config) (cache.Cache, error) {

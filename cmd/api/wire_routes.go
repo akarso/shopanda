@@ -3,21 +3,19 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
+	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
-	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -28,16 +26,6 @@ import (
 func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB) (http.Handler, error) {
 	router := shophttp.NewRouter()
 
-	rateLimiterFactory, rateLimiterCloser, err := resolveRateLimiterFactory(cfg, log)
-	if err != nil {
-		return nil, err
-	}
-	rt.rateLimiterRedisClient = rateLimiterCloser
-	rateLimitMiddleware, err := shophttp.RateLimitMiddleware(cfg.RateLimit, log, rateLimiterFactory)
-	if err != nil {
-		return nil, err
-	}
-
 	// Middleware: outermost first.
 	// Metrics and Tracing are outermost so they capture the final status
 	// (after Recovery converts a panic to 500) and the full request
@@ -47,7 +35,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())
-	router.Use(rateLimitMiddleware)
+	router.Use(shophttp.RateLimitMiddlewareWithFactory(cfg.RateLimit, log, rt.rateLimitFactory))
 	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.BodyLimitMiddleware(cfg.HTTP.MaxBodyBytes, cfg.HTTP.MediaMaxBodyBytes))
@@ -58,6 +46,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
 		"/setup",
+		"/fragments",
 		"/api/v1/setup",
 		"/api/v1/carts",
 		"/api/v1/checkout",
@@ -105,6 +94,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireJobsRead := admin.RequirePermission(rbac.JobsRead)
 	requireJobsWrite := admin.RequirePermission(rbac.JobsWrite)
 	requireSearchReindex := admin.RequirePermission(rbac.SearchReindex)
+	requireCacheRead := admin.RequirePermission(rbac.CacheRead)
+	requireCacheClear := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
+	requireCachePurgeURL := admin.RequirePermission(rbac.CachePurgeURL)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -167,6 +159,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("DELETE /api/v1/admin/categories/{id}/products/{productId}", requireCategoriesWrite(rt.categoryProductAssignmentAdmin.Unassign()))
 	router.Handle("GET /api/v1/admin/products/{id}/translations", requireProductsRead(rt.productTranslationAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/products/{id}/translations", requireProductsWrite(rt.productTranslationAdmin.Update()))
+	router.Handle("GET /api/v1/admin/products/{id}/variants", requireProductsRead(rt.variantHandler.List()))
+	router.Handle("GET /api/v1/admin/products/{id}/variants/{variantId}", requireProductsRead(rt.variantHandler.Get()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(rt.variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(rt.variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/products/{id}/variants/{variantId}/price", requireProductsRead(rt.productPriceAdmin.Get()))
@@ -182,6 +176,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/jobs/{id}", requireJobsRead(rt.jobAdmin.Get()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/retry", requireJobsWrite(rt.jobAdmin.Retry()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
+	router.Handle("GET /api/v1/admin/cache/stats", requireCacheRead(rt.cacheAdmin.Stats()))
+	router.Handle("POST /api/v1/admin/cache/clear", requireCacheClear(rt.cacheAdmin.Clear()))
+	router.Handle("POST /api/v1/admin/cache/purge-url", requireCachePurgeURL(rt.cacheAdmin.PurgeURL()))
 	router.Handle("POST /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.Trigger()))
 	router.Handle("GET /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.List()))
 	router.Handle("GET /api/v1/admin/search/reindex/{runID}", requireSearchReindex(rt.searchAdmin.Get()))
@@ -369,7 +366,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}))
+		themeOpts := []domtheme.Option{
+			domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}),
+			// Fragment paths / htmx markup live in the storefront adapter, not domain.
+			domtheme.WithFragment(storefront.FragmentTemplateFunc(config.DevModeEnabled())),
+		}
+		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, themeOpts...)
 		if thErr != nil {
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}
@@ -387,7 +389,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
 		linkLinker := storefront.NewStorefrontOrderLinkerAdapter(linkService)
 
-		storefront := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+		sfHandler := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+			WithVisibilityFacts(rt.visibilityFacts).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
@@ -408,71 +411,109 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithLayeredNavAttributes(rt.attributeStore).
 			WithAdvancedSearchAttributes(rt.attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
+		if cfg.Cache.FullPage.Enabled && rt.appCache != nil {
+			ttl, err := time.ParseDuration(cfg.Cache.FullPage.TTL)
+			if err != nil || ttl <= 0 {
+				return nil, fmt.Errorf("cache.full_page.ttl: %q", cfg.Cache.FullPage.TTL)
+			}
+			var routeTTL map[string]time.Duration
+			if len(cfg.Cache.FullPage.RouteTTL) > 0 {
+				routeTTL = make(map[string]time.Duration, len(cfg.Cache.FullPage.RouteTTL))
+				for k, raw := range cfg.Cache.FullPage.RouteTTL {
+					d, err := time.ParseDuration(raw)
+					if err != nil {
+						return nil, fmt.Errorf("cache.full_page.route_ttl[%q]: %w", k, err)
+					}
+					if d <= 0 {
+						return nil, fmt.Errorf("cache.full_page.route_ttl[%q]: must be > 0", k)
+					}
+					routeTTL[k] = d
+				}
+			}
+			expose := cfg.Cache.FullPage.ExposeHeader || config.DevModeEnabled()
+			sfHandler.WithFullPageCache(rt.appCache, ttl, expose, routeTTL)
+			if rt.fpcObs != nil {
+				sfHandler.WithFPCObserver(rt.fpcObs)
+			}
+		}
+		if rt.cacheAdminService != nil {
+			rt.cacheAdminService.RegisterL1(cacheApp.L1Source{
+				Name: "storefront.category_nav",
+				Snap: func() (int, int64, int64) {
+					s := sfHandler.CategoryNavCacheSnapshot()
+					return s.Entries, s.Hits, s.Misses
+				},
+				Clear: sfHandler.ClearCategoryNavCache,
+			})
+		}
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			staticHandler.ServeHTTP(w, r)
 		}))
-		router.HandleFunc("GET /cart", storefront.Cart())
-		router.HandleFunc("GET /account/login", storefront.Login())
-		router.HandleFunc("POST /account/login", storefront.Login())
-		router.HandleFunc("GET /account/register", storefront.Register())
-		router.HandleFunc("POST /account/register", storefront.Register())
-		router.HandleFunc("GET /account/verify-email", storefront.AccountVerifyEmail())
-		router.HandleFunc("POST /account/logout", storefront.Logout())
-		router.HandleFunc("GET /account/orders", storefront.AccountOrders())
-		router.HandleFunc("GET /account/orders/claim", storefront.AccountOrdersClaim())
-		router.HandleFunc("POST /account/orders/claim", storefront.AccountOrdersClaim())
-		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
-		router.HandleFunc("POST /account/orders/{orderId}/returns", storefront.AccountOrderReturnRequest())
-		router.HandleFunc("GET /account/returns", storefront.AccountReturns())
-		router.HandleFunc("POST /account/returns/{returnId}/cancel", storefront.AccountReturnCancel())
-		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
-		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
-		router.HandleFunc("GET /account/addresses", storefront.AccountAddresses())
-		router.HandleFunc("POST /account/addresses", storefront.AccountAddressCreate())
-		router.HandleFunc("POST /account/addresses/{addressId}", storefront.AccountAddressUpdate())
-		router.HandleFunc("POST /account/addresses/{addressId}/default", storefront.AccountAddressSetDefault())
-		router.HandleFunc("POST /account/addresses/{addressId}/delete", storefront.AccountAddressDelete())
-		router.HandleFunc("GET /account/preferences", storefront.AccountPreferences())
-		router.HandleFunc("POST /account/preferences", storefront.AccountPreferences())
-		router.HandleFunc("GET /account/security", storefront.AccountSecurity())
-		router.HandleFunc("GET /account/security/verify", storefront.AccountSecurityVerify())
-		router.HandleFunc("POST /account/security/verify", storefront.AccountSecurityVerify())
-		router.HandleFunc("POST /account/security/password", storefront.AccountPassword())
-		router.HandleFunc("POST /account/security/email", storefront.AccountEmailChange())
-		router.HandleFunc("GET /account/security/email/confirm", storefront.AccountEmailChangeConfirm())
-		router.HandleFunc("POST /account/security/delete", storefront.AccountDelete())
-		router.HandleFunc("POST /account/profile/password", storefront.AccountPassword())
-		router.HandleFunc("POST /account/profile/delete", storefront.AccountDelete())
-		router.HandleFunc("GET /checkout/address", storefront.CheckoutAddress())
-		router.HandleFunc("GET /checkout/shipping", storefront.CheckoutShipping())
-		router.HandleFunc("POST /checkout/shipping", storefront.CheckoutShipping())
-		router.HandleFunc("GET /checkout/payment", storefront.CheckoutPayment())
-		router.HandleFunc("POST /checkout/payment", storefront.CheckoutPayment())
-		router.HandleFunc("GET /checkout/confirm", storefront.CheckoutConfirm())
-		router.HandleFunc("POST /checkout/confirm", storefront.CheckoutConfirm())
-		router.HandleFunc("GET /fragments/cart-count", storefront.CartCountFragment())
-		router.HandleFunc("GET /fragments/mini-cart", storefront.MiniCartFragment())
-		router.HandleFunc("GET /fragments/search-suggest", storefront.SearchSuggestFragment())
-		router.HandleFunc("GET /{$}", storefront.Home())
-		router.HandleFunc("GET /pages/{slug}", storefront.CMSPage())
-		router.HandleFunc("GET /categories", storefront.Categories())
-		router.HandleFunc("GET /categories/{slug}", storefront.Category())
-		router.HandleFunc("POST /cart/add", storefront.AddToCart())
-		router.HandleFunc("POST /cart/update", storefront.UpdateCart())
-		router.HandleFunc("POST /cart/remove", storefront.RemoveCartItem())
-		router.HandleFunc("POST /fragments/cart/add", storefront.AddToCart())
-		router.HandleFunc("POST /fragments/cart/update", storefront.UpdateCart())
-		router.HandleFunc("POST /fragments/cart/remove", storefront.RemoveCartItem())
-		router.HandleFunc("GET /products", storefront.Products())
-		router.HandleFunc("GET /products/{slug}", storefront.Product())
-		router.HandleFunc("GET /search", storefront.Search())
+		router.HandleFunc("GET /cart", sfHandler.Cart())
+		router.HandleFunc("GET /account/login", sfHandler.Login())
+		router.HandleFunc("POST /account/login", sfHandler.Login())
+		router.HandleFunc("GET /account/register", sfHandler.Register())
+		router.HandleFunc("POST /account/register", sfHandler.Register())
+		router.HandleFunc("GET /account/verify-email", sfHandler.AccountVerifyEmail())
+		router.HandleFunc("POST /account/logout", sfHandler.Logout())
+		router.HandleFunc("GET /account/orders", sfHandler.AccountOrders())
+		router.HandleFunc("GET /account/orders/claim", sfHandler.AccountOrdersClaim())
+		router.HandleFunc("POST /account/orders/claim", sfHandler.AccountOrdersClaim())
+		router.HandleFunc("GET /account/orders/{orderId}", sfHandler.AccountOrderDetail())
+		router.HandleFunc("POST /account/orders/{orderId}/returns", sfHandler.AccountOrderReturnRequest())
+		router.HandleFunc("GET /account/returns", sfHandler.AccountReturns())
+		router.HandleFunc("POST /account/returns/{returnId}/cancel", sfHandler.AccountReturnCancel())
+		router.HandleFunc("GET /account/profile", sfHandler.AccountProfile())
+		router.HandleFunc("POST /account/profile", sfHandler.AccountProfile())
+		router.HandleFunc("GET /account/addresses", sfHandler.AccountAddresses())
+		router.HandleFunc("POST /account/addresses", sfHandler.AccountAddressCreate())
+		router.HandleFunc("POST /account/addresses/{addressId}", sfHandler.AccountAddressUpdate())
+		router.HandleFunc("POST /account/addresses/{addressId}/default", sfHandler.AccountAddressSetDefault())
+		router.HandleFunc("POST /account/addresses/{addressId}/delete", sfHandler.AccountAddressDelete())
+		router.HandleFunc("GET /account/preferences", sfHandler.AccountPreferences())
+		router.HandleFunc("POST /account/preferences", sfHandler.AccountPreferences())
+		router.HandleFunc("GET /account/security", sfHandler.AccountSecurity())
+		router.HandleFunc("GET /account/security/verify", sfHandler.AccountSecurityVerify())
+		router.HandleFunc("POST /account/security/verify", sfHandler.AccountSecurityVerify())
+		router.HandleFunc("POST /account/security/password", sfHandler.AccountPassword())
+		router.HandleFunc("POST /account/security/email", sfHandler.AccountEmailChange())
+		router.HandleFunc("GET /account/security/email/confirm", sfHandler.AccountEmailChangeConfirm())
+		router.HandleFunc("POST /account/security/delete", sfHandler.AccountDelete())
+		router.HandleFunc("POST /account/profile/password", sfHandler.AccountPassword())
+		router.HandleFunc("POST /account/profile/delete", sfHandler.AccountDelete())
+		router.HandleFunc("GET /checkout/address", sfHandler.CheckoutAddress())
+		router.HandleFunc("GET /checkout/shipping", sfHandler.CheckoutShipping())
+		router.HandleFunc("POST /checkout/shipping", sfHandler.CheckoutShipping())
+		router.HandleFunc("GET /checkout/payment", sfHandler.CheckoutPayment())
+		router.HandleFunc("POST /checkout/payment", sfHandler.CheckoutPayment())
+		router.HandleFunc("GET /checkout/confirm", sfHandler.CheckoutConfirm())
+		router.HandleFunc("POST /checkout/confirm", sfHandler.CheckoutConfirm())
+		router.HandleFunc("GET /fragments/cart-count", sfHandler.CartCountFragment())
+		router.HandleFunc("GET /fragments/mini-cart", sfHandler.MiniCartFragment())
+		router.HandleFunc("GET /fragments/csrf", sfHandler.CSRFFragment())
+		router.HandleFunc("GET /fragments/greeting", sfHandler.GreetingFragment())
+		router.HandleFunc("GET /fragments/recently-viewed", sfHandler.RecentlyViewedFragment())
+		router.HandleFunc("GET /fragments/search-suggest", sfHandler.SearchSuggestFragment())
+		router.HandleFunc("GET /{$}", sfHandler.Home())
+		router.HandleFunc("GET /pages/{slug}", sfHandler.CMSPage())
+		router.HandleFunc("GET /categories", sfHandler.Categories())
+		router.HandleFunc("GET /categories/{slug}", sfHandler.Category())
+		router.HandleFunc("POST /cart/add", sfHandler.AddToCart())
+		router.HandleFunc("POST /cart/update", sfHandler.UpdateCart())
+		router.HandleFunc("POST /cart/remove", sfHandler.RemoveCartItem())
+		router.HandleFunc("POST /fragments/cart/add", sfHandler.AddToCart())
+		router.HandleFunc("POST /fragments/cart/update", sfHandler.UpdateCart())
+		router.HandleFunc("POST /fragments/cart/remove", sfHandler.RemoveCartItem())
+		router.HandleFunc("GET /products", sfHandler.Products())
+		router.HandleFunc("GET /products/{slug}", sfHandler.Product())
+		router.HandleFunc("GET /search", sfHandler.Search())
 
 		// Guest order claim routes (public, no auth required).
-		router.HandleFunc("POST /api/v1/orders/claim-search", storefront.ClaimOrderSearch())
-		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
+		router.HandleFunc("POST /api/v1/orders/claim-search", sfHandler.ClaimOrderSearch())
+		router.HandleFunc("POST /api/v1/orders/claim-register", sfHandler.ClaimLink())
 	}
 
 	// URL rewrite resolution: least-specific route, only reached when no
@@ -508,53 +549,4 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		wrapProbe(readyHandler),
 		router.Handler(),
 	), nil
-}
-
-// resolveRateLimiterFactory selects the RateLimitMiddleware backend for
-// rate_limit.driver (PR-1041): nil (memory, the default) keeps the
-// existing in-process token bucket — correct for one instance, silently
-// wrong for more than one, since each replica gets its own independent
-// budget; redis shares one sliding-window counter across every replica
-// connected to the same backend. See RUNBOOK.md's "Rate limiting and
-// login lockout" section for the operational tradeoff.
-// resolveRateLimiterFactory also returns an io.Closer for the redis
-// client it opens (nil for every other case) — the caller is
-// responsible for closing it on shutdown; see buildServeHandler.
-//
-// Two things this deliberately does NOT do, both to keep an unavailable
-// Redis from taking down the whole API when the runtime check (Allow)
-// already fails open on exactly that:
-//   - Skips connecting at all when rate_limit.enabled=false. RateLimitMiddleware
-//     never calls the factory in that case (it short-circuits to a
-//     passthrough before touching newLimiter), so connecting here first
-//     would mean an unreachable Redis blocks startup for a disabled
-//     limiter that would otherwise be a complete no-op.
-//   - Uses NewLazyClient, not ConnectURL: a malformed rate_limit.redis.url
-//     still fails startup immediately (a real config error), but Redis
-//     merely being unreachable right now (e.g. mid-restart during a
-//     rolling deploy) does not — the lazy client connects on first real
-//     use, and Allow already fails open on that error.
-func resolveRateLimiterFactory(cfg *config.Config, log logger.Logger) (shophttp.LimiterFactory, io.Closer, error) {
-	if !cfg.RateLimit.Enabled {
-		return nil, nil, nil
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.RateLimit.Driver)) {
-	case "", "memory":
-		return nil, nil, nil
-	case "redis":
-		if cfg.RateLimit.Redis.URL == "" {
-			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or REDIS_URL")
-		}
-		client, err := inredis.NewLazyClient(cfg.RateLimit.Redis.URL)
-		if err != nil {
-			return nil, nil, fmt.Errorf("rate limit: redis: %w", err)
-		}
-		keyPrefix := cfg.RateLimit.Redis.KeyPrefix
-		factory := func(scope string, rate float64, burst int) (shophttp.RateLimiter, error) {
-			return inredis.NewRateLimiter(client, keyPrefix, scope, rate, burst, log)
-		}
-		return factory, client, nil
-	default:
-		return nil, nil, fmt.Errorf("unsupported rate_limit.driver: %q", cfg.RateLimit.Driver)
-	}
 }

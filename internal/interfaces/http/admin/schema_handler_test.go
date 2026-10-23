@@ -8,7 +8,9 @@ import (
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
@@ -94,6 +96,113 @@ func TestSchemaHandler_GetForm_OK(t *testing.T) {
 	}
 	if form.Fields[1].Options[0].Value != "draft" {
 		t.Errorf("option[0].Value = %q, want %q", form.Fields[1].Options[0].Value, "draft")
+	}
+}
+
+func TestSchemaHandler_GetForm_IncludesSections(t *testing.T) {
+	reg, mux := schemaSetup()
+	if err := reg.RegisterFormSection("product.form", domainadmin.FormSection{
+		ID: "bundle-components", Title: "Bundle components", Types: []string{"bundle"},
+	}); err != nil {
+		t.Fatalf("RegisterFormSection: %v", err)
+	}
+	if err := reg.RegisterFormSection("product.form", domainadmin.FormSection{
+		ID: "always-notes", Title: "Notes",
+	}); err != nil {
+		t.Fatalf("RegisterFormSection always-visible: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/forms/product.form", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Form struct {
+				Sections []struct {
+					ID    string   `json:"id"`
+					Title string   `json:"title"`
+					Types []string `json:"types"`
+				} `json:"sections"`
+			} `json:"form"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(envelope.Data.Form.Sections) != 2 {
+		t.Fatalf("sections = %d, want 2", len(envelope.Data.Form.Sections))
+	}
+	sec := envelope.Data.Form.Sections[0]
+	if sec.ID != "bundle-components" || sec.Title != "Bundle components" {
+		t.Fatalf("section = %+v", sec)
+	}
+	if len(sec.Types) != 1 || sec.Types[0] != "bundle" {
+		t.Fatalf("types = %v, want [bundle]", sec.Types)
+	}
+	always := envelope.Data.Form.Sections[1]
+	if always.Types == nil || len(always.Types) != 0 {
+		t.Fatalf("always-visible types = %#v, want empty slice (not null)", always.Types)
+	}
+}
+
+func TestSchemaHandler_GetForm_RegisterProductSchemas(t *testing.T) {
+	reg := domainadmin.NewRegistry()
+	adminApp.RegisterProductSchemas(reg)
+	handler := admin.NewSchemaHandler(reg, nil)
+	requireAdmin := admin.RequireRole(identity.RoleAdmin)
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(handler.GetForm()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/forms/product.form", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Form struct {
+				Fields []struct {
+					Name    string `json:"name"`
+					Options []struct {
+						Value string `json:"value"`
+					} `json:"options"`
+				} `json:"fields"`
+				Sections []interface{} `json:"sections"`
+			} `json:"form"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var typeField *struct {
+		Name    string `json:"name"`
+		Options []struct {
+			Value string `json:"value"`
+		} `json:"options"`
+	}
+	for i := range envelope.Data.Form.Fields {
+		if envelope.Data.Form.Fields[i].Name == "type" {
+			typeField = &envelope.Data.Form.Fields[i]
+			break
+		}
+	}
+	if typeField == nil {
+		t.Fatal("type field missing from RegisterProductSchemas form")
+	}
+	if len(typeField.Options) != len(catalog.AllTypes()) {
+		t.Fatalf("type options = %d, want %d", len(typeField.Options), len(catalog.AllTypes()))
+	}
+	if envelope.Data.Form.Sections != nil && len(envelope.Data.Form.Sections) != 0 {
+		t.Fatalf("sections = %#v, want omitted or empty until later tracks", envelope.Data.Form.Sections)
 	}
 }
 

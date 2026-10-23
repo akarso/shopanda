@@ -23,11 +23,11 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** Tracks A (jobs & scheduling admin, PR-1027–1032) and B (search indexing, PR-1033–1038) are done, as are standalone PR-1027 / PR-1048 / PR-1049. Track C (caching foundation) is well underway: PR-1039 (tag-based invalidation), PR-1040 (in-memory L1 cache tier), and PR-1041 (rate limiting hardening) are done; PR-1042–1043 and Track D (PR-1044–1047) are still planned.
+**Complete.** Tracks A (jobs & scheduling admin, PR-1027–1032), B (search indexing, PR-1033–1038), C (caching foundation, PR-1039–1043), and D (full-page cache, PR-1044–1047) are done, as are standalone PR-1027 / PR-1048 / PR-1049.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item) |
-| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **In progress** |
+| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **Shipped** (PR-1027–1049) |

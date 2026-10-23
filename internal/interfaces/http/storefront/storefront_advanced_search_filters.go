@@ -15,6 +15,13 @@ func (h *StorefrontHandler) WithAdvancedSearchAttributes(lister AdvancedSearchAt
 }
 
 func (h *StorefrontHandler) advancedSearchAttributes(ctx context.Context) ([]catalog.Attribute, error) {
+	if bag := fpcAttrBagFrom(ctx); bag != nil && bag.loadedAdvanced {
+		return bag.advanced, nil
+	}
+	return h.fetchAdvancedSearchAttributes(ctx)
+}
+
+func (h *StorefrontHandler) fetchAdvancedSearchAttributes(ctx context.Context) ([]catalog.Attribute, error) {
 	if h.advancedSearchAttrs == nil {
 		return nil, nil
 	}

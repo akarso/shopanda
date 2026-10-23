@@ -84,7 +84,7 @@ func canceledCheckoutCart(t *testing.T) *cart.Cart {
 
 func TestValidateCartStep_SurfacesCanceledContext(t *testing.T) {
 	repo := &blockingVariantRepo{}
-	step := checkout.NewValidateCartStep(repo)
+	step := newValidateCartStep(repo, &mockProductRepo047{})
 	c := canceledCheckoutCart(t)
 	cctx := &checkout.Context{CartID: c.ID, Cart: c, Currency: "EUR"}
 
@@ -109,7 +109,7 @@ func TestValidateCartStep_SurfacesCanceledContext(t *testing.T) {
 
 func TestReserveInventoryStep_SurfacesCanceledContext(t *testing.T) {
 	repo := &blockingReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 	c := canceledCheckoutCart(t)
 	cctx := &checkout.Context{CartID: c.ID, Cart: c, Currency: "EUR"}
 
@@ -134,7 +134,7 @@ func TestReserveInventoryStep_SurfacesCanceledContext(t *testing.T) {
 
 func TestWorkflow_ReturnsCanceledErrorDetectable(t *testing.T) {
 	repo := &blockingVariantRepo{}
-	step := checkout.NewValidateCartStep(repo)
+	step := newValidateCartStep(repo, &mockProductRepo047{})
 	log := logger.NewWithWriter(&bytes.Buffer{}, "error")
 	wf := checkout.NewWorkflow([]checkout.Step{step}, event.NewBus(log), log)
 
@@ -194,7 +194,7 @@ func (r *cancelAfterFirstReserveRepo) ReleaseExpiredBefore(context.Context, time
 func TestReserveInventoryStep_RollbackIgnoresCanceledRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	repo := &cancelAfterFirstReserveRepo{cancel: cancel}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	c, err := cart.NewCart(id.New(), "EUR")
 	if err != nil {
@@ -321,7 +321,7 @@ func TestCreateOrderStep_SnapshotIgnoresCanceledRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	orders := &cancelAfterSaveOrderRepo{cancel: cancel}
 	snap := &trackingSnapshotter{}
-	step := checkout.NewCreateOrderStep(orders, &mockVariantRepo037{variants: variantMap037("v1")}, nil, snap)
+	step := checkout.NewCreateOrderStep(orders, &mockVariantRepo037{variants: variantMap037("v1")}, nil, snap, idleProducts(), idleComponents(), idlePrices())
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)

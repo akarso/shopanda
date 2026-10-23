@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -40,9 +42,24 @@ type txHistoryRepo interface {
 	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
 }
 
+// lockingProductRepo locks type and pricing_mode on the transaction-bound repo.
+type lockingProductRepo interface {
+	catalog.ProductRepository
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
+}
+
+// rowRejectError is a per-row validation failure. Import records it and
+// continues. It is not an infrastructure failure.
+type rowRejectError struct {
+	msg string
+}
+
+func (e *rowRejectError) Error() string { return e.msg }
+
 // PriceImporter imports prices from CSV.
 type PriceImporter struct {
 	variants  catalog.VariantRepository
+	products  catalog.ProductRepository
 	prices    pricing.PriceRepository
 	history   pricing.PriceHistoryRepository
 	txStarter TxStarter
@@ -65,6 +82,13 @@ func (imp *PriceImporter) WithRowHooks(registry *importctx.Registry) *PriceImpor
 	return imp
 }
 
+// WithProducts rejects price rows for grouped parents and dynamic bundles.
+// Import returns an error when this was not set.
+func (imp *PriceImporter) WithProducts(products catalog.ProductRepository) *PriceImporter {
+	imp.products = products
+	return imp
+}
+
 // Import reads CSV rows from r and upserts prices.
 //
 // Required columns: sku, currency, amount.
@@ -73,6 +97,9 @@ func (imp *PriceImporter) WithRowHooks(registry *importctx.Registry) *PriceImpor
 // for that variant+currency+store tuple. Amount is in the smallest currency
 // unit (e.g. cents).
 func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult, error) {
+	if imp.products == nil {
+		return nil, fmt.Errorf("price import: product repository is required")
+	}
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
 
@@ -140,8 +167,8 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			result.Skipped++
 			continue
 		}
-		if amount <= 0 {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: amount must be positive, got %d", lineNum, amount))
+		if amount < 0 {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: amount must be non-negative, got %d", lineNum, amount))
 			result.Skipped++
 			continue
 		}
@@ -156,6 +183,25 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 		}
 		if variant == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown sku %q", lineNum, sku))
+			result.Skipped++
+			continue
+		}
+		product, err := imp.products.FindByID(catalog.WithOperatorProductReadScope(ctx), variant.ProductID)
+		if err != nil {
+			return nil, fmt.Errorf("price import: find product for sku %q: %w", sku, err)
+		}
+		if product == nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: product not found for sku %q", lineNum, sku))
+			result.Skipped++
+			continue
+		}
+		if product.Type == catalog.TypeGrouped {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.GroupedPriceRejectedMessage))
+			result.Skipped++
+			continue
+		}
+		if product.Type == catalog.TypeBundle && product.PricingMode == catalog.PricingModeDynamic {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.DynamicBundlePriceRejectedMessage))
 			result.Skipped++
 			continue
 		}
@@ -190,7 +236,13 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		if err := imp.upsertWithHistory(ctx, &p); err != nil {
+		if err := imp.upsertWithHistory(ctx, &p, variant.ProductID); err != nil {
+			var rejected *rowRejectError
+			if errors.As(err, &rejected) {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, rejected.Error()))
+				result.Skipped++
+				continue
+			}
 			return nil, fmt.Errorf("price import: sku %q currency %s: %w", sku, currency, err)
 		}
 
@@ -215,53 +267,64 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 	return result, nil
 }
 
-// upsertWithHistory writes the price and records a history snapshot atomically
-// when a TxStarter and tx-capable repos are available. Falls back to sequential
-// writes otherwise.
-func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Price) error {
-	if imp.history == nil {
-		return imp.prices.Upsert(ctx, p)
+// upsertWithHistory locks the product row and writes the price (and history,
+// when configured) on that same transaction. Grouped and dynamic bundles are
+// rejected from the locked type and pricing_mode, matching admin price PUT.
+func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Price, productID string) error {
+	if imp.txStarter == nil {
+		return fmt.Errorf("transaction starter is required")
 	}
-
-	snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
-	if err != nil {
-		return fmt.Errorf("snapshot: %w", err)
+	txProducts, ok := imp.products.(txProductRepo)
+	if !ok {
+		return fmt.Errorf("product repository does not support transactions")
 	}
-
-	if imp.txStarter != nil {
-		txP, ok1 := imp.prices.(txPriceRepo)
-		txH, ok2 := imp.history.(txHistoryRepo)
-		if ok1 && ok2 {
-			return imp.upsertInTx(ctx, txP, txH, p, &snap)
+	txPrices, ok := imp.prices.(txPriceRepo)
+	if !ok {
+		return fmt.Errorf("price repository does not support transactions")
+	}
+	var txHistory txHistoryRepo
+	if imp.history != nil {
+		txHistory, ok = imp.history.(txHistoryRepo)
+		if !ok {
+			return fmt.Errorf("price history repository does not support transactions")
 		}
 	}
 
-	// Fallback: sequential writes.
-	if err := imp.prices.Upsert(ctx, p); err != nil {
-		return fmt.Errorf("upsert: %w", err)
-	}
-	if err := imp.history.Record(ctx, &snap); err != nil {
-		return fmt.Errorf("record history: %w", err)
-	}
-	return nil
-}
-
-func (imp *PriceImporter) upsertInTx(ctx context.Context, txP txPriceRepo, txH txHistoryRepo, p *pricing.Price, snap *pricing.PriceSnapshot) error {
 	tx, err := imp.txStarter.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
 
-	priceRepo := txP.WithTx(tx)
-	historyRepo := txH.WithTx(tx)
+	locker, ok := txProducts.WithTx(tx).(lockingProductRepo)
+	if !ok {
+		return fmt.Errorf("product repository does not support row locks")
+	}
+	productType, pricingMode, _, _, err := locker.LockTypeAndModes(ctx, productID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return err
+		}
+		return fmt.Errorf("lock product: %w", err)
+	}
+	if productType == catalog.TypeGrouped {
+		return &rowRejectError{msg: catalog.GroupedPriceRejectedMessage}
+	}
+	if productType == catalog.TypeBundle && pricingMode == catalog.PricingModeDynamic {
+		return &rowRejectError{msg: catalog.DynamicBundlePriceRejectedMessage}
+	}
 
-	if err := priceRepo.Upsert(ctx, p); err != nil {
-		tx.Rollback()
+	if err := txPrices.WithTx(tx).Upsert(ctx, p); err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
-	if err := historyRepo.Record(ctx, snap); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("record history: %w", err)
+	if txHistory != nil {
+		snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
+		if err != nil {
+			return fmt.Errorf("snapshot: %w", err)
+		}
+		if err := txHistory.WithTx(tx).Record(ctx, &snap); err != nil {
+			return fmt.Errorf("record history: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)

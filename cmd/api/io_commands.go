@@ -89,7 +89,9 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 				"skipped":  result.Skipped,
 				"errors":   len(result.Errors),
 			},
-			Errors: result.Errors,
+			Errors:       result.Errors,
+			Warnings:     result.Warnings,
+			WarningEvent: "export.products.warning",
 		}, nil
 	})
 }
@@ -115,7 +117,11 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("stock repo: %w", err)
 		}
-		imp := importer.NewStockImporter(variantRepo, stockRepo).WithRowHooks(regs.Import)
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		imp := importer.NewStockImporter(variantRepo, stockRepo).WithProducts(productRepo).WithTxStarter(conn).WithRowHooks(regs.Import)
 		// PR-1049: batch-trigger a scoped reindex for every product this
 		// import touches (see StockImporter.WithReindex's own doc comment
 		// for why this is one call after the whole import, not one per
@@ -442,6 +448,10 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("variant repo: %w", err)
 		}
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
 		priceRepo, err := postgres.NewPriceRepo(conn)
 		if err != nil {
 			return nil, fmt.Errorf("price repo: %w", err)
@@ -459,6 +469,7 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 		// invalidation), batch the search-index side first rather than just
 		// passing a real bus through.
 		result, err := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil).
+			WithProducts(productRepo).
 			WithRowHooks(regs.Import).
 			Import(ctx, f)
 		if err != nil {
