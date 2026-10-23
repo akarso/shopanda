@@ -131,6 +131,7 @@ func (s *GroupedService) Add(ctx context.Context, m *catalog.GroupedMember) erro
 }
 
 // Remove deletes one member from a group. The member product itself is unchanged.
+// It checks the parent type with one FindByID and does not list the membership.
 // It does not lock either product row. Membership is a display link: a future
 // product delete API unlinks members by ON DELETE CASCADE and does not return
 // 422 because a row exists. Silent unlink is intentional.
@@ -142,6 +143,13 @@ func (s *GroupedService) Remove(ctx context.Context, groupProductID, memberProdu
 	}
 	if memberProductID == "" {
 		return apperror.Validation("member product id must not be empty")
+	}
+	group, err := s.loadProduct(ctx, groupProductID)
+	if err != nil {
+		return err
+	}
+	if group.Type != catalog.TypeGrouped {
+		return apperror.Validation(fmt.Sprintf("only products with type %q can have grouped members", catalog.TypeGrouped))
 	}
 	if err := s.members.Remove(ctx, groupProductID, memberProductID); err != nil {
 		return fmt.Errorf("grouped: remove member: %w", err)

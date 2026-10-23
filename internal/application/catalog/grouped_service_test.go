@@ -302,7 +302,10 @@ func TestGroupedService_List_NilSliceBecomesEmpty(t *testing.T) {
 
 func TestGroupedService_Remove(t *testing.T) {
 	members := &stubGroupedMemberRepo{}
-	svc := newGroupedService(&stubProductRepo{}, members)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"g1": {ID: "g1", Type: catalog.TypeGrouped, Status: catalog.StatusActive},
+	}}
+	svc := newGroupedService(products, members)
 
 	if err := svc.Remove(context.Background(), "g1", "m1"); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -314,7 +317,10 @@ func TestGroupedService_Remove(t *testing.T) {
 
 func TestGroupedService_Remove_NotFound(t *testing.T) {
 	members := &stubGroupedMemberRepo{removeErr: apperror.NotFound("grouped member not found")}
-	svc := newGroupedService(&stubProductRepo{}, members)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"g1": {ID: "g1", Type: catalog.TypeGrouped, Status: catalog.StatusActive},
+	}}
+	svc := newGroupedService(products, members)
 
 	err := svc.Remove(context.Background(), "g1", "m1")
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -353,7 +359,10 @@ func TestGroupedService_List_TrimsID(t *testing.T) {
 
 func TestGroupedService_Remove_TrimsIDs(t *testing.T) {
 	members := &stubGroupedMemberRepo{}
-	svc := newGroupedService(&stubProductRepo{}, members)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"g1": {ID: "g1", Type: catalog.TypeGrouped, Status: catalog.StatusActive},
+	}}
+	svc := newGroupedService(products, members)
 
 	if err := svc.Remove(context.Background(), " g1 ", " m1 "); err != nil {
 		t.Fatalf("Remove: %v", err)

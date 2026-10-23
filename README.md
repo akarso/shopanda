@@ -231,6 +231,10 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `import:products <file.csv>` | Bulk import products from CSV |
 | `export:products <file.csv>` | Export products and variants to CSV |
+| `import:bundle-components <file.csv>` | Add or update bundle component links (`parent_slug,component_slug,quantity,required`) |
+| `export:bundle-components <file.csv>` | Export bundle component links to CSV |
+| `import:grouped-members <file.csv>` | Add grouped member links (`parent_slug,member_slug`) |
+| `export:grouped-members <file.csv>` | Export grouped member links to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |
