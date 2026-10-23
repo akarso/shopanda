@@ -735,6 +735,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
 	productPriceAdmin.WithTxStarter(conn)
+	productPriceAdmin.WithHistory(repos.priceHistoryRepo) // catalog price change → price_history (same as CSV import)
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
 		WithVisibilityFacts(visibilityFacts)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)

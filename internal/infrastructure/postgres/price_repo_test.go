@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
@@ -389,5 +390,65 @@ func TestPriceRepo_FindByVariantsCurrencyAndStore_Fallback(t *testing.T) {
 	}
 	if got[vGlobal.ID] == nil || got[vGlobal.ID].Amount.Amount() != 300 {
 		t.Fatalf("global fallback price = %v, want 300", got[vGlobal.ID])
+	}
+}
+
+// TestPriceRepo_WithTxRollbackOmitsPriceAndHistory is the postgres contract
+// behind admin price PUT. Upsert and Record inside the transaction are absent
+// after Rollback. The handler returns before Commit when Record fails and
+// defers Rollback, so the prices row does not remain.
+func TestPriceRepo_WithTxRollbackOmitsPriceAndHistory(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM price_history")
+		db.Exec("DELETE FROM prices")
+	})
+
+	ctx := context.Background()
+	vid := seedVariant(t, db)
+	priceRepo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	historyRepo, err := postgres.NewPriceHistoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceHistoryRepo: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	p := mustNewPrice(t, vid, 2500, "EUR")
+	if err := priceRepo.WithTx(tx).Upsert(ctx, &p); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	snap, err := pricing.NewPriceSnapshot(id.New(), vid, "", shared.MustNewMoney(2500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPriceSnapshot: %v", err)
+	}
+	if err := historyRepo.WithTx(tx).Record(ctx, &snap); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+
+	got, err := priceRepo.FindByVariantCurrencyAndStore(ctx, vid, "EUR", "")
+	if err != nil {
+		t.Fatalf("FindByVariantCurrencyAndStore: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("price after rollback = %+v, want none", got)
+	}
+	hist, err := historyRepo.LowestSince(ctx, vid, "EUR", "", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("LowestSince: %v", err)
+	}
+	if hist != nil {
+		t.Fatalf("history after rollback = %+v, want none", hist)
 	}
 }

@@ -26,6 +26,7 @@ type ProductPriceAdminHandler struct {
 	products  catalog.ProductRepository
 	variants  catalog.VariantRepository
 	prices    pricing.PriceRepository
+	history   pricing.PriceHistoryRepository
 	txStarter txStarter
 	auditor   *admin.Auditor
 	log       logger.Logger
@@ -36,6 +37,13 @@ type ProductPriceAdminHandler struct {
 type txPriceRepo interface {
 	pricing.PriceRepository
 	WithTx(tx *sql.Tx) pricing.PriceRepository
+}
+
+// txHistoryRepo binds a price_history insert to that same transaction.
+// Satisfied by *postgres.PriceHistoryRepo.
+type txHistoryRepo interface {
+	pricing.PriceHistoryRepository
+	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
 }
 
 // NewProductPriceAdminHandler creates a ProductPriceAdminHandler.
@@ -73,6 +81,16 @@ func (h *ProductPriceAdminHandler) WithTxStarter(starter txStarter) *ProductPric
 // Left unset (nil), Update works exactly as before.
 func (h *ProductPriceAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
+}
+
+// WithHistory records a price_history snapshot on every successful Update,
+// on the same transaction as the price upsert (same shape as CSV
+// upsertWithHistory). History is required for a write: a nil repo, or one
+// that cannot join the transaction, fails the PUT closed. Sale-time checkout
+// does not use this path.
+func (h *ProductPriceAdminHandler) WithHistory(history pricing.PriceHistoryRepository) *ProductPriceAdminHandler {
+	h.history = history
+	return h
 }
 
 type updateProductPriceRequest struct {
@@ -168,9 +186,11 @@ func (h *ProductPriceAdminHandler) Get() http.HandlerFunc {
 }
 
 // Update handles PUT /api/v1/admin/products/{id}/variants/{variantId}/price.
-// The product row is locked (SELECT type, pricing_mode FOR UPDATE) and the
-// price upsert commits on that same transaction, so a concurrent switch to
-// grouped or dynamic cannot land an own price row.
+// The product row is locked (SELECT type, pricing_mode FOR UPDATE). The price
+// upsert and a price_history snapshot commit on that same transaction, so a
+// concurrent switch to grouped or dynamic cannot land an own price row.
+// History is required: a nil history repository, or one that does not support
+// WithTx, fails the PUT closed before the price is committed.
 func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid := strings.TrimSpace(r.PathValue("id"))
@@ -290,7 +310,33 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		if h.history == nil {
+			err := apperror.Internal("product price admin: price history repository is not configured")
+			h.audit(r, admin.AuditPriceUpdate, vid, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		txHistory, ok := h.history.(txHistoryRepo)
+		if !ok {
+			err := fmt.Errorf("product price admin: price history repository does not support transactions")
+			h.audit(r, admin.AuditPriceUpdate, vid, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
 		if err := txPrices.WithTx(tx).Upsert(r.Context(), &price); err != nil {
+			h.audit(r, admin.AuditPriceUpdate, vid, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		snap, err := pricing.NewPriceSnapshot(id.New(), price.VariantID, price.StoreID, price.Amount)
+		if err != nil {
+			err = fmt.Errorf("product price admin: snapshot: %w", err)
+			h.audit(r, admin.AuditPriceUpdate, vid, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		if err := txHistory.WithTx(tx).Record(r.Context(), &snap); err != nil {
+			err = fmt.Errorf("product price admin: record history: %w", err)
 			h.audit(r, admin.AuditPriceUpdate, vid, nil, err)
 			httpshared.JSONError(w, err)
 			return
