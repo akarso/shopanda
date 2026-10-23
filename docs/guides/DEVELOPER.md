@@ -799,14 +799,15 @@ When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUG
 
 ## Roadmap and Future Work
 
-Phases 1–8 are **complete**. **Phase 9 — Integrator Backlog & Merchant Discovery** is **in progress** (PR-856+).
+Phases 1–11 are **complete**. **Phase 12 — Product Types & Composition** is **in progress** (PR-1048–1065 done; next PR-1066). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is planned and should finish before a real merchant site.
 
 | Phase | Focus |
 | --- | --- |
-| 8 (done) | Integrator platform (PR-800–855) |
-| 9 (in progress) | Integrator backlog + Phase 7 carryover; then **PRIORITY** merchant discovery (PR-900–903) |
+| 8–11 (done) | Integrator platform, merchant discovery, platform excellence, jobs/search/cache |
+| 12 (in progress) | Product types, visibility/purchasability, bundle/grouped, linked products, downloadable |
+| 13 (planned) | Plugin-owned migrations + on-demand sync enqueue |
 
-Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Phase 9 Roadmap](../phase-9-merchant-discovery/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+Full plans: [Phase 11 Roadmap](../phase-11-jobs-search-cache/ROADMAP.md) · [Phase 12 Roadmap](../phase-12-product-composition/ROADMAP.md) · [Phase 13 Roadmap](../phase-13-plugin-runtime/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
