@@ -1370,6 +1370,204 @@ paths:
         "422":
           $ref: "#/components/responses/Validation"
 
+  # ── Admin: Bundle / grouped composition ───────────────
+  /api/v1/admin/products/{id}/bundle-components:
+    get:
+      operationId: adminListBundleComponents
+      tags: ["Admin: Products"]
+      summary: List bundle components
+      description: >-
+        422 when the product is not type bundle. Each row includes the child
+        product name, slug, and type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  components:
+                    - component_product_id: "c1"
+                      quantity: 2
+                      required: true
+                      name: "Leaf"
+                      slug: "leaf"
+                      type: simple
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: adminAddBundleComponent
+      tags: ["Admin: Products"]
+      summary: Add or update a bundle component
+      description: >-
+        Upserts quantity and required for the component product. Omitted
+        `required` defaults to true. 422 when the parent is not a bundle or
+        the component is not simple, virtual, or downloadable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddBundleComponentRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/bundle-components/{componentId}:
+    delete:
+      operationId: adminRemoveBundleComponent
+      tags: ["Admin: Products"]
+      summary: Remove a bundle component
+      description: >-
+        `componentId` is the component product id. 422 when the parent is not
+        a bundle. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: componentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/grouped-members:
+    get:
+      operationId: adminListGroupedMembers
+      tags: ["Admin: Products"]
+      summary: List grouped members
+      description: >-
+        422 when the product is not type grouped. Each row includes the member
+        product name, slug, and type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: adminAddGroupedMember
+      tags: ["Admin: Products"]
+      summary: Add a grouped member
+      description: >-
+        Insert-ignore. A duplicate link succeeds without changing the member.
+        422 when the parent is not grouped or the member is not a leaf type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddGroupedMemberRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/grouped-members/{memberId}:
+    delete:
+      operationId: adminRemoveGroupedMember
+      tags: ["Admin: Products"]
+      summary: Remove a grouped member
+      description: >-
+        `memberId` is the member product id. 422 when the parent is not
+        grouped. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: memberId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
   # ── Admin: Variants ────────────────────────────────────
   /api/v1/admin/products/{id}/variants:
     post:
@@ -2884,6 +3082,27 @@ components:
         attributes:
           type: object
           additionalProperties: true
+
+    AddBundleComponentRequest:
+      type: object
+      required: [component_product_id, quantity]
+      properties:
+        component_product_id:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        required:
+          type: boolean
+          description: Omit to default to true.
+
+    AddGroupedMemberRequest:
+      type: object
+      required: [member_product_id]
+      properties:
+        member_product_id:
+          type: string
 
     CreateVariantRequest:
       type: object

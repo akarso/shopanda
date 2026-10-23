@@ -130,6 +130,7 @@ type serveRuntime struct {
 
 	productHandler                 *storefront.ProductHandler
 	productAdmin                   *admin.ProductAdminHandler
+	productCompositionAdmin        *admin.ProductCompositionAdminHandler
 	productTranslationAdmin        *admin.ProductTranslationAdminHandler
 	productPriceAdmin              *admin.ProductPriceAdminHandler
 	variantHandler                 *storefront.VariantHandler
@@ -692,6 +693,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}); err != nil {
 		return nil, fmt.Errorf("register visibility form section: %w", err)
 	}
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "bundle", Title: "Bundle", Types: []string{"bundle"},
+	}); err != nil {
+		return nil, fmt.Errorf("register bundle form section: %w", err)
+	}
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "grouped", Title: "Grouped", Types: []string{"grouped"},
+	}); err != nil {
+		return nil, fmt.Errorf("register grouped form section: %w", err)
+	}
 
 	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
@@ -731,6 +742,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVariantPrices(repos.variantRepo, repos.priceRepo).
 		WithVariantStock(repos.stockRepo).
 		WithTxStarter(conn)
+	productCompositionAdmin := admin.NewProductCompositionAdminHandler(repos.productRepo, bundleService, groupedService, sharedAuditor)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
@@ -963,6 +975,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		log:                            log,
 		productHandler:                 productHandler,
 		productAdmin:                   productAdmin,
+		productCompositionAdmin:        productCompositionAdmin,
 		productTranslationAdmin:        productTranslationAdmin,
 		productPriceAdmin:              productPriceAdmin,
 		variantHandler:                 variantHandler,

@@ -1312,6 +1312,7 @@
             if (typeSectionsHost) {
                 typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
                 setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
+                setupProductCompositionSections(typeSectionsHost, product, productID, form);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1446,6 +1447,48 @@
             api.bindStatusChange(document, form, state);
         }
         typeSectionsHost._shopandaVisibilityState = state;
+    }
+
+    function productCompositionSectionAPI() {
+        return (typeof ShopandaProductCompositionSection !== "undefined") ? ShopandaProductCompositionSection : null;
+    }
+
+    // Bundle and grouped sections (PR-1066). Mode selects live in the bundle
+    // section and are merged by collectProductPayload only when type is bundle.
+    // Component and member pickers save through their own routes and render
+    // only after the product exists (same moment as the variant panel).
+    function setupProductCompositionSections(typeSectionsHost, product, productID, form) {
+        var sectionAPI = productCompositionSectionAPI();
+        if (!sectionAPI || !typeSectionsHost) {
+            return;
+        }
+        var modes = sectionAPI.modesFromProduct(product);
+        var bundleBody = typeSectionsHost.querySelector('[data-product-type-section-body="bundle"]');
+        if (bundleBody) {
+            bundleBody.innerHTML = sectionAPI.renderBundleSectionHTML(modes, !!productID);
+            sectionAPI.bindBundleModes(bundleBody);
+            if (productID) {
+                sectionAPI.bindBundlePicker(bundleBody, {
+                    productID: productID,
+                    api: api,
+                    canWrite: userHasPermission("products.write")
+                });
+            }
+        }
+        var groupedBody = typeSectionsHost.querySelector('[data-product-type-section-body="grouped"]');
+        if (groupedBody) {
+            groupedBody.innerHTML = sectionAPI.renderGroupedSectionHTML(!!productID);
+            if (productID) {
+                sectionAPI.bindGroupedPicker(groupedBody, {
+                    productID: productID,
+                    api: api,
+                    canWrite: userHasPermission("products.write")
+                });
+            }
+        }
+        if (form) {
+            form._shopandaCompositionBound = true;
+        }
     }
 
     // Guard async visibility refresh after variant price save: an in-flight GET for
@@ -2002,6 +2045,17 @@
         if (visibilityAPI && document.getElementById(visibilityAPI.selectID(visibilityAPI.AXES[0].key))) {
             payload.visibility_modes = visibilityAPI.collectModes(document);
         }
+        var compositionAPI = productCompositionSectionAPI();
+        if (compositionAPI && compositionAPI.collectModes) {
+            var typeEl = form.elements.type;
+            var productType = typeEl && typeEl.value ? typeEl.value : "simple";
+            var bundleModes = compositionAPI.collectModes(document, productType);
+            if (bundleModes) {
+                payload.pricing_mode = bundleModes.pricing_mode;
+                payload.stock_mode = bundleModes.stock_mode;
+                payload.explode_order_lines = bundleModes.explode_order_lines;
+            }
+        }
         return payload;
     }
 
@@ -2463,6 +2517,9 @@
             description: pick(raw, "description", "Description"),
             type: pick(raw, "type", "Type") || "simple",
             status: pick(raw, "status", "Status"),
+            pricingMode: pick(raw, "pricing_mode", "PricingMode") || "fixed",
+            stockMode: pick(raw, "stock_mode", "StockMode") || "fixed",
+            explodeOrderLines: !!(pick(raw, "explode_order_lines", "ExplodeOrderLines")),
             attributes: pick(raw, "attributes", "Attributes") || {},
             visibilityModes: pick(raw, "visibility_modes", "VisibilityModes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),

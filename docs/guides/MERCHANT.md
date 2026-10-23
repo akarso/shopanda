@@ -86,10 +86,19 @@ Use the **Store / Language / Currency** switcher in the admin header when a scre
 
 1. Open `/admin/products`.
 2. Select **New Product**.
-3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Type-specific panels (bundle components, linked children, downloadable files, and similar) appear on this form only after those catalog features ship — choosing Bundle/Grouped/etc. today stores the type for later use.
-4. Save the product. On edit, changing **Type** asks for confirmation: it can alter shipping behavior and which type-specific panels apply.
+3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Choosing **Bundle** shows pricing mode, stock mode, and explode order lines. Explode order lines can be turned on only when both modes are dynamic. Choosing **Grouped** shows a members panel after the product is saved. Linked-child and downloadable file panels are still later tracks.
+4. Save the product. On edit, changing **Type** asks for confirmation: it can alter shipping behavior and which type-specific panels apply. Bundle components and grouped members are edited on the saved product: the picker shows a page of simple, virtual, or downloadable products, Load more fetches the next page, and search filters products already loaded. Set quantity and required for a bundle component, and add or remove the link. Those links are not edited from the variant grid.
 
 The product form is schema-driven, so the exact fields can vary by deployment. Use the fields your store exposes rather than assuming every catalog uses the same product structure.
+
+**Bulk composition CSV (optional):** operators with shell access can import and export the same links. Import adds or updates rows. A row missing from the file is not deleted. Product CSV does not change `pricing_mode`, `stock_mode`, or `explode_order_lines` on a product that already exists; empty cells on create mean fixed / fixed / false.
+
+```bash
+app export:bundle-components bundle-components.csv
+app import:bundle-components bundle-components.csv
+app export:grouped-members grouped-members.csv
+app import:grouped-members grouped-members.csv
+```
 
 ### Add or update variants
 
@@ -130,7 +139,7 @@ The media library shows a thumbnail, file name, file size, public URL, and delet
 2. Create or edit categories in the tree.
 3. On a product edit page, use the **Categories** checkbox tree to assign the product.
 
-For very large catalog migrations, CSV workflows remain available:
+For very large catalog migrations, CSV workflows remain available.
 
 **On the storefront:** with the **PostgreSQL** search engine (default), category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` on PostgreSQL and Meilisearch ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). On `/search`, attributes flagged for advanced search appear as additional filter chips on both engines ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md)). PostgreSQL picks up discovery-flag changes on the next request. **Meilisearch** syncs filterable fields when you change flags in admin ([PR-907](../phase-9-merchant-discovery/prs/PR-907.md)) or import attributes via CSV ([PR-908](../phase-9-merchant-discovery/prs/PR-908.md)); reindex products so facet counts reflect existing catalog data.
 

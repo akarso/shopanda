@@ -79,11 +79,14 @@ var requiredColumns = []string{"name", "slug", "sku"}
 // knownColumns are CSV headers handled by the core import logic.
 // Any other header is treated as an attribute column.
 //
-// "type" is reserved for product taxonomy (PR-1052). A CSV that previously
-// used a free-form attribute column named "type" must rename that attribute;
-// values in the type column are never stored in variant.Attributes.
+// "type" is reserved for product taxonomy (PR-1052). pricing_mode, stock_mode,
+// and explode_order_lines are reserved for bundle mode columns (PR-1066).
+// A CSV that previously used a free-form attribute column with one of these
+// names must rename that attribute; values in the reserved columns are never
+// stored in variant.Attributes.
 var knownColumns = map[string]struct{}{
 	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {}, "type": {},
+	"pricing_mode": {}, "stock_mode": {}, "explode_order_lines": {},
 }
 
 // Import reads CSV rows from r and persists them as products and variants.
@@ -94,6 +97,9 @@ var knownColumns = map[string]struct{}{
 //	slug         — product slug (required, used to group variants)
 //	description  — product description (optional)
 //	type         — product type (optional; empty → simple on create; case-sensitive like admin API)
+//	pricing_mode — fixed or dynamic (optional; empty → fixed on create; bundle-only dynamic)
+//	stock_mode   — fixed or dynamic (optional; empty → fixed on create; bundle-only dynamic)
+//	explode_order_lines — true or false (optional; empty → false on create; only when both modes are dynamic)
 //	sku          — variant SKU (required)
 //	variant_name — variant display name (optional)
 //
@@ -107,6 +113,11 @@ var knownColumns = map[string]struct{}{
 // Type consensus: all-empty → simple on create (and no type check on existing);
 // when any cell is set, blanks count as simple so empty+virtual conflicts.
 // Type updates on existing products are rejected (create-only for this field).
+// Mode columns use the same consensus: all-empty keeps create defaults
+// (fixed / fixed / false) and does not check an existing product. When any
+// cell in a column is set, blanks count as that column's default. A non-empty
+// consensus that differs from the stored value is an error and the slug is
+// skipped — CSV does not update modes on existing products.
 func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, error) {
 	ctx = catalog.WithOperatorProductReadScope(ctx)
 	reader := csv.NewReader(r)
@@ -164,6 +175,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 		}
+		explodeRaw, explodeOK := normalizeExplodeCell(colValRow(rowMap, "explode_order_lines"))
 		row := productImportRow{
 			lineNum:     lineNum,
 			name:        colValRow(rowMap, "name"),
@@ -171,6 +183,10 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			sku:         colValRow(rowMap, "sku"),
 			desc:        colValRow(rowMap, "description"),
 			productType: colValRow(rowMap, "type"), // case-sensitive; matches admin API
+			pricingMode: colValRow(rowMap, "pricing_mode"),
+			stockMode:   colValRow(rowMap, "stock_mode"),
+			explodeRaw:  explodeRaw,
+			explodeOK:   explodeOK,
 			variantName: colValRow(rowMap, "variant_name"),
 		}
 		if len(attrColumns) > 0 {
@@ -206,6 +222,21 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				failedLines[row.lineNum] = struct{}{}
 			}
 		}
+		if row.pricingMode != "" && !catalog.PricingMode(row.pricingMode).IsValid() {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidPricingModeMessage(catalog.PricingMode(row.pricingMode))))
+			result.Skipped++
+			failedLines[row.lineNum] = struct{}{}
+		}
+		if row.stockMode != "" && !catalog.StockMode(row.stockMode).IsValid() {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidStockModeMessage(catalog.StockMode(row.stockMode))))
+			result.Skipped++
+			failedLines[row.lineNum] = struct{}{}
+		}
+		if !row.explodeOK {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid explode_order_lines %q", row.lineNum, row.explodeRaw))
+			result.Skipped++
+			failedLines[row.lineNum] = struct{}{}
+		}
 	}
 
 	// 3. For each group, validate and write in a transaction
@@ -222,6 +253,34 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 					"line %d: conflicting type values for slug %q: %s (empty cells count as simple when any type is set)",
 					row.lineNum, slug, seenMsg,
 				))
+				result.Skipped++
+				failedLines[row.lineNum] = struct{}{}
+			}
+			continue
+		}
+		groupPricing, pricingConflict, pricingSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.pricingMode }, string(catalog.PricingModeFixed))
+		groupStock, stockConflict, stockSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.stockMode }, string(catalog.StockModeFixed))
+		groupExplode, explodeConflict, explodeSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.explodeRaw }, "false")
+		if pricingConflict || stockConflict || explodeConflict {
+			for _, row := range rows {
+				if pricingConflict {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: conflicting pricing_mode values for slug %q: %s (empty cells count as fixed when any pricing_mode is set)",
+						row.lineNum, slug, strings.Join(pricingSeen, ", "),
+					))
+				}
+				if stockConflict {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: conflicting stock_mode values for slug %q: %s (empty cells count as fixed when any stock_mode is set)",
+						row.lineNum, slug, strings.Join(stockSeen, ", "),
+					))
+				}
+				if explodeConflict {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: conflicting explode_order_lines values for slug %q: %s (empty cells count as false when any explode_order_lines is set)",
+						row.lineNum, slug, strings.Join(explodeSeen, ", "),
+					))
+				}
 				result.Skipped++
 				failedLines[row.lineNum] = struct{}{}
 			}
@@ -257,6 +316,16 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
+			if mismatch := existingModeMismatches(existing, groupPricing, groupStock, groupExplode); len(mismatch) > 0 {
+				for _, row := range rows {
+					for _, msg := range mismatch {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, msg))
+					}
+					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
+				}
+				continue
+			}
 			product = existing
 		} else {
 			p, err := catalog.NewProduct(id.New(), rows[0].name, slug)
@@ -273,6 +342,14 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				p.Type = catalog.TypeSimple
 			} else {
 				p.Type = catalog.Type(groupType)
+			}
+			if err := applyImportModes(&p, groupPricing, groupStock, groupExplode); err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: %v", row.lineNum, err))
+					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
+				}
+				continue
 			}
 			if err := p.Validate(); err != nil {
 				for _, row := range rows {
@@ -461,8 +538,74 @@ type productImportRow struct {
 	sku         string
 	desc        string
 	productType string
+	pricingMode string
+	stockMode   string
+	explodeRaw  string
+	explodeOK   bool
 	variantName string
 	rawAttrs    map[string]string
+}
+
+// normalizeExplodeCell accepts empty, true, and false (case-insensitive).
+// An invalid token is returned unchanged with ok false so the row error can quote it.
+func normalizeExplodeCell(raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", true
+	}
+	switch strings.ToLower(s) {
+	case "true":
+		return "true", true
+	case "false":
+		return "false", true
+	default:
+		return s, false
+	}
+}
+
+func applyImportModes(p *catalog.Product, pricing, stock, explode string) error {
+	if err := p.ApplyPricingMode(pricing, pricing != ""); err != nil {
+		return err
+	}
+	if err := p.ApplyStockMode(stock, stock != ""); err != nil {
+		return err
+	}
+	return p.ApplyExplodeOrderLines(explode == "true", explode != "")
+}
+
+func existingModeMismatches(existing *catalog.Product, pricing, stock, explode string) []string {
+	var out []string
+	storedPricing := existing.PricingMode
+	if storedPricing == "" {
+		storedPricing = catalog.PricingModeFixed
+	}
+	if pricing != "" && catalog.PricingMode(pricing) != storedPricing {
+		out = append(out, fmt.Sprintf(
+			"pricing_mode updates via CSV are not supported (product %q has pricing_mode %q, CSV has %q)",
+			existing.Slug, storedPricing, pricing,
+		))
+	}
+	storedStock := existing.StockMode
+	if storedStock == "" {
+		storedStock = catalog.StockModeFixed
+	}
+	if stock != "" && catalog.StockMode(stock) != storedStock {
+		out = append(out, fmt.Sprintf(
+			"stock_mode updates via CSV are not supported (product %q has stock_mode %q, CSV has %q)",
+			existing.Slug, storedStock, stock,
+		))
+	}
+	storedExplode := "false"
+	if existing.ExplodeOrderLines {
+		storedExplode = "true"
+	}
+	if explode != "" && explode != storedExplode {
+		out = append(out, fmt.Sprintf(
+			"explode_order_lines updates via CSV are not supported (product %q has explode_order_lines %q, CSV has %q)",
+			existing.Slug, storedExplode, explode,
+		))
+	}
+	return out
 }
 
 // skipSlugGroupSiblings marks remaining rows in a slug group when at least one
@@ -519,6 +662,39 @@ func slugGroupType(rows []productImportRow) (groupType string, conflict bool, se
 	seenSorted = make([]string, 0, len(seen))
 	for t := range seen {
 		seenSorted = append(seenSorted, t)
+	}
+	sort.Strings(seenSorted)
+	if len(seen) == 1 {
+		return seenSorted[0], false, seenSorted
+	}
+	return "", true, seenSorted
+}
+
+// slugGroupConsensus returns the agreed value for one optional column.
+// All-empty → ("", false, nil). When any cell is non-empty, blanks use
+// blankDefault; more than one distinct value → conflict.
+func slugGroupConsensus(rows []productImportRow, raw func(productImportRow) string, blankDefault string) (value string, conflict bool, seenSorted []string) {
+	anyNonEmpty := false
+	for _, row := range rows {
+		if raw(row) != "" {
+			anyNonEmpty = true
+			break
+		}
+	}
+	if !anyNonEmpty {
+		return "", false, nil
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		v := raw(row)
+		if v == "" {
+			v = blankDefault
+		}
+		seen[v] = struct{}{}
+	}
+	seenSorted = make([]string, 0, len(seen))
+	for v := range seen {
+		seenSorted = append(seenSorted, v)
 	}
 	sort.Strings(seenSorted)
 	if len(seen) == 1 {

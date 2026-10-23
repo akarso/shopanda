@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
@@ -24,12 +27,40 @@ type fakeTxConn struct{}
 
 func (fakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (fakeTxConn) Close() error                        { return nil }
-func (fakeTxConn) Begin() (driver.Tx, error)           { return fakeTx{}, nil }
+func (fakeTxConn) Begin() (driver.Tx, error) {
+	sess := &bundleTxSession{}
+	bundleTxCurrent.Store(sess)
+	return sess, nil
+}
 
-type fakeTx struct{}
+// bundleTxSession is the driver transaction for one BundleService.Add call.
+// Commit copies in-memory upserts onto the parent stub. Rollback leaves the
+// parent unchanged, matching a rolled-back database write.
+type bundleTxSession struct {
+	onCommit []func()
+	done     bool
+}
 
-func (fakeTx) Commit() error   { return nil }
-func (fakeTx) Rollback() error { return nil }
+func (s *bundleTxSession) Commit() error {
+	if s.done {
+		return sql.ErrTxDone
+	}
+	s.done = true
+	for _, fn := range s.onCommit {
+		fn()
+	}
+	return nil
+}
+
+func (s *bundleTxSession) Rollback() error {
+	if s.done {
+		return sql.ErrTxDone
+	}
+	s.done = true
+	return nil
+}
+
+var bundleTxCurrent atomic.Pointer[bundleTxSession]
 
 var (
 	fakeTxDBOnce sync.Once
@@ -62,11 +93,24 @@ type stubBundleComponentRepo struct {
 	}
 	removeErr error
 	calls     *[]string
+	parent    *stubBundleComponentRepo
+}
+
+func (s *stubBundleComponentRepo) owner() *stubBundleComponentRepo {
+	if s.parent != nil {
+		return s.parent
+	}
+	return s
 }
 
 func (s *stubBundleComponentRepo) ListByBundleID(_ context.Context, bundleProductID string) ([]catalog.BundleComponent, error) {
-	s.listBundleID = bundleProductID
-	return s.list, nil
+	s.owner().listBundleID = bundleProductID
+	if s.list == nil {
+		return nil, nil
+	}
+	out := make([]catalog.BundleComponent, len(s.list))
+	copy(out, s.list)
+	return out, nil
 }
 
 func (s *stubBundleComponentRepo) CountByBundleID(context.Context, string) (int, error) {
@@ -78,15 +122,42 @@ func (s *stubBundleComponentRepo) CountByComponentID(context.Context, string) (i
 }
 
 func (s *stubBundleComponentRepo) Upsert(_ context.Context, c *catalog.BundleComponent) error {
-	if s.calls != nil {
-		*s.calls = append(*s.calls, "upsert")
+	owner := s.owner()
+	if owner.calls != nil {
+		*owner.calls = append(*owner.calls, "upsert")
 	}
 	cp := *c
 	s.upsert = &cp
+	for i := range s.list {
+		if s.list[i].BundleProductID == cp.BundleProductID && s.list[i].ComponentProductID == cp.ComponentProductID {
+			s.list[i] = cp
+			return nil
+		}
+	}
+	s.list = append(s.list, cp)
 	return nil
 }
 
-func (s *stubBundleComponentRepo) WithTx(_ *sql.Tx) catalog.BundleComponentRepository { return s }
+func (s *stubBundleComponentRepo) WithTx(_ *sql.Tx) catalog.BundleComponentRepository {
+	if s.parent != nil {
+		return s
+	}
+	child := &stubBundleComponentRepo{
+		list:   append([]catalog.BundleComponent(nil), s.list...),
+		parent: s,
+		calls:  s.calls,
+	}
+	if sess := bundleTxCurrent.Load(); sess != nil {
+		sess.onCommit = append(sess.onCommit, func() {
+			s.list = append([]catalog.BundleComponent(nil), child.list...)
+			if child.upsert != nil {
+				cp := *child.upsert
+				s.upsert = &cp
+			}
+		})
+	}
+	return child
+}
 
 func (s *stubBundleComponentRepo) Remove(_ context.Context, bundleProductID, componentProductID string) error {
 	s.removed.bundleID = bundleProductID
@@ -360,9 +431,82 @@ func TestBundleService_List_EmptySlice(t *testing.T) {
 	}
 }
 
+func requiredCapFixture() (*stubProductRepo, *stubBundleComponentRepo) {
+	byID := map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+	}
+	rows := make([]catalog.BundleComponent, catalog.MaxBundleRequiredComponents)
+	for i := range rows {
+		id := fmt.Sprintf("c%02d", i)
+		byID[id] = &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive}
+		rows[i] = catalog.BundleComponent{
+			BundleProductID: "b1", ComponentProductID: id, Quantity: 1, Required: true,
+		}
+	}
+	byID["extra"] = &catalog.Product{ID: "extra", Type: catalog.TypeSimple, Status: catalog.StatusActive}
+	return &stubProductRepo{byID: byID}, &stubBundleComponentRepo{list: rows}
+}
+
+func TestBundleService_Add_RequiredCap(t *testing.T) {
+	products, components := requiredCapFixture()
+	svc := newBundleService(products, components)
+
+	extra, err := catalog.NewBundleComponent("b1", "extra", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	err = svc.Add(context.Background(), extra)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Add = %v, want validation", err)
+	}
+	if !strings.Contains(err.Error(), "maximum is 50") {
+		t.Fatalf("error = %v, want required-component cap", err)
+	}
+	if components.upsert != nil {
+		t.Fatalf("51st row committed: %+v", components.upsert)
+	}
+	if len(components.list) != catalog.MaxBundleRequiredComponents {
+		t.Fatalf("committed rows = %d, want %d", len(components.list), catalog.MaxBundleRequiredComponents)
+	}
+	for _, row := range components.list {
+		if row.ComponentProductID == "extra" {
+			t.Fatal("rolled-back component is still in the committed list")
+		}
+	}
+
+	updated, err := catalog.NewBundleComponent("b1", "c00", 4)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	if err := svc.Add(context.Background(), updated); err != nil {
+		t.Fatalf("quantity change: %v", err)
+	}
+	if components.upsert == nil || components.upsert.ComponentProductID != "c00" || components.upsert.Quantity != 4 || !components.upsert.Required {
+		t.Fatalf("committed upsert = %+v", components.upsert)
+	}
+	if len(components.list) != catalog.MaxBundleRequiredComponents {
+		t.Fatalf("committed rows = %d, want %d", len(components.list), catalog.MaxBundleRequiredComponents)
+	}
+	var found bool
+	for _, row := range components.list {
+		if row.ComponentProductID == "c00" {
+			found = true
+			if row.Quantity != 4 || !row.Required {
+				t.Fatalf("committed row = %+v", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("existing required component missing after quantity change")
+	}
+}
+
 func TestBundleService_Remove(t *testing.T) {
 	components := &stubBundleComponentRepo{}
-	svc := newBundleService(&stubProductRepo{}, components)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+	}}
+	svc := newBundleService(products, components)
 
 	if err := svc.Remove(context.Background(), "b1", "c1"); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -374,7 +518,10 @@ func TestBundleService_Remove(t *testing.T) {
 
 func TestBundleService_Remove_NotFound(t *testing.T) {
 	components := &stubBundleComponentRepo{removeErr: apperror.NotFound("bundle component not found")}
-	svc := newBundleService(&stubProductRepo{}, components)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+	}}
+	svc := newBundleService(products, components)
 
 	err := svc.Remove(context.Background(), "b1", "c1")
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -399,7 +546,10 @@ func TestBundleService_List_TrimsID(t *testing.T) {
 
 func TestBundleService_Remove_TrimsIDs(t *testing.T) {
 	components := &stubBundleComponentRepo{}
-	svc := newBundleService(&stubProductRepo{}, components)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+	}}
+	svc := newBundleService(products, components)
 
 	if err := svc.Remove(context.Background(), " b1 ", " c1 "); err != nil {
 		t.Fatalf("Remove: %v", err)

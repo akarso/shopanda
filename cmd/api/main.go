@@ -119,6 +119,14 @@ func run() error {
 			return runImportProducts(cfg, log)
 		case "export:products":
 			return runExportProducts(cfg, log)
+		case "import:bundle-components":
+			return runImportBundleComponents(cfg, log)
+		case "export:bundle-components":
+			return runExportBundleComponents(cfg, log)
+		case "import:grouped-members":
+			return runImportGroupedMembers(cfg, log)
+		case "export:grouped-members":
+			return runExportGroupedMembers(cfg, log)
 		case "import:stock":
 			return runImportStock(cfg, log)
 		case "export:stock":
@@ -709,6 +717,10 @@ Commands:
   config:import <file> Import configuration from a YAML file
   import:products <f>  Import products from a CSV file
   export:products <f>  Export products to a CSV file
+  import:bundle-components <f>  Import bundle component links from a CSV file
+  export:bundle-components <f>  Export bundle component links to a CSV file
+  import:grouped-members <f>  Import grouped member links from a CSV file
+  export:grouped-members <f>  Export grouped member links to a CSV file
   import:stock <f>     Import stock from a CSV file
   export:stock <f>     Export stock to a CSV file
   import:customers <f> Import customers from a CSV file

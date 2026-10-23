@@ -1148,3 +1148,209 @@ Widget,widget,SKU-002,bad2
 		t.Errorf("products created = %d, want 0", len(prodRepo.products))
 	}
 }
+
+func TestImport_CreateBundleModes(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
+Kit,kit,SKU-K,bundle,dynamic,dynamic,true
+Plain,plain,SKU-P,simple,,,
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 2 || len(result.Errors) != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	bySlug := map[string]*catalog.Product{}
+	for _, p := range prodRepo.products {
+		bySlug[p.Slug] = p
+	}
+	kit := bySlug["kit"]
+	if kit.PricingMode != catalog.PricingModeDynamic || kit.StockMode != catalog.StockModeDynamic || !kit.ExplodeOrderLines {
+		t.Fatalf("kit modes = %s %s explode=%v", kit.PricingMode, kit.StockMode, kit.ExplodeOrderLines)
+	}
+	plain := bySlug["plain"]
+	if plain.PricingMode != catalog.PricingModeFixed || plain.StockMode != catalog.StockModeFixed || plain.ExplodeOrderLines {
+		t.Fatalf("plain modes = %s %s explode=%v", plain.PricingMode, plain.StockMode, plain.ExplodeOrderLines)
+	}
+}
+
+func TestImport_DynamicModeOnSimpleIsRejected(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode
+Widget,widget,SKU-1,simple,dynamic
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 0 || len(prodRepo.products) != 0 {
+		t.Fatalf("want no create, result=%+v", result)
+	}
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0], "line 2:") {
+		t.Fatalf("errors = %v", result.Errors)
+	}
+}
+
+func TestImport_ExistingModeMismatchSkips(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Type: catalog.TypeBundle,
+		PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			if slug == "kit" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,pricing_mode
+Kit,kit,SKU-1,bundle,dynamic
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("variants created on mode mismatch: %+v", result)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "pricing_mode updates via CSV are not supported") || !strings.Contains(joined, "line 2:") {
+		t.Fatalf("errors = %v", result.Errors)
+	}
+	if existing.PricingMode != catalog.PricingModeFixed {
+		t.Fatalf("stored mode changed to %s", existing.PricingMode)
+	}
+}
+
+func TestImport_ExistingEmptyModeColumnsDoNotConflict(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Type: catalog.TypeBundle,
+		PricingMode: catalog.PricingModeDynamic, StockMode: catalog.StockModeDynamic, ExplodeOrderLines: true,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			if slug == "kit" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type
+Kit,kit,SKU-NEW,bundle
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 || result.Variants != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if existing.PricingMode != catalog.PricingModeDynamic || !existing.ExplodeOrderLines {
+		t.Fatalf("stored modes changed: %+v", existing)
+	}
+}
+
+func TestImport_ExplodeTrueWithFixedModesRejected(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
+Kit,kit,SKU-K,bundle,fixed,fixed,true
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 0 || len(prodRepo.products) != 0 {
+		t.Fatalf("want no create, result=%+v products=%d", result, len(prodRepo.products))
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "line 2:") || !strings.Contains(joined, "explode order lines") {
+		t.Fatalf("errors = %v", result.Errors)
+	}
+}
+
+func TestImport_SlugGroupModeConflict(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
+Kit,kit,SKU-1,bundle,fixed,fixed,false
+Kit,kit,SKU-2,bundle,dynamic,fixed,false
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 0 || len(prodRepo.products) != 0 || result.Variants != 0 {
+		t.Fatalf("want no create, result=%+v", result)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "conflicting pricing_mode") || !strings.Contains(joined, "line 2:") || !strings.Contains(joined, "line 3:") {
+		t.Fatalf("errors = %v", result.Errors)
+	}
+}
+
+func TestImport_MatchingModeReimportSucceeds(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Type: catalog.TypeBundle,
+		PricingMode: catalog.PricingModeDynamic, StockMode: catalog.StockModeDynamic, ExplodeOrderLines: true,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			if slug == "kit" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
+Kit,kit,SKU-NEW,bundle,dynamic,dynamic,true
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 || result.Variants != 1 || len(varRepo.variants) != 1 {
+		t.Fatalf("result=%+v variants=%d", result, len(varRepo.variants))
+	}
+	if existing.PricingMode != catalog.PricingModeDynamic || existing.StockMode != catalog.StockModeDynamic || !existing.ExplodeOrderLines {
+		t.Fatalf("stored modes changed: %+v", existing)
+	}
+}
+
+func TestImport_ModeColumnsAreNotAttributes(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode,color
+Widget,widget,SKU-1,simple,fixed,red
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 || len(varRepo.variants) != 1 {
+		t.Fatalf("result=%+v variants=%d", result, len(varRepo.variants))
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["color"] != "red" {
+		t.Fatalf("color = %#v", attrs["color"])
+	}
+	if _, ok := attrs["pricing_mode"]; ok {
+		t.Fatalf("pricing_mode stored as attribute: %#v", attrs)
+	}
+}
