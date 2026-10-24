@@ -107,15 +107,16 @@ type serveRuntime struct {
 	pdp *composition.Pipeline[composition.ProductContext]
 	plp *composition.Pipeline[composition.ListingContext]
 
-	cartService           *cartApp.Service
-	checkoutService       *checkoutApp.Service
-	authService           *authApp.Service
-	accountService        *accountApp.Service
-	returnService         *returnsApp.Service
-	extensionValueService *extensionApp.ValueService
-	setupService          *setupApp.Service
-	bundleService         *catalogApp.BundleService
-	groupedService        *catalogApp.GroupedService
+	cartService              *cartApp.Service
+	checkoutService          *checkoutApp.Service
+	authService              *authApp.Service
+	accountService           *accountApp.Service
+	returnService            *returnsApp.Service
+	extensionValueService    *extensionApp.ValueService
+	setupService             *setupApp.Service
+	bundleService            *catalogApp.BundleService
+	groupedService           *catalogApp.GroupedService
+	linkedEligibilityService *catalogApp.LinkedEligibilityService
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -517,6 +518,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// Composition pipelines (core SEO steps + plugin steps).
 	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo, conn)
 	groupedService := catalogApp.NewGroupedService(repos.productRepo, repos.groupedMemberRepo, conn)
+	linkedEligibilityService := catalogApp.NewLinkedEligibilityService(
+		repos.productRepo, repos.categoryRepo, repos.linkedEligibilityRepo, conn,
+	)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -964,6 +968,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		setupService:                   setupService,
 		bundleService:                  bundleService,
 		groupedService:                 groupedService,
+		linkedEligibilityService:       linkedEligibilityService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,

@@ -21,7 +21,7 @@
 | PR-1064 | C | done | [Order line explosion + returns integration](PR-1064.md) |
 | PR-1065 | C | done | [Omnibus catalog history for kits](PR-1065.md) |
 | PR-1066 | C | done | [Bundle/grouped admin API + CSV + GUI](PR-1066.md) |
-| PR-1067 | D | planned | [`LinkedProduct` catalog eligibility](PR-1067.md) |
+| PR-1067 | D | done | [`LinkedProduct` catalog eligibility](PR-1067.md) |
 | PR-1068 | D | planned | [`RequiresLinkedParent` purchasability gate](PR-1068.md) |
 | PR-1069 | D | planned | [`ProductAssignment` instance domain](PR-1069.md) |
 | PR-1070 | D | planned | [Assignment flow: cart-time + post-purchase](PR-1070.md) |
