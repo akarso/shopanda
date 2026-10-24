@@ -84,7 +84,6 @@ C4Component
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
             Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert and rejects a non-active product unless IncludeNonActiveProducts is set. Remove does not lock product rows. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows (including illicit rows); it fails closed when the repo or tx starter is unwired.")
             Component(groupedService, "GroupedService", "Go", "Grouped display membership (PR-1061): list, add, and remove member links. No quantity. A member may belong to more than one group. Add locks both product rows FOR UPDATE before insert-ignore and rejects a non-active product unless IncludeNonActiveProducts is set. Remove deletes one link and does not lock product rows. Members must be leaf types (simple, virtual, downloadable) and stay independently purchasable — membership does not affect Purchasable or visibility. ValidateComposition is service-only. Fail-closed type-change guards live on ProductAdminHandler, not here.")
-            Component(linkedEligibilityService, "LinkedEligibilityService", "Go", "Linked-product catalog eligibility (PR-1067): child-declared allowlist and/or category rules. AddParent locks both product rows FOR UPDATE before insert-ignore; AddCategory locks the child and checks the category exists. Remove does not lock. IsEligible and HasRules are join-table predicates (no product-status check). IsEligible is OR across explicit parent rows and product_categories membership. Eligibility does not affect Purchasable or visibility (PR-1068). No admin HTTP yet (PR-1073).")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -232,7 +231,6 @@ C4Component
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(bundleService, postgresRepos, "Reads products and writes bundle_components")
     Rel(groupedService, postgresRepos, "Reads products and writes grouped_members")
-    Rel(linkedEligibilityService, postgresRepos, "Reads products/categories and writes linked_eligible_parents / linked_eligible_categories")
     Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components and grouped_members")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")

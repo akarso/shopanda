@@ -120,8 +120,8 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1067 | `LinkedProduct` catalog eligibility | **done.** Child-declared eligibility, not composition: `linked_eligible_parents` (explicit parent-product allowlist) and `linked_eligible_categories` (any product assigned to that category via `product_categories`). `IsEligible` and `HasRules` are join-table predicates (no status check); `IsEligible` is OR across both; an empty rule set is false. Both product FKs and the category FK are `ON DELETE CASCADE`. No type restriction. `LinkedEligibilityService` locks products on add (draft needs operator scope); `Remove*` do not lock. Eligibility does not change `Purchasable` or visibility. PR-1068 uses an explicit `RequiresLinkedParent` flag, not `HasRules`. No admin HTTP (PR-1073). See [`prs/PR-1067.md`](prs/PR-1067.md). |
-| PR-1068 | `RequiresLinkedParent` purchasability gate | Explicit `RequiresLinkedParent` product flag (do **not** derive it from `HasRules`). After the product is already in scope, `IsEligible` only answers “does this parent match a rule.” `Purchasable = false` until an assignment context makes it eligible — reuses Track B's `HookCartAddItemBefore`/`HookCartValidate` seam (PR-1058). Eligibility ≠ purchasable ≠ assignable; still check active/visible on both sides. |
+| PR-1067 | `LinkedProduct` catalog eligibility | Many-to-many eligibility, not composition: which child products are assignable to which parent products. Two scoping mechanisms, both supported (merchant picks whichever fits): an explicit parent-product-ID allowlist per child, or a category-based rule (a ticket is eligible for assignment to any product in the "Cards" category) — reuse the existing catalog-rule scoping pattern from Promotions (`internal/application/pricing/catalog_promotion_step.go`) rather than inventing a second rule engine. |
+| PR-1068 | `RequiresLinkedParent` purchasability gate | A product flagged `RequiresLinkedParent = true` computes `Purchasable = false` (Track B) until an assignment context makes it eligible — reuses Track B's `HookCartAddItemBefore`/`HookCartValidate` seam (PR-1058) rather than a bespoke check. This is the direct answer to "a ticket must not be sellable or visible until assigned to a card." |
 | PR-1069 | `ProductAssignment` instance domain | New domain: binds one purchased/issued child unit (an order item, or a serialized unit for a digital "smart card in a phone" case) to one purchased parent unit. State machine: `unassigned → assigned → revoked` (revoke, not delete — keeps an audit trail; a revoked ticket can be reassigned). This is the piece with no existing analog anywhere in the codebase — closest precedent in shape (not in domain) is the store-credit ledger's append-only entry model. |
 | PR-1070 | Assignment flow: cart-time + post-purchase | Both paths supported, per the actual use case (many buyers already own a card and buy tickets for it later; some buy card+ticket together): cart-time assignment (customer selects which of their existing card instances a ticket is being purchased for, if any) is optional; if not chosen at cart time, the ticket is purchasable but the resulting order item is `unassigned` until a post-purchase assignment step (self-service account page or admin action) completes it — a `RequiresLinkedParent` item stays non-purchasable at the *product* level (PR-1068) but an already-purchased-and-unassigned unit is a different state, tracked by PR-1069. |
 | PR-1071 | Admin API for assignment | List/create/revoke assignments; "this card's assigned tickets" and "this ticket's current card" views. |
@@ -217,8 +217,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1064 | C | done |
 | 1065 | C | done |
 | 1066 | C | done |
-| 1067 | D | done |
-| 1068–1073 | D | planned |
+| 1067–1073 | D | planned |
 | 1074–1078 | E | planned |
 | 1079–1083 | F | planned |
 
@@ -232,4 +231,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1067 done — Track D started, eligibility relation only; next PR-1068; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1066 done — Track C closed; Omnibus is per-SKU catalog history, dynamic headlines exempt, VAT still order-level; next PR-1067 Track D; numbering collides with Phase 11 — disambiguate by phase folder) |

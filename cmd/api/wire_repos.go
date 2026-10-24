@@ -31,7 +31,6 @@ type serveRepos struct {
 	collectionRepo             *postgres.CollectionRepo
 	bundleComponentRepo        *postgres.BundleComponentRepo
 	groupedMemberRepo          *postgres.GroupedMemberRepo
-	linkedEligibilityRepo      *postgres.LinkedEligibilityRepo
 	taxRateRepo                *postgres.TaxRateRepo
 	promotionRepo              *postgres.PromotionRepo
 	couponRepo                 *postgres.CouponRepo
@@ -160,13 +159,6 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	// groupedMemberRepo: opened at serve start. wire_services passes it to
 	// ProductAdminHandler.WithGroupedMembers for type-change guards.
 	// Grouped admin HTTP remains PR-1066.
-
-	repos.linkedEligibilityRepo, err = postgres.NewLinkedEligibilityRepo(conn)
-	if err != nil {
-		return nil, wrapRepoOpen("linkedEligibilityRepo", err)
-	}
-	// linkedEligibilityRepo: opened at serve start. wire_services constructs
-	// LinkedEligibilityService. Admin HTTP / CSV remain PR-1073.
 
 	repos.taxRateRepo, err = postgres.NewTaxRateRepo(conn)
 	if err != nil {

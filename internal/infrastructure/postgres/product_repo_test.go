@@ -49,26 +49,22 @@ func ensureProductsTable(t *testing.T, db *sql.DB) {
 	})
 }
 
-// deleteAllProducts removes composition and eligibility links before products.
-// Bundle component FKs are ON DELETE RESTRICT, so a product delete fails while
-// a link still points at it. Grouped membership and linked-eligibility FKs
-// cascade, but rows are removed first so cleanup does not depend on that.
+// deleteAllProducts removes composition links before products. Bundle component
+// FKs are ON DELETE RESTRICT, so a product delete fails while a link still
+// points at it. Grouped membership FKs cascade, but rows are removed first so
+// cleanup does not depend on that.
 func deleteAllProducts(t *testing.T, db *sql.DB) {
 	t.Helper()
 	mustExec(t, db, "DELETE FROM bundle_components")
 	mustExec(t, db, "DELETE FROM grouped_members")
-	mustExec(t, db, "DELETE FROM linked_eligible_parents")
-	mustExec(t, db, "DELETE FROM linked_eligible_categories")
 	mustExec(t, db, "DELETE FROM products")
 }
 
-// deleteProductByID removes composition and eligibility links that reference productID, then the product row.
+// deleteProductByID removes composition links that reference productID, then the product row.
 func deleteProductByID(t *testing.T, db *sql.DB, productID string) {
 	t.Helper()
 	mustExec(t, db, "DELETE FROM bundle_components WHERE bundle_product_id = $1 OR component_product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM grouped_members WHERE group_product_id = $1 OR member_product_id = $1", productID)
-	mustExec(t, db, "DELETE FROM linked_eligible_parents WHERE child_product_id = $1 OR parent_product_id = $1", productID)
-	mustExec(t, db, "DELETE FROM linked_eligible_categories WHERE child_product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM products WHERE id = $1", productID)
 }
 
