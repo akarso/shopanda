@@ -388,9 +388,12 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
 	// Validate every guest line before copying extensions so a late failure
-	// cannot leave earlier guest targets half-migrated. Guest extension deletes
-	// wait until after customer cart Save so a failed Save leaves guest values
-	// intact (same ordering as assignGuestCart).
+	// cannot leave earlier guest targets half-migrated. CopyTarget commits on
+	// its own, while the customer cart is saved only after the loop. A later
+	// assignment conflict must not overwrite custom values on a shared variant
+	// while leaving quantities unchanged. Guest extension deletes wait until
+	// after that Save so a failed Save leaves guest values intact (same
+	// ordering as assignGuestCart).
 	dropped, err := s.unclaimableGuestLines(ctx, guestCart, customerCart)
 	if err != nil {
 		return nil, err
@@ -401,6 +404,11 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		}
 		if assignmentsConflict(lineAssignmentFromCart(customerCart, item.VariantID), lineAssignment(item)) {
 			return nil, apperror.Validation(conflictingLinkedParentAssignmentMessage)
+		}
+	}
+	for _, item := range guestCart.Items {
+		if _, skip := dropped[item.VariantID]; skip {
+			continue
 		}
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)

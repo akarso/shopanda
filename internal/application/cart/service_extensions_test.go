@@ -384,6 +384,92 @@ func TestService_ClaimGuestCart_MergeCopiesAndCleansExtensions(t *testing.T) {
 	}
 }
 
+func TestService_ClaimGuestCart_LaterAssignmentConflict_DoesNotOverwriteExtensions(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift message",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatalf("register field: %v", err)
+	}
+	repo := newMemCartExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, repo)
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	prices.set("var-2", "EUR", 2000)
+	vr := mapVariantRepo{variants: map[string]*catalog.Variant{
+		"var-1": {ID: "var-1", ProductID: "prod-1"},
+		"var-2": {ID: "var-2", ProductID: "prod-2"},
+	}}
+	pr := mapProductRepo{products: map[string]*catalog.Product{
+		"prod-1": {ID: "prod-1", Status: catalog.StatusActive},
+		"prod-2": {ID: "prod-2", Status: catalog.StatusActive},
+	}}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, nil)
+	ctx := context.Background()
+
+	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, customer.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: "Keep me"}},
+		UpdatedBy:  "cust-1",
+	}); err != nil {
+		t.Fatalf("AddItem customer var-1: %v", err)
+	}
+	parentA := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{ParentProductID: "card-a"})
+	if _, err := svc.AddItem(parentA, customer.ID, "cust-1", "var-2", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem customer var-2: %v", err)
+	}
+	// Shared variant is first so a late conflict used to copy its extensions
+	// before the merge aborted and before the customer cart was saved.
+	if _, err := svc.AddItem(ctx, guest.ID, "", "var-1", 2, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: "Overwrite"}},
+		UpdatedBy:  "guest",
+	}); err != nil {
+		t.Fatalf("AddItem guest var-1: %v", err)
+	}
+	parentB := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{ParentProductID: "card-b"})
+	if _, err := svc.AddItem(parentB, guest.ID, "", "var-2", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem guest var-2: %v", err)
+	}
+
+	_, err = svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), "different linked parent assignment") {
+		t.Fatalf("err = %v, want conflicting assignment", err)
+	}
+
+	stored, err := repo.ListByTarget(ctx, domainext.CartItemTarget(customer.ID, "var-1"))
+	if err != nil {
+		t.Fatalf("ListByTarget customer: %v", err)
+	}
+	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "Keep me" {
+		t.Fatalf("customer extension = %+v, want Keep me", stored)
+	}
+	saved, err := carts.FindByID(ctx, customer.ID)
+	if err != nil || saved == nil {
+		t.Fatalf("customer cart: %v", err)
+	}
+	qty := map[string]int{}
+	parent := map[string]string{}
+	for _, item := range saved.Items {
+		qty[item.VariantID] = item.Quantity
+		parent[item.VariantID] = item.AssignmentParent()
+	}
+	if qty["var-1"] != 1 || qty["var-2"] != 1 || parent["var-2"] != "card-a" {
+		t.Fatalf("customer items = %+v, want var-1 qty 1 and var-2 qty 1 parent card-a", saved.Items)
+	}
+}
+
 func TestService_ClaimGuestCart_AssignDeleteFailsAfterSave_RetryPurgesOrphans(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(domainext.FieldDef{
