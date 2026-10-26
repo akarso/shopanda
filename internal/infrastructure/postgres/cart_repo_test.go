@@ -94,7 +94,7 @@ func TestCartRepo_AssignmentRoundTrip(t *testing.T) {
 	if err := c.AddItem(variantID, 1, price); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
-	c.SetItemAssignment(variantID, " card-1 ", true)
+	c.SetItemAssignment(variantID, " card-1 ", " order-1/var-card ", true)
 
 	if err := repo.Save(ctx, &c); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -103,8 +103,8 @@ func TestCartRepo_AssignmentRoundTrip(t *testing.T) {
 	if err != nil || got == nil || len(got.Items) != 1 {
 		t.Fatalf("FindByID: got=%v err=%v", got, err)
 	}
-	if got.Items[0].AssignmentParent() != "card-1" || !got.Items[0].AssignmentDeferred {
-		t.Fatalf("assignment = %+v, want parent card-1 deferred", got.Items[0])
+	if got.Items[0].AssignmentParent() != "card-1" || got.Items[0].AssignmentUnit() != "order-1/var-card" || !got.Items[0].AssignmentDeferred {
+		t.Fatalf("assignment = %+v, want parent card-1 unit order-1/var-card deferred", got.Items[0])
 	}
 }
 

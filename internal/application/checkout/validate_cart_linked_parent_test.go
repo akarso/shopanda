@@ -5,9 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/checkout"
+	"github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -254,3 +258,103 @@ func (r assignmentVariantRepo) ListByProductIDs(_ context.Context, ids []string,
 }
 func (assignmentVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
 func (assignmentVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
+type checkoutEligStub struct{ ok bool }
+
+func (s checkoutEligStub) IsEligible(context.Context, string, string) (bool, error) {
+	return s.ok, nil
+}
+
+type checkoutAssignRepoStub struct{}
+
+func (checkoutAssignRepoStub) Insert(context.Context, *assignment.ProductAssignment) error {
+	return nil
+}
+func (checkoutAssignRepoStub) Update(context.Context, *assignment.ProductAssignment) error {
+	return nil
+}
+func (checkoutAssignRepoStub) FindByID(context.Context, string) (*assignment.ProductAssignment, error) {
+	return nil, nil
+}
+func (checkoutAssignRepoStub) FindCurrentByChildID(context.Context, string) (*assignment.ProductAssignment, error) {
+	return nil, nil
+}
+func (checkoutAssignRepoStub) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
+	return nil, nil
+}
+
+type checkoutOrderStub struct{}
+
+func (checkoutOrderStub) FindByID(context.Context, string) (*order.Order, error) { return nil, nil }
+func (checkoutOrderStub) FindByCustomerID(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
+
+type checkoutPaymentStub struct{}
+
+func (checkoutPaymentStub) FindByOrderID(context.Context, string) (*payment.Payment, error) {
+	return nil, nil
+}
+
+func TestValidateCartStep_RequiresLinkedParent_IneligibleRejects(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"prod-1": {
+			ID: "prod-1", Status: catalog.StatusActive, Type: catalog.TypeSimple,
+			RequiresLinkedParent: true,
+		},
+	}}
+	assignRepo := checkoutAssignRepoStub{}
+	flow := assignmentapp.NewFlow(assignmentapp.NewService(assignRepo), assignRepo, checkoutEligStub{ok: false}, checkoutOrderStub{}, repo, checkoutPaymentStub{})
+	step := newValidateCartStep(repo, products).
+		WithVisibilityFacts(checkoutPurchasableFacts{"prod-1": checkoutSellableSnap()}, catalog.VisibilityOptions{}).
+		WithAssignmentFlow(flow)
+
+	ctx := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{ParentProductID: "card-1"})
+	err := step.Execute(ctx, linkedParentCartContext(t))
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.ParentNotEligibleMessage) {
+		t.Fatalf("err = %v, want %q", err, assignmentapp.ParentNotEligibleMessage)
+	}
+}
+
+func TestValidateCartStep_BundleLeaf_EligibilityUsesLeafProduct(t *testing.T) {
+	child, err := catalog.NewVariant("child-v", "child-1", "CHILD")
+	if err != nil {
+		t.Fatalf("NewVariant: %v", err)
+	}
+	repo := assignmentVariantRepo{byID: map[string]*catalog.Variant{
+		"v1":      {ID: "v1", ProductID: "bundle-1"},
+		"child-v": &child,
+	}}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"bundle-1": {ID: "bundle-1", Status: catalog.StatusActive, Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic},
+		"child-1":  {ID: "child-1", Status: catalog.StatusActive, Type: catalog.TypeSimple, RequiresLinkedParent: true},
+	}}
+	comp, err := catalog.NewBundleComponent("bundle-1", "child-1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	assignRepo := checkoutAssignRepoStub{}
+	flow := assignmentapp.NewFlow(
+		assignmentapp.NewService(assignRepo), assignRepo,
+		checkoutEligMap{ok: map[string]bool{"child-1|card-1": true}},
+		checkoutOrderStub{}, repo, checkoutPaymentStub{},
+	)
+	step := checkout.NewValidateCartStep(repo, products, linkedParentCheckoutComponents{*comp}, cartApp.PermissiveStock()).
+		WithVisibilityFacts(checkoutPurchasableFacts{"bundle-1": checkoutSellableSnap()}, catalog.VisibilityOptions{}).
+		WithAssignmentFlow(flow)
+
+	cctx := linkedParentCartContext(t)
+	cctx.Cart.Items[0].AssignmentParentProductID = "card-1"
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+type checkoutEligMap struct {
+	ok map[string]bool
+}
+
+func (s checkoutEligMap) IsEligible(_ context.Context, childID, parentID string) (bool, error) {
+	return s.ok[childID+"|"+parentID], nil
+}

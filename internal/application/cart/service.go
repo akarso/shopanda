@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	"github.com/akarso/shopanda/internal/application/hooks"
 	appinventory "github.com/akarso/shopanda/internal/application/inventory"
@@ -45,6 +46,7 @@ type Service struct {
 	unitPrices      appPricing.UnitPriceSources
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
+	assignments     *assignmentapp.Flow
 	pipeline        pricing.Pipeline
 	extensions      extensionValueWriter
 	hooks           *hooks.Registry
@@ -110,6 +112,16 @@ func NewService(
 func (s *Service) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *Service {
 	s.visibilityFacts = facts
 	s.visibilityOpts = opts
+	return s
+}
+
+// WithAssignmentFlow checks IsEligible and parent-unit ownership when a
+// parent is present (PR-1070). Nil skips those checks (tests).
+func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
+	if s == nil {
+		return nil
+	}
+	s.assignments = flow
 	return s
 }
 
@@ -271,7 +283,7 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 // above available are returned so the claim can drop them instead of
 // failing: a failed claim leaves the guest cookie in place and every later
 // login retries and fails again. Infrastructure errors still abort the claim.
-func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart, into *domainCart.Cart) (map[string]struct{}, error) {
+func (s *Service) unclaimableGuestLines(ctx context.Context, customerID string, guestCart, into *domainCart.Cart) (map[string]struct{}, error) {
 	dropped := make(map[string]struct{})
 	for _, item := range guestCart.Items {
 		lineQty, qtyErr := guestLineQtyForClaim(into, item.VariantID, item.Quantity)
@@ -282,7 +294,7 @@ func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart, into *do
 			}
 			return nil, qtyErr
 		}
-		err := s.ensureVariantPurchasable(ctx, item.VariantID, guestCart.Currency, lineQty, lineAssignment(item))
+		err := s.ensureVariantPurchasable(ctx, customerID, item.VariantID, guestCart.Currency, lineQty, lineAssignment(item))
 		if err == nil {
 			continue
 		}
@@ -354,7 +366,7 @@ func (s *Service) finishMergedGuestCleanup(ctx context.Context, guestCartID stri
 }
 
 func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
-	dropped, err := s.unclaimableGuestLines(ctx, guestCart, nil)
+	dropped, err := s.unclaimableGuestLines(ctx, customerID, guestCart, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +406,7 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	// while leaving quantities unchanged. Guest extension deletes wait until
 	// after that Save so a failed Save leaves guest values intact (same
 	// ordering as assignGuestCart).
-	dropped, err := s.unclaimableGuestLines(ctx, guestCart, customerCart)
+	dropped, err := s.unclaimableGuestLines(ctx, customerCart.CustomerID, guestCart, customerCart)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +494,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, lineQty, lineAssignmentFromCart(c, variantID)); err != nil {
+	if err := s.ensureVariantPurchasable(ctx, customerID, variantID, c.Currency, lineQty, lineAssignmentFromCart(c, variantID)); err != nil {
 		return nil, err
 	}
 	if assignmentsConflict(lineAssignmentFromCart(c, variantID), catalog.AssignmentContextFrom(ctx)) {
@@ -576,7 +588,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		}
 	}
 	if quantity > currentQty {
-		if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, quantity, lineAssignmentFromCart(c, variantID)); err != nil {
+		if err := s.ensureVariantPurchasable(ctx, customerID, variantID, c.Currency, quantity, lineAssignmentFromCart(c, variantID)); err != nil {
 			return nil, err
 		}
 	}
@@ -786,8 +798,12 @@ func assignmentsConflict(existing, incoming catalog.AssignmentContext) bool {
 		return false
 	}
 	existing.ParentProductID = strings.TrimSpace(existing.ParentProductID)
+	existing.ParentUnitID = strings.TrimSpace(existing.ParentUnitID)
 	incoming.ParentProductID = strings.TrimSpace(incoming.ParentProductID)
-	return existing.Deferred != incoming.Deferred || existing.ParentProductID != incoming.ParentProductID
+	incoming.ParentUnitID = strings.TrimSpace(incoming.ParentUnitID)
+	return existing.Deferred != incoming.Deferred ||
+		existing.ParentProductID != incoming.ParentProductID ||
+		existing.ParentUnitID != incoming.ParentUnitID
 }
 
 func purchaseAssignments(ctx context.Context, c *domainCart.Cart) map[string]catalog.AssignmentContext {
@@ -804,6 +820,7 @@ func purchaseAssignments(ctx context.Context, c *domainCart.Cart) map[string]cat
 func lineAssignment(item domainCart.Item) catalog.AssignmentContext {
 	return catalog.AssignmentContext{
 		ParentProductID: item.AssignmentParentProductID,
+		ParentUnitID:    item.AssignmentParentUnitID,
 		Deferred:        item.AssignmentDeferred,
 	}
 }
@@ -830,13 +847,25 @@ func stampLineAssignment(c *domainCart.Cart, variantID string, ac catalog.Assign
 		}
 		if lineAssignment(c.Items[i]).Empty() {
 			c.Items[i].AssignmentParentProductID = ac.ParentProductID
+			c.Items[i].AssignmentParentUnitID = ac.ParentUnitID
 			c.Items[i].AssignmentDeferred = ac.Deferred
 		}
 		return
 	}
 }
 
-func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, currency string, lineQty int, line catalog.AssignmentContext) error {
+func (s *Service) checkAssignmentPurchase(ctx context.Context, customerID string, p *catalog.Product, assignment catalog.AssignmentContext) error {
+	ids, err := catalogapp.LinkedParentChildProductIDs(ctx, s.products, s.unitPrices.Components, p)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		ids = []string{p.ID}
+	}
+	return s.assignments.CheckPurchaseAll(ctx, customerID, ids, assignment)
+}
+
+func (s *Service) ensureVariantPurchasable(ctx context.Context, customerID, variantID, currency string, lineQty int, line catalog.AssignmentContext) error {
 	v, err := s.variants.FindByID(ctx, variantID)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: lookup variant: %w", err)
@@ -864,6 +893,11 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	lineCtx := catalog.WithAssignmentContext(ctx, assignment)
 	if catalog.LinkedParentBlocksPurchase(p, assignment) {
 		return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+	}
+	if s.assignments != nil && (strings.TrimSpace(assignment.ParentProductID) != "" || strings.TrimSpace(assignment.ParentUnitID) != "") {
+		if err := s.checkAssignmentPurchase(ctx, customerID, p, assignment); err != nil {
+			return err
+		}
 	}
 	if p.Type == catalog.TypeBundle {
 		if err := catalogapp.RejectRequiredLinkedParentLeaves(lineCtx, s.products, s.unitPrices.Components, p.ID, assignment); err != nil {

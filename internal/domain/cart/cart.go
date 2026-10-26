@@ -167,12 +167,14 @@ func (c *Cart) UpdateItemQuantity(variantID string, quantity int) error {
 }
 
 // SetItemAssignment writes the stored assignment on an existing line.
-// A whitespace parent is stored trimmed. Missing variant is a no-op.
-func (c *Cart) SetItemAssignment(variantID, parentProductID string, deferred bool) {
+// A whitespace parent or unit is stored trimmed. Missing variant is a no-op.
+func (c *Cart) SetItemAssignment(variantID, parentProductID, parentUnitID string, deferred bool) {
 	parentProductID = trimAssignmentParent(parentProductID)
+	parentUnitID = trimAssignmentParent(parentUnitID)
 	for i := range c.Items {
 		if c.Items[i].VariantID == variantID {
 			c.Items[i].AssignmentParentProductID = parentProductID
+			c.Items[i].AssignmentParentUnitID = parentUnitID
 			c.Items[i].AssignmentDeferred = deferred
 			return
 		}

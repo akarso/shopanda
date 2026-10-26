@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -12,8 +13,9 @@ import (
 
 // InitiatePaymentStep creates a payment record and initiates it via the selected provider.
 type InitiatePaymentStep struct {
-	providers *payment.ProviderRegistry
-	payments  payment.PaymentRepository
+	providers   *payment.ProviderRegistry
+	payments    payment.PaymentRepository
+	assignments *assignmentapp.Flow
 }
 
 // NewInitiatePaymentStep creates an InitiatePaymentStep.
@@ -28,6 +30,16 @@ func NewInitiatePaymentStep(
 		panic("checkout: payment repository must not be nil")
 	}
 	return &InitiatePaymentStep{providers: providers, payments: payments}
+}
+
+// WithAssignmentFlow revokes current rows for this order when payment
+// does not succeed (decline or provider error after Create).
+func (s *InitiatePaymentStep) WithAssignmentFlow(flow *assignmentapp.Flow) *InitiatePaymentStep {
+	if s == nil {
+		return nil
+	}
+	s.assignments = flow
+	return s
 }
 
 func (s *InitiatePaymentStep) Name() string { return "initiate_payment" }
@@ -81,6 +93,9 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 
 	result, err := provider.Initiate(ctx, &py)
 	if err != nil {
+		if revErr := s.revokeAssignments(ctx, cctx); revErr != nil {
+			return fmt.Errorf("initiate_payment: provider error: %w (revoke: %v)", err, revErr)
+		}
 		return fmt.Errorf("initiate_payment: provider error: %w", err)
 	}
 
@@ -91,17 +106,19 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 		}
 		py.ProviderRef = result.ProviderRef
 		py.UpdatedAt = time.Now().UTC()
-		// Provider already accepted the charge — persist outcome even if request ctx is done.
+		// Provider already accepted the charge. Record that before
+		// UpdateStatus so a persist error does not look like "no charge"
+		// to checkout compensation.
+		cctx.SetMeta("payment", &py)
+		cctx.SetMeta("payment_initiated", true)
+		if result.ClientSecret != "" {
+			cctx.SetMeta("client_secret", result.ClientSecret)
+		}
 		persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
 		err := s.payments.UpdateStatus(persistCtx, &py, prevUpdatedAt)
 		persistCancel()
 		if err != nil {
 			return fmt.Errorf("initiate_payment: update status: %w", err)
-		}
-		cctx.SetMeta("payment", &py)
-		cctx.SetMeta("payment_initiated", true)
-		if result.ClientSecret != "" {
-			cctx.SetMeta("client_secret", result.ClientSecret)
 		}
 		return nil
 	}
@@ -127,8 +144,21 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 	cctx.SetMeta("payment_initiated", true)
 
 	if !result.Success {
+		if revErr := s.revokeAssignments(ctx, cctx); revErr != nil {
+			return fmt.Errorf("initiate_payment: payment declined (revoke: %v)", revErr)
+		}
 		return fmt.Errorf("initiate_payment: payment declined")
 	}
 
 	return nil
+}
+
+func (s *InitiatePaymentStep) revokeAssignments(ctx context.Context, cctx *Context) error {
+	if s == nil || s.assignments == nil || cctx == nil || cctx.Order == nil {
+		return nil
+	}
+	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
+	err := s.assignments.RevokeForOrder(persistCtx, cctx.Order.ID)
+	persistCancel()
+	return err
 }

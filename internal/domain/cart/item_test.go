@@ -102,6 +102,11 @@ func TestItem_AssignmentHelpers(t *testing.T) {
 		t.Fatalf("parent trim = %+v", item)
 	}
 	item.AssignmentParentProductID = ""
+	item.AssignmentParentUnitID = "  order/var  "
+	if item.AssignmentUnit() != "order/var" || !item.HasStoredAssignment() {
+		t.Fatalf("unit trim = %+v", item)
+	}
+	item.AssignmentParentUnitID = ""
 	item.AssignmentDeferred = true
 	if !item.HasStoredAssignment() {
 		t.Fatal("deferred should count as stored assignment")

@@ -1180,9 +1180,10 @@ func TestCreateOrderStep_NilContext(t *testing.T) {
 }
 
 type mockStoreCreditService struct {
-	balance  int64
-	redeemed []int64
-	issued   []int64
+	balance    int64
+	redeemed   []int64
+	issued     []int64
+	issuedKeys []string
 }
 
 func (m *mockStoreCreditService) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
@@ -1195,7 +1196,23 @@ func (m *mockStoreCreditService) Redeem(_ context.Context, _, _ string, amount s
 	return nil
 }
 
-func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _, _ string) error {
+func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _, key string) error {
+	return m.recordIssue(amount, key)
+}
+
+func (m *mockStoreCreditService) Restore(_ context.Context, _ string, amount shared.Money, _, key string) error {
+	return m.recordIssue(amount, key)
+}
+
+func (m *mockStoreCreditService) recordIssue(amount shared.Money, key string) error {
+	if key != "" {
+		for _, k := range m.issuedKeys {
+			if k == key {
+				return nil
+			}
+		}
+		m.issuedKeys = append(m.issuedKeys, key)
+	}
 	m.issued = append(m.issued, amount.Amount())
 	m.balance += amount.Amount()
 	return nil

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -107,6 +108,17 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 			return
 		}
 
+		if !req.Success && p.Status() == payment.StatusFailed {
+			if err := publishPaymentFailed(h.bus, r.Context(), "payment.webhook", p, p.Status()); err != nil {
+				JSONError(w, err)
+				return
+			}
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"status": "already_processed",
+			})
+			return
+		}
+
 		prevUpdatedAt := p.UpdatedAt
 		oldStatus := p.Status()
 
@@ -131,16 +143,32 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 		if !req.Success {
 			evtName = payment.EventPaymentFailed
 		}
-		_ = h.bus.Publish(r.Context(), event.New(evtName, "payment.webhook", payment.PaymentStatusChangedData{
+		if err := h.bus.Publish(r.Context(), event.New(evtName, "payment.webhook", payment.PaymentStatusChangedData{
 			PaymentID:   p.ID,
 			OrderID:     p.OrderID,
 			OldStatus:   oldStatus,
 			NewStatus:   p.Status(),
 			ProviderRef: p.ProviderRef,
-		}))
+		})); err != nil && evtName == payment.EventPaymentFailed {
+			JSONError(w, err)
+			return
+		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"status": "accepted",
 		})
 	}
+}
+
+func publishPaymentFailed(bus *event.Bus, ctx context.Context, source string, p *payment.Payment, oldStatus payment.PaymentStatus) error {
+	if bus == nil || p == nil {
+		return nil
+	}
+	return bus.Publish(ctx, event.New(payment.EventPaymentFailed, source, payment.PaymentStatusChangedData{
+		PaymentID:   p.ID,
+		OrderID:     p.OrderID,
+		OldStatus:   oldStatus,
+		NewStatus:   p.Status(),
+		ProviderRef: p.ProviderRef,
+	}))
 }

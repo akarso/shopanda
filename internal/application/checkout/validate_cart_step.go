@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	appinventory "github.com/akarso/shopanda/internal/application/inventory"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -26,6 +27,7 @@ type ValidateCartStep struct {
 	stock           inventory.StockRepository
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
+	assignments     *assignmentapp.Flow
 }
 
 // NewValidateCartStep creates a ValidateCartStep.
@@ -62,6 +64,16 @@ func NewValidateCartStep(
 func (s *ValidateCartStep) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *ValidateCartStep {
 	s.visibilityFacts = facts
 	s.visibilityOpts = opts
+	return s
+}
+
+// WithAssignmentFlow checks IsEligible and parent-unit ownership when a
+// parent is present (PR-1070). Nil skips those checks (tests).
+func (s *ValidateCartStep) WithAssignmentFlow(flow *assignmentapp.Flow) *ValidateCartStep {
+	if s == nil {
+		return nil
+	}
+	s.assignments = flow
 	return s
 }
 
@@ -184,6 +196,11 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 				item.VariantID, catalog.RequiresLinkedParentNotPurchasableMessage,
 			))
 		}
+		if s.assignments != nil && p != nil && (assignment.ParentProductID != "" || assignment.ParentUnitID != "") {
+			if err := s.checkAssignmentPurchase(ctx, cctx.CustomerID, p, assignment); err != nil {
+				return err
+			}
+		}
 		if p != nil && p.Type == catalog.TypeBundle {
 			if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.components, p.ID, assignment); err != nil {
 				return err
@@ -217,6 +234,17 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 	return nil
 }
 
+func (s *ValidateCartStep) checkAssignmentPurchase(ctx context.Context, customerID string, p *catalog.Product, assignment catalog.AssignmentContext) error {
+	ids, err := catalogapp.LinkedParentChildProductIDs(ctx, s.products, s.components, p)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		ids = []string{p.ID}
+	}
+	return s.assignments.CheckPurchaseAll(ctx, customerID, ids, assignment)
+}
+
 // linePurchaseContext carries this line's resolved assignment. Callers must
 // not reuse the result for a different line.
 func linePurchaseContext(ctx context.Context, item cart.Item) context.Context {
@@ -226,6 +254,7 @@ func linePurchaseContext(ctx context.Context, item cart.Item) context.Context {
 func lineAssignment(item cart.Item) catalog.AssignmentContext {
 	return catalog.AssignmentContext{
 		ParentProductID: item.AssignmentParentProductID,
+		ParentUnitID:    item.AssignmentParentUnitID,
 		Deferred:        item.AssignmentDeferred,
 	}
 }

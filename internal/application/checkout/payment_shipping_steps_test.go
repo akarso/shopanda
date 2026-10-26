@@ -835,4 +835,43 @@ func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for pending result with empty ProviderRef")
 	}
+	if _, ok := cctx.GetMeta("payment_initiated"); ok {
+		t.Error("payment_initiated should not be set when pending has no provider reference")
+	}
+}
+
+func TestInitiatePaymentStep_Pending_UpdateStatusErrorSetsInitiated(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{
+			ProviderRef:  "pi_accepted",
+			Pending:      true,
+			ClientSecret: "pi_accepted_secret",
+		},
+	}
+	repo := &mockPaymentRepo047{updateErr: errors.New("conflict")}
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil {
+		t.Fatal("expected error from update status")
+	}
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Fatal("payment_initiated must be set before UpdateStatus on an accepted pending charge")
+	}
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		t.Fatal("expected payment in meta after accepted pending initiate")
+	}
+	py := raw.(*payment.Payment)
+	if py.Status() != payment.StatusPending {
+		t.Fatalf("payment status = %v, want pending", py.Status())
+	}
+	if py.ProviderRef != "pi_accepted" {
+		t.Fatalf("ProviderRef = %q, want pi_accepted", py.ProviderRef)
+	}
 }

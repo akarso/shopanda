@@ -471,6 +471,35 @@ func TestCartHandler_AddItem_OK(t *testing.T) {
 	}
 }
 
+func TestCartHandler_AddItem_StampsAssignmentContext(t *testing.T) {
+	carts, prices, _, mux := cartSetup()
+	prices.set("var-1", "EUR", 1500)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1,"assignment_parent_product_id":"card-1","assignment_deferred":true}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	resp := parseCartBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	cart := data["cart"].(map[string]interface{})
+	item := cart["items"].([]interface{})[0].(map[string]interface{})
+	if item["assignment_parent_product_id"] != "card-1" {
+		t.Fatalf("parent = %v", item["assignment_parent_product_id"])
+	}
+	if item["assignment_deferred"] != true {
+		t.Fatalf("deferred = %v", item["assignment_deferred"])
+	}
+}
+
 func TestCartHandler_AddItem_CartNotFound(t *testing.T) {
 	_, _, _, mux := cartSetup()
 

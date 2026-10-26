@@ -11,6 +11,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
@@ -35,9 +36,12 @@ type createCartRequest struct {
 }
 
 type addItemRequest struct {
-	VariantID  string                   `json:"variant_id"`
-	Quantity   int                      `json:"quantity"`
-	Extensions []cartItemExtensionInput `json:"extensions,omitempty"`
+	VariantID                 string                   `json:"variant_id"`
+	Quantity                  int                      `json:"quantity"`
+	AssignmentParentProductID string                   `json:"assignment_parent_product_id,omitempty"`
+	AssignmentParentUnitID    string                   `json:"assignment_parent_unit_id,omitempty"`
+	AssignmentDeferred        bool                     `json:"assignment_deferred,omitempty"`
+	Extensions                []cartItemExtensionInput `json:"extensions,omitempty"`
 }
 
 type updateItemRequest struct {
@@ -60,12 +64,15 @@ type cartResponse struct {
 }
 
 type cartItemResponse struct {
-	VariantID  string                      `json:"variant_id"`
-	Quantity   int                         `json:"quantity"`
-	UnitPrice  int64                       `json:"unit_price"`
-	Currency   string                      `json:"currency"`
-	LineTotal  int64                       `json:"line_total"`
-	Extensions []cartItemExtensionResponse `json:"extensions,omitempty"`
+	VariantID                 string                      `json:"variant_id"`
+	Quantity                  int                         `json:"quantity"`
+	UnitPrice                 int64                       `json:"unit_price"`
+	Currency                  string                      `json:"currency"`
+	LineTotal                 int64                       `json:"line_total"`
+	AssignmentParentProductID string                      `json:"assignment_parent_product_id,omitempty"`
+	AssignmentParentUnitID    string                      `json:"assignment_parent_unit_id,omitempty"`
+	AssignmentDeferred        bool                        `json:"assignment_deferred,omitempty"`
+	Extensions                []cartItemExtensionResponse `json:"extensions,omitempty"`
 }
 
 func (h *CartHandler) toCartResponse(ctx context.Context, c *cart.Cart) (cartResponse, error) {
@@ -77,12 +84,15 @@ func (h *CartHandler) toCartResponse(ctx context.Context, c *cart.Cart) (cartRes
 			return cartResponse{}, err
 		}
 		items[i] = cartItemResponse{
-			VariantID:  item.VariantID,
-			Quantity:   item.Quantity,
-			UnitPrice:  item.UnitPrice.Amount(),
-			Currency:   item.UnitPrice.Currency(),
-			LineTotal:  lineTotal.Amount(),
-			Extensions: extensions,
+			VariantID:                 item.VariantID,
+			Quantity:                  item.Quantity,
+			UnitPrice:                 item.UnitPrice.Amount(),
+			Currency:                  item.UnitPrice.Currency(),
+			LineTotal:                 lineTotal.Amount(),
+			AssignmentParentProductID: item.AssignmentParent(),
+			AssignmentParentUnitID:    item.AssignmentUnit(),
+			AssignmentDeferred:        item.AssignmentDeferred,
+			Extensions:                extensions,
 		}
 	}
 	return cartResponse{
@@ -217,7 +227,12 @@ func (h *CartHandler) AddItem() http.HandlerFunc {
 		}
 
 		userID := auth.IdentityFrom(r.Context()).UserID
-		c, err := h.svc.AddItem(r.Context(), cartID, userID, req.VariantID, req.Quantity, cartApp.AddItemOptions{
+		ac := assignmentContextFromFields(req.AssignmentParentProductID, req.AssignmentParentUnitID, req.AssignmentDeferred)
+		addCtx := r.Context()
+		if !ac.Empty() {
+			addCtx = catalog.WithAssignmentContext(addCtx, ac)
+		}
+		c, err := h.svc.AddItem(addCtx, cartID, userID, req.VariantID, req.Quantity, cartApp.AddItemOptions{
 			Extensions: extensionInputsFromRequest(req.Extensions),
 			UpdatedBy:  userID,
 		})

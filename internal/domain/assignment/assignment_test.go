@@ -346,3 +346,31 @@ func mustAssigned(t *testing.T, parent, child string) *assignment.ProductAssignm
 	}
 	return a
 }
+
+func TestUnitID_RoundTrip(t *testing.T) {
+	orderID := id.New()
+	variantID := id.New()
+	got := assignment.UnitID(" "+orderID+" ", " "+variantID+" ")
+	if got != orderID+"/"+variantID {
+		t.Fatalf("UnitID = %q", got)
+	}
+	parsedOrder, parsedVariant, ok := assignment.SplitUnitID(" " + got + " ")
+	if !ok || parsedOrder != orderID || parsedVariant != variantID {
+		t.Fatalf("SplitUnitID = %q %q ok=%v", parsedOrder, parsedVariant, ok)
+	}
+}
+
+func TestUnitID_EmptyParts(t *testing.T) {
+	if assignment.UnitID("", "v") != "" || assignment.UnitID("o", "") != "" {
+		t.Fatal("empty part must yield empty unit id")
+	}
+	if _, _, ok := assignment.SplitUnitID(""); ok {
+		t.Fatal("empty unit must not parse")
+	}
+	if _, _, ok := assignment.SplitUnitID("no-separator"); ok {
+		t.Fatal("missing separator must not parse")
+	}
+	if _, _, ok := assignment.SplitUnitID("/variant"); ok {
+		t.Fatal("empty order must not parse")
+	}
+}

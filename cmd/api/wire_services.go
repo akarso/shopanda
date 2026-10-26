@@ -119,6 +119,7 @@ type serveRuntime struct {
 	groupedService           *catalogApp.GroupedService
 	linkedEligibilityService *catalogApp.LinkedEligibilityService
 	productAssignmentService *assignmentApp.Service
+	assignmentFlow           *assignmentApp.Flow
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -149,6 +150,7 @@ type serveRuntime struct {
 	refundHandler                  *admin.RefundHandler
 	returnAdmin                    *admin.ReturnAdminHandler
 	returnAccount                  *storefront.ReturnAccountHandler
+	assignmentAccount              *storefront.AssignmentAccountHandler
 	reviewHandler                  *storefront.ReviewHandler
 	reviewAccount                  *storefront.ReviewAccountHandler
 	reviewAdmin                    *admin.ReviewAdminHandler
@@ -524,6 +526,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		repos.productRepo, repos.categoryRepo, repos.linkedEligibilityRepo, conn,
 	)
 	productAssignmentService := assignmentApp.NewService(repos.productAssignmentRepo)
+	assignmentFlow := assignmentApp.NewFlow(
+		productAssignmentService,
+		repos.productAssignmentRepo,
+		linkedEligibilityService,
+		repos.orderRepo,
+		repos.variantRepo,
+		repos.paymentRepo,
+	)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -600,21 +610,25 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	// Application services.
 	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
-		WithVisibilityFacts(visibilityFacts, visibilityOpts)
+		WithVisibilityFacts(visibilityFacts, visibilityOpts).
+		WithAssignmentFlow(assignmentFlow)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo).
-		WithVisibilityFacts(visibilityFacts, visibilityOpts)
+		WithVisibilityFacts(visibilityFacts, visibilityOpts).
+		WithAssignmentFlow(assignmentFlow)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo, repos.productRepo, repos.variantRepo, repos.bundleComponentRepo,
 		checkoutApp.WithStockEventPublishing(bus), checkoutApp.WithLogger(log))
 	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService, repos.productRepo, repos.bundleComponentRepo, repos.priceRepo).
 		WithReservations(repos.reservationRepo).
-		WithStockEventPublishing(bus, log)
+		WithStockEventPublishing(bus, log).
+		WithAssignmentFlow(assignmentFlow, conn)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
-	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
+	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo).
+		WithAssignmentFlow(assignmentFlow)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
@@ -641,7 +655,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, fmt.Errorf("checkout workflow: %w", err)
 	}
-	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log).WithMetrics(metricsRecorder)
+	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log).
+		WithMetrics(metricsRecorder).
+		WithUnpaidOrderCompensation(repos.orderRepo, assignmentFlow, repos.paymentRepo, storeCreditService)
+	checkoutApp.RegisterPaymentFailedCompensation(bus, repos.orderRepo, storeCreditService, assignmentFlow)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
 	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionValueService)
 
@@ -800,6 +817,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithTxStarter(conn)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
+	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)
 	reviewHandler := storefront.NewReviewHandler(reviewService).
 		WithVisibilityGate(repos.productRepo, visibilityFacts)
 	reviewAccount := storefront.NewReviewAccountHandler(reviewService).
@@ -973,6 +991,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		groupedService:                 groupedService,
 		linkedEligibilityService:       linkedEligibilityService,
 		productAssignmentService:       productAssignmentService,
+		assignmentFlow:                 assignmentFlow,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,
@@ -1000,6 +1019,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		refundHandler:                  refundHandler,
 		returnAdmin:                    returnAdmin,
 		returnAccount:                  returnAccount,
+		assignmentAccount:              assignmentAccount,
 		reviewHandler:                  reviewHandler,
 		reviewAccount:                  reviewAccount,
 		reviewAdmin:                    reviewAdmin,

@@ -12,8 +12,8 @@ import (
 )
 
 // Service manages ProductAssignment rows. It is the state model only:
-// create unassigned, create assigned, assign, revoke, and read. It does
-// not check catalog eligibility, ownership, or purchasability (PR-1070).
+// create unassigned, create assigned, assign, revoke, and read. Catalog
+// eligibility, ownership, and purchasability live on Flow (PR-1070).
 // Unit ids are opaque; they are not resolved against order_items.
 type Service struct {
 	assignments domain.Repository

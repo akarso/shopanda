@@ -2,11 +2,13 @@ package checkout
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
 	"strings"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	pricingapp "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -24,6 +26,10 @@ import (
 // OrderLinesCouldNotBeCreatedMessage is the customer-facing text when exploded
 // order lines cannot be built. Variant and component ids stay on Unwrap.
 const OrderLinesCouldNotBeCreatedMessage = "order lines could not be created"
+
+// AssignmentConflictMessage is returned when two cart lines explode to
+// the same leaf variant with different assignment contexts.
+const AssignmentConflictMessage = "the same product cannot be assigned to different parents in one order"
 
 type storeCreditService interface {
 	GetBalance(ctx context.Context, customerID, currency string) (shared.Money, error)
@@ -50,8 +56,18 @@ type CreateOrderStep struct {
 	components   catalog.BundleComponentRepository
 	prices       pricing.PriceRepository
 	reservations inventory.ReservationRepository
+	assignments  *assignmentapp.Flow
+	tx           assignmentTxBeginner
 	bus          *event.Bus
 	log          logger.Logger
+}
+
+type assignmentTxBeginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+type orderTxBinder interface {
+	WithTx(tx *sql.Tx) order.OrderRepository
 }
 
 // WithReservations releases checkout reservations when Execute fails before
@@ -79,6 +95,19 @@ func (s *CreateOrderStep) WithStockEventPublishing(bus *event.Bus, log logger.Lo
 	}
 	s.bus = bus
 	s.log = log
+	return s
+}
+
+// WithAssignmentFlow writes ProductAssignment rows on order create
+// (PR-1070). Assignment lines fail closed unless the order repo, the
+// assignment repo, and db share one transaction. The save-then-record
+// path is not used.
+func (s *CreateOrderStep) WithAssignmentFlow(flow *assignmentapp.Flow, db assignmentTxBeginner) *CreateOrderStep {
+	if s == nil {
+		return nil
+	}
+	s.assignments = flow
+	s.tx = db
 	return s
 }
 
@@ -210,21 +239,8 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 		return err
 	}
 
-	if err := s.orders.Save(ctx, &o); err != nil {
-		if appliedCredit != nil && s.credits != nil {
-			rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
-			// No idempotency key here — see the package-level comment
-			// above applyStoreCredit for why neither o.ID (changes every
-			// attempt, so it can never collide) nor cctx.CartID (stable,
-			// but unsafe: see that comment) is a correct choice without a
-			// bigger fix this rollback call alone can't provide.
-			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "")
-			rbcancel()
-			if rollbackErr != nil {
-				return fmt.Errorf("create_order: save: %w (store credit rollback failed: %v)", err, rollbackErr)
-			}
-		}
-		return fmt.Errorf("create_order: save: %w", err)
+	if err := s.persistOrder(ctx, cctx, &o, appliedCredit); err != nil {
+		return err
 	}
 
 	cctx.Order = &o
@@ -256,6 +272,175 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 	}
 
 	return nil
+}
+
+func (s *CreateOrderStep) persistOrder(ctx context.Context, cctx *Context, o *order.Order, appliedCredit *shared.Money) error {
+	lines, err := s.assignmentLines(ctx, cctx, o)
+	if err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, err)
+	}
+	lines, err = collapsePurchaseLines(lines)
+	if err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, err)
+	}
+	if len(lines) == 0 {
+		if err := s.orders.Save(ctx, o); err != nil {
+			return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: save: %w", err))
+		}
+		return nil
+	}
+	binder, canBindOrder := s.orders.(orderTxBinder)
+	if s.assignments == nil || s.tx == nil || !canBindOrder || !s.assignments.BindsTx() {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: assignment writes require a shared transaction"))
+	}
+	tx, err := s.tx.BeginTx(ctx, nil)
+	if err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: begin assignment tx: %w", err))
+	}
+	defer tx.Rollback()
+	if err := binder.WithTx(tx).Save(ctx, o); err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: save: %w", err))
+	}
+	if err := s.assignments.WithTx(tx).RecordPurchase(ctx, cctx.CustomerID, o.ID, lines); err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: assignment: %w", err))
+	}
+	if err := tx.Commit(); err != nil {
+		return s.rollbackAppliedCredit(ctx, cctx, o, appliedCredit, fmt.Errorf("create_order: commit: %w", err))
+	}
+	return nil
+}
+
+func (s *CreateOrderStep) rollbackAppliedCredit(ctx context.Context, cctx *Context, o *order.Order, appliedCredit *shared.Money, cause error) error {
+	if appliedCredit == nil || s.credits == nil || o == nil {
+		return cause
+	}
+	rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
+	// No idempotency key here — see the package-level comment
+	// above applyStoreCredit for why neither o.ID (changes every
+	// attempt, so it can never collide) nor cctx.CartID (stable,
+	// but unsafe: see that comment) is a correct choice without a
+	// bigger fix this rollback call alone can't provide.
+	rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "")
+	rbcancel()
+	if rollbackErr != nil {
+		return fmt.Errorf("%w (store credit rollback failed: %v)", cause, rollbackErr)
+	}
+	return cause
+}
+
+func (s *CreateOrderStep) assignmentLines(ctx context.Context, cctx *Context, o *order.Order) ([]assignmentapp.PurchaseLine, error) {
+	if cctx == nil || cctx.Cart == nil || o == nil {
+		return nil, nil
+	}
+	onOrder := make(map[string]struct{}, len(o.Items()))
+	for _, item := range o.Items() {
+		onOrder[item.VariantID] = struct{}{}
+	}
+	lines := make([]assignmentapp.PurchaseLine, 0)
+	for _, ci := range cctx.Cart.Items {
+		v := cartVariantFromMeta(cctx, ci.VariantID)
+		if v == nil {
+			var err error
+			v, err = s.variants.FindByID(ctx, ci.VariantID)
+			if err != nil {
+				return nil, fmt.Errorf("create_order: lookup variant %s: %w", ci.VariantID, err)
+			}
+		}
+		if v == nil {
+			continue
+		}
+		product := cartProductFromMeta(cctx, v.ProductID)
+		if product == nil {
+			var err error
+			product, err = s.products.FindByID(ctx, v.ProductID)
+			if err != nil {
+				return nil, fmt.Errorf("create_order: lookup product %s: %w", v.ProductID, err)
+			}
+		}
+		if product == nil {
+			continue
+		}
+		ac := catalog.ResolvePurchaseAssignment(ctx, lineAssignment(ci))
+		if product.Type == catalog.TypeBundle && product.ExplodeOrderLines {
+			leaves, err := catalogapp.RequiredLeafVariants(linePurchaseContext(ctx, ci), s.products, s.variants, s.components, product.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, leaf := range leaves {
+				if leaf.Product == nil || !leaf.Product.RequiresLinkedParent {
+					continue
+				}
+				if _, ok := onOrder[leaf.Variant.ID]; !ok {
+					continue
+				}
+				lines = append(lines, assignmentapp.PurchaseLine{
+					ChildVariantID: leaf.Variant.ID,
+					ChildProductID: leaf.Product.ID,
+					Assignment:     ac,
+				})
+			}
+			continue
+		}
+		if _, ok := onOrder[ci.VariantID]; !ok {
+			continue
+		}
+		if product.RequiresLinkedParent {
+			lines = append(lines, assignmentapp.PurchaseLine{
+				ChildVariantID: ci.VariantID,
+				ChildProductID: product.ID,
+				Assignment:     ac,
+			})
+			continue
+		}
+		if product.Type != catalog.TypeBundle {
+			continue
+		}
+		eligible, err := catalogapp.LinkedParentChildProductIDs(ctx, s.products, s.components, product)
+		if err != nil {
+			return nil, err
+		}
+		if len(eligible) == 0 {
+			continue
+		}
+		lines = append(lines, assignmentapp.PurchaseLine{
+			ChildVariantID:     ci.VariantID,
+			ChildProductID:     product.ID,
+			EligibleProductIDs: eligible,
+			Assignment:         ac,
+		})
+	}
+	return lines, nil
+}
+
+func collapsePurchaseLines(lines []assignmentapp.PurchaseLine) ([]assignmentapp.PurchaseLine, error) {
+	if len(lines) < 2 {
+		return lines, nil
+	}
+	seen := make(map[string]assignmentapp.PurchaseLine, len(lines))
+	out := make([]assignmentapp.PurchaseLine, 0, len(lines))
+	for _, line := range lines {
+		key := strings.TrimSpace(line.ChildVariantID)
+		if key == "" {
+			return nil, apperror.Validation("child variant id must not be empty")
+		}
+		line.Assignment.ParentProductID = strings.TrimSpace(line.Assignment.ParentProductID)
+		line.Assignment.ParentUnitID = strings.TrimSpace(line.Assignment.ParentUnitID)
+		if existing, ok := seen[key]; ok {
+			if !samePurchaseAssignment(existing.Assignment, line.Assignment) {
+				return nil, apperror.Validation(AssignmentConflictMessage)
+			}
+			continue
+		}
+		seen[key] = line
+		out = append(out, line)
+	}
+	return out, nil
+}
+
+func samePurchaseAssignment(a, b catalog.AssignmentContext) bool {
+	return strings.TrimSpace(a.ParentProductID) == strings.TrimSpace(b.ParentProductID) &&
+		strings.TrimSpace(a.ParentUnitID) == strings.TrimSpace(b.ParentUnitID) &&
+		a.Deferred == b.Deferred
 }
 
 func pricingStoreID(cctx *Context, pctx *pricing.PricingContext) string {

@@ -5,8 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	"github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
@@ -560,5 +564,72 @@ func TestService_ClaimGuestCart_MergesSameLinkedParent(t *testing.T) {
 	}
 	if len(merged.Items) != 1 || merged.Items[0].Quantity != 3 || merged.Items[0].AssignmentParent() != "card-a" {
 		t.Fatalf("merged = %+v, want qty 3 parent card-a", merged.Items)
+	}
+}
+
+type cartEligStub struct {
+	ok bool
+}
+
+func (s cartEligStub) IsEligible(context.Context, string, string) (bool, error) {
+	return s.ok, nil
+}
+
+type cartAssignRepoStub struct{}
+
+func (cartAssignRepoStub) Insert(context.Context, *assignment.ProductAssignment) error { return nil }
+func (cartAssignRepoStub) Update(context.Context, *assignment.ProductAssignment) error { return nil }
+func (cartAssignRepoStub) FindByID(context.Context, string) (*assignment.ProductAssignment, error) {
+	return nil, nil
+}
+func (cartAssignRepoStub) FindCurrentByChildID(context.Context, string) (*assignment.ProductAssignment, error) {
+	return nil, nil
+}
+func (cartAssignRepoStub) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
+	return nil, nil
+}
+
+type cartOrderStub struct{}
+
+func (cartOrderStub) FindByID(context.Context, string) (*order.Order, error) { return nil, nil }
+func (cartOrderStub) FindByCustomerID(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
+
+type cartVariantLookupStub struct{}
+
+func (cartVariantLookupStub) FindByID(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+
+type cartPaymentStub struct{}
+
+func (cartPaymentStub) FindByOrderID(context.Context, string) (*payment.Payment, error) {
+	return nil, nil
+}
+
+func TestService_AddItem_RequiresLinkedParent_IneligibleRejects(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
+	pr := addItemProductStub{product: &catalog.Product{
+		ID: "prod-1", Status: catalog.StatusActive, RequiresLinkedParent: true,
+	}}
+	repo := cartAssignRepoStub{}
+	flow := assignmentapp.NewFlow(assignmentapp.NewService(repo), repo, cartEligStub{ok: false}, cartOrderStub{}, cartVariantLookupStub{}, cartPaymentStub{})
+	facts := purchasableFacts{"prod-1": sellableSnap(catalog.DefaultVisibilityAxes())}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{}).
+		WithAssignmentFlow(flow)
+
+	c, err := svc.CreateCart(context.Background(), "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	ctx := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{ParentProductID: "card-1"})
+	_, err = svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.ParentNotEligibleMessage) {
+		t.Fatalf("err = %v, want %q", err, assignmentapp.ParentNotEligibleMessage)
 	}
 }
