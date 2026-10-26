@@ -44,6 +44,51 @@ func TestProductAssignmentRepo_NilDB(t *testing.T) {
 	}
 }
 
+func TestProductAssignmentRepo_WithTx_RollbackInvisible(t *testing.T) {
+	db := testDB(t)
+	ensureProductAssignmentsTable(t, db)
+	repo, err := postgres.NewProductAssignmentRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductAssignmentRepo: %v", err)
+	}
+	ctx := context.Background()
+	child := "child-" + id.New()
+	a, err := assignment.NewUnassigned(id.New(), child)
+	if err != nil {
+		t.Fatalf("NewUnassigned: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Insert(ctx, a); err != nil {
+		t.Fatalf("Insert in tx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	got, err := repo.FindByID(ctx, a.ID)
+	if err != nil || got != nil {
+		t.Fatalf("rolled-back insert visible: %+v %v", got, err)
+	}
+
+	tx, err = db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Insert(ctx, a); err != nil {
+		t.Fatalf("Insert in tx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	got, err = repo.FindByID(ctx, a.ID)
+	if err != nil || got == nil || got.ChildOrderItemID != child {
+		t.Fatalf("committed FindByID = %+v %v", got, err)
+	}
+}
+
 func TestProductAssignmentRepo_InsertFindListAssignRevoke(t *testing.T) {
 	db := testDB(t)
 	ensureProductAssignmentsTable(t, db)
