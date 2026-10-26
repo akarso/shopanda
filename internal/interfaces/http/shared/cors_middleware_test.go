@@ -95,6 +95,34 @@ func TestCORSMiddleware_WildcardAnonymous(t *testing.T) {
 	}
 }
 
+func TestCORSMiddleware_SkipsStorefront(t *testing.T) {
+	h := shared.CORSMiddleware([]string{"https://store.example"}, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	cases := []struct {
+		method, path string
+	}{
+		{http.MethodGet, "/storefront/csrf"},
+		{http.MethodOptions, "/storefront/csrf"},
+		{http.MethodPost, "/storefront/cart/items"},
+		{http.MethodPut, "/storefront/cart/items/var-1"},
+		{http.MethodDelete, "/storefront/cart/items/var-1"},
+		{http.MethodOptions, "/storefront/cart/items"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Origin", "https://store.example")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Header().Get("Access-Control-Allow-Origin") != "" {
+			t.Fatalf("%s %s must not receive CORS, got %q", tc.method, tc.path, rec.Header().Get("Access-Control-Allow-Origin"))
+		}
+		if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("%s %s must not receive credentials CORS", tc.method, tc.path)
+		}
+	}
+}
+
 func TestCORSMiddleware_SkipsAdmin(t *testing.T) {
 	h := shared.CORSMiddleware([]string{"https://store.example"}, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

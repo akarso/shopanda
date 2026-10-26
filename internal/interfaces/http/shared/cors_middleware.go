@@ -6,7 +6,8 @@ import (
 )
 
 // storefrontCORSPrefixes are the only paths that receive CORS headers.
-// Admin, setup, webhooks, and docs stay same-origin.
+// Admin, setup, webhooks, docs, and /storefront/* (SSR cookie cart JSON)
+// stay same-origin.
 var storefrontCORSPrefixes = []string{
 	"/api/v1/products",
 	"/api/v1/categories",

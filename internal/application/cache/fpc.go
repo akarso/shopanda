@@ -49,6 +49,7 @@ var denyPrefixes = []string{
 	"/account",
 	"/admin",
 	"/fragments",
+	"/storefront",
 	"/api",
 	"/setup",
 }

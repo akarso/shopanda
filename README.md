@@ -307,7 +307,7 @@ Shopanda has been built in numbered phases, each with its own roadmap and per-PR
 | 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | Shipped |
 | 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **In progress** |
 | 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned (do before a real site) |
-| 14 — Storefront authoring | [phase-14-storefront-authoring/README.md](docs/phase-14-storefront-authoring/README.md) | Shipped (theme packaging + headless gaps) |
+| 14 — Storefront authoring | [phase-14-storefront-authoring/README.md](docs/phase-14-storefront-authoring/README.md) | Shipped (theme packaging + headless gaps; Track C storefront JS cart add/update/remove) |
 
 Additional historical specs:
 

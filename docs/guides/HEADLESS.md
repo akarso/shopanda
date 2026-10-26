@@ -33,7 +33,7 @@ Opt in to snake_case maps (`id`, `name`, `slug`) with `?fields=snake` or header 
 
 ## Browser CORS
 
-Same-origin or a BFF/proxy is the default advice. CORS is applied only to storefront API prefixes (`/api/v1/products`, `/api/v1/account`, `/api/v1/auth`, …). Admin, setup, webhooks, and `/docs` never get CORS headers.
+Same-origin or a BFF/proxy is the default advice. CORS is applied only to storefront API prefixes (`/api/v1/products`, `/api/v1/account`, `/api/v1/auth`, …). Admin, setup, webhooks, `/docs`, and `/storefront/*` (SSR cookie-cart JSON) never get CORS headers.
 
 ```yaml
 http:
@@ -53,9 +53,46 @@ Env: `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS=https://www.example.com,http://127.0.0.
 ## Auth and cart
 
 - Login returns a JWT. Send `Authorization: Bearer <token>`.
-- `/api/v1/*` is not CSRF-checked. CSRF is for HTML `/account/` and `/checkout/` forms.
+- `/api/v1/*` is not CSRF-checked. CSRF is for HTML `/account/` and `/checkout/` forms, and for `/storefront/*` JSON.
 - Headless clients store `cart_id` themselves. The SSR cart cookie is not used.
 - Cookie session (`shopanda_storefront_session`) is for the HTML storefront. Do not turn on CORS credentials to reuse it from another origin.
+
+## Same-origin storefront JS (hybrid)
+
+A configurator (or any same-origin script) that should land on SSR `/cart` and `/checkout` must mutate the **storefront** cart, not `POST /api/v1/carts`.
+
+These routes exist only when the HTML storefront is mounted (`frontend.enabled: true` and `frontend.mode` is not `headless`). On an API-only process they 404. They are not in OpenAPI — they are the SSR cookie-cart seam, not `/api/v1`.
+
+```http
+GET /storefront/csrf
+POST /storefront/cart/items
+PUT /storefront/cart/items/{variantId}
+DELETE /storefront/cart/items/{variantId}
+Content-Type: application/json   # required for POST and PUT
+X-CSRF-Token: <token from GET /storefront/csrf>
+```
+
+```json
+{"variant_id":"…","quantity":1,"extensions":[{"field_code":"acme.print.design","value":{}}]}
+```
+
+Omit `quantity` to add 1. Explicit `null`, `0`, or a negative quantity is 422 and does not mint a guest cart. PUT `quantity` is required and must be a positive integer; omitted, `null`, `0`, and negative are 422 `quantity must be positive`. DELETE has no body.
+
+Responses use the standard envelope (`{"data":...,"error":null}`):
+
+```json
+{"data":{"csrf_token":"..."},"error":null}
+```
+
+```json
+{"data":{"item_count":1,"total_quantity":1,"cart_url":"/cart"},"error":null}
+```
+
+POST sets `shopanda_storefront_cart` for guests only after a successful add. A failed first guest add does not persist a reachable cart: the empty row is discarded and no cookie is set. The body never includes `cart_id`. Signed-in requests mutate the customer active cart and ignore a leftover guest cookie. CSRF failures (missing or wrong `X-CSRF-Token`) are JSON 403 `{"data":null,"error":{"code":"forbidden",...}}` — query-string `csrf_token` is not accepted on `/storefront/*`. Extension and `cart.validate` failures are 422 with the real code (`unknown_field_code`, `field_validation_failed`, `cart_validation_failed`); a private field is 403 `forbidden_private_field`. Concurrent cart writes are 409 `conflict`. Unexpected service errors are a generic JSON 500.
+
+`/storefront/*` is not on the CORS allowlist — serve the script from the Shopanda origin (or a same-host reverse-proxy path).
+
+HTML `POST /cart/add`, `/cart/update`, and `/cart/remove` are unchanged and are not CSRF-gated.
 
 ## Claim (JSON or form)
 
