@@ -2,11 +2,14 @@ package storefront
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -197,6 +200,8 @@ func (h *StorefrontHandler) RemoveStorefrontCartJSON() http.HandlerFunc {
 	}
 }
 
+const storefrontGuestCartDiscardTimeout = 5 * time.Second
+
 func storefrontJSONAddQuantity(q storefrontJSONQuantity) (int, bool) {
 	if !q.present {
 		return 1, true
@@ -215,7 +220,9 @@ func (h *StorefrontHandler) discardUnusedGuestCart(r *http.Request, created bool
 	if !created || customerID != "" || currentCart == nil {
 		return
 	}
-	if err := h.carts.DiscardEmptyGuestCart(r.Context(), currentCart.ID); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), storefrontGuestCartDiscardTimeout)
+	defer cancel()
+	if err := h.carts.DiscardEmptyGuestCart(ctx, currentCart.ID); err != nil {
 		h.logStorefrontCartError("storefront.cart.json.add.discard_failed", err, r, map[string]interface{}{
 			"cart_id": currentCart.ID,
 		})
@@ -228,8 +235,12 @@ func decodeStorefrontCartJSON(r *http.Request, dest interface{}) error {
 	if err := dec.Decode(dest); err != nil {
 		return err
 	}
-	if dec.More() {
-		return errors.New("trailing json")
+	return requireSingleJSONValue(dec)
+}
+
+func requireSingleJSONValue(dec *json.Decoder) error {
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return errors.New("request body must contain exactly one JSON value")
 	}
 	return nil
 }
@@ -282,7 +293,7 @@ func storefrontCartJSONClientError(err error) bool {
 	}
 	switch appErr.Code {
 	case apperror.CodeValidation, apperror.CodeNotFound, apperror.CodeForbidden,
-		apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed,
+		apperror.CodeConflict, apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed,
 		apperror.CodeCartValidationFailed, apperror.CodeForbiddenPrivateField:
 		return true
 	default:

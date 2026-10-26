@@ -88,7 +88,7 @@ Responses use the standard envelope (`{"data":...,"error":null}`):
 {"data":{"item_count":1,"total_quantity":1,"cart_url":"/cart"},"error":null}
 ```
 
-POST sets `shopanda_storefront_cart` for guests only after a successful add. A failed first guest add does not persist a reachable cart: the empty row is discarded and no cookie is set. The body never includes `cart_id`. Signed-in requests mutate the customer active cart and ignore a leftover guest cookie. CSRF failures (missing or wrong `X-CSRF-Token`) are JSON 403 `{"data":null,"error":{"code":"forbidden",...}}` — query-string `csrf_token` is not accepted on `/storefront/*`. Extension and `cart.validate` failures are 422 with the real code (`unknown_field_code`, `field_validation_failed`, `cart_validation_failed`); a private field is 403 `forbidden_private_field`. Unexpected service errors are a generic JSON 500.
+POST sets `shopanda_storefront_cart` for guests only after a successful add. A failed first guest add does not persist a reachable cart: the empty row is discarded and no cookie is set. The body never includes `cart_id`. Signed-in requests mutate the customer active cart and ignore a leftover guest cookie. CSRF failures (missing or wrong `X-CSRF-Token`) are JSON 403 `{"data":null,"error":{"code":"forbidden",...}}` — query-string `csrf_token` is not accepted on `/storefront/*`. Extension and `cart.validate` failures are 422 with the real code (`unknown_field_code`, `field_validation_failed`, `cart_validation_failed`); a private field is 403 `forbidden_private_field`. Concurrent cart writes are 409 `conflict`. Unexpected service errors are a generic JSON 500.
 
 `/storefront/*` is not on the CORS allowlist — serve the script from the Shopanda origin (or a same-host reverse-proxy path).
 

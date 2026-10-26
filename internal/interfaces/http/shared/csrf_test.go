@@ -147,10 +147,9 @@ func TestCSRFMiddleware_StorefrontRejectsQueryToken(t *testing.T) {
 }
 
 func TestCSRFMiddleware_StorefrontMintFailureJSON(t *testing.T) {
-	t.Cleanup(shared.SetCSRFTokenGeneratorForTest(func() (string, error) {
+	next := shared.CSRFMiddlewareWithGenerator(func() (string, error) {
 		return "", errors.New("rand failed")
-	}))
-	next := shared.CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler must not run")
 	}))
 	for _, tc := range []struct {

@@ -28,6 +28,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -813,12 +814,14 @@ func TestStorefrontHandler_JSONCartAdd_RejectsTrailingJSON(t *testing.T) {
 	prices.set("var-1", "EUR", 1500)
 	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(nil, cartSvc)
 
-	rec := storefrontJSONCartRequest(t, h, http.MethodPost, "/storefront/cart/items", `{"variant_id":"var-1"}{"x":1}`, storefrontJSONCartCall{})
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422 body=%s", rec.Code, rec.Body.String())
-	}
-	if _, ok := findCookie(rec, "shopanda_storefront_cart"); ok {
-		t.Fatal("trailing json must not mint a cart cookie")
+	for _, body := range []string{`{"variant_id":"var-1"}{"x":1}`, `{"variant_id":"var-1"}}`} {
+		rec := storefrontJSONCartRequest(t, h, http.MethodPost, "/storefront/cart/items", body, storefrontJSONCartCall{})
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("body %s status = %d, want 422 body=%s", body, rec.Code, rec.Body.String())
+		}
+		if _, ok := findCookie(rec, "shopanda_storefront_cart"); ok {
+			t.Fatalf("trailing json %s must not mint a cart cookie", body)
+		}
 	}
 }
 
@@ -1171,6 +1174,40 @@ func TestStorefrontHandler_JSONCartAdd_UnexpectedErrorIsGeneric500(t *testing.T)
 	}
 	if !strings.Contains(logs.String(), "storefront.cart.json.add.failed") {
 		t.Fatalf("missing add.failed log: %s", logs.String())
+	}
+}
+
+type conflictSaveRepo struct {
+	*storefrontCartRepoStub
+}
+
+func (r *conflictSaveRepo) Save(ctx context.Context, c *domainCart.Cart) error {
+	if _, exists := r.carts[c.ID]; exists {
+		return apperror.Conflict("cart was modified concurrently")
+	}
+	return r.storefrontCartRepoStub.Save(ctx, c)
+}
+
+func TestStorefrontHandler_JSONCartAdd_ConflictIs409(t *testing.T) {
+	carts := &conflictSaveRepo{storefrontCartRepoStub: newStorefrontCartRepoStub()}
+	prices := newStorefrontPriceRepoStub()
+	prices.set("var-1", "EUR", 1500)
+	svcLog := logger.NewWithWriter(io.Discard, "error")
+	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStepLegacy(prices), pricing.NewFinalizeStep())
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	cartSvc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, svcLog, event.NewBus(svcLog), nil, nil)
+	guest, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := createTestTheme(t)
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()).WithCart(nil, cartSvc)
+
+	rec := storefrontJSONCartRequest(t, h, http.MethodPost, "/storefront/cart/items", `{"variant_id":"var-1","quantity":1}`, storefrontJSONCartCall{
+		Cookies: []*http.Cookie{{Name: "shopanda_storefront_cart", Value: guest.ID}},
+	})
+	if rec.Code != http.StatusConflict || storefrontJSONErrorCode(t, rec) != "conflict" {
+		t.Fatalf("status=%d code=%s body=%s", rec.Code, storefrontJSONErrorCode(t, rec), rec.Body.String())
 	}
 }
 
