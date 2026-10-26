@@ -19,7 +19,7 @@ See [`ROADMAP.md`](ROADMAP.md) and [`prs/`](prs/).
 
 ## Status
 
-**Shipped** (PR-1100–1110).
+**Shipped** (PR-1100–1112). Track C: same-origin storefront cart JSON add/update/remove (`/storefront/csrf`, `/storefront/cart/items`).
 
 ## Relationship
 

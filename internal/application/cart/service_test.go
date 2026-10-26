@@ -303,6 +303,50 @@ func TestService_CreateCart_Guest(t *testing.T) {
 	}
 }
 
+func TestService_DiscardEmptyGuestCart(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1500)
+	svc := cartApp.NewService(carts, prices, nil, nil, permissiveVR, permissivePR, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	ctx := context.Background()
+
+	empty, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DiscardEmptyGuestCart(ctx, empty.ID); err != nil {
+		t.Fatalf("discard empty: %v", err)
+	}
+	if got, _ := carts.FindByID(ctx, empty.ID); got != nil {
+		t.Fatal("empty guest cart should be deleted")
+	}
+
+	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DiscardEmptyGuestCart(ctx, customer.ID); err != nil {
+		t.Fatalf("discard customer: %v", err)
+	}
+	if got, _ := carts.FindByID(ctx, customer.ID); got == nil {
+		t.Fatal("customer cart must not be discarded")
+	}
+
+	filled, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddItem(ctx, filled.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DiscardEmptyGuestCart(ctx, filled.ID); err != nil {
+		t.Fatalf("discard filled: %v", err)
+	}
+	if got, _ := carts.FindByID(ctx, filled.ID); got == nil {
+		t.Fatal("guest cart with items must not be discarded")
+	}
+}
+
 func TestService_CreateCart_InvalidCurrency(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()

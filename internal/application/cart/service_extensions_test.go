@@ -9,6 +9,7 @@ import (
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -173,6 +174,63 @@ func setupCartExtensionService(t *testing.T) (*cartApp.Service, *memCartExtensio
 	vr, pr := cartApp.PermissiveCatalogRepos()
 	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, nil)
 	return svc, repo
+}
+
+type failExistingSaveCartRepo struct {
+	*stubCartRepo
+}
+
+func (r *failExistingSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
+	if _, exists := r.carts[c.ID]; exists {
+		return errors.New("disk full")
+	}
+	return r.stubCartRepo.Save(ctx, c)
+}
+
+func TestService_DiscardEmptyGuestCart_PurgesOrphanExtensions(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift message",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	extRepo := newMemCartExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+	carts := &failExistingSaveCartRepo{stubCartRepo: newStubCartRepo()}
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, nil)
+	ctx := context.Background()
+
+	c, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AddItem(ctx, c.ID, "", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: "Hello"}},
+		UpdatedBy:  "system",
+	})
+	if err == nil {
+		t.Fatal("expected AddItem save to fail")
+	}
+	if len(extRepo.values) == 0 {
+		t.Fatal("expected extension row written before Save failed")
+	}
+
+	if err := svc.DiscardEmptyGuestCart(ctx, c.ID); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if got, _ := carts.FindByID(ctx, c.ID); got != nil {
+		t.Fatal("empty guest cart should be deleted")
+	}
+	if len(extRepo.values) != 0 {
+		t.Fatalf("extension leftovers = %d, want 0", len(extRepo.values))
+	}
 }
 
 func TestService_AddItem_WithExtensions(t *testing.T) {

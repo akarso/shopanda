@@ -13,5 +13,7 @@
 | PR-1108 | B | done | [Addresses JSON + claim routes](PR-1108.md) |
 | PR-1109 | B | done | [OpenAPI catch-up](PR-1109.md) |
 | PR-1110 | B | done | [Headless primer](PR-1110.md) |
+| PR-1111 | C | done | [Same-origin storefront cart JSON add](PR-1111.md) |
+| PR-1112 | C | done | [JSON update/remove on the storefront cookie cart](PR-1112.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)

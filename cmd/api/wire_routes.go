@@ -50,6 +50,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.CacheControlMiddleware([]string{
 		"/setup",
 		"/fragments",
+		"/storefront",
 		"/api/v1/setup",
 		"/api/v1/carts",
 		"/api/v1/checkout",
@@ -507,6 +508,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		router.HandleFunc("GET /pages/{slug}", sfHandler.CMSPage())
 		router.HandleFunc("GET /categories", sfHandler.Categories())
 		router.HandleFunc("GET /categories/{slug}", sfHandler.Category())
+		router.HandleFunc("GET /storefront/csrf", sfHandler.StorefrontCSRF())
+		router.HandleFunc("POST /storefront/cart/items", sfHandler.AddToStorefrontCartJSON())
+		router.HandleFunc("PUT /storefront/cart/items/{variantId}", sfHandler.UpdateStorefrontCartJSON())
+		router.HandleFunc("DELETE /storefront/cart/items/{variantId}", sfHandler.RemoveStorefrontCartJSON())
 		router.HandleFunc("POST /cart/add", sfHandler.AddToCart())
 		router.HandleFunc("POST /cart/update", sfHandler.UpdateCart())
 		router.HandleFunc("POST /cart/remove", sfHandler.RemoveCartItem())
