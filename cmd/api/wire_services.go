@@ -18,6 +18,7 @@ import (
 	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
 	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
+	assignmentApp "github.com/akarso/shopanda/internal/application/assignment"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -117,6 +118,7 @@ type serveRuntime struct {
 	bundleService            *catalogApp.BundleService
 	groupedService           *catalogApp.GroupedService
 	linkedEligibilityService *catalogApp.LinkedEligibilityService
+	productAssignmentService *assignmentApp.Service
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -521,6 +523,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	linkedEligibilityService := catalogApp.NewLinkedEligibilityService(
 		repos.productRepo, repos.categoryRepo, repos.linkedEligibilityRepo, conn,
 	)
+	productAssignmentService := assignmentApp.NewService(repos.productAssignmentRepo)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -969,6 +972,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		bundleService:                  bundleService,
 		groupedService:                 groupedService,
 		linkedEligibilityService:       linkedEligibilityService,
+		productAssignmentService:       productAssignmentService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,
