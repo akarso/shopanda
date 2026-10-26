@@ -37,7 +37,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/localcache"
-	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -47,7 +46,6 @@ import (
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
 	engine              *theme.Engine
-	engineMu            sync.RWMutex
 	repo                catalog.ProductRepository
 	cats                catalog.CategoryRepository
 	pdp                 *composition.Pipeline[composition.ProductContext]
@@ -123,9 +121,6 @@ type StorefrontLayoutData struct {
 	SearchQuery         string
 	CartURL             string
 	CartLabel           string
-	StyleCSSURL         string
-	CustomCSSURL        string
-	HtmxJSURL           string
 	EnableCart          bool
 	CSRFToken           string
 	UseFragments        bool // PR-1045: cacheable chrome holes (csrf/greeting/cart)
@@ -280,48 +275,6 @@ func NewStorefrontHandler(
 		log:    logger.New("warn"),
 		catNav: localcache.New[[]catalog.Category](1, storefrontCategoryCacheTTL),
 	}
-}
-
-func (h *StorefrontHandler) theme() *theme.Engine {
-	if h == nil {
-		return nil
-	}
-	h.engineMu.RLock()
-	e := h.engine
-	h.engineMu.RUnlock()
-	return e
-}
-
-// ReplaceEngine swaps the loaded theme (dev-mode watch).
-func (h *StorefrontHandler) ReplaceEngine(e *theme.Engine) {
-	if h == nil || e == nil {
-		return
-	}
-	h.engineMu.Lock()
-	h.engine = e
-	h.engineMu.Unlock()
-}
-
-func (h *StorefrontHandler) hasTemplate(name string) bool {
-	e := h.theme()
-	return e != nil && e.HasTemplate(name)
-}
-
-func (h *StorefrontHandler) themeMeta() theme.Theme {
-	e := h.theme()
-	if e == nil {
-		return theme.Theme{}
-	}
-	return e.Theme()
-}
-
-// ThemeStaticRoots returns the active theme's inherited static directories.
-func (h *StorefrontHandler) ThemeStaticRoots() []string {
-	e := h.theme()
-	if e == nil {
-		return nil
-	}
-	return e.StaticRoots()
 }
 
 // CategoryNavCacheSnapshot returns L1 occupancy and hit/miss counters
@@ -507,14 +460,14 @@ func (h *StorefrontHandler) WithAccountSecurityEmailLinks(storeBaseURL string, e
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
 	return h.withFullPageCache(cacheapp.RouteHome, func(w http.ResponseWriter, r *http.Request) {
-		if !h.hasTemplate("home") {
+		if !h.engine.HasTemplate("home") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
 
 		page := StorefrontHomePageData{
 			Layout: h.layoutForCacheablePage(r, nil),
-			Theme:  h.themeMeta(),
+			Theme:  h.engine.Theme(),
 		}
 		blocks, tags, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypeLayout, "home")
 		if err != nil {
@@ -605,7 +558,7 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 		page := StorefrontProductPageData{
 			ProductContext: ctx,
 			Layout:         h.layoutForCacheablePage(r, nil),
-			Theme:          h.themeMeta(),
+			Theme:          h.engine.Theme(),
 			CartForm:       h.resolveCartForm(r, product.ID),
 		}
 		cacheapp.AddPageTags(r.Context(), cacheapp.ProductTag(product.ID))
@@ -623,7 +576,7 @@ func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string,
 		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce))
 	}
 	var buf bytes.Buffer
-	if err := h.theme().Render(&buf, name, data); err != nil {
+	if err := h.engine.Render(&buf, name, data); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -634,7 +587,7 @@ func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string,
 
 func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.hasTemplate("product_list") {
+		if !h.engine.HasTemplate("product_list") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -713,7 +666,7 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 
 func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.hasTemplate("category") {
+		if !h.engine.HasTemplate("category") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -873,8 +826,8 @@ func (h *StorefrontHandler) layoutDataBestEffort(r *http.Request) StorefrontLayo
 }
 
 func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalog.Category, cacheable bool) StorefrontLayoutData {
-	themeCfg := h.themeMeta().Storefront
-	siteName := h.themeMeta().Name
+	themeCfg := h.engine.Theme().Storefront
+	siteName := h.engine.Theme().Name
 	if s := store.FromContext(r.Context()); s != nil && s.Name != "" {
 		siteName = s.Name
 	}
@@ -931,22 +884,12 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	}
 	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
 	cspNonce := h.newCSPNonce()
-	styleCSS, customCSS, htmxJS := "/static/css/style.css", "/static/css/custom.css", "/static/js/htmx.min.js"
-	if e := h.theme(); e != nil {
-		roots := e.StaticRoots()
-		styleCSS = themefs.StaticURL(roots, "css/style.css")
-		customCSS = themefs.StaticURL(roots, "css/custom.css")
-		htmxJS = themefs.StaticURL(roots, "js/htmx.min.js")
-	}
 	return StorefrontLayoutData{
 		SiteName:            siteName,
 		SearchAction:        searchAction,
 		SearchQuery:         strings.TrimSpace(r.URL.Query().Get("q")),
 		CartURL:             cartURL,
 		CartLabel:           cartLabel,
-		StyleCSSURL:         styleCSS,
-		CustomCSSURL:        customCSS,
-		HtmxJSURL:           htmxJS,
 		EnableCart:          h.carts != nil,
 		CSRFToken:           csrfToken,
 		UseFragments:        cacheable,
@@ -1112,7 +1055,7 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout Storefr
 
 	return StorefrontListingPageData{
 		Layout:        layout,
-		Theme:         h.themeMeta(),
+		Theme:         h.engine.Theme(),
 		Title:         title,
 		Eyebrow:       eyebrow,
 		View:          params.View,

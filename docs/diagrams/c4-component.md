@@ -46,10 +46,9 @@ C4Component
             Component(cacheAdmin, "CacheAdminHandler", "HTTP", "Stats, clear (prefix/tag/key/all), and FPC purge-url (admin, cache.read/cache.write/cache.clear_all/cache.purge_url)")
             Component(scheduleAdmin, "ScheduleAdminHandler", "HTTP", "List, Trigger, Enable, Disable scheduled tasks (admin, jobs.read/jobs.write)")
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
-            Component(addressHandler, "AddressHandler", "HTTP", "JSON CRUD for saved customer addresses (GET/POST/PUT/DELETE /api/v1/account/addresses)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.StorefrontHTML — enabled and not mode=headless). Guest claim JSON is always mounted. Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled). Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 

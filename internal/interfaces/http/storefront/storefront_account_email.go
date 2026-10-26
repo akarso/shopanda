@@ -17,7 +17,7 @@ import (
 // effect once that link is confirmed.
 func (h *StorefrontHandler) AccountEmailChange() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || h.security == nil || !h.hasTemplate("account_security") {
+		if h.auth == nil || h.security == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -85,13 +85,13 @@ func (h *StorefrontHandler) AccountEmailChange() http.HandlerFunc {
 // It does not require an active session, so the link works from any device.
 func (h *StorefrontHandler) AccountEmailChangeConfirm() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || h.security == nil || !h.hasTemplate("account_verify_email") {
+		if h.auth == nil || h.security == nil || !h.engine.HasTemplate("account_verify_email") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
 		page := StorefrontAccountEmailVerificationPageData{
 			Layout:      h.layoutDataBestEffort(r),
-			Theme:       h.themeMeta(),
+			Theme:       h.engine.Theme(),
 			ContinueURL: "/account/login",
 		}
 		token := strings.TrimSpace(r.URL.Query().Get("email_token"))

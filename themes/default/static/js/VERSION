@@ -1,4 +1,0 @@
-htmx 1.9.12
-Source: https://cdn.jsdelivr.net/npm/htmx.org@1.9.12/dist/htmx.min.js
-License: BSD-2-Clause (https://github.com/bigskysoftware/htmx/blob/v1.9.12/LICENSE)
-Do not upgrade to 2.x without an explicit product decision.

@@ -37,14 +37,12 @@ This means:
 
 ## 3. Non-Goals (v1)
 
-Shipped later (see [THEME_SLOTS.md](../../../guides/THEME_SLOTS.md)): slots, child-theme inheritance, `layout.yaml` block order, fragments.
-
-Still out of scope:
-
-* no multi-theme switching / preview
-* no SCSS/JS asset pipeline (plain files under `static/`)
-* no Magento-style layout XML
-* no official React storefront
+* no block rendering system yet
+* no slot system yet
+* no theme inheritance
+* no multi-theme switching
+* no asset pipeline (SCSS/JS)
+* no CMS features
 
 ---
 
@@ -104,9 +102,9 @@ frontend:
 
 #### `headless`
 
-* HTML routes are not mounted (`frontend.enabled: false` is the usual switch; `mode: headless` also skips HTML)
+* SSR disabled
 * API only
-* external frontend required — see [HEADLESS.md](../../../guides/HEADLESS.md)
+* external frontend required
 
 ---
 
@@ -128,14 +126,7 @@ frontend:
     /templates
       product.html
       layout.html
-    /static
-      /css
-      /js/htmx.min.js
     theme.yaml
-    layout.yaml
-  /_starter
-    theme.yaml          # parent: ../default
-    /static/css/custom.css
 ```
 
 ---

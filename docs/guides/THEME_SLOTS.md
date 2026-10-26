@@ -33,16 +33,6 @@ When you customize markup:
 
 A theme is a directory pointed to by `frontend.theme_path` (default: `themes/default`).
 
-Create a child theme without copying templates:
-
-```bash
-./shopanda theme:init my-store
-# writes <themes-root>/my-store (name must match [a-z0-9][a-z0-9_-]*)
-# themes-root is the parent of frontend.theme_path, or ./themes
-```
-
-Or copy [`themes/_starter`](../../themes/_starter).
-
 ```text
 themes/my-store/
   theme.yaml
@@ -91,7 +81,6 @@ Child themes extend a parent without copying every template.
 | Inherit | Parent templates used when child has no matching file |
 | Partials | Same child-wins rule for `_*.html` partials |
 | Boundary | Parent must resolve inside the themes tree (no absolute paths) |
-| Static | `/static/*` falls back to parent `static/` when the child file is missing |
 
 ### Example: footer-only override
 
@@ -317,8 +306,8 @@ Response includes the standard catalog plus registered handlers per anchor.
 
 ## Checklist for a new child theme
 
-1. Run `./shopanda theme:init my-store` (or create `themes/my-store/theme.yaml` with `parent: ../default`).
-2. Set `frontend.theme_path: themes/my-store` in config. Parent `static/` is inherited; override `static/css/custom.css` for CSS.
+1. Create `themes/my-store/theme.yaml` with `parent: ../default` (or your base).
+2. Set `frontend.theme_path: themes/my-store` in config.
 3. Override only the templates/partials you need (`_footer.html`, `product.html`, …).
 4. In every overridden file, **keep or intentionally replace** slot markers from the parent.
 5. Run the API in dev mode and enable a reference plugin (`plugins.slotsdemo.enabled: true`) to confirm DOM injection.

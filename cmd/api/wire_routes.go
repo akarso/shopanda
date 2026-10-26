@@ -1,11 +1,10 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
@@ -18,14 +17,13 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
-	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
-func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB, serveCtx context.Context) (http.Handler, error) {
+func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB) (http.Handler, error) {
 	router := shophttp.NewRouter()
 
 	// Middleware: outermost first.
@@ -36,7 +34,6 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.TracingMiddleware())
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
-	router.Use(shophttp.CORSMiddleware(cfg.HTTP.CORS.AllowedOrigins, cfg.HTTP.CORS.AllowCredentials))
 	router.Use(shophttp.RequestIDMiddleware())
 	router.Use(shophttp.RateLimitMiddlewareWithFactory(cfg.RateLimit, log, rt.rateLimitFactory))
 	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
@@ -353,12 +350,6 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/account/data", requireAuth(rt.accountHandler.GetData()))
 	router.Handle("GET /api/v1/account/export", requireAuth(rt.accountHandler.Export()))
 	router.Handle("DELETE /api/v1/account", requireAuth(rt.accountHandler.Delete()))
-	addressHandler := storefront.NewAddressHandler(rt.repos.customerAddressRepo)
-	router.Handle("GET /api/v1/account/addresses", requireAuth(addressHandler.List()))
-	router.Handle("POST /api/v1/account/addresses", requireAuth(addressHandler.Create()))
-	router.Handle("PUT /api/v1/account/addresses/{addressId}", requireAuth(addressHandler.Update()))
-	router.Handle("POST /api/v1/account/addresses/{addressId}/default", requireAuth(addressHandler.SetDefault()))
-	router.Handle("DELETE /api/v1/account/addresses/{addressId}", requireAuth(addressHandler.Delete()))
 
 	// Shipping rates (behind RequireAuth — used during checkout).
 	router.Handle("GET /api/v1/shipping/rates", requireAuth(rt.shippingRates.List()))
@@ -379,9 +370,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /admin", adminWithSetup)
 	router.Handle("GET /admin/{path...}", adminWithSetup)
 
-	// Storefront SSR routes (optional, gated by frontend.enabled and not headless).
-	var sfHandler *storefront.StorefrontHandler
-	if cfg.Frontend.StorefrontHTML() {
+	// Storefront SSR routes (optional, gated by frontend.enabled).
+	if cfg.Frontend.Enabled {
 		themeOpts := []domtheme.Option{
 			domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}),
 			// Fragment paths / htmx markup live in the storefront adapter, not domain.
@@ -391,7 +381,21 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		if thErr != nil {
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}
-		sfHandler = storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+		claimService := orderApp.NewClaimService(rt.repos.orderRepo)
+		claimEmailer := storefrontOrderClaimEmailer{
+			mailer: smtpmail.New(smtpmail.Config{
+				Host:     cfg.Mail.SMTP.Host,
+				Port:     cfg.Mail.SMTP.Port,
+				User:     cfg.Mail.SMTP.User,
+				Password: cfg.Mail.SMTP.Password,
+				From:     cfg.Mail.SMTP.From,
+			}),
+			storeBaseURL: cfg.Server.PublicBaseURL,
+		}
+		linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
+		linkLinker := storefront.NewStorefrontOrderLinkerAdapter(linkService)
+
+		sfHandler := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
 			WithVisibilityFacts(rt.visibilityFacts).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
@@ -404,11 +408,15 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithTrustedProxies(cfg.RateLimit.TrustedProxies...).
 			WithReturns(rt.returnService).
 			WithAccountProfile(rt.repos.customerAddressRepo, rt.repos.consentRepo).
+			WithOrderClaim(claimService).
+			WithOrderClaimEmailer(claimEmailer).
+			WithOrderLinker(linkLinker).
+			WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute).
+			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute).
 			WithAssets(rt.assetRegistry).
 			WithLayeredNavAttributes(rt.attributeStore).
 			WithAdvancedSearchAttributes(rt.attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
-		sfHandler = attachStorefrontClaimAPI(sfHandler, rt, cfg)
 		if cfg.Cache.FullPage.Enabled && rt.appCache != nil {
 			ttl, err := time.ParseDuration(cfg.Cache.FullPage.TTL)
 			if err != nil || ttl <= 0 {
@@ -444,20 +452,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 				Clear: sfHandler.ClearCategoryNavCache,
 			})
 		}
-		router.Handle("GET /static/{path...}", themefs.StaticHandler(sfHandler.ThemeStaticRoots, config.DevModeEnabled()))
-		if config.DevModeEnabled() {
-			watchCtx := serveCtx
-			if watchCtx == nil {
-				watchCtx = context.Background()
-			}
-			go themeapp.WatchLoop(watchCtx, cfg.Frontend.ThemePath, time.Second, themeOpts, func(e *domtheme.Engine) {
-				sfHandler.ReplaceEngine(e)
-				sfHandler.ClearCategoryNavCache()
-				if rt.appCache != nil {
-					_ = rt.appCache.DeleteByPrefix(context.Background(), "fpc:")
-				}
-			}, log)
-		}
+		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
+		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
+		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			staticHandler.ServeHTTP(w, r)
+		}))
 		router.HandleFunc("GET /cart", sfHandler.Cart())
 		router.HandleFunc("GET /account/login", sfHandler.Login())
 		router.HandleFunc("POST /account/login", sfHandler.Login())
@@ -516,14 +516,11 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		router.HandleFunc("GET /products", sfHandler.Products())
 		router.HandleFunc("GET /products/{slug}", sfHandler.Product())
 		router.HandleFunc("GET /search", sfHandler.Search())
-	}
 
-	if sfHandler == nil {
-		sfHandler = attachStorefrontClaimAPI(storefront.NewStorefrontHandler(nil, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine), rt, cfg)
+		// Guest order claim routes (public, no auth required).
+		router.HandleFunc("POST /api/v1/orders/claim-search", sfHandler.ClaimOrderSearch())
+		router.HandleFunc("POST /api/v1/orders/claim-register", sfHandler.ClaimLink())
 	}
-	// Guest order claim routes (public, no auth required). Available with or without SSR.
-	router.HandleFunc("POST /api/v1/orders/claim-search", sfHandler.ClaimOrderSearch())
-	router.HandleFunc("POST /api/v1/orders/claim-register", sfHandler.ClaimLink())
 
 	// URL rewrite resolution: least-specific route, only reached when no
 	// route registered above matches. Looks up the raw request path in the
@@ -558,28 +555,4 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		wrapProbe(readyHandler),
 		router.Handler(),
 	), nil
-}
-
-func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
-	claimService := orderApp.NewClaimService(rt.repos.orderRepo)
-	claimEmailer := storefrontOrderClaimEmailer{
-		mailer: smtpmail.New(smtpmail.Config{
-			Host:     cfg.Mail.SMTP.Host,
-			Port:     cfg.Mail.SMTP.Port,
-			User:     cfg.Mail.SMTP.User,
-			Password: cfg.Mail.SMTP.Password,
-			From:     cfg.Mail.SMTP.From,
-		}),
-		storeBaseURL: cfg.Server.PublicBaseURL,
-	}
-	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
-	sf = sf.
-		WithOrderClaim(claimService).
-		WithOrderClaimEmailer(claimEmailer).
-		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
-		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
-	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
-	}
-	return sf
 }

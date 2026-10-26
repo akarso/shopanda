@@ -67,7 +67,7 @@ type StorefrontAccountPreferencesPageData struct {
 // AccountAddresses renders the saved address list with an add/edit form.
 func (h *StorefrontHandler) AccountAddresses() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.addresses == nil || !h.hasTemplate("account_addresses") {
+		if h.addresses == nil || !h.engine.HasTemplate("account_addresses") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -107,7 +107,7 @@ func (h *StorefrontHandler) AccountAddresses() http.HandlerFunc {
 // AccountAddressCreate handles POST /account/addresses.
 func (h *StorefrontHandler) AccountAddressCreate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.addresses == nil || !h.hasTemplate("account_addresses") {
+		if h.addresses == nil || !h.engine.HasTemplate("account_addresses") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -137,7 +137,7 @@ func (h *StorefrontHandler) AccountAddressCreate() http.HandlerFunc {
 // AccountAddressUpdate handles POST /account/addresses/{addressId}.
 func (h *StorefrontHandler) AccountAddressUpdate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.addresses == nil || !h.hasTemplate("account_addresses") {
+		if h.addresses == nil || !h.engine.HasTemplate("account_addresses") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -165,8 +165,6 @@ func (h *StorefrontHandler) AccountAddressUpdate() http.HandlerFunc {
 			h.renderAddressFormError(w, r, customerID, form, true, apperror.Validation(err.Error()))
 			return
 		}
-		// HTML checkbox: omitted means unchecked, not "leave unchanged".
-		// Unchecked must not clear an existing default; use SetDefault to switch.
 		existing.IsDefault = existing.IsDefault || form.IsDefault
 		if err := h.addresses.Update(r.Context(), existing); err != nil {
 			h.renderAddressFormError(w, r, customerID, form, true, err)
@@ -235,7 +233,7 @@ func (h *StorefrontHandler) AccountAddressDelete() http.HandlerFunc {
 // AccountPreferences renders and saves marketing consent.
 func (h *StorefrontHandler) AccountPreferences() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.consents == nil || !h.hasTemplate("account_preferences") {
+		if h.consents == nil || !h.engine.HasTemplate("account_preferences") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -250,7 +248,7 @@ func (h *StorefrontHandler) AccountPreferences() http.HandlerFunc {
 		}
 		page := StorefrontAccountPreferencesPageData{
 			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.themeMeta(),
+			Theme:      h.engine.Theme(),
 			AccountNav: storefrontAccountNav("preferences"),
 			CSRFToken:  httpshared.CSRFToken(r),
 		}
@@ -300,7 +298,7 @@ func (h *StorefrontHandler) buildAddressesPage(r *http.Request, customerID strin
 	}
 	page := StorefrontAccountAddressesPageData{
 		Layout:       h.layoutDataBestEffort(r),
-		Theme:        h.themeMeta(),
+		Theme:        h.engine.Theme(),
 		AccountNav:   storefrontAccountNav("addresses"),
 		CSRFToken:    httpshared.CSRFToken(r),
 		Addresses:    rows,

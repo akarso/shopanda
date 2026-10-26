@@ -41,8 +41,8 @@ func (h *ReviewHandler) WithVisibilityGate(products catalog.ProductRepository, f
 // List handles GET /api/v1/products/{id}/reviews.
 func (h *ReviewHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parent, ok := h.resolveParent(w, r)
-		if !ok {
+		productID := r.PathValue("id")
+		if !h.parentIndividuallyVisible(w, r, productID) {
 			return
 		}
 		offset, limit, err := httpshared.ParsePagination(r)
@@ -54,7 +54,7 @@ func (h *ReviewHandler) List() http.HandlerFunc {
 			limit = 20
 		}
 
-		list, err := h.reviews.ListApprovedByProduct(r.Context(), parent.ID, offset, limit)
+		list, err := h.reviews.ListApprovedByProduct(r.Context(), productID, offset, limit)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -68,47 +68,40 @@ func (h *ReviewHandler) List() http.HandlerFunc {
 	}
 }
 
-func (h *ReviewHandler) resolveParent(w http.ResponseWriter, r *http.Request) (*catalog.Product, bool) {
-	return resolveReviewParent(w, r, h.products, h.visibilityFacts, h.visibilityOpts)
+func (h *ReviewHandler) parentIndividuallyVisible(w http.ResponseWriter, r *http.Request, productID string) bool {
+	return reviewParentIndividuallyVisible(w, r, h.products, h.visibilityFacts, h.visibilityOpts, productID)
 }
 
-func resolveReviewParent(
+func reviewParentIndividuallyVisible(
 	w http.ResponseWriter,
 	r *http.Request,
 	products catalog.ProductRepository,
 	facts catalog.VisibilityFactsSource,
 	opts catalog.VisibilityOptions,
-) (*catalog.Product, bool) {
-	key := r.PathValue("id")
-	if key == "" {
-		httpshared.JSONError(w, apperror.Validation("product id is required"))
-		return nil, false
+	productID string,
+) bool {
+	if products == nil || facts == nil {
+		return true
 	}
-	if products == nil {
-		return &catalog.Product{ID: key}, true
-	}
-	p, err := findProductByIDOrSlug(r.Context(), products, key)
+	p, err := products.FindByID(r.Context(), productID)
 	if err != nil {
 		httpshared.JSONError(w, err)
-		return nil, false
+		return false
 	}
 	if p == nil {
 		httpshared.JSONError(w, apperror.NotFound("product not found"))
-		return nil, false
-	}
-	if facts == nil {
-		return p, true
+		return false
 	}
 	ok, err := catalog.AllowWithFacts(r.Context(), p, catalog.VisibilitySurfaceIndividually, facts, opts)
 	if err != nil {
 		httpshared.JSONError(w, err)
-		return nil, false
+		return false
 	}
 	if !ok {
 		httpshared.JSONError(w, apperror.NotFound("product not found"))
-		return nil, false
+		return false
 	}
-	return p, true
+	return true
 }
 
 // ReviewAccountHandler serves authenticated customer review endpoints.
@@ -144,8 +137,8 @@ type submitReviewBody struct {
 func (h *ReviewAccountHandler) Submit() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		customerID := auth.IdentityFrom(r.Context()).UserID
-		parent, ok := resolveReviewParent(w, r, h.products, h.visibilityFacts, h.visibilityOpts)
-		if !ok {
+		productID := r.PathValue("id")
+		if !reviewParentIndividuallyVisible(w, r, h.products, h.visibilityFacts, h.visibilityOpts, productID) {
 			return
 		}
 
@@ -155,7 +148,7 @@ func (h *ReviewAccountHandler) Submit() http.HandlerFunc {
 			return
 		}
 
-		rev, err := h.reviews.Submit(r.Context(), parent.ID, customerID, reviewsApp.SubmitInput{
+		rev, err := h.reviews.Submit(r.Context(), productID, customerID, reviewsApp.SubmitInput{
 			Rating: req.Rating,
 			Title:  req.Title,
 			Body:   req.Body,

@@ -42,7 +42,7 @@ func (h *VariantHandler) requireProduct(w http.ResponseWriter, r *http.Request) 
 		httpshared.JSONError(w, apperror.Validation("product id is required"))
 		return nil
 	}
-	p, err := findProductByIDOrSlug(r.Context(), h.products, pid)
+	p, err := h.products.FindByID(r.Context(), pid)
 	if err != nil {
 		httpshared.JSONError(w, err)
 		return nil

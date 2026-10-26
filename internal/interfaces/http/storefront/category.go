@@ -73,7 +73,7 @@ func (h *CategoryHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		cat, err := findCategoryByIDOrSlug(r.Context(), h.categories, id)
+		cat, err := h.categories.FindByID(r.Context(), id)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -84,7 +84,7 @@ func (h *CategoryHandler) Get() http.HandlerFunc {
 		}
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"category": categoryJSON(cat, wantSnakeFieldNames(r)),
+			"category": cat,
 		})
 	}
 }
@@ -99,7 +99,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 		}
 
 		// Verify category exists.
-		cat, err := findCategoryByIDOrSlug(r.Context(), h.categories, id)
+		cat, err := h.categories.FindByID(r.Context(), id)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -118,7 +118,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 		page, err := catalog.ListVisiblePage(
 			r.Context(),
 			func(ctx context.Context, dbOffset, dbLimit int) ([]catalog.Product, error) {
-				return h.products.FindByCategoryID(ctx, cat.ID, dbOffset, dbLimit)
+				return h.products.FindByCategoryID(ctx, id, dbOffset, dbLimit)
 			},
 			catalog.VisibilitySurfaceCatalog,
 			h.visibilityFacts,
@@ -137,21 +137,10 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 		}
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"products": productsValuePublicJSON(page.Products, wantSnakeFieldNames(r)),
+			"products": page.Products,
 			"meta":     visibilityListMeta(page),
 		})
 	}
-}
-
-func findCategoryByIDOrSlug(ctx context.Context, repo catalog.CategoryRepository, key string) (*catalog.Category, error) {
-	cat, err := repo.FindByID(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	if cat != nil {
-		return cat, nil
-	}
-	return repo.FindBySlug(ctx, key)
 }
 
 // buildTree assembles a flat slice of categories into a nested tree.

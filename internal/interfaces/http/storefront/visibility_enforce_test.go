@@ -17,17 +17,6 @@ import (
 
 type stubReviewRepo struct{}
 
-type recordingReviewRepo struct {
-	stubReviewRepo
-	lastProductID string
-	list          []domainReview.Review
-}
-
-func (r *recordingReviewRepo) ListApprovedByProduct(_ context.Context, productID string, _, _ int) ([]domainReview.Review, error) {
-	r.lastProductID = productID
-	return r.list, nil
-}
-
 func (stubReviewRepo) Save(context.Context, *domainReview.Review) error { return nil }
 func (stubReviewRepo) FindByID(context.Context, string) (*domainReview.Review, error) {
 	return nil, nil
@@ -145,7 +134,11 @@ func TestProductHandler_List_FiltersHiddenCatalog(t *testing.T) {
 		t.Fatalf("products len = %d, want 1", len(products))
 	}
 	p := products[0].(map[string]interface{})
+	// Product JSON uses exported field names (no json tags).
 	id, _ := p["ID"].(string)
+	if id == "" {
+		id, _ = p["id"].(string)
+	}
 	if id != "v1" {
 		t.Fatalf("id = %v, want v1 (product=%v)", id, p)
 	}
@@ -304,6 +297,9 @@ func TestProductHandler_List_AfterWithEnforceOff(t *testing.T) {
 	}
 	p0 := products[0].(map[string]interface{})
 	id, _ := p0["ID"].(string)
+	if id == "" {
+		id, _ = p0["id"].(string)
+	}
 	if id != "p5" {
 		t.Fatalf("id=%q want p5 (after honoured with enforce off)", id)
 	}
@@ -418,42 +414,6 @@ func TestStorefrontHandler_Product_HiddenIndividually(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
-	}
-}
-
-func TestReviewHandler_List_BySlug(t *testing.T) {
-	modes := catalog.DefaultVisibilityAxes()
-	modes.Individually = catalog.VisibilityModeVisible
-	prod := &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive, VisibilityModes: modes}
-	prodRepo := &mockProductRepo{
-		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			if id == prod.ID {
-				return prod, nil
-			}
-			return nil, nil
-		},
-		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
-			if slug == "widget" {
-				return prod, nil
-			}
-			return nil, nil
-		},
-	}
-	repo := &recordingReviewRepo{
-		list: []domainReview.Review{{ID: "r1", ProductID: "p1", Title: "ok"}},
-	}
-	svc := reviewsApp.NewService(repo, prodRepo)
-	h := storefront.NewReviewHandler(svc).WithVisibilityGate(prodRepo, enforceFacts{prod.ID: enforceSnap(modes)})
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/products/{id}/reviews", h.List())
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/products/widget/reviews", nil)
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-	if repo.lastProductID != "p1" {
-		t.Fatalf("listed reviews for %q, want p1", repo.lastProductID)
 	}
 }
 

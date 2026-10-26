@@ -108,7 +108,7 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
 **Check:**
 - Browser network: `/fragments/csrf` is 200 and sets/refreshes `shopanda_csrf`; the logout form’s hidden input is non-empty before submit.
 - Theme includes `hx-get="/fragments/csrf"` **inside** the logout form — a path mention elsewhere on the page is not enough; FPC refuses logout forms without that in-form hole.
-- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403. Default theme vendors `themes/default/static/js/htmx.min.js` (1.9.12).
+- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
 
 ### Cache appears stale after a product/price/content change
 
@@ -124,21 +124,6 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
   - Nuclear: `{"prefix":"fpc:"}` or `{"all": true}`.
 
 **Fix:** restore event publishing / tag wiring on the write path if a tag was never written or an event never fired. Purge-by-URL is a path-scoped escape hatch, not a whole-PLP broom; do not leave a known miss permanently on TTL alone.
-
-In `SHOPANDA_DEV_MODE`, theme watch reloads templates and then deletes `fpc:` keys plus the in-process category-nav cache. If HTML still looks stale after a template edit, confirm watch is running in that process and that you are not hitting a second replica without watch.
-
-### Headless CORS looks wide open
-
-**Symptom:** a browser on another origin can call `/api/v1` with shopper cookies, or every `OPTIONS` returns 204.
-
-**Check:**
-- `http.cors.allowed_origins` / `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS`. Empty means no CORS headers.
-- `*` is anonymous only (`Access-Control-Allow-Origin: *`, no credentials). Combining `*` with `allow_credentials: true` disables the wildcard.
-- Credentials require an explicit origin list. `/api/v1` is **not** CSRF-checked — do not enable cookie credentials unless you add CSRF or stay on Bearer.
-- CORS is storefront prefixes only. Admin/setup/webhooks/docs must not show `Access-Control-Allow-Origin`.
-- Unmatched preflights must fall through (not 204).
-
-See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 ### Full-page cache hit rate unexpectedly low
 

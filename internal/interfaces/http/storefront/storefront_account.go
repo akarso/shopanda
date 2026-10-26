@@ -145,7 +145,7 @@ type StorefrontAccountSecurityPageData struct {
 
 func (h *StorefrontHandler) Login() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.hasTemplate("account_login") {
+		if h.auth == nil || !h.engine.HasTemplate("account_login") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -156,7 +156,7 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 
 		page := StorefrontAccountLoginPageData{
 			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.themeMeta(),
+			Theme:      h.engine.Theme(),
 			CSRFToken:  httpshared.CSRFToken(r),
 			RedirectTo: "/account/orders",
 		}
@@ -198,7 +198,7 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 
 func (h *StorefrontHandler) Register() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.hasTemplate("account_register") {
+		if h.auth == nil || !h.engine.HasTemplate("account_register") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -209,7 +209,7 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 
 		page := StorefrontAccountRegisterPageData{
 			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.themeMeta(),
+			Theme:      h.engine.Theme(),
 			CSRFToken:  httpshared.CSRFToken(r),
 			RedirectTo: "/account/orders",
 		}
@@ -371,7 +371,7 @@ func (h *StorefrontHandler) Logout() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountOrders() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.orders == nil || !h.hasTemplate("account_orders") {
+		if h.orders == nil || !h.engine.HasTemplate("account_orders") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -390,7 +390,7 @@ func (h *StorefrontHandler) AccountOrders() http.HandlerFunc {
 		}
 		h.renderPage(w, "account_orders", StorefrontAccountOrdersPageData{
 			Layout:       h.layoutDataBestEffort(r),
-			Theme:        h.themeMeta(),
+			Theme:        h.engine.Theme(),
 			AccountNav:   storefrontAccountNav("orders"),
 			Orders:       rows,
 			EmptyMessage: "You have not placed any orders yet.",
@@ -400,7 +400,7 @@ func (h *StorefrontHandler) AccountOrders() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountOrderDetail() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.orders == nil || !h.hasTemplate("account_order_detail") {
+		if h.orders == nil || !h.engine.HasTemplate("account_order_detail") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -432,7 +432,7 @@ func (h *StorefrontHandler) AccountOrderDetail() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.hasTemplate("account_profile") {
+		if h.auth == nil || !h.engine.HasTemplate("account_profile") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -472,7 +472,7 @@ func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.hasTemplate("account_security") {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -501,7 +501,7 @@ func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.hasTemplate("account_security") {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -543,7 +543,7 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.account == nil || h.auth == nil || !h.hasTemplate("account_security") {
+		if h.account == nil || h.auth == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -649,7 +649,7 @@ func storefrontAccountNav(current string) StorefrontAccountNavData {
 func storefrontAccountProfilePage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountProfilePageData {
 	return StorefrontAccountProfilePageData{
 		Layout:     h.layoutDataBestEffort(r),
-		Theme:      h.themeMeta(),
+		Theme:      h.engine.Theme(),
 		AccountNav: storefrontAccountNav("profile"),
 		CSRFToken:  httpshared.CSRFToken(r),
 		Email:      profile.Email,
@@ -661,7 +661,7 @@ func storefrontAccountProfilePage(h *StorefrontHandler, r *http.Request, profile
 func storefrontAccountSecurityPage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountSecurityPageData {
 	return StorefrontAccountSecurityPageData{
 		Layout:     h.layoutDataBestEffort(r),
-		Theme:      h.themeMeta(),
+		Theme:      h.engine.Theme(),
 		AccountNav: storefrontAccountNav("security"),
 		CSRFToken:  httpshared.CSRFToken(r),
 		Email:      profile.Email,
