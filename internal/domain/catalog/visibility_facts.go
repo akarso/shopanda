@@ -32,11 +32,19 @@ func (s VisibilitySnapshot) Resolve(opts VisibilityOptions) Visibility {
 }
 
 // resolveForRequest copies the request assignment context, then resolves.
-// Used by AllowWithFacts and the facts filters so the purchasable gate
-// sees the same context cart and checkout read.
+// Listing filters use it. Cart and checkout pass each line's resolved
+// assignment to Allows instead, so one line cannot unlock another.
 func resolveForRequest(ctx context.Context, snap VisibilitySnapshot, opts VisibilityOptions) Visibility {
 	snap.Inputs.Assignment = AssignmentContextFrom(ctx)
 	return snap.Resolve(opts)
+}
+
+// Allows reports whether snap passes surface for assignment. Assignment
+// replaces whatever was already on Inputs. Callers pass one line's resolved
+// assignment; the method does not read ctx.
+func (s VisibilitySnapshot) Allows(surface VisibilitySurface, assignment AssignmentContext, opts VisibilityOptions) bool {
+	s.Inputs.Assignment = assignment
+	return s.Resolve(opts).AllowedOn(surface)
 }
 
 // VisibilityFactsSource loads visibility snapshots for products (PR-1057).

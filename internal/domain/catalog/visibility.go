@@ -105,9 +105,10 @@ type VisibilityInputs struct {
 	// before resolve. It is not an AutoBasis input. When true and Assignment
 	// is empty, the purchasable axis is false after ResolveAxis.
 	RequiresLinkedParent bool
-	// Assignment is the request assignment context. AllowWithFacts and the
-	// facts filters copy AssignmentContextFrom(ctx) onto this field. Domain
-	// callers of Product.Visibility set it directly.
+	// Assignment is the purchase assignment for this resolve. Listing filters
+	// copy AssignmentContextFrom(ctx). Cart and checkout set one line's
+	// resolved assignment so lines do not share a parent. Domain callers of
+	// Product.Visibility set it directly.
 	Assignment AssignmentContext
 }
 

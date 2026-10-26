@@ -45,6 +45,12 @@ type lockingProductRepo interface {
 	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
 }
 
+// linkedParentLockRepo reads requires_linked_parent from the locked row.
+// An omitted update uses it so a stale FindByID cannot write the flag back.
+type linkedParentLockRepo interface {
+	RequiresLinkedParentForUpdate(ctx context.Context, id string) (bool, error)
+}
+
 // txBundleComponentRepo is a bundle component repository that can bind to a transaction.
 type txBundleComponentRepo interface {
 	WithTx(tx *sql.Tx) catalog.BundleComponentRepository
@@ -1067,8 +1073,21 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if err := applyExplodeOrderLinesPatch(product, req); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
-	// Omitted requires_linked_parent keeps the value loaded by FindByID.
-	// The flag is not part of LockTypeAndModes.
+	// Omitted requires_linked_parent keeps the locked row, not the earlier FindByID.
+	if req.RequiresLinkedParent == nil {
+		reader, ok := boundProducts.(linkedParentLockRepo)
+		if !ok {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support requires_linked_parent lock read")
+		}
+		flag, err := reader.RequiresLinkedParentForUpdate(ctx, product.ID)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeNotFound) {
+				return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+			}
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: read requires_linked_parent: %w", err)
+		}
+		product.RequiresLinkedParent = flag
+	}
 	applyRequiresLinkedParentPatch(product, req)
 	// Own-price rejection applies when this request changes type or mode.
 	// A name-only edit must keep the locked mode and must not fail closed

@@ -74,6 +74,39 @@ func ResolvePurchaseAssignment(ctx context.Context, line AssignmentContext) Assi
 	return AssignmentContextFrom(ctx)
 }
 
+type purchaseAssignmentsKey struct{}
+
+// WithPurchaseAssignments stores one resolved assignment per variant id.
+// PurchaseAssignmentForVariant returns only that variant's entry, so a
+// pricing pass can price each line without applying one line's parent to
+// the next. A nil ctx is treated as Background. Parent ids are stored trimmed.
+func WithPurchaseAssignments(ctx context.Context, byVariant map[string]AssignmentContext) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	copied := make(map[string]AssignmentContext, len(byVariant))
+	for id, ac := range byVariant {
+		ac.ParentProductID = strings.TrimSpace(ac.ParentProductID)
+		copied[id] = ac
+	}
+	return context.WithValue(ctx, purchaseAssignmentsKey{}, copied)
+}
+
+// PurchaseAssignmentForVariant returns the assignment stored for variantID.
+// A missing map, a missing id, or a nil ctx reports ok false. It does not
+// fall back to another variant or to AssignmentContextFrom.
+func PurchaseAssignmentForVariant(ctx context.Context, variantID string) (AssignmentContext, bool) {
+	if ctx == nil || variantID == "" {
+		return AssignmentContext{}, false
+	}
+	byVariant, ok := ctx.Value(purchaseAssignmentsKey{}).(map[string]AssignmentContext)
+	if !ok {
+		return AssignmentContext{}, false
+	}
+	ac, ok := byVariant[variantID]
+	return ac, ok
+}
+
 // LinkedParentBlocksPurchase is the purchasable-axis override. A nil
 // product is not blocked here (callers already reject missing products).
 func LinkedParentBlocksPurchase(p *Product, assignment AssignmentContext) bool {

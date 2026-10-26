@@ -80,6 +80,26 @@ func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.
 	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), explode, nil
 }
 
+// RequiresLinkedParentForUpdate reads requires_linked_parent on the current
+// transaction. The repo must be bound via WithTx. Product admin calls it
+// after LockTypeAndModes when an update omits the flag, so the write uses
+// the locked row instead of the earlier FindByID snapshot.
+func (r *ProductRepo) RequiresLinkedParentForUpdate(ctx context.Context, id string) (bool, error) {
+	if r.tx == nil {
+		return false, fmt.Errorf("product_repo: requires_linked_parent lock read: transaction required")
+	}
+	const q = `SELECT requires_linked_parent FROM products WHERE id = $1 FOR UPDATE`
+	var flag bool
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&flag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, apperror.NotFound("product not found")
+	}
+	if err != nil {
+		return false, fmt.Errorf("product_repo: requires_linked_parent lock read: %w", err)
+	}
+	return flag, nil
+}
+
 func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter) bool {
 	return filter.IncludeNonActive || catalog.IncludeNonActiveProducts(ctx)
 }

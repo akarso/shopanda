@@ -145,6 +145,11 @@ func ResolveUnitPrice(ctx context.Context, src UnitPriceSources, variantID, curr
 }
 
 func resolveUnitPriceUncached(ctx context.Context, src UnitPriceSources, variantID, currency, storeID string) (shared.Money, error) {
+	// A cart recalculate stores one resolved assignment per variant. Apply
+	// only this variant's entry so a sibling line keeps its own parent.
+	if ac, ok := catalog.PurchaseAssignmentForVariant(ctx, variantID); ok {
+		ctx = catalog.WithAssignmentContext(ctx, ac)
+	}
 	if src.Prices == nil {
 		return shared.Money{}, apperror.Internal("price repository is required")
 	}

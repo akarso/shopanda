@@ -90,3 +90,21 @@ func TestLinkedParentBlocksPurchase(t *testing.T) {
 		t.Fatal("parent id must not block")
 	}
 }
+
+func TestPurchaseAssignmentForVariant_DoesNotShare(t *testing.T) {
+	ctx := catalog.WithPurchaseAssignments(context.Background(), map[string]catalog.AssignmentContext{
+		"v1": {ParentProductID: "card-a"},
+		"v2": {Deferred: true},
+	})
+	got, ok := catalog.PurchaseAssignmentForVariant(ctx, "v1")
+	if !ok || got.ParentProductID != "card-a" || got.Deferred {
+		t.Fatalf("v1 = %+v ok=%v", got, ok)
+	}
+	got, ok = catalog.PurchaseAssignmentForVariant(ctx, "v2")
+	if !ok || !got.Deferred || got.ParentProductID != "" {
+		t.Fatalf("v2 = %+v ok=%v", got, ok)
+	}
+	if _, ok := catalog.PurchaseAssignmentForVariant(ctx, "v3"); ok {
+		t.Fatal("missing variant must not fall back to another line")
+	}
+}

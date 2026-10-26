@@ -314,3 +314,251 @@ func TestService_AddItem_RequiredBundleLeafRequiresLinkedParent(t *testing.T) {
 		t.Fatalf("err = %v, want linked-parent validation for required leaf", err)
 	}
 }
+
+func flaggedSellableSnap() catalog.VisibilitySnapshot {
+	snap := sellableSnap(catalog.DefaultVisibilityAxes())
+	snap.RequiresLinkedParent = true
+	return snap
+}
+
+func TestService_UpdateItemQuantity_StampedLine_FlaggedSnapshot_EmptyRequest(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
+	pr := addItemProductStub{product: &catalog.Product{
+		ID: "prod-1", Status: catalog.StatusActive, RequiresLinkedParent: true,
+	}}
+	facts := purchasableFacts{"prod-1": flaggedSellableSnap()}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	addCtx := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{ParentProductID: "card-1"})
+	if _, err := svc.AddItem(addCtx, c.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	got, err := svc.UpdateItemQuantity(context.Background(), c.ID, "", "var-1", 2)
+	if err != nil {
+		t.Fatalf("increase with stamped line and empty request: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Quantity != 2 || got.Items[0].AssignmentParent() != "card-1" {
+		t.Fatalf("line = %+v, want qty 2 parent card-1", got.Items)
+	}
+}
+
+func TestService_ClaimGuestCart_StampedLine_FlaggedSnapshot_EmptyRequest(t *testing.T) {
+	cat := newMutableCatalog()
+	seedActiveLine(t, cat, "var-1", "prod-1")
+	seedActiveLine(t, cat, "var-2", "prod-2")
+	cat.setProduct(&catalog.Product{ID: "prod-2", Status: catalog.StatusActive, RequiresLinkedParent: true})
+
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	prices.set("var-2", "EUR", 2000)
+	flagged := flaggedSellableSnap()
+	facts := purchasableFacts{
+		"prod-1": sellableSnap(catalog.DefaultVisibilityAxes()),
+		"prod-2": flagged,
+	}
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+	ctx := context.Background()
+
+	if _, err := svc.CreateCart(ctx, "cust-1", "EUR"); err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	addCtx := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{Deferred: true})
+	for _, vid := range []string{"var-1", "var-2"} {
+		if _, err := svc.AddItem(addCtx, guest.ID, "", vid, 1, cartApp.AddItemOptions{}); err != nil {
+			t.Fatalf("AddItem %s: %v", vid, err)
+		}
+	}
+
+	merged, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	if len(merged.Items) != 2 {
+		t.Fatalf("items = %+v, want both lines kept", merged.Items)
+	}
+	for _, item := range merged.Items {
+		if item.VariantID == "var-2" && !item.AssignmentDeferred {
+			t.Fatal("claimed linked-parent line lost deferred stamp")
+		}
+	}
+}
+
+func TestService_UpdateItemQuantity_DynamicBundleLeaf_StampedLine_EmptyRequest(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("bundle-v", "EUR", 1000)
+	child, err := catalog.NewVariant("child-v", "child-1", "CHILD")
+	if err != nil {
+		t.Fatalf("NewVariant: %v", err)
+	}
+	vr := linkedParentVariantRepo{byID: map[string]*catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle-1"},
+		"child-v":  &child,
+	}}
+	pr := linkedParentProductMap{
+		"bundle-1": {ID: "bundle-1", Status: catalog.StatusActive, Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, PricingMode: catalog.PricingModeFixed},
+		"child-1":  {ID: "child-1", Status: catalog.StatusActive, Type: catalog.TypeSimple, RequiresLinkedParent: true},
+	}
+	comp, err := catalog.NewBundleComponent("bundle-1", "child-1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, linkedParentComponents{*comp}, cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	addCtx := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{Deferred: true})
+	if _, err := svc.AddItem(addCtx, c.ID, "", "bundle-v", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	got, err := svc.UpdateItemQuantity(context.Background(), c.ID, "", "bundle-v", 2)
+	if err != nil {
+		t.Fatalf("increase dynamic bundle with stamped line: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Quantity != 2 || !got.Items[0].AssignmentDeferred {
+		t.Fatalf("line = %+v, want qty 2 deferred", got.Items)
+	}
+}
+
+type linkedParentVariantRepo struct {
+	byID map[string]*catalog.Variant
+}
+
+func (r linkedParentVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return r.byID[id], nil
+}
+func (linkedParentVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (linkedParentVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
+func (linkedParentVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (r linkedParentVariantRepo) ListByProductIDs(_ context.Context, ids []string, _ int) (map[string][]catalog.Variant, error) {
+	out := make(map[string][]catalog.Variant)
+	for _, id := range ids {
+		for _, v := range r.byID {
+			if v != nil && v.ProductID == id {
+				out[id] = append(out[id], *v)
+			}
+		}
+	}
+	return out, nil
+}
+func (linkedParentVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (linkedParentVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
+func TestService_AddItem_RejectsConflictingLinkedParentAssignment(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
+	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	first := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{ParentProductID: "card-a"})
+	if _, err := svc.AddItem(first, c.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	second := catalog.WithAssignmentContext(context.Background(), catalog.AssignmentContext{ParentProductID: "card-b"})
+	_, err = svc.AddItem(second, c.ID, "", "var-1", 1, cartApp.AddItemOptions{})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), "different linked parent assignment") {
+		t.Fatalf("err = %v, want conflicting assignment", err)
+	}
+	stored, err := carts.FindByID(context.Background(), c.ID)
+	if err != nil || stored == nil || len(stored.Items) != 1 || stored.Items[0].Quantity != 1 || stored.Items[0].AssignmentParent() != "card-a" {
+		t.Fatalf("stored = %+v err=%v, want qty 1 parent card-a", stored, err)
+	}
+}
+
+func TestService_ClaimGuestCart_RejectsConflictingParents(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
+	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	ctx := context.Background()
+
+	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	parentA := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{ParentProductID: "card-a"})
+	parentB := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{ParentProductID: "card-b"})
+	if _, err := svc.AddItem(parentA, customer.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem customer: %v", err)
+	}
+	if _, err := svc.AddItem(parentB, guest.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+
+	_, err = svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), "different linked parent assignment") {
+		t.Fatalf("err = %v, want conflicting assignment", err)
+	}
+	stored, err := carts.FindByID(ctx, customer.ID)
+	if err != nil || stored == nil || len(stored.Items) != 1 || stored.Items[0].Quantity != 1 || stored.Items[0].AssignmentParent() != "card-a" {
+		t.Fatalf("customer = %+v err=%v, want qty 1 parent card-a", stored, err)
+	}
+}
+
+func TestService_ClaimGuestCart_MergesSameLinkedParent(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
+	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	ctx := context.Background()
+
+	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	parent := catalog.WithAssignmentContext(ctx, catalog.AssignmentContext{ParentProductID: "card-a"})
+	if _, err := svc.AddItem(parent, customer.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem customer: %v", err)
+	}
+	if _, err := svc.AddItem(parent, guest.ID, "", "var-1", 2, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+	merged, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	if len(merged.Items) != 1 || merged.Items[0].Quantity != 3 || merged.Items[0].AssignmentParent() != "card-a" {
+		t.Fatalf("merged = %+v, want qty 3 parent card-a", merged.Items)
+	}
+}

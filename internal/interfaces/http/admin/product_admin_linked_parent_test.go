@@ -83,6 +83,41 @@ func TestProductAdminHandler_Update_RequiresLinkedParentOmitKeeps(t *testing.T) 
 	}
 }
 
+func TestProductAdminHandler_Update_RequiresLinkedParentOmitUsesLockedRow(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Ticket", Slug: "ticket", Status: catalog.StatusDraft,
+		Type: catalog.TypeSimple, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		RequiresLinkedParent: false,
+		VisibilityModes:      catalog.DefaultVisibilityAxes(),
+	}
+	locked := true
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			cp := *p
+			updated = &cp
+			return nil
+		},
+		lockedRequiresLinkedParent: &locked,
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{
+		"name": "Ticket renamed",
+	}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || !updated.RequiresLinkedParent || updated.Name != "Ticket renamed" {
+		t.Fatalf("updated = %+v, want locked flag true", updated)
+	}
+}
+
 func TestProductAdminHandler_Update_RequiresLinkedParentSetFalse(t *testing.T) {
 	existing := &catalog.Product{
 		ID: "p1", Name: "Ticket", Slug: "ticket", Status: catalog.StatusDraft,

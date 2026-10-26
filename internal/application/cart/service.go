@@ -399,6 +399,9 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		if _, skip := dropped[item.VariantID]; skip {
 			continue
 		}
+		if assignmentsConflict(lineAssignmentFromCart(customerCart, item.VariantID), lineAssignment(item)) {
+			return nil, apperror.Validation(conflictingLinkedParentAssignmentMessage)
+		}
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
@@ -473,6 +476,9 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	}
 	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, lineQty, lineAssignmentFromCart(c, variantID)); err != nil {
 		return nil, err
+	}
+	if assignmentsConflict(lineAssignmentFromCart(c, variantID), catalog.AssignmentContextFrom(ctx)) {
+		return nil, apperror.Validation(conflictingLinkedParentAssignmentMessage)
 	}
 
 	if len(opts.Extensions) > 0 {
@@ -708,7 +714,10 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 
 	// Existing lines are repriced even after the product is archived. Add and
 	// quantity increases still use the active-only scope in ensureVariantPurchasable.
+	// Each line's resolved assignment is stored by variant so a dynamic bundle
+	// leaf check cannot reuse a sibling line's parent.
 	priceCtx := catalog.WithIncludeNonActiveProducts(ctx)
+	priceCtx = catalog.WithPurchaseAssignments(priceCtx, purchaseAssignments(ctx, c))
 	if err := s.pipeline.Execute(priceCtx, &pctx); err != nil {
 		if customer, ok := s.bundlePriceCustomerError(priceCtx, err); ok {
 			return customer
@@ -760,6 +769,28 @@ func guestLineQtyForClaim(into *domainCart.Cart, variantID string, guestQty int)
 		return guestQty, nil
 	}
 	return resultingLineQty(into, variantID, guestQty)
+}
+
+const conflictingLinkedParentAssignmentMessage = "cart item already has a different linked parent assignment"
+
+func assignmentsConflict(existing, incoming catalog.AssignmentContext) bool {
+	if existing.Empty() || incoming.Empty() {
+		return false
+	}
+	existing.ParentProductID = strings.TrimSpace(existing.ParentProductID)
+	incoming.ParentProductID = strings.TrimSpace(incoming.ParentProductID)
+	return existing.Deferred != incoming.Deferred || existing.ParentProductID != incoming.ParentProductID
+}
+
+func purchaseAssignments(ctx context.Context, c *domainCart.Cart) map[string]catalog.AssignmentContext {
+	if c == nil {
+		return map[string]catalog.AssignmentContext{}
+	}
+	out := make(map[string]catalog.AssignmentContext, len(c.Items))
+	for _, item := range c.Items {
+		out[item.VariantID] = catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item))
+	}
+	return out
 }
 
 func lineAssignment(item domainCart.Item) catalog.AssignmentContext {
@@ -819,12 +850,15 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	// BypassProductVisibility. HookCartAddItemBefore runs later and checkout
 	// never calls it, so the gate has to live here (PR-1068). Line assignment
 	// wins over the request context so claim and qty increase keep a stamp.
+	// lineCtx carries that resolved assignment into visibility, price, and
+	// leaf walks. It is not reused for another line.
 	assignment := catalog.ResolvePurchaseAssignment(ctx, line)
+	lineCtx := catalog.WithAssignmentContext(ctx, assignment)
 	if catalog.LinkedParentBlocksPurchase(p, assignment) {
 		return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
 	}
 	if p.Type == catalog.TypeBundle {
-		if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.unitPrices.Components, p.ID, assignment); err != nil {
+		if err := catalogapp.RejectRequiredLinkedParentLeaves(lineCtx, s.products, s.unitPrices.Components, p.ID, assignment); err != nil {
 			return err
 		}
 	}
@@ -833,29 +867,29 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	// axes still apply; the price gate is ResolveUnitPrice in the cart currency
 	// and store.
 	if p.Type == catalog.TypeBundle && p.PricingMode == catalog.PricingModeDynamic {
-		if err := s.allowDynamicBundlePurchase(ctx, p); err != nil {
+		if err := s.allowDynamicBundlePurchase(lineCtx, p, assignment); err != nil {
 			return err
 		}
-		if err := s.requireDynamicBundlePrice(ctx, variantID, currency); err != nil {
+		if err := s.requireDynamicBundlePrice(lineCtx, variantID, currency); err != nil {
 			return err
 		}
-		return appinventory.RejectQtyAboveAvailable(ctx, s.stockSources(), p.ID, variantID, lineQty)
+		return appinventory.RejectQtyAboveAvailable(lineCtx, s.stockSources(), p.ID, variantID, lineQty)
 	}
-	ok, err := catalog.AllowWithFacts(ctx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	ok, err := catalog.AllowWithFacts(lineCtx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
 	}
 	if !ok {
 		return apperror.Validation("product is not currently purchasable")
 	}
-	return appinventory.RejectQtyAboveAvailable(ctx, s.stockSources(), p.ID, variantID, lineQty)
+	return appinventory.RejectQtyAboveAvailable(lineCtx, s.stockSources(), p.ID, variantID, lineQty)
 }
 
 // allowDynamicBundlePurchase applies the purchasable axis without the listing
 // HasPrice bit. Status, stock, store assignment, category, and a forced hidden
 // mode still deny. A forced visible mode still allows the axis; ResolveUnitPrice
 // remains the price gate.
-func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Product) error {
+func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Product, assignment catalog.AssignmentContext) error {
 	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
 		return nil
 	}
@@ -870,7 +904,7 @@ func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Pro
 	inputs := snap.Inputs
 	inputs.HasPrice = true
 	inputs.RequiresLinkedParent = snap.RequiresLinkedParent
-	inputs.Assignment = catalog.ResolvePurchaseAssignment(ctx, catalog.AssignmentContextFrom(ctx))
+	inputs.Assignment = assignment
 	if !snap.Modes.Resolve(snap.Status, inputs, s.visibilityOpts).Purchasable {
 		return apperror.Validation("product is not currently purchasable")
 	}

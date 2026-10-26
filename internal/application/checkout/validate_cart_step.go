@@ -71,16 +71,18 @@ func (s *ValidateCartStep) Name() string { return "validate_cart" }
 // in the cart and rejects the first line (in cart order) whose product is not
 // purchasable.
 func (s *ValidateCartStep) checkPurchasableAxis(ctx context.Context, cctx *Context, variants map[string]*catalog.Variant, productIDs []string) error {
-	allowed, err := catalog.FilterIDsWithFacts(ctx, productIDs, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
+		return nil
+	}
+	byID, err := s.visibilityFacts.LoadMany(ctx, productIDs)
 	if err != nil {
 		return fmt.Errorf("validate_cart: purchasability: %w", err)
 	}
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, id := range allowed {
-		allowedSet[id] = struct{}{}
-	}
 	for _, item := range cctx.Cart.Items {
-		if _, ok := allowedSet[variants[item.VariantID].ProductID]; !ok {
+		productID := variants[item.VariantID].ProductID
+		snap, ok := byID[productID]
+		assignment := catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item))
+		if !ok || !snap.Allows(catalog.VisibilitySurfacePurchasable, assignment, s.visibilityOpts) {
 			return apperror.Validation(fmt.Sprintf(
 				"validate_cart: product for variant %s is not currently purchasable", item.VariantID,
 			))
@@ -194,7 +196,7 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 		return err
 	}
 	for _, item := range cctx.Cart.Items {
-		if err := appinventory.RejectQtyAboveAvailable(ctx, s.qtySources(), variants[item.VariantID].ProductID, item.VariantID, item.Quantity); err != nil {
+		if err := appinventory.RejectQtyAboveAvailable(linePurchaseContext(ctx, item), s.qtySources(), variants[item.VariantID].ProductID, item.VariantID, item.Quantity); err != nil {
 			return err
 		}
 	}
@@ -213,6 +215,12 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	cctx.SetMeta("validated", true)
 	return nil
+}
+
+// linePurchaseContext carries this line's resolved assignment. Callers must
+// not reuse the result for a different line.
+func linePurchaseContext(ctx context.Context, item cart.Item) context.Context {
+	return catalog.WithAssignmentContext(ctx, catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item)))
 }
 
 func lineAssignment(item cart.Item) catalog.AssignmentContext {
