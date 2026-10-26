@@ -128,7 +128,9 @@ func (s *LinkedEligibilityService) AddParent(ctx context.Context, p *catalog.Lin
 		return fmt.Errorf("linked eligibility: product repository does not support row locks")
 	}
 
-	ids := []string{p.ChildProductID, p.ParentProductID}
+	// Fold case before sorting. Postgres locks the UUID row, so two
+	// spellings of the same pair must take one lock order.
+	ids := []string{strings.ToLower(p.ChildProductID), strings.ToLower(p.ParentProductID)}
 	sort.Strings(ids)
 	for _, id := range ids {
 		if _, err := locker.LockForUpdate(ctx, id); err != nil {
@@ -267,7 +269,7 @@ func (s *LinkedEligibilityService) IsEligible(ctx context.Context, childID, pare
 	if parentID == "" {
 		return false, apperror.Validation("parent product id must not be empty")
 	}
-	if childID == parentID {
+	if strings.EqualFold(childID, parentID) {
 		return false, nil
 	}
 	ok, err := s.rules.IsEligible(ctx, childID, parentID)

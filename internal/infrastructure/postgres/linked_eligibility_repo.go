@@ -270,13 +270,18 @@ func (r *LinkedEligibilityRepo) IsEligible(ctx context.Context, childProductID, 
 	if childProductID == parentProductID {
 		return false, nil
 	}
-	const q = `SELECT EXISTS (
-		SELECT 1 FROM linked_eligible_parents
-		WHERE child_product_id = $1 AND parent_product_id = $2
-	) OR EXISTS (
-		SELECT 1 FROM linked_eligible_categories lec
-		JOIN product_categories pc ON pc.category_id = lec.category_id
-		WHERE lec.child_product_id = $1 AND pc.product_id = $2
+	// Compare UUID values, not the argument strings. Postgres treats
+	// case and other spellings of one UUID as equal, so a product that
+	// sits in one of its own eligible categories must not match itself.
+	const q = `SELECT $1::uuid <> $2::uuid AND (
+		EXISTS (
+			SELECT 1 FROM linked_eligible_parents
+			WHERE child_product_id = $1 AND parent_product_id = $2
+		) OR EXISTS (
+			SELECT 1 FROM linked_eligible_categories lec
+			JOIN product_categories pc ON pc.category_id = lec.category_id
+			WHERE lec.child_product_id = $1 AND pc.product_id = $2
+		)
 	)`
 	var ok bool
 	if err := r.queryer().QueryRowContext(ctx, q, childProductID, parentProductID).Scan(&ok); err != nil {

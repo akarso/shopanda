@@ -284,6 +284,74 @@ func TestLinkedEligibilityRepo_IsEligible_OR(t *testing.T) {
 	}
 }
 
+func TestLinkedEligibilityRepo_IsEligible_CaseDifferingSelfInOwnCategory(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	categoryRepo, err := postgres.NewCategoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewCategoryRepo: %v", err)
+	}
+	repo, err := postgres.NewLinkedEligibilityRepo(db)
+	if err != nil {
+		t.Fatalf("NewLinkedEligibilityRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	child := mustNewProduct(t, "Self Card", "self-card-"+id.New())
+	if err := productRepo.Create(ctx, &child); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	other := mustNewProduct(t, "Other Card", "other-card-"+id.New())
+	if err := productRepo.Create(ctx, &other); err != nil {
+		t.Fatalf("create other: %v", err)
+	}
+	cat := mustNewCategory(t, "Own Cards", "own-cards-"+id.New())
+	if err := categoryRepo.Create(ctx, &cat); err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	if err := productRepo.AssignCategory(ctx, child.ID, cat.ID); err != nil {
+		t.Fatalf("AssignCategory child: %v", err)
+	}
+	if err := productRepo.AssignCategory(ctx, other.ID, cat.ID); err != nil {
+		t.Fatalf("AssignCategory other: %v", err)
+	}
+	rule, err := catalog.NewLinkedEligibleCategory(child.ID, cat.ID)
+	if err != nil {
+		t.Fatalf("NewLinkedEligibleCategory: %v", err)
+	}
+	if err := repo.InsertCategory(ctx, rule); err != nil {
+		t.Fatalf("InsertCategory: %v", err)
+	}
+
+	lower := strings.ToLower(child.ID)
+	upper := strings.ToUpper(child.ID)
+	if lower == upper {
+		t.Fatal("fixture product id has no case distinction")
+	}
+	for _, pair := range [][2]string{{lower, upper}, {upper, lower}} {
+		ok, err := repo.IsEligible(ctx, pair[0], pair[1])
+		if err != nil {
+			t.Fatalf("IsEligible %s %s: %v", pair[0], pair[1], err)
+		}
+		if ok {
+			t.Fatalf("case-differing self %s / %s must not be eligible", pair[0], pair[1])
+		}
+	}
+
+	ok, err := repo.IsEligible(ctx, lower, strings.ToUpper(other.ID))
+	if err != nil {
+		t.Fatalf("IsEligible other: %v", err)
+	}
+	if !ok {
+		t.Fatal("another product in the eligible category must stay eligible")
+	}
+}
+
 func TestLinkedEligibilityRepo_WithTx_RollbackInvisible(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

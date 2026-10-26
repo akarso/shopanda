@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
@@ -164,6 +165,48 @@ func TestLinkedEligibilityService_AddParent_LocksBeforeInsert(t *testing.T) {
 	for i := range want {
 		if calls[i] != want[i] {
 			t.Fatalf("calls = %v, want %v", calls, want)
+		}
+	}
+}
+
+func TestLinkedEligibilityService_AddParent_LockOrderIgnoresUUIDCase(t *testing.T) {
+	const (
+		childLower  = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		parentLower = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	)
+	childUpper := strings.ToUpper(childLower)
+	parentUpper := strings.ToUpper(parentLower)
+	products := &stubProductRepo{byID: map[string]*catalog.Product{}}
+	for _, id := range []string{childLower, childUpper, parentLower, parentUpper} {
+		products.byID[id] = &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive}
+	}
+
+	// Unnormalized ASCII sort locks these spellings in opposite orders:
+	// ('B' < 'a') vs ('A' < 'b'). Both must lock the lowercase pair.
+	spellings := [][2]string{
+		{childLower, parentUpper},
+		{childUpper, parentLower},
+	}
+	for _, sp := range spellings {
+		var calls []string
+		products.calls = &calls
+		rules := &stubLinkedEligibilityRepo{calls: &calls}
+		svc := newLinkedEligibilityService(products, nil, rules)
+		p, err := catalog.NewLinkedEligibleParent(sp[0], sp[1])
+		if err != nil {
+			t.Fatalf("NewLinkedEligibleParent: %v", err)
+		}
+		if err := svc.AddParent(context.Background(), p); err != nil {
+			t.Fatalf("AddParent %s %s: %v", sp[0], sp[1], err)
+		}
+		want := []string{"lock:" + childLower, "lock:" + parentLower, "insert-parent"}
+		if len(calls) != len(want) {
+			t.Fatalf("calls = %v, want %v", calls, want)
+		}
+		for i := range want {
+			if calls[i] != want[i] {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
 		}
 	}
 }
@@ -479,6 +522,18 @@ func TestLinkedEligibilityService_IsEligible_SelfAndEmpty(t *testing.T) {
 	}
 	if rules.eligibleChild != "" {
 		t.Fatal("repo must not be called for self")
+	}
+
+	const selfID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	ok, err = svc.IsEligible(context.Background(), strings.ToLower(selfID), strings.ToUpper(selfID))
+	if err != nil {
+		t.Fatalf("case-differing self: %v", err)
+	}
+	if ok {
+		t.Fatal("case-differing self must not be eligible")
+	}
+	if rules.eligibleChild != "" {
+		t.Fatal("repo must not be called for case-differing self")
 	}
 	if _, err := svc.IsEligible(context.Background(), "", "p1"); !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("empty child = %v, want validation", err)
