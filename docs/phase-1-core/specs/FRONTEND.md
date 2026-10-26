@@ -44,6 +44,7 @@ Location:
 
 ```plaintext
 /themes/default
+/themes/_starter
 ```
 
 ---
@@ -52,8 +53,10 @@ Structure:
 
 ```plaintext
 /templates
-/assets
+/static/css
+/static/js
 theme.yaml
+layout.yaml
 ```
 
 ---
@@ -99,13 +102,16 @@ Example:
 
 * vanilla JS
 * progressive enhancement
+* vendored **htmx 1.9.12** in `themes/default/static/js/htmx.min.js` (do not chase 2.x)
 
 ---
 
-### Optional:
+### Optional (theme author's choice, not core):
 
-* Svelte (or similar)
-* no framework lock-in
+* Alpine or similar for local UI state
+* Headless: any stack; see [HEADLESS.md](../../../guides/HEADLESS.md) and `examples/headless-vanilla`
+
+Forbidden in core: React/Vue/Angular storefront, npm build step
 
 ---
 

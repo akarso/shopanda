@@ -34,7 +34,7 @@ type StorefrontAccountReturnsPageData struct {
 
 func (h *StorefrontHandler) AccountReturns() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.returns == nil || !h.engine.HasTemplate("account_returns") {
+		if h.returns == nil || !h.hasTemplate("account_returns") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -53,7 +53,7 @@ func (h *StorefrontHandler) AccountReturns() http.HandlerFunc {
 		}
 		h.renderPage(w, "account_returns", StorefrontAccountReturnsPageData{
 			Layout:       h.layoutDataBestEffort(r),
-			Theme:        h.engine.Theme(),
+			Theme:        h.themeMeta(),
 			AccountNav:   storefrontAccountNav("returns"),
 			CSRFToken:    httpshared.CSRFToken(r),
 			Returns:      rows,
@@ -199,7 +199,7 @@ func (h *StorefrontHandler) buildAccountOrderDetailPage(r *http.Request, o *orde
 
 	page := StorefrontAccountOrderDetailPageData{
 		Layout:     h.layoutDataBestEffort(r),
-		Theme:      h.engine.Theme(),
+		Theme:      h.themeMeta(),
 		AccountNav: storefrontAccountNav("orders"),
 		CSRFToken:  httpshared.CSRFToken(r),
 		OrderID:    o.ID,

@@ -527,13 +527,13 @@ func storefrontClearSecurityVerifyCookie(w http.ResponseWriter, r *http.Request)
 
 func (h *StorefrontHandler) AccountVerifyEmail() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || h.security == nil || !h.engine.HasTemplate("account_verify_email") {
+		if h.auth == nil || h.security == nil || !h.hasTemplate("account_verify_email") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
 		page := StorefrontAccountEmailVerificationPageData{
 			Layout:      h.layoutDataBestEffort(r),
-			Theme:       h.engine.Theme(),
+			Theme:       h.themeMeta(),
 			ContinueURL: storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), storefrontEmailVerificationDefaultRedirect),
 		}
 		if token := strings.TrimSpace(r.URL.Query().Get("email_token")); token != "" {
@@ -589,7 +589,7 @@ func (h *StorefrontHandler) requireStorefrontSecurityVerification(w http.Respons
 
 func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || h.security == nil || !h.engine.HasTemplate("account_security_verify") {
+		if h.auth == nil || h.security == nil || !h.hasTemplate("account_security_verify") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -607,7 +607,7 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 		}
 		page := StorefrontAccountSecurityVerifyPageData{
 			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.engine.Theme(),
+			Theme:      h.themeMeta(),
 			CSRFToken:  httpshared.CSRFToken(r),
 			RedirectTo: storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/security"),
 			Email:      profile.Email,

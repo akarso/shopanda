@@ -113,7 +113,7 @@ type storefrontMiniCartData struct {
 
 func (h *StorefrontHandler) Cart() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.engine.HasTemplate("cart") {
+		if !h.hasTemplate("cart") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -336,7 +336,7 @@ func (h *StorefrontHandler) buildCartPageResponse(r *http.Request) (StorefrontCa
 func (h *StorefrontHandler) buildCartPageData(r *http.Request, layout StorefrontLayoutData, currentCart *cart.Cart) (StorefrontCartPageData, error) {
 	page := StorefrontCartPageData{
 		Layout:       layout,
-		Theme:        h.engine.Theme(),
+		Theme:        h.themeMeta(),
 		EmptyMessage: "Your cart is empty.",
 	}
 	if currentCart == nil || len(currentCart.Items) == 0 {

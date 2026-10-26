@@ -103,15 +103,17 @@ Optional:
 /themes/
   default/
     templates/
-    assets/
+    static/
       js/
-        core.js
-        htmx.min.js (optional)
+        htmx.min.js   # vendored 1.9.12
       css/
-    blocks/
-  admin/
-    templates/
-    assets/
+        style.css
+        custom.css
+    theme.yaml
+    layout.yaml
+  _starter/
+    theme.yaml        # parent: ../default
+    static/css/custom.css
 ```
 
 ---

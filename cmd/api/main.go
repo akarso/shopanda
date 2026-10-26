@@ -165,6 +165,8 @@ func run() error {
 			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
 		case "cache:purge-url":
 			return runCachePurgeURL(os.Stdout, cfg, log, os.Args[2:])
+		case "theme:init":
+			return runThemeInit(cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -249,7 +251,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		defer rt.rateLimitClose()
 	}
 
-	handler, err := buildServeHandler(cfg, log, rt, conn)
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+	handler, err := buildServeHandler(cfg, log, rt, conn, serveCtx)
 	if err != nil {
 		shutdownTracing()
 		rbac.UnbindRuntime()
@@ -745,6 +749,7 @@ Commands:
   schedule:enable <n>  Re-enable a scheduled task
   schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
+  theme:init <name>    Create a child theme under themes/<name>
   help                 Show this help message
 `))
 }
