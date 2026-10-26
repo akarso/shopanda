@@ -24,6 +24,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Theme Slots & Inheritance](THEME_SLOTS.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
+- [Headless storefront](#headless-storefront)
 - [Jobs admin API](#jobs-admin-api)
 - [Cache admin API](#cache-admin-api)
 - [Full-page cache](#full-page-cache)
@@ -687,6 +688,20 @@ curl http://localhost:8080/api/v1/admin/orders \
 ### Admin UI note
 
 The embedded admin SPA stores its JWT in browser local storage and sends it as a bearer token on API requests. Extension work against admin APIs should continue to use the same bearer-token model rather than inventing a separate admin auth flow.
+
+## Headless storefront
+
+A custom frontend (vanilla, Next.js, or anything else) is a REST client. Shopanda does not ship a React/Zustand storefront.
+
+See [Headless storefront](HEADLESS.md) and the [`examples/headless-vanilla`](../../examples/headless-vanilla) primer.
+
+Practical rules:
+
+- `frontend.enabled: false` (or `mode: headless`) — API only
+- Product/category GET (and nested `/variants`, `/reviews`) accept **id or slug**
+- Storefront product/category JSON keeps Go names by default; `?fields=snake` or `X-Shopanda-Field-Names: snake` opt in
+- Set `http.cors.allowed_origins` only if the browser talks to the API cross-origin; prefer a same-origin proxy. `*` is anonymous (no credentials). `allow_credentials` needs an explicit origin list.
+- Ignore `/fragments/*` (SSR full-page-cache holes)
 
 ## Jobs admin API
 

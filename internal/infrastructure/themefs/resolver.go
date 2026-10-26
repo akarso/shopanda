@@ -71,6 +71,7 @@ func resolveThemeTemplates(themeDir, boundary string, visited map[string]struct{
 	if err := overlayLayoutFile(absDir, &merged); err != nil {
 		return theme.ResolvedTemplates{}, err
 	}
+	OverlayStaticRoot(&merged, absDir)
 	return merged, nil
 }
 

@@ -92,8 +92,19 @@ func (h *ProductHandler) List() http.HandlerFunc {
 			ctx.Meta[k] = v
 		}
 
-		httpshared.JSON(w, http.StatusOK, listingResponse(ctx))
+		httpshared.JSON(w, http.StatusOK, listingResponse(ctx, wantSnakeFieldNames(r)))
 	}
+}
+
+func findProductByIDOrSlug(ctx context.Context, repo catalog.ProductRepository, key string) (*catalog.Product, error) {
+	product, err := repo.FindByID(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if product != nil {
+		return product, nil
+	}
+	return repo.FindBySlug(ctx, key)
 }
 
 // Get handles GET /api/v1/products/{id}.
@@ -105,7 +116,7 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		product, err := h.repo.FindByID(r.Context(), id)
+		product, err := findProductByIDOrSlug(r.Context(), h.repo, id)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -144,26 +155,7 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 
 		h.overlayProductTranslation(r.Context(), ctx.Product)
 
-		httpshared.JSON(w, http.StatusOK, productResponse(ctx))
-	}
-}
-
-// productResponse builds the response body for a single product.
-func productResponse(ctx *composition.ProductContext) map[string]interface{} {
-	return map[string]interface{}{
-		"product": ctx.Product,
-		"blocks":  ctx.Blocks,
-		"meta":    ctx.Meta,
-	}
-}
-
-// listingResponse builds the response body for a product listing.
-func listingResponse(ctx *composition.ListingContext) map[string]interface{} {
-	return map[string]interface{}{
-		"products": ctx.Products,
-		"blocks":   ctx.Blocks,
-		"filters":  ctx.Filters,
-		"meta":     ctx.Meta,
+		httpshared.JSON(w, http.StatusOK, productResponse(ctx, wantSnakeFieldNames(r)))
 	}
 }
 

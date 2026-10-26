@@ -59,7 +59,7 @@ func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		if !h.engine.HasTemplate("page") {
+		if !h.hasTemplate("page") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -76,7 +76,7 @@ func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
 		cacheapp.AddPageTags(r.Context(), tags...)
 		data := StorefrontCMSPageData{
 			Layout:  h.layoutForCacheablePage(r, nil),
-			Theme:   h.engine.Theme(),
+			Theme:   h.themeMeta(),
 			Title:   page.Title(),
 			Content: cms.SanitizeHTML(page.Content()),
 			Blocks:  blocks,

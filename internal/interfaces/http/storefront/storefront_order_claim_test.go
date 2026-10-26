@@ -478,6 +478,67 @@ func TestStorefrontHandler_AccountOrdersClaim_PostInvalidToken(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_ClaimOrderSearch_JSON(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{}
+	claimSvc := orderApp.NewClaimService(repo)
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatal(err)
+	}
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(claimSvc).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(`{"contact_email":"guest@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if emailer.lastToken == "" {
+		t.Fatal("expected claim email for JSON body")
+	}
+}
+
+func TestStorefrontHandler_ClaimRegister_JSON(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{}
+	linker := &storefrontOrderLinkerStub{customerID: "cust-123", token: "jwt-token"}
+	claimSvc := orderApp.NewClaimService(repo)
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(claimSvc).
+		WithOrderClaimEmailer(emailer).
+		WithOrderLinker(linker).
+		WithAccountSecurity("test-secret", time.Minute)
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatal(err)
+	}
+
+	searchReq := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(`{"contact_email":"guest@example.com"}`))
+	searchReq.Header.Set("Content-Type", "application/json")
+	searchRec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(searchRec, searchReq)
+	if searchRec.Code != http.StatusOK || emailer.lastToken == "" {
+		t.Fatalf("search status=%d token=%q", searchRec.Code, emailer.lastToken)
+	}
+
+	body := `{"order_id":"` + o.ID + `","claim_token":"` + emailer.lastToken + `","email":"guest@example.com","password":"SecurePass123","first_name":"Jane","last_name":"Doe"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ClaimLink().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !linker.called {
+		t.Fatal("expected linker for JSON claim-register")
+	}
+}
+
 func mustNewStorefrontGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {
 	t.Helper()
 	price := shared.MustNewMoney(1000, "EUR")

@@ -21,6 +21,7 @@ import (
 
 type mockProductRepo struct {
 	findByIDFn       func(ctx context.Context, id string) (*catalog.Product, error)
+	findBySlugFn     func(ctx context.Context, slug string) (*catalog.Product, error)
 	listFn           func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	findByCategoryFn func(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error)
 }
@@ -30,6 +31,9 @@ func (m *mockProductRepo) FindByID(ctx context.Context, id string) (*catalog.Pro
 }
 
 func (m *mockProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
+	if m.findBySlugFn != nil {
+		return m.findBySlugFn(ctx, slug)
+	}
 	return nil, nil
 }
 
@@ -254,6 +258,63 @@ func TestProductHandler_Get_OK(t *testing.T) {
 	product := data["product"].(map[string]interface{})
 	if product["ID"] != "p1" {
 		t.Errorf("product ID = %v, want p1", product["ID"])
+	}
+}
+
+func TestProductHandler_Get_BySlug(t *testing.T) {
+	repo := &mockProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return nil, nil
+		},
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget"}, nil
+			}
+			return nil, nil
+		},
+	}
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := storefront.NewProductHandler(repo, pdp, plp, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products/widget", nil)
+	newRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := parseBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	product := data["product"].(map[string]interface{})
+	if product["ID"] != "p1" || product["Slug"] != "widget" {
+		t.Errorf("product = %#v", product)
+	}
+}
+
+func TestProductHandler_Get_SnakeFieldNames(t *testing.T) {
+	repo := &mockProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+		},
+	}
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := storefront.NewProductHandler(repo, pdp, plp, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products/p1?fields=snake", nil)
+	newRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := parseBody(t, rec)
+	product := body["data"].(map[string]interface{})["product"].(map[string]interface{})
+	if product["id"] != "p1" || product["name"] != "Widget" {
+		t.Fatalf("snake product = %#v", product)
+	}
+	if _, ok := product["pricing_mode"]; ok {
+		t.Fatal("snake product must not leak pricing_mode")
 	}
 }
 

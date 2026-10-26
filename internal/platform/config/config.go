@@ -187,6 +187,14 @@ type HTTPConfig struct {
 	MaxBodyBytes int64 `yaml:"max_body_bytes"`
 	// MediaMaxBodyBytes is the body cap for admin media upload routes (bytes).
 	MediaMaxBodyBytes int64 `yaml:"media_max_body_bytes"`
+	// CORS allowlist for browser storefronts on another origin. Empty = no CORS headers.
+	CORS CORSConfig `yaml:"cors"`
+}
+
+// CORSConfig is an optional browser CORS allowlist for storefront API paths.
+type CORSConfig struct {
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
 }
 
 const (
@@ -652,6 +660,16 @@ type FrontendConfig struct {
 	StrictSlotMarkers bool   `yaml:"strict_slot_markers"`
 }
 
+// StorefrontHTML reports whether the built-in SSR storefront should be mounted.
+// `frontend.enabled` is the real gate; `mode: headless` skips HTML even when
+// enabled is true so the unused mode key is not a lie.
+func (f FrontendConfig) StorefrontHTML() bool {
+	if !f.Enabled {
+		return false
+	}
+	return !strings.EqualFold(strings.TrimSpace(f.Mode), "headless")
+}
+
 type CDNConfig struct {
 	BaseURL string `yaml:"base_url"`
 }
@@ -923,6 +941,18 @@ func applyEnv(cfg *Config) {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			cfg.HTTP.MaxBodyBytes = n
 		}
+	}
+	if v := os.Getenv("SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS"); v != "" {
+		cfg.HTTP.CORS.AllowedOrigins = nil
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				cfg.HTTP.CORS.AllowedOrigins = append(cfg.HTTP.CORS.AllowedOrigins, part)
+			}
+		}
+	}
+	if v := os.Getenv("SHOPANDA_HTTP_CORS_ALLOW_CREDENTIALS"); v != "" {
+		cfg.HTTP.CORS.AllowCredentials = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -1371,6 +1401,8 @@ func flatten(cfg *Config) map[string]string {
 	m["server.public_base_url"] = cfg.Server.PublicBaseURL
 	m["http.max_body_bytes"] = strconv.FormatInt(cfg.HTTP.MaxBodyBytes, 10)
 	m["http.media_max_body_bytes"] = strconv.FormatInt(cfg.HTTP.MediaMaxBodyBytes, 10)
+	m["http.cors.allowed_origins"] = strings.Join(cfg.HTTP.CORS.AllowedOrigins, ",")
+	m["http.cors.allow_credentials"] = strconv.FormatBool(cfg.HTTP.CORS.AllowCredentials)
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User

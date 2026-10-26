@@ -1564,6 +1564,27 @@ func TestParseDotEnvLine(t *testing.T) {
 	}
 }
 
+func TestFrontendConfig_StorefrontHTML(t *testing.T) {
+	cases := []struct {
+		enabled bool
+		mode    string
+		want    bool
+	}{
+		{false, "ssr", false},
+		{true, "ssr", true},
+		{true, "", true},
+		{true, "headless", false},
+		{true, "HEADLESS", false},
+		{false, "headless", false},
+	}
+	for _, tc := range cases {
+		got := FrontendConfig{Enabled: tc.enabled, Mode: tc.mode}.StorefrontHTML()
+		if got != tc.want {
+			t.Fatalf("enabled=%v mode=%q StorefrontHTML()=%v, want %v", tc.enabled, tc.mode, got, tc.want)
+		}
+	}
+}
+
 func TestLoad_FrontendStrictSlotMarkers_EnvOverlay(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")

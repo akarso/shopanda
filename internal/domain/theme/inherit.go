@@ -12,6 +12,8 @@ type ResolvedTemplates struct {
 	PartialFiles map[string]string
 	PageFiles    map[string]string
 	Layout       LayoutConfig
+	// StaticRoots are theme static/ directories, child first then parents.
+	StaticRoots []string
 }
 
 // NewResolvedTemplates creates an empty resolved template set.

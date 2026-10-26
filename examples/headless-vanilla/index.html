@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shopanda headless primer</title>
+  <style>
+    body { font-family: sans-serif; max-width: 42rem; margin: 2rem auto; line-height: 1.4; }
+    label, input, button { display: block; margin: 0.4rem 0; }
+    input { width: 100%; padding: 0.4rem; }
+    pre { background: #f4f4f4; padding: 0.75rem; overflow: auto; }
+    section { margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Shopanda headless primer</h1>
+  <p>Vanilla <code>fetch</code> against storefront REST. No Node.</p>
+
+  <section>
+    <label for="base">API base</label>
+    <input id="base" value="http://127.0.0.1:8080">
+    <label for="slug">Product id or slug</label>
+    <input id="slug" value="usb-c-cable">
+    <button id="load-product" type="button">Load product</button>
+  </section>
+
+  <section>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <button id="login" type="button">Login</button>
+    <button id="addresses" type="button">List addresses</button>
+  </section>
+
+  <section>
+    <button id="add-cart" type="button">Add first variant to new cart</button>
+  </section>
+
+  <pre id="out">Ready.</pre>
+  <script src="./app.js"></script>
+</body>
+</html>
