@@ -12,15 +12,31 @@ var ErrVisibilityScanBudget = errors.New("catalog: visibility scan budget exhaus
 
 // VisibilitySnapshot is status + modes + AutoBasis facts for one product
 // (PR-1057). Enough to resolve axes without loading the full Product row.
+// RequiresLinkedParent is stored beside Inputs and copied onto them at
+// resolve time (PR-1068). It is not an AutoBasis fact.
 type VisibilitySnapshot struct {
-	Status Status
-	Modes  VisibilityAxes
-	Inputs VisibilityInputs
+	Status               Status
+	Modes                VisibilityAxes
+	Inputs               VisibilityInputs
+	RequiresLinkedParent bool
 }
 
-// Resolve applies modes and inputs under opts.
+// Resolve applies modes and inputs under opts. RequiresLinkedParent is
+// copied from the snapshot onto inputs so a stale input flag cannot
+// disagree with the row. Assignment already on Inputs is left as-is;
+// facts filters set it from AssignmentContextFrom before calling Resolve.
 func (s VisibilitySnapshot) Resolve(opts VisibilityOptions) Visibility {
-	return s.Modes.Resolve(s.Status, s.Inputs, opts)
+	in := s.Inputs
+	in.RequiresLinkedParent = s.RequiresLinkedParent
+	return s.Modes.Resolve(s.Status, in, opts)
+}
+
+// resolveForRequest copies the request assignment context, then resolves.
+// Used by AllowWithFacts and the facts filters so the purchasable gate
+// sees the same context cart and checkout read.
+func resolveForRequest(ctx context.Context, snap VisibilitySnapshot, opts VisibilityOptions) Visibility {
+	snap.Inputs.Assignment = AssignmentContextFrom(ctx)
+	return snap.Resolve(opts)
 }
 
 // VisibilityFactsSource loads visibility snapshots for products (PR-1057).
@@ -69,7 +85,7 @@ func AllowWithFacts(
 	if !ok {
 		return false, nil
 	}
-	return snap.Resolve(opts).AllowedOn(surface), nil
+	return resolveForRequest(ctx, snap, opts).AllowedOn(surface), nil
 }
 
 // FilterWithFacts keeps products allowed on surface. Nil facts passes all
@@ -104,7 +120,7 @@ func FilterWithFacts(
 		if !ok {
 			continue
 		}
-		if snap.Resolve(opts).AllowedOn(surface) {
+		if resolveForRequest(ctx, snap, opts).AllowedOn(surface) {
 			out = append(out, products[i])
 		}
 	}
@@ -142,7 +158,7 @@ func FilterIDsWithFacts(
 		if !ok {
 			continue
 		}
-		if snap.Resolve(opts).AllowedOn(surface) {
+		if resolveForRequest(ctx, snap, opts).AllowedOn(surface) {
 			out = append(out, id)
 		}
 	}
@@ -287,7 +303,7 @@ func ListVisiblePage(
 		for i := range batch {
 			resumeAt = dbOffset + i + 1
 			snap, ok := byID[batch[i].ID]
-			if !ok || !snap.Resolve(opts).AllowedOn(surface) {
+			if !ok || !resolveForRequest(ctx, snap, opts).AllowedOn(surface) {
 				continue
 			}
 			if skipped < visibleSkip {

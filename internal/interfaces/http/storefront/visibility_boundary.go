@@ -55,15 +55,15 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "GET", Path: "/fragments/search-suggest", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: pr1057, Note: "HTML search suggest fragment"},
 		{Method: "GET", Path: "/fragments/recently-viewed", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1057, Note: "recently viewed cards"},
 
-		// Purchasability mutations (deferred to PR-1058)
-		{Method: "POST", Path: "/api/v1/carts/{cartId}/items", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "AddItem"},
-		{Method: "PUT", Path: "/api/v1/carts/{cartId}/items/{variantId}", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "qty increase — same purchasable gate as AddItem"},
-		{Method: "POST", Path: "/api/v1/checkout", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "checkout start — lines must remain purchasable"},
-		{Method: "POST", Path: "/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML add to cart"},
-		{Method: "POST", Path: "/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML cart qty update"},
-		{Method: "POST", Path: "/fragments/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment add to cart"},
-		{Method: "POST", Path: "/fragments/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment cart qty update"},
-		{Method: "POST", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML confirm calls StartCheckout directly"},
+		// Purchasability mutations (PR-1058 axis + PR-1068 linked-parent hard check)
+		{Method: "POST", Path: "/api/v1/carts/{cartId}/items", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "AddItem — PR-1068 linked-parent gate runs even when visibility enforce is off"},
+		{Method: "PUT", Path: "/api/v1/carts/{cartId}/items/{variantId}", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "qty increase — same purchasable + PR-1068 gate as AddItem"},
+		{Method: "POST", Path: "/api/v1/checkout", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "checkout start — PR-1068 hard check independent of catalog.visibility.enforce"},
+		{Method: "POST", Path: "/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML add to cart — PR-1068 hard check"},
+		{Method: "POST", Path: "/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML cart qty update — PR-1068 hard check"},
+		{Method: "POST", Path: "/fragments/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment add to cart — PR-1068 hard check"},
+		{Method: "POST", Path: "/fragments/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment cart qty update — PR-1068 hard check"},
+		{Method: "POST", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML confirm — PR-1068 hard check at StartCheckout"},
 
 		// Already-in-cart / checkout UI display — no discovery axis gate (1058 may re-check)
 		{Method: "GET", Path: "/api/v1/carts/{cartId}", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "cart GET shows line products already in cart"},

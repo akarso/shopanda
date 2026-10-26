@@ -832,3 +832,37 @@ func TestProductRepo_Update_InvalidVisibilityMode(t *testing.T) {
 		t.Fatalf("Update invalid mode error = %v, want quoted value", err)
 	}
 }
+
+func TestProductRepo_RequiresLinkedParentRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	p := mustNewProduct(t, "Linked Ticket", "linked-ticket")
+	if p.RequiresLinkedParent {
+		t.Fatal("NewProduct flag = true, want false")
+	}
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.FindByID(ctx, p.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID: got=%v err=%v", got, err)
+	}
+	if got.RequiresLinkedParent {
+		t.Fatal("stored flag = true, want false when omitted")
+	}
+
+	p.RequiresLinkedParent = true
+	if err := repo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err = repo.FindByID(ctx, p.ID)
+	if err != nil || got == nil || !got.RequiresLinkedParent {
+		t.Fatalf("after update = %+v err=%v, want flag true", got, err)
+	}
+}

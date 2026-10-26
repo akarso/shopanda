@@ -175,7 +175,28 @@ test("failureLabel maps known codes and falls back to the raw code", () => {
     assert.equal(ui.failureLabel("no_price"), "no price set");
     assert.equal(ui.failureLabel("no_store_assignment"), "no store assignment");
     assert.equal(ui.failureLabel("no_category"), "no category assignment");
+    assert.equal(ui.failureLabel("requires_linked_parent"), "requires a linked parent");
     assert.equal(ui.failureLabel("something_new"), "something_new");
+});
+
+test("purchasable axis respects requiresLinkedParent even when mode is visible", () => {
+    const state = makeLiveState({ autoBasis: true, requiresLinkedParent: true });
+    assert.equal(ui.effectiveForMode("visible", true, "active", "purchasable", true), false);
+    assert.equal(ui.effectiveForMode("auto", true, "active", "purchasable", true), false);
+    assert.equal(ui.effectiveForMode("visible", true, "active", "catalog", true), true);
+    assert.equal(ui.showFailures("visible", state, "purchasable"), true);
+    assert.equal(ui.showFailures("visible", state, "catalog"), false);
+    assert.deepEqual(ui.failureCodesFor(state, "purchasable"), ["requires_linked_parent"]);
+    assert.match(ui.badgeText("visible", state, "purchasable"), /requires linked parent/);
+    assert.equal(ui.badgeText("auto", state, "purchasable"), "Auto — hidden");
+});
+
+test("stateFromVisibilityPayload copies requires_linked_parent", () => {
+    const state = ui.stateFromVisibilityPayload({
+        enforced: true, status: "active", auto_basis: true, failure_codes: [],
+        requires_linked_parent: true, axes: {}
+    });
+    assert.equal(state.requiresLinkedParent, true);
 });
 
 // FAILURE_LABELS key sync with Go is covered by TestFailureLabelsMatchAutoBasisCodes

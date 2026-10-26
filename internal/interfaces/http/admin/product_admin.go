@@ -558,7 +558,10 @@ func (h *ProductAdminHandler) Get() http.HandlerFunc {
 				// Prefer the loaded product row's Status/VisibilityModes over
 				// the snapshot's — they can diverge if the product changed
 				// between the FindByID above and this LoadManyAnyStatus call.
-				autoBasis, codes, axesExp := catalog.ExplainAxes(product.VisibilityModes, product.Status, snap.Inputs, h.opts)
+				inputs := snap.Inputs
+				inputs.RequiresLinkedParent = product.RequiresLinkedParent
+				inputs.Assignment = catalog.AssignmentContextFrom(r.Context())
+				autoBasis, codes, axesExp := catalog.ExplainAxes(product.VisibilityModes, product.Status, inputs, h.opts)
 				if codes == nil {
 					codes = []string{}
 				}
@@ -571,11 +574,12 @@ func (h *ProductAdminHandler) Get() http.HandlerFunc {
 					inputCodes = []string{}
 				}
 				visibilityPayload = map[string]interface{}{
-					"enforced":            h.enforced,
-					"status":              string(product.Status),
-					"auto_basis":          autoBasis,
-					"failure_codes":       codes,
-					"input_failure_codes": inputCodes,
+					"enforced":               h.enforced,
+					"status":                 string(product.Status),
+					"auto_basis":             autoBasis,
+					"failure_codes":          codes,
+					"input_failure_codes":    inputCodes,
+					"requires_linked_parent": product.RequiresLinkedParent,
 					"axes": map[string]interface{}{
 						"catalog":      newAdminAxisExplanation(axesExp.Catalog),
 						"search":       newAdminAxisExplanation(axesExp.Search),
@@ -669,29 +673,31 @@ func visibilityModesMap(axes catalog.VisibilityAxes) map[string]string {
 
 // createProductRequest is the JSON body for creating a product.
 type createProductRequest struct {
-	Name              string                  `json:"name"`
-	Slug              string                  `json:"slug"`
-	Description       string                  `json:"description"`
-	Type              string                  `json:"type"`
-	PricingMode       *string                 `json:"pricing_mode"`
-	StockMode         *string                 `json:"stock_mode"`
-	ExplodeOrderLines *bool                   `json:"explode_order_lines"`
-	VisibilityModes   *visibilityModesRequest `json:"visibility_modes"`
-	Attributes        map[string]interface{}  `json:"attributes"`
+	Name                 string                  `json:"name"`
+	Slug                 string                  `json:"slug"`
+	Description          string                  `json:"description"`
+	Type                 string                  `json:"type"`
+	PricingMode          *string                 `json:"pricing_mode"`
+	StockMode            *string                 `json:"stock_mode"`
+	ExplodeOrderLines    *bool                   `json:"explode_order_lines"`
+	RequiresLinkedParent *bool                   `json:"requires_linked_parent"`
+	VisibilityModes      *visibilityModesRequest `json:"visibility_modes"`
+	Attributes           map[string]interface{}  `json:"attributes"`
 }
 
 // updateProductRequest is the JSON body for updating a product.
 type updateProductRequest struct {
-	Name              *string                 `json:"name"`
-	Slug              *string                 `json:"slug"`
-	Description       *string                 `json:"description"`
-	Status            *string                 `json:"status"`
-	Type              *string                 `json:"type"`
-	PricingMode       *string                 `json:"pricing_mode"`
-	StockMode         *string                 `json:"stock_mode"`
-	ExplodeOrderLines *bool                   `json:"explode_order_lines"`
-	VisibilityModes   *visibilityModesRequest `json:"visibility_modes"`
-	Attributes        map[string]interface{}  `json:"attributes"`
+	Name                 *string                 `json:"name"`
+	Slug                 *string                 `json:"slug"`
+	Description          *string                 `json:"description"`
+	Status               *string                 `json:"status"`
+	Type                 *string                 `json:"type"`
+	PricingMode          *string                 `json:"pricing_mode"`
+	StockMode            *string                 `json:"stock_mode"`
+	ExplodeOrderLines    *bool                   `json:"explode_order_lines"`
+	RequiresLinkedParent *bool                   `json:"requires_linked_parent"`
+	VisibilityModes      *visibilityModesRequest `json:"visibility_modes"`
+	Attributes           map[string]interface{}  `json:"attributes"`
 }
 
 // Create handles POST /api/v1/admin/products.
@@ -755,6 +761,7 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		applyCreateRequiresLinkedParent(&product, req)
 		if err := applyCreateExplodeOrderLines(&product, req); err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
@@ -913,6 +920,20 @@ func applyStockModePatch(product *catalog.Product, req updateProductRequest) err
 	return nil
 }
 
+func applyCreateRequiresLinkedParent(product *catalog.Product, req createProductRequest) {
+	if req.RequiresLinkedParent == nil {
+		return
+	}
+	product.RequiresLinkedParent = *req.RequiresLinkedParent
+}
+
+func applyRequiresLinkedParentPatch(product *catalog.Product, req updateProductRequest) {
+	if req.RequiresLinkedParent == nil {
+		return
+	}
+	product.RequiresLinkedParent = *req.RequiresLinkedParent
+}
+
 func applyCreateExplodeOrderLines(product *catalog.Product, req createProductRequest) error {
 	value := false
 	if req.ExplodeOrderLines != nil {
@@ -1046,6 +1067,9 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if err := applyExplodeOrderLinesPatch(product, req); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
+	// Omitted requires_linked_parent keeps the value loaded by FindByID.
+	// The flag is not part of LockTypeAndModes.
+	applyRequiresLinkedParentPatch(product, req)
 	// Own-price rejection applies when this request changes type or mode.
 	// A name-only edit must keep the locked mode and must not fail closed
 	// because variant price repos are unwired.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	appinventory "github.com/akarso/shopanda/internal/application/inventory"
+	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -170,6 +172,21 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 				"validate_cart: product for variant %s is not available for purchase", item.VariantID,
 			))
 		}
+		// Same gate as cart ensureVariantPurchasable: ignore visibility
+		// bypass and a nil facts source. Checkout does not call
+		// HookCartAddItemBefore. Line assignment wins over request context.
+		assignment := catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item))
+		if catalog.LinkedParentBlocksPurchase(p, assignment) {
+			return apperror.Validation(fmt.Sprintf(
+				"validate_cart: product for variant %s: %s",
+				item.VariantID, catalog.RequiresLinkedParentNotPurchasableMessage,
+			))
+		}
+		if p != nil && p.Type == catalog.TypeBundle {
+			if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.components, p.ID, assignment); err != nil {
+				return err
+			}
+		}
 		variants[item.VariantID] = v
 	}
 
@@ -196,6 +213,13 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	cctx.SetMeta("validated", true)
 	return nil
+}
+
+func lineAssignment(item cart.Item) catalog.AssignmentContext {
+	return catalog.AssignmentContext{
+		ParentProductID: item.AssignmentParentProductID,
+		Deferred:        item.AssignmentDeferred,
+	}
 }
 
 func (s *ValidateCartStep) qtySources() appinventory.AvailableQtySources {

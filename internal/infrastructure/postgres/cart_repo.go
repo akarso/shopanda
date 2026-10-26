@@ -158,14 +158,16 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	}
 
 	if len(c.Items) > 0 {
-		const insertItem = `INSERT INTO cart_items (cart_id, variant_id, quantity, unit_price, currency, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`
+		const insertItem = `INSERT INTO cart_items (cart_id, variant_id, quantity, unit_price, currency, created_at, updated_at,
+			assignment_parent_product_id, assignment_deferred)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 		for i := range c.Items {
 			item := &c.Items[i]
 			_, err = tx.ExecContext(ctx, insertItem,
 				c.ID, item.VariantID, item.Quantity,
 				item.UnitPrice.Amount(), item.UnitPrice.Currency(),
 				item.CreatedAt, item.UpdatedAt,
+				item.AssignmentParent(), item.AssignmentDeferred,
 			)
 			if err != nil {
 				return fmt.Errorf("cart_repo: insert item %q: %w", item.VariantID, err)
@@ -260,7 +262,8 @@ func (r *CartRepo) MarkRecoveryEmailSent(ctx context.Context, cartID string, sen
 
 // loadItems fetches all items for a cart, ordered by created_at.
 func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, error) {
-	const query = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
+	const query = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at,
+		assignment_parent_product_id, assignment_deferred
 		FROM cart_items WHERE cart_id = $1
 		ORDER BY created_at`
 	rows, err := q.QueryContext(ctx, query, cartID)
@@ -276,7 +279,10 @@ func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, erro
 		var priceAmount int64
 		var priceCurrency string
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&variantID, &quantity, &priceAmount, &priceCurrency, &createdAt, &updatedAt); err != nil {
+		var assignmentParent string
+		var assignmentDeferred bool
+		if err := rows.Scan(&variantID, &quantity, &priceAmount, &priceCurrency, &createdAt, &updatedAt,
+			&assignmentParent, &assignmentDeferred); err != nil {
 			return nil, fmt.Errorf("cart_repo: scan item: %w", err)
 		}
 		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
@@ -284,11 +290,13 @@ func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, erro
 			return nil, fmt.Errorf("cart_repo: item money: %w", err)
 		}
 		items = append(items, cart.Item{
-			VariantID: variantID,
-			Quantity:  quantity,
-			UnitPrice: unitPrice,
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
+			VariantID:                 variantID,
+			Quantity:                  quantity,
+			UnitPrice:                 unitPrice,
+			CreatedAt:                 createdAt,
+			UpdatedAt:                 updatedAt,
+			AssignmentParentProductID: assignmentParent,
+			AssignmentDeferred:        assignmentDeferred,
 		})
 	}
 	if err := rows.Err(); err != nil {

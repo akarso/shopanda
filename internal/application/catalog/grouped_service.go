@@ -112,7 +112,7 @@ func (s *GroupedService) Add(ctx context.Context, m *catalog.GroupedMember) erro
 		}
 		locked[id] = typ
 	}
-	if err := requireActiveCompositionProducts(ctx, productRepo, m.GroupProductID, m.MemberProductID); err != nil {
+	if _, err := requireActiveCompositionProducts(ctx, productRepo, m.GroupProductID, m.MemberProductID); err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
 		}

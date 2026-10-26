@@ -88,3 +88,22 @@ func TestNewItem_NegativePrice(t *testing.T) {
 		t.Fatal("expected error for negative price")
 	}
 }
+
+func TestItem_AssignmentHelpers(t *testing.T) {
+	item, err := cart.NewItem("var-1", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	if item.HasStoredAssignment() || item.AssignmentParent() != "" {
+		t.Fatalf("new item has assignment: %+v", item)
+	}
+	item.AssignmentParentProductID = "  card-1  "
+	if item.AssignmentParent() != "card-1" || !item.HasStoredAssignment() {
+		t.Fatalf("parent trim = %+v", item)
+	}
+	item.AssignmentParentProductID = ""
+	item.AssignmentDeferred = true
+	if !item.HasStoredAssignment() {
+		t.Fatal("deferred should count as stored assignment")
+	}
+}

@@ -248,6 +248,27 @@ func TestBundleService_Add_ValidComposition(t *testing.T) {
 	}
 }
 
+func TestBundleService_Add_RejectsRequiredLinkedParentChild(t *testing.T) {
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive, RequiresLinkedParent: true},
+	}}
+	components := &stubBundleComponentRepo{}
+	svc := newBundleService(products, components)
+
+	c, err := catalog.NewBundleComponent("b1", "c1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	err = svc.Add(context.Background(), c)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), catalog.RequiresLinkedParentNotPurchasableMessage) {
+		t.Fatalf("err = %v, want linked-parent validation", err)
+	}
+	if components.upsert != nil {
+		t.Fatal("required flagged child must not be upserted")
+	}
+}
+
 func TestBundleService_Add_TrimsIDs(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
 		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},

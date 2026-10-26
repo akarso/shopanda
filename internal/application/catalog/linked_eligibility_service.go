@@ -140,7 +140,7 @@ func (s *LinkedEligibilityService) AddParent(ctx context.Context, p *catalog.Lin
 			return fmt.Errorf("linked eligibility: lock product: %w", err)
 		}
 	}
-	if err := requireActiveCompositionProducts(ctx, productRepo, p.ChildProductID, p.ParentProductID); err != nil {
+	if _, err := requireActiveCompositionProducts(ctx, productRepo, p.ChildProductID, p.ParentProductID); err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
 		}
@@ -192,7 +192,7 @@ func (s *LinkedEligibilityService) AddCategory(ctx context.Context, c *catalog.L
 		}
 		return fmt.Errorf("linked eligibility: lock product: %w", err)
 	}
-	if err := requireActiveCompositionProducts(ctx, productRepo, c.ChildProductID); err != nil {
+	if _, err := requireActiveCompositionProducts(ctx, productRepo, c.ChildProductID); err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
 		}

@@ -92,6 +92,7 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 			p.visibility_search_mode,
 			p.visibility_individually_mode,
 			p.visibility_purchasable_mode,
+			p.requires_linked_parent,
 			CASE
 				WHEN p.type = 'grouped' THEN FALSE
 				WHEN p.type = 'bundle' AND p.stock_mode = 'dynamic' THEN
@@ -155,11 +156,13 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 			status                            string
 			catalogMode, searchMode           string
 			individuallyMode, purchasableMode string
+			requiresLinkedParent              bool
 			qty, price, category              bool
 		)
 		if err := rows.Scan(
 			&id, &status,
 			&catalogMode, &searchMode, &individuallyMode, &purchasableMode,
+			&requiresLinkedParent,
 			&qty, &price, &category,
 		); err != nil {
 			return nil, fmt.Errorf("visibility facts scan: %w", err)
@@ -178,6 +181,7 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 				HasStoreAssignment: true,
 				HasCategory:        category,
 			},
+			RequiresLinkedParent: requiresLinkedParent,
 		}
 	}
 	if err := rows.Err(); err != nil {

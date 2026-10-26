@@ -256,7 +256,7 @@ func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart, into *do
 			}
 			return nil, qtyErr
 		}
-		err := s.ensureVariantPurchasable(ctx, item.VariantID, guestCart.Currency, lineQty)
+		err := s.ensureVariantPurchasable(ctx, item.VariantID, guestCart.Currency, lineQty, lineAssignment(item))
 		if err == nil {
 			continue
 		}
@@ -376,6 +376,7 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
+		stampLineAssignment(customerCart, item.VariantID, lineAssignment(item))
 		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
 			return nil, err
 		}
@@ -444,7 +445,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, lineQty); err != nil {
+	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, lineQty, lineAssignmentFromCart(c, variantID)); err != nil {
 		return nil, err
 	}
 
@@ -470,6 +471,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	if err := c.AddItem(variantID, quantity, price); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot add item", err)
 	}
+	stampLineAssignment(c, variantID, catalog.AssignmentContextFrom(ctx))
 
 	if err := s.recalculate(ctx, c); err != nil {
 		return nil, err
@@ -534,7 +536,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		}
 	}
 	if quantity > currentQty {
-		if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, quantity); err != nil {
+		if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency, quantity, lineAssignmentFromCart(c, variantID)); err != nil {
 			return nil, err
 		}
 	}
@@ -734,7 +736,42 @@ func guestLineQtyForClaim(into *domainCart.Cart, variantID string, guestQty int)
 	return resultingLineQty(into, variantID, guestQty)
 }
 
-func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, currency string, lineQty int) error {
+func lineAssignment(item domainCart.Item) catalog.AssignmentContext {
+	return catalog.AssignmentContext{
+		ParentProductID: item.AssignmentParentProductID,
+		Deferred:        item.AssignmentDeferred,
+	}
+}
+
+func lineAssignmentFromCart(c *domainCart.Cart, variantID string) catalog.AssignmentContext {
+	if c == nil {
+		return catalog.AssignmentContext{}
+	}
+	for _, item := range c.Items {
+		if item.VariantID == variantID {
+			return lineAssignment(item)
+		}
+	}
+	return catalog.AssignmentContext{}
+}
+
+func stampLineAssignment(c *domainCart.Cart, variantID string, ac catalog.AssignmentContext) {
+	if c == nil || ac.Empty() {
+		return
+	}
+	for i := range c.Items {
+		if c.Items[i].VariantID != variantID {
+			continue
+		}
+		if lineAssignment(c.Items[i]).Empty() {
+			c.Items[i].AssignmentParentProductID = ac.ParentProductID
+			c.Items[i].AssignmentDeferred = ac.Deferred
+		}
+		return
+	}
+}
+
+func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, currency string, lineQty int, line catalog.AssignmentContext) error {
 	v, err := s.variants.FindByID(ctx, variantID)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: lookup variant: %w", err)
@@ -751,6 +788,19 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	}
 	if p.Type == catalog.TypeGrouped {
 		return apperror.Validation(catalog.GroupedNotPurchasableMessage)
+	}
+	// Independent of visibility enforce, a nil facts source, and
+	// BypassProductVisibility. HookCartAddItemBefore runs later and checkout
+	// never calls it, so the gate has to live here (PR-1068). Line assignment
+	// wins over the request context so claim and qty increase keep a stamp.
+	assignment := catalog.ResolvePurchaseAssignment(ctx, line)
+	if catalog.LinkedParentBlocksPurchase(p, assignment) {
+		return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+	}
+	if p.Type == catalog.TypeBundle {
+		if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.unitPrices.Components, p.ID, assignment); err != nil {
+			return err
+		}
 	}
 	// Listing HasPrice is a global-row flag. A dynamic bundle can be sellable
 	// from a store-scoped component price that flag never sees. Other purchasable
@@ -793,6 +843,8 @@ func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Pro
 	}
 	inputs := snap.Inputs
 	inputs.HasPrice = true
+	inputs.RequiresLinkedParent = snap.RequiresLinkedParent
+	inputs.Assignment = catalog.ResolvePurchaseAssignment(ctx, catalog.AssignmentContextFrom(ctx))
 	if !snap.Modes.Resolve(snap.Status, inputs, s.visibilityOpts).Purchasable {
 		return apperror.Validation("product is not currently purchasable")
 	}

@@ -13,6 +13,7 @@ classDiagram
         +string Name
         +string Slug
         +string Status
+        +bool RequiresLinkedParent
         +map Attributes
         +time CreatedAt
         +time UpdatedAt
