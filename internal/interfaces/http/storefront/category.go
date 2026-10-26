@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // CategoryHandler serves category read endpoints.
@@ -73,7 +74,7 @@ func (h *CategoryHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		cat, err := h.categories.FindByID(r.Context(), id)
+		cat, err := findCategoryByIDOrSlug(r.Context(), h.categories, id)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -83,8 +84,8 @@ func (h *CategoryHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"category": cat,
+		writeCatalogJSON(w, http.StatusOK, map[string]interface{}{
+			"category": categoryJSON(cat, wantSnakeFieldNames(r)),
 		})
 	}
 }
@@ -99,7 +100,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 		}
 
 		// Verify category exists.
-		cat, err := h.categories.FindByID(r.Context(), id)
+		cat, err := findCategoryByIDOrSlug(r.Context(), h.categories, id)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -118,7 +119,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 		page, err := catalog.ListVisiblePage(
 			r.Context(),
 			func(ctx context.Context, dbOffset, dbLimit int) ([]catalog.Product, error) {
-				return h.products.FindByCategoryID(ctx, id, dbOffset, dbLimit)
+				return h.products.FindByCategoryID(ctx, cat.ID, dbOffset, dbLimit)
 			},
 			catalog.VisibilitySurfaceCatalog,
 			h.visibilityFacts,
@@ -136,11 +137,21 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"products": page.Products,
+		writeCatalogJSON(w, http.StatusOK, map[string]interface{}{
+			"products": productsValuePublicJSON(page.Products, wantSnakeFieldNames(r)),
 			"meta":     visibilityListMeta(page),
 		})
 	}
+}
+
+func findCategoryByIDOrSlug(ctx context.Context, repo catalog.CategoryRepository, key string) (*catalog.Category, error) {
+	if id.IsUUID(key) {
+		c, err := repo.FindByID(ctx, key)
+		if err != nil || c != nil {
+			return c, err
+		}
+	}
+	return repo.FindBySlug(ctx, key)
 }
 
 // buildTree assembles a flat slice of categories into a nested tree.

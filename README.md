@@ -144,7 +144,7 @@ Extension mechanisms (events, pricing/checkout/composition pipelines, permission
 
 See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
-**Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
+**Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
 
 Phases 1–11 are shipped. Active development: [Phase 12 — Product Types & Composition](docs/phase-12-product-composition/ROADMAP.md). Site-ready plugin work (owned schema + on-demand jobs) is planned as [Phase 13](docs/phase-13-plugin-runtime/ROADMAP.md) and should finish before a real merchant site. See [Development history](#development-history) below for the full phase-by-phase breakdown.
 
@@ -271,6 +271,8 @@ Current guides live in [`docs/guides/`](docs/guides/):
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, GHCR releases (`sha-<commit>` / digest pins), bare metal, TLS, backups, and monitoring
 - [Developer Guide](docs/guides/DEVELOPER.md) — three-tier plugin model, extension points, events, pipelines, and API integration
+- [Theme author guide](docs/guides/THEME_SLOTS.md) — child themes, slots, `theme:init`
+- [Headless storefront](docs/guides/HEADLESS.md) — REST client notes + [`examples/headless-vanilla`](examples/headless-vanilla)
 - [Extension Points](docs/guides/EXTENSION_POINTS.md) — which mechanism to use (events, hooks, pipelines, workflows, registries)
 - [Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md) — multi-plugin ordering and precedence
 - [Plugin Authoring Guide](PLUGINS.md) — core vs external boundaries, extension mechanisms, deferred capabilities
@@ -305,6 +307,7 @@ Shopanda has been built in numbered phases, each with its own roadmap and per-PR
 | 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | Shipped |
 | 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **In progress** |
 | 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned (do before a real site) |
+| 14 — Storefront authoring | [phase-14-storefront-authoring/README.md](docs/phase-14-storefront-authoring/README.md) | Shipped (theme packaging + headless gaps) |
 
 Additional historical specs:
 

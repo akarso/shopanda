@@ -7,6 +7,7 @@ import (
 )
 
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+var uuidShape = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // New generates a new UUID v4 string.
 func New() string {
@@ -25,4 +26,10 @@ func New() string {
 // IsValid reports whether s is a valid UUID v4 string.
 func IsValid(s string) bool {
 	return uuidRegex.MatchString(s)
+}
+
+// IsUUID reports whether s has RFC 4122 UUID shape (any version).
+// Used to choose id vs slug lookup without sending slugs to UUID columns.
+func IsUUID(s string) bool {
+	return uuidShape.MatchString(s)
 }

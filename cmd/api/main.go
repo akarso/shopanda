@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -165,6 +164,8 @@ func run() error {
 			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
 		case "cache:purge-url":
 			return runCachePurgeURL(os.Stdout, cfg, log, os.Args[2:])
+		case "theme:init":
+			return runThemeInit(cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -249,7 +250,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		defer rt.rateLimitClose()
 	}
 
-	handler, err := buildServeHandler(cfg, log, rt, conn)
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+	handler, err := buildServeHandler(cfg, log, rt, conn, serveCtx)
 	if err != nil {
 		shutdownTracing()
 		rbac.UnbindRuntime()
@@ -745,26 +748,41 @@ Commands:
   schedule:enable <n>  Re-enable a scheduled task
   schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
+  theme:init <name>    Create a child theme under themes/<name>
   help                 Show this help message
 `))
 }
 
 type storefrontOrderClaimEmailer struct {
-	mailer       mail.Mailer
-	storeBaseURL string
+	mailer   mail.Mailer
+	claimURL string
+}
+
+func storefrontClaimPageURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if u := strings.TrimSpace(cfg.Frontend.ClaimURL); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if cfg.Frontend.StorefrontHTML() {
+		base := strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
+		if base == "" {
+			return ""
+		}
+		return base + "/account/orders/claim"
+	}
+	return ""
 }
 
 func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken string) error {
 	if e.mailer == nil {
 		return fmt.Errorf("storefront order claim emailer: mailer not configured")
 	}
-	baseURL, err := url.Parse(strings.TrimSpace(e.storeBaseURL))
+	baseURL, err := url.Parse(strings.TrimSpace(e.claimURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
-		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
+		return fmt.Errorf("storefront order claim emailer: invalid claim URL")
 	}
-	// Preserve any configured base path so deployments mounted under a
-	// subpath still produce valid claim links.
-	baseURL.Path = path.Join("/", baseURL.Path, "account/orders/claim")
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()
