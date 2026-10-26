@@ -105,6 +105,7 @@ type mockAdminProductRepo struct {
 	lockedType                 catalog.Type
 	lockedPricingMode          catalog.PricingMode
 	lockedStockMode            catalog.StockMode
+	lockedRequiresLinkedParent *bool
 }
 
 type mockAdminProductRepoWithoutCategoryLookup struct {
@@ -194,6 +195,20 @@ func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) 
 		stock = m.lockedStockMode
 	}
 	return typ, pricing, stock, explode, nil
+}
+
+func (m *mockAdminProductRepo) RequiresLinkedParentForUpdate(ctx context.Context, id string) (bool, error) {
+	if m.lockedRequiresLinkedParent != nil {
+		return *m.lockedRequiresLinkedParent, nil
+	}
+	p, err := m.FindByID(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if p == nil {
+		return false, apperror.NotFound("product not found")
+	}
+	return p.RequiresLinkedParent, nil
 }
 
 type mockBundleComponentGuard struct {

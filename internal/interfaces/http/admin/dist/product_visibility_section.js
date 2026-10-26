@@ -53,7 +53,8 @@
         no_stock: "no variant in stock",
         no_price: "no price set",
         no_store_assignment: "no store assignment",
-        no_category: "no category assignment"
+        no_category: "no category assignment",
+        requires_linked_parent: "requires a linked parent"
     };
 
     function failureLabel(code) {
@@ -148,6 +149,7 @@
                 inputFailureCodes: inputFailureCodes,
                 autoBasis: deriveAutoBasis(status, inputFailureCodes),
                 failureCodes: deriveFailureCodes(status, inputFailureCodes),
+                requiresLinkedParent: !!payload.requires_linked_parent,
                 axes: axes
             };
         }
@@ -187,8 +189,11 @@
     // Computed client-side on every mode change (and on status change — see
     // bindStatusChange) so the badge reflects the candidate mode/status pair,
     // not whatever happened to be persisted when the page loaded.
-    function effectiveForMode(mode, autoBasis, status) {
+    function effectiveForMode(mode, autoBasis, status, axisKey, requiresLinkedParent) {
         if (status !== "active") {
+            return false;
+        }
+        if (axisKey === "purchasable" && requiresLinkedParent) {
             return false;
         }
         if (mode === "auto") {
@@ -206,14 +211,15 @@
     // badgeText describes the storefront-facing outcome for mode given state.
     // No per-badge "Would be ..." prefix; see renderSectionCaptionsHTML for
     // the section-level "Enforcement off — preview" caption.
-    function badgeText(mode, state) {
+    function badgeText(mode, state, axisKey) {
         if (!state) {
             return capitalize(mode) + " — computed after save";
         }
         if (isError(state)) {
             return ERROR_BADGE_TEXT;
         }
-        var effective = effectiveForMode(mode, state.autoBasis, state.status);
+        var requires = !!(state.requiresLinkedParent && axisKey === "purchasable");
+        var effective = effectiveForMode(mode, state.autoBasis, state.status, axisKey, state.requiresLinkedParent);
         if (mode === "auto") {
             return "Auto — " + (effective ? "visible" : "hidden");
         }
@@ -221,20 +227,44 @@
             return "Forced hidden";
         }
         if (mode === "visible") {
-            return effective ? "Forced visible" : "Forced visible — not live (product inactive)";
+            if (effective) {
+                return "Forced visible";
+            }
+            if (requires) {
+                return "Forced visible — not purchasable (requires linked parent)";
+            }
+            return "Forced visible — not live (product inactive)";
         }
         return capitalize(mode);
     }
 
-    // "why hidden" only applies to a live axis that is auto and currently
-    // failing AutoBasis; forced axes, a pending/create state, and an error
-    // state have nothing to explain.
-    function showFailures(mode, state) {
+    // "why hidden" applies to a live auto axis failing AutoBasis, and to
+    // the purchasable axis when RequiresLinkedParent is set (empty admin
+    // assignment context).
+    function showFailures(mode, state, axisKey) {
+        if (isLive(state) && axisKey === "purchasable" && state.requiresLinkedParent) {
+            return true;
+        }
         return isLive(state) && mode === "auto" && !state.autoBasis;
     }
 
-    function failureCodesFor(state) {
-        return (isLive(state) && state.failureCodes) || [];
+    function failureCodesFor(state, axisKey) {
+        var codes = (isLive(state) && state.failureCodes) || [];
+        if (axisKey === "purchasable" && isLive(state) && state.requiresLinkedParent) {
+            var out = codes.slice();
+            var found = false;
+            for (var i = 0; i < out.length; i++) {
+                if (out[i] === "requires_linked_parent") {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                out.push("requires_linked_parent");
+            }
+            return out;
+        }
+        return codes;
     }
 
     function escapeHTML(str) {
@@ -274,14 +304,14 @@
 
     // state: result of stateFromVisibilityPayload (live / error / null).
     function renderRowHTML(axis, mode, state) {
-        var visible = showFailures(mode, state);
+        var visible = showFailures(mode, state, axis.key);
         return '<div class="product-visibility-row" data-visibility-axis="' + axis.key + '">' +
             '<label for="' + selectID(axis.key) + '">' + escapeHTML(axis.label) + "</label>" +
             '<select id="' + selectID(axis.key) + '" name="visibility_mode_' + axis.key + '" data-visibility-mode="' + axis.key + '">' +
             renderOptionsHTML(mode) +
             "</select>" +
-            '<span id="' + badgeID(axis.key) + '" class="product-visibility-badge">' + escapeHTML(badgeText(mode, state)) + "</span>" +
-            renderFailuresHTML(axis.key, failureCodesFor(state), visible) +
+            '<span id="' + badgeID(axis.key) + '" class="product-visibility-badge">' + escapeHTML(badgeText(mode, state, axis.key)) + "</span>" +
+            renderFailuresHTML(axis.key, failureCodesFor(state, axis.key), visible) +
             "</div>";
     }
 
@@ -332,12 +362,12 @@
     function updateRowFromMode(doc, axis, mode, state) {
         var badge = doc.getElementById(badgeID(axis.key));
         if (badge) {
-            badge.textContent = badgeText(mode, state);
+            badge.textContent = badgeText(mode, state, axis.key);
         }
         var list = doc.getElementById(failuresID(axis.key));
         if (list) {
-            list.style.display = showFailures(mode, state) ? "" : "none";
-            list.innerHTML = renderFailureItemsHTML(failureCodesFor(state));
+            list.style.display = showFailures(mode, state, axis.key) ? "" : "none";
+            list.innerHTML = renderFailureItemsHTML(failureCodesFor(state, axis.key));
         }
     }
 
@@ -432,7 +462,8 @@
         bindAxisChange: bindAxisChange,
         bindStatusChange: bindStatusChange,
         refreshLivePreview: refreshLivePreview,
-        updateRowFromMode: updateRowFromMode
+        updateRowFromMode: updateRowFromMode,
+        failureCodesFor: failureCodesFor
     };
 
     root.ShopandaProductVisibilitySection = api;

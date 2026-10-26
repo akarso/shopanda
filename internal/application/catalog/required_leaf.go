@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -106,6 +107,9 @@ func RequiredLeafVariants(
 				component.ComponentProductID,
 			)))
 		}
+		if catalog.LinkedParentBlocksPurchase(product, catalog.AssignmentContextFrom(ctx)) {
+			return nil, apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+		}
 	}
 
 	variantsByProduct, err := variants.ListByProductIDs(ctx, productIDs, ComponentVariantProbe)
@@ -128,6 +132,53 @@ func RequiredLeafVariants(
 		}
 	}
 	return leaves, nil
+}
+
+// RejectRequiredLinkedParentLeaves denies a bundle whose required child has
+// RequiresLinkedParent set and assignment empty. Used by cart and checkout
+// for every bundle type, not only dynamic explode. Optional components are
+// ignored. A missing products or components repo is a no-op.
+func RejectRequiredLinkedParentLeaves(
+	ctx context.Context,
+	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
+	bundleProductID string,
+	assignment catalog.AssignmentContext,
+) error {
+	if products == nil || components == nil {
+		return nil
+	}
+	bundleProductID = strings.TrimSpace(bundleProductID)
+	if bundleProductID == "" {
+		return nil
+	}
+	rows, err := components.ListByBundleID(ctx, bundleProductID)
+	if err != nil {
+		return fmt.Errorf("bundle %s components: %w", bundleProductID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if catalog.LinkedParentBlocksPurchase(byID[id], assignment) {
+			return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+		}
+	}
+	return nil
 }
 
 // BundleCustomerError returns a validation error whose Message is

@@ -5,6 +5,8 @@ import "fmt"
 // VisibilityMode controls how one visibility axis is resolved (PR-1055).
 // auto uses VisibilityInputs / AutoBasis; visible and hidden force the axis.
 // visible on Purchasable is a sellability override (force on sale), not display-only.
+// RequiresLinkedParent with an empty assignment context still forces Purchasable
+// false after that override (PR-1068). Display axes are not affected.
 type VisibilityMode string
 
 const (
@@ -99,6 +101,15 @@ type VisibilityInputs struct {
 	HasPrice           bool
 	HasStoreAssignment bool
 	HasCategory        bool
+	// RequiresLinkedParent is copied from the product or visibility snapshot
+	// before resolve. It is not an AutoBasis input. When true and Assignment
+	// is empty, the purchasable axis is false after ResolveAxis.
+	RequiresLinkedParent bool
+	// Assignment is the purchase assignment for this resolve. Listing filters
+	// copy AssignmentContextFrom(ctx). Cart and checkout set one line's
+	// resolved assignment so lines do not share a parent. Domain callers of
+	// Product.Visibility set it directly.
+	Assignment AssignmentContext
 }
 
 // VisibilityOptions carries config that must not be mixed with per-product facts.
@@ -260,9 +271,28 @@ func ExplainAxes(axes VisibilityAxes, status Status, in VisibilityInputs, opts V
 		Catalog:      ExplainAxis(axes.Catalog, status, autoBasis, codes),
 		Search:       ExplainAxis(axes.Search, status, autoBasis, codes),
 		Individually: ExplainAxis(axes.Individually, status, autoBasis, codes),
-		Purchasable:  ExplainAxis(axes.Purchasable, status, autoBasis, codes),
+		Purchasable:  explainPurchasableAxis(axes.Purchasable, status, autoBasis, codes, in),
 	}
 	return
+}
+
+// explainPurchasableAxis is ExplainAxis plus the RequiresLinkedParent gate.
+// The extra failure code is attached only to this axis. codes (the shared
+// AutoBasis list) is not modified.
+func explainPurchasableAxis(mode VisibilityMode, status Status, auto bool, failureCodes []string, in VisibilityInputs) AxisExplanation {
+	exp := ExplainAxis(mode, status, auto, failureCodes)
+	if !linkedParentBlocksPurchase(in) {
+		return exp
+	}
+	exp.Resolved = false
+	exp.Effective = false
+	exp.FailureCodes = append(exp.FailureCodes, RequiresLinkedParentCode)
+	return exp
+}
+
+// linkedParentBlocksPurchase reports the purchasable-axis override.
+func linkedParentBlocksPurchase(in VisibilityInputs) bool {
+	return LinkedParentBlocksPurchase(&Product{RequiresLinkedParent: in.RequiresLinkedParent}, in.Assignment)
 }
 
 // ResolveAxis applies mode to the auto-computed basis.
@@ -285,10 +315,14 @@ func ResolveAxis(mode VisibilityMode, auto bool) bool {
 // status, inputs, and options.
 func (a VisibilityAxes) Resolve(status Status, in VisibilityInputs, opts VisibilityOptions) Visibility {
 	auto := AutoBasis(status, in, opts)
+	purchasable := ResolveAxis(a.Purchasable, auto)
+	if linkedParentBlocksPurchase(in) {
+		purchasable = false
+	}
 	return Visibility{
 		VisibleInCatalog:    ResolveAxis(a.Catalog, auto),
 		VisibleInSearch:     ResolveAxis(a.Search, auto),
 		VisibleIndividually: ResolveAxis(a.Individually, auto),
-		Purchasable:         ResolveAxis(a.Purchasable, auto),
+		Purchasable:         purchasable,
 	}
 }

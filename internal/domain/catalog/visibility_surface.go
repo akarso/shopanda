@@ -46,6 +46,7 @@ func AllowProduct(ctx context.Context, p *Product, surface VisibilitySurface, in
 	if BypassProductVisibility(ctx) {
 		return true
 	}
+	in.Assignment = AssignmentContextFrom(ctx)
 	return p.Visibility(in, opts).AllowedOn(surface)
 }
 

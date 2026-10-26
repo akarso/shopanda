@@ -31,6 +31,9 @@ func TestNewProduct(t *testing.T) {
 	if p.Type != catalog.TypeSimple {
 		t.Errorf("Type = %q, want simple", p.Type)
 	}
+	if p.RequiresLinkedParent {
+		t.Error("RequiresLinkedParent = true, want false")
+	}
 	wantModes := catalog.DefaultVisibilityAxes()
 	if p.VisibilityModes != wantModes {
 		t.Errorf("VisibilityModes = %+v, want %+v", p.VisibilityModes, wantModes)

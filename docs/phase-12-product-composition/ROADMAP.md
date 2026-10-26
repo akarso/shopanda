@@ -121,7 +121,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1067 | `LinkedProduct` catalog eligibility | **done.** Child-declared eligibility, not composition: `linked_eligible_parents` (explicit parent-product allowlist) and `linked_eligible_categories` (any product assigned to that category via `product_categories`). `IsEligible` and `HasRules` are join-table predicates (no status check); `IsEligible` is OR across both; an empty rule set is false. Both product FKs and the category FK are `ON DELETE CASCADE`. No type restriction. `LinkedEligibilityService` locks products on add (draft needs operator scope); `Remove*` do not lock. Eligibility does not change `Purchasable` or visibility. PR-1068 uses an explicit `RequiresLinkedParent` flag, not `HasRules`. No admin HTTP (PR-1073). See [`prs/PR-1067.md`](prs/PR-1067.md). |
-| PR-1068 | `RequiresLinkedParent` purchasability gate | Explicit `RequiresLinkedParent` product flag (do **not** derive it from `HasRules`). After the product is already in scope, `IsEligible` only answers “does this parent match a rule.” `Purchasable = false` until an assignment context makes it eligible — reuses Track B's `HookCartAddItemBefore`/`HookCartValidate` seam (PR-1058). Eligibility ≠ purchasable ≠ assignable; still check active/visible on both sides. |
+| PR-1068 | `RequiresLinkedParent` purchasability gate | **done.** Explicit `requires_linked_parent` flag (not `HasRules`). Empty assignment context forces the purchasable axis false, including when mode is `visible`. Display axes are unchanged. Cart and checkout enforce it even when visibility is bypassed or facts are nil. Guest claim drops the line. Admin create/update accepts the bool. Assignment context writers are PR-1070. See [`prs/PR-1068.md`](prs/PR-1068.md). |
 | PR-1069 | `ProductAssignment` instance domain | New domain: binds one purchased/issued child unit (an order item, or a serialized unit for a digital "smart card in a phone" case) to one purchased parent unit. State machine: `unassigned → assigned → revoked` (revoke, not delete — keeps an audit trail; a revoked ticket can be reassigned). This is the piece with no existing analog anywhere in the codebase — closest precedent in shape (not in domain) is the store-credit ledger's append-only entry model. |
 | PR-1070 | Assignment flow: cart-time + post-purchase | Both paths supported, per the actual use case (many buyers already own a card and buy tickets for it later; some buy card+ticket together): cart-time assignment (customer selects which of their existing card instances a ticket is being purchased for, if any) is optional; if not chosen at cart time, the ticket is purchasable but the resulting order item is `unassigned` until a post-purchase assignment step (self-service account page or admin action) completes it — a `RequiresLinkedParent` item stays non-purchasable at the *product* level (PR-1068) but an already-purchased-and-unassigned unit is a different state, tracked by PR-1069. |
 | PR-1071 | Admin API for assignment | List/create/revoke assignments; "this card's assigned tickets" and "this ticket's current card" views. |
@@ -218,7 +218,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1065 | C | done |
 | 1066 | C | done |
 | 1067 | D | done |
-| 1068–1073 | D | planned |
+| 1068 | D | done |
+| 1069–1073 | D | planned |
 | 1074–1078 | E | planned |
 | 1079–1083 | F | planned |
 
@@ -232,4 +233,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1067 done — Track D started, eligibility relation only; next PR-1068; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1068 done — Track D: eligibility + purchasability gate; next PR-1069; numbering collides with Phase 11 — disambiguate by phase folder) |

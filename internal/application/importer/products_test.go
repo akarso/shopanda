@@ -1355,6 +1355,32 @@ Widget,widget,SKU-1,simple,fixed,red
 	}
 }
 
+func TestImport_RequiresLinkedParentColumnIsNotAttribute(t *testing.T) {
+	csv := `name,slug,sku,type,requires_linked_parent,color
+Ticket,ticket,SKU-1,simple,true,red
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 || len(varRepo.variants) != 1 {
+		t.Fatalf("result=%+v variants=%d", result, len(varRepo.variants))
+	}
+	if len(prodRepo.products) != 1 || prodRepo.products[0].RequiresLinkedParent {
+		t.Fatalf("product flag = %+v, want false (CSV does not set it)", prodRepo.products)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["color"] != "red" {
+		t.Fatalf("color = %#v", attrs["color"])
+	}
+	if _, ok := attrs["requires_linked_parent"]; ok {
+		t.Fatalf("requires_linked_parent stored as attribute: %#v", attrs)
+	}
+}
+
 func TestImport_InvalidModeFieldsSkipRowOnce(t *testing.T) {
 	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
 Widget,widget,SKU-1,nope,bogus,nope,maybe

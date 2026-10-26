@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	appinventory "github.com/akarso/shopanda/internal/application/inventory"
+	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -69,16 +71,18 @@ func (s *ValidateCartStep) Name() string { return "validate_cart" }
 // in the cart and rejects the first line (in cart order) whose product is not
 // purchasable.
 func (s *ValidateCartStep) checkPurchasableAxis(ctx context.Context, cctx *Context, variants map[string]*catalog.Variant, productIDs []string) error {
-	allowed, err := catalog.FilterIDsWithFacts(ctx, productIDs, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
+		return nil
+	}
+	byID, err := s.visibilityFacts.LoadMany(ctx, productIDs)
 	if err != nil {
 		return fmt.Errorf("validate_cart: purchasability: %w", err)
 	}
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, id := range allowed {
-		allowedSet[id] = struct{}{}
-	}
 	for _, item := range cctx.Cart.Items {
-		if _, ok := allowedSet[variants[item.VariantID].ProductID]; !ok {
+		productID := variants[item.VariantID].ProductID
+		snap, ok := byID[productID]
+		assignment := catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item))
+		if !ok || !snap.Allows(catalog.VisibilitySurfacePurchasable, assignment, s.visibilityOpts) {
 			return apperror.Validation(fmt.Sprintf(
 				"validate_cart: product for variant %s is not currently purchasable", item.VariantID,
 			))
@@ -170,6 +174,21 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 				"validate_cart: product for variant %s is not available for purchase", item.VariantID,
 			))
 		}
+		// Same gate as cart ensureVariantPurchasable: ignore visibility
+		// bypass and a nil facts source. Checkout does not call
+		// HookCartAddItemBefore. Line assignment wins over request context.
+		assignment := catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item))
+		if catalog.LinkedParentBlocksPurchase(p, assignment) {
+			return apperror.Validation(fmt.Sprintf(
+				"validate_cart: product for variant %s: %s",
+				item.VariantID, catalog.RequiresLinkedParentNotPurchasableMessage,
+			))
+		}
+		if p != nil && p.Type == catalog.TypeBundle {
+			if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.components, p.ID, assignment); err != nil {
+				return err
+			}
+		}
 		variants[item.VariantID] = v
 	}
 
@@ -177,7 +196,7 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 		return err
 	}
 	for _, item := range cctx.Cart.Items {
-		if err := appinventory.RejectQtyAboveAvailable(ctx, s.qtySources(), variants[item.VariantID].ProductID, item.VariantID, item.Quantity); err != nil {
+		if err := appinventory.RejectQtyAboveAvailable(linePurchaseContext(ctx, item), s.qtySources(), variants[item.VariantID].ProductID, item.VariantID, item.Quantity); err != nil {
 			return err
 		}
 	}
@@ -196,6 +215,19 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	cctx.SetMeta("validated", true)
 	return nil
+}
+
+// linePurchaseContext carries this line's resolved assignment. Callers must
+// not reuse the result for a different line.
+func linePurchaseContext(ctx context.Context, item cart.Item) context.Context {
+	return catalog.WithAssignmentContext(ctx, catalog.ResolvePurchaseAssignment(ctx, lineAssignment(item)))
+}
+
+func lineAssignment(item cart.Item) catalog.AssignmentContext {
+	return catalog.AssignmentContext{
+		ParentProductID: item.AssignmentParentProductID,
+		Deferred:        item.AssignmentDeferred,
+	}
 }
 
 func (s *ValidateCartStep) qtySources() appinventory.AvailableQtySources {

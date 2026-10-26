@@ -80,13 +80,16 @@ var requiredColumns = []string{"name", "slug", "sku"}
 // Any other header is treated as an attribute column.
 //
 // "type" is reserved for product taxonomy (PR-1052). pricing_mode, stock_mode,
-// and explode_order_lines are reserved for bundle mode columns (PR-1066).
+// explode_order_lines are reserved for bundle mode columns (PR-1066).
+// requires_linked_parent is reserved (PR-1068); CSV does not set the flag
+// until PR-1073, so the header is ignored rather than stored as an attribute.
 // A CSV that previously used a free-form attribute column with one of these
 // names must rename that attribute; values in the reserved columns are never
 // stored in variant.Attributes.
 var knownColumns = map[string]struct{}{
 	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {}, "type": {},
 	"pricing_mode": {}, "stock_mode": {}, "explode_order_lines": {},
+	"requires_linked_parent": {},
 }
 
 // Import reads CSV rows from r and persists them as products and variants.

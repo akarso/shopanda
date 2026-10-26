@@ -3181,7 +3181,7 @@ components:
             `catalog.Product`, Go-serialized with no JSON tags — field names
             are the exported Go struct field names verbatim (PascalCase: `ID`,
             `Name`, `Slug`, `Description`, `Status`, `Type`, `PricingMode`,
-            `StockMode`, `ExplodeOrderLines`, `VisibilityModes`, `Attributes`,
+            `StockMode`, `ExplodeOrderLines`, `RequiresLinkedParent`, `VisibilityModes`, `Attributes`,
             `CreatedAt`, `UpdatedAt`), not
             the snake_case used by the rest of this response's `data` keys.
         category_ids:
@@ -3247,6 +3247,14 @@ components:
             `bundle` and both `pricing_mode` and `stock_mode` are `dynamic`.
             Omit to default to false. Sending true for any other combination
             is rejected with 422.
+        requires_linked_parent:
+          type: boolean
+          description: >-
+            When true, the purchasable axis stays false until the request
+            carries a non-empty assignment context (a parent product id, or
+            deferred assignment). Omit to store false. Display axes are
+            unchanged. There is no product-type restriction. Not accepted
+            on product CSV (PR-1073).
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
@@ -3293,6 +3301,11 @@ components:
             false when `type` changes off `bundle`, or when a pricing_mode or
             stock_mode change leaves the bundle ineligible to explode. Sending
             true without both dynamic modes is rejected with 422.
+        requires_linked_parent:
+          type: boolean
+          description: >-
+            Same flag as create. Omit to keep the stored value. There is
+            no product-type restriction. Not accepted on product CSV (PR-1073).
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:

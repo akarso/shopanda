@@ -325,7 +325,7 @@ func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, c
 			fmt.Errorf("product %s", product.ID),
 		)
 	}
-	leaves, err := catalogapp.RequiredLeafVariants(ctx, s.products, s.variants, s.components, product.ID)
+	leaves, err := catalogapp.RequiredLeafVariants(linePurchaseContext(ctx, ci), s.products, s.variants, s.components, product.ID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) || apperror.Is(err, apperror.CodeConflict) {
 			return nil, false, catalogapp.BundleCustomerError(err)
@@ -538,7 +538,7 @@ func (s *CreateOrderStep) keptReservedQty(ctx context.Context, cctx *Context, ci
 		}
 	}
 	if product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic {
-		return s.dynamicBundleReservedQty(ctx, product.ID, ci.Quantity)
+		return s.dynamicBundleReservedQty(linePurchaseContext(ctx, ci), product.ID, ci.Quantity)
 	}
 	return map[string]int{ci.VariantID: ci.Quantity}, nil
 }
