@@ -23,7 +23,7 @@
 | PR-1066 | C | done | [Bundle/grouped admin API + CSV + GUI](PR-1066.md) |
 | PR-1067 | D | done | [`LinkedProduct` catalog eligibility](PR-1067.md) |
 | PR-1068 | D | done | [`RequiresLinkedParent` purchasability gate](PR-1068.md) |
-| PR-1069 | D | planned | [`ProductAssignment` instance domain](PR-1069.md) |
+| PR-1069 | D | done | [`ProductAssignment` instance domain](PR-1069.md) |
 | PR-1070 | D | planned | [Assignment flow: cart-time + post-purchase](PR-1070.md) |
 | PR-1071 | D | planned | [Admin API for assignment](PR-1071.md) |
 | PR-1072 | D | planned | [Returns integration for assigned children](PR-1072.md) |

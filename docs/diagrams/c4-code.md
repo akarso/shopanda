@@ -92,6 +92,17 @@ classDiagram
         +Money UnitPrice
     }
 
+    class ProductAssignment {
+        +string ID
+        +string ParentOrderItemID
+        +string ChildOrderItemID
+        +Status status
+        +time CreatedAt
+        +time RevokedAt
+        +Assign(parentID) error
+        +Revoke() error
+    }
+
     class Customer {
         +string ID
         +string Email
@@ -334,6 +345,15 @@ classDiagram
         +IsEligible(ctx, childID, parentID) bool
     }
 
+    class ProductAssignmentRepository {
+        <<interface>>
+        +Insert(ctx, assignment) error
+        +Update(ctx, assignment) error
+        +FindByID(ctx, id) ProductAssignment
+        +FindCurrentByChildID(ctx, childID) ProductAssignment
+        +ListByChildID(ctx, childID) []ProductAssignment
+    }
+
     class PricingStep {
         <<interface>>
         +Name() string
@@ -439,6 +459,11 @@ classDiagram
         -db *sql.DB
         -tx *sql.Tx
         +WithTx(tx) LinkedEligibilityRepository
+    }
+    class PostgresProductAssignmentRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) ProductAssignmentRepository
     }
     class ManualPayProvider {
     }
@@ -686,6 +711,7 @@ classDiagram
     BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
     GroupedMemberRepository <|.. PostgresGroupedMemberRepo : implements
     LinkedEligibilityRepository <|.. PostgresLinkedEligibilityRepo : implements
+    ProductAssignmentRepository <|.. PostgresProductAssignmentRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
@@ -738,5 +764,7 @@ classDiagram
 **Product composition admin (PR-1066):** `ProductCompositionAdminHandler` in `internal/interfaces/http/admin/product_composition_admin.go` lists, upserts, and removes bundle components and grouped members. It calls `BundleService` and `GroupedService` only. Child `name` / `slug` / `type` come from `ProductRepository.FindByID`. Routes are registered in `cmd/api/wire_routes.go` with `products.read` / `products.write`. No new port or container.
 
 **Linked-product eligibility (PR-1067):** `LinkedEligibilityRepository` + `postgres.LinkedEligibilityRepo`. A child product declares an explicit parent allowlist (`linked_eligible_parents`) and/or a category rule (`linked_eligible_categories`); `IsEligible` and `HasRules` are join-table predicates (no product-status check). `IsEligible` is OR across the allowlist and `product_categories` membership. `WithTx` is adapter-only. No admin HTTP or CSV (PR-1073). No new container.
+
+**Product assignment (PR-1069):** `assignment.ProductAssignment` + `ProductAssignmentRepository` + `postgres.ProductAssignmentRepo`. Binds one purchased/issued child unit to one purchased parent unit. State machine `unassigned → assigned → revoked`, or `unassigned → revoked` with a null parent. Revoke, not delete; reassignment is a new `assigned` row. Parent is written only on insert-assigned or `unassigned → assigned`. Unit ids are opaque TEXT, not FKs to `order_items`. At most one current row per child. `FindByID` rejects a non-UUID as validation. `WithTx` is adapter-only. No cart/checkout writers (PR-1070) and no admin HTTP (PR-1071). No new container.
 
 **OpenTelemetry tracing (PR-1024):** New `internal/platform/tracing` package (`Setup`/`Shutdown`) installs an OTLP/HTTP exporter as the global OTel `TracerProvider` when `tracing.enabled` — otherwise every `otel.Tracer(...)` call anywhere in the process resolves to OTel's own no-op tracer, so instrumentation never needs its own enabled-check or nil-guard (unlike the `metrics.Recorder` interface's `Noop()`, tracing needed no equivalent construct in this codebase). `shared.TracingMiddleware` (new, alongside `MetricsMiddleware` in `internal/interfaces/http/shared`) starts one span per HTTP request and reads the matched route template from the same `*routeMatch` context box `MetricsMiddleware` already reads (see PR-1023's CR-follow-up round) rather than re-deriving it. `checkout.Workflow.Execute` gets a root span plus one child span per step. Both `TracingMiddleware` and `checkout.NewWorkflow` resolve their `Tracer` handle at construction time (once per process, in `cmd/api`'s wiring) rather than caching one in a package variable — OTel's global provider only migrates a pre-existing handle to a newly-installed SDK provider once, so a handle obtained before `tracing.Setup` runs would otherwise never see the real provider. DB query spans are deferred: no shared `*sql.DB` access wrapper exists across the ~40 postgres repo files to hang them on.
