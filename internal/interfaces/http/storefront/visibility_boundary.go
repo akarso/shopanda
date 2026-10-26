@@ -60,6 +60,8 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "PUT", Path: "/api/v1/carts/{cartId}/items/{variantId}", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "qty increase — same purchasable gate as AddItem"},
 		{Method: "POST", Path: "/api/v1/checkout", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "checkout start — lines must remain purchasable"},
 		{Method: "POST", Path: "/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML add to cart"},
+		{Method: "POST", Path: "/storefront/cart/items", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "same-origin JSON add to SSR cart"},
+		{Method: "PUT", Path: "/storefront/cart/items/{variantId}", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "same-origin JSON qty update"},
 		{Method: "POST", Path: "/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "HTML cart qty update"},
 		{Method: "POST", Path: "/fragments/cart/add", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment add to cart"},
 		{Method: "POST", Path: "/fragments/cart/update", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: pr1058, Note: "fragment cart qty update"},

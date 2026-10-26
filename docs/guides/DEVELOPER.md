@@ -702,6 +702,7 @@ Practical rules:
 - Storefront product/category JSON keeps Go names by default; `?fields=snake` or `X-Shopanda-Field-Names: snake` opt in
 - Set `http.cors.allowed_origins` only if the browser talks to the API cross-origin; prefer a same-origin proxy. `*` is anonymous (no credentials). `allow_credentials` needs an explicit origin list.
 - Ignore `/fragments/*` (SSR full-page-cache holes)
+- Same-origin configurator + SSR checkout: `POST/PUT/DELETE /storefront/cart/items` (CSRF header), not `/api/v1/carts`. See [HEADLESS.md](HEADLESS.md#same-origin-storefront-js-hybrid).
 
 ## Jobs admin API
 
@@ -734,7 +735,7 @@ The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache
 
 **Allowlist** (anything else is never stored): `/` (home), `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`. Defined in `internal/application/cache` (`Allowlisted`). Adding a new storefront route does **not** cache it until that template is added to the allowlist.
 
-**Denylist** (independent second check): `/cart`, `/checkout`, `/account`, `/admin`, `/fragments`, `/api`, `/setup`. A template on the allowlist still will not cache if the request path matches a denylist prefix (`Cacheable` requires both).
+**Denylist** (independent second check): `/cart`, `/checkout`, `/account`, `/admin`, `/fragments`, `/storefront`, `/api`, `/setup`. A template on the allowlist still will not cache if the request path matches a denylist prefix (`Cacheable` requires both).
 
 **Reviewer checklist before allowlisting a route:**
 

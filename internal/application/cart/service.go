@@ -148,6 +148,32 @@ func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (
 	return &c, nil
 }
 
+// DiscardEmptyGuestCart deletes a guest cart that still has no lines and
+// purges leftover cart_item extension rows for that cart ID. Customer carts
+// and carts with items are left untouched.
+func (s *Service) DiscardEmptyGuestCart(ctx context.Context, cartID string) error {
+	cartID = strings.TrimSpace(cartID)
+	if cartID == "" {
+		return nil
+	}
+	c, err := s.carts.FindByID(ctx, cartID)
+	if err != nil {
+		return fmt.Errorf("cart service: discard empty guest: find: %w", err)
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 {
+		return nil
+	}
+	if s.extensions != nil {
+		if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cartID, nil); err != nil {
+			return fmt.Errorf("cart service: discard empty guest: purge extensions: %w", err)
+		}
+	}
+	if err := s.carts.Delete(ctx, cartID); err != nil {
+		return fmt.Errorf("cart service: discard empty guest: delete: %w", err)
+	}
+	return nil
+}
+
 // GetCart returns a cart by ID when it belongs to customerID.
 // Guest callers pass an empty customerID and may only read guest-owned carts.
 func (s *Service) GetCart(ctx context.Context, cartID, customerID string) (*domainCart.Cart, error) {

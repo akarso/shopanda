@@ -292,6 +292,8 @@ If you rename `pdp.info` → `product.sidebar`, plugins registering on `pdp.info
 
 **Slots vs fragments:** slots are resolved when the page (or FPC miss) renders — plugin output can be stored inside a full-page cache entry. Fragments are htmx holes that always hit `/fragments/…` with `Cache-Control: no-store` after the shell loads. Use slots for catalog/plugin chrome; use fragments for session, cart, CSRF, or other shopper-private bits.
 
+Same-origin configurator JS that must reach SSR `/cart` should use `/storefront/cart/items` (POST/PUT/DELETE; see [HEADLESS.md](HEADLESS.md#same-origin-storefront-js-hybrid)), not the headless `/api/v1/carts` routes.
+
 ### Verify during development
 
 With dev mode enabled, the slot registry warns when a plugin registers an anchor **not declared** in the active theme (`slots.registration.unmarked_anchor`).

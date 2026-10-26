@@ -187,10 +187,7 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 			return
 		}
 		customerID := storefrontCustomerID(r)
-		if _, err := h.carts.AddItem(r.Context(), currentCart.ID, customerID, variantID, quantity, cartApp.AddItemOptions{
-			Extensions: h.storefrontExtensionInputsFromForm(r),
-			UpdatedBy:  cartExtensionActor(customerID),
-		}); err != nil {
+		if _, err := h.addLineToStorefrontCart(r, currentCart, customerID, variantID, quantity, h.storefrontExtensionInputsFromForm(r)); err != nil {
 			status := http.StatusInternalServerError
 			if apperror.Is(err, apperror.CodeValidation) {
 				status = http.StatusUnprocessableEntity
@@ -589,22 +586,27 @@ func (h *StorefrontHandler) currentCart(r *http.Request) (*cart.Cart, error) {
 }
 
 func (h *StorefrontHandler) ensureCartForRequest(w http.ResponseWriter, r *http.Request) (*cart.Cart, error) {
+	currentCart, _, err := h.loadOrCreateStorefrontCart(r, w, true)
+	return currentCart, err
+}
+
+func (h *StorefrontHandler) loadOrCreateStorefrontCart(r *http.Request, w http.ResponseWriter, setGuestCookie bool) (*cart.Cart, bool, error) {
 	if h.carts == nil {
-		return nil, fmt.Errorf("storefront cart service is not configured")
+		return nil, false, fmt.Errorf("storefront cart service is not configured")
 	}
 	if existing, err := h.currentCart(r); err != nil {
-		return nil, err
+		return nil, false, err
 	} else if existing != nil {
-		return existing, nil
+		return existing, false, nil
 	}
 	created, err := h.carts.CreateCart(r.Context(), storefrontCustomerID(r), storefrontCurrency(r))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if storefrontCustomerID(r) == "" {
+	if setGuestCookie && storefrontCustomerID(r) == "" {
 		storefrontSetCartCookie(w, r, created.ID)
 	}
-	return created, nil
+	return created, true, nil
 }
 
 func storefrontCurrency(r *http.Request) string {
@@ -644,6 +646,13 @@ func storefrontClearCartCookie(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   r != nil && r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (h *StorefrontHandler) addLineToStorefrontCart(r *http.Request, currentCart *cart.Cart, customerID, variantID string, quantity int, exts []domainext.ValueInput) (*cart.Cart, error) {
+	return h.carts.AddItem(r.Context(), currentCart.ID, customerID, variantID, quantity, cartApp.AddItemOptions{
+		Extensions: exts,
+		UpdatedBy:  cartExtensionActor(customerID),
 	})
 }
 

@@ -6,13 +6,24 @@
 | --- | --- | --- |
 | **A** | SSR packaging | PR-1100–1105 |
 | **B** | Headless API | PR-1106–1110 |
+| **C** | Storefront JS seam (follow-up) | PR-1111–1112 |
 
 ```text
 1100 → 1101 → 1102 → 1103 → 1104 → 1105
 1106 → 1107 → 1108 → 1109 → 1110
+1111 → 1112
 ```
 
-Tracks are independent except that docs (1105 / 1110) should land after their code.
+Tracks A/B are independent except that docs (1105 / 1110) should land after their code. Track C is a follow-up after 1110.
+
+## Track C — Storefront JS seam (follow-up)
+
+Same-origin configurator scripts that must land on SSR `/cart` / `/checkout`. Does **not** merge the headless REST cart with the cookie cart.
+
+| PR | Title | Status |
+| --- | --- | --- |
+| PR-1111 | `POST /storefront/cart/items` + `GET /storefront/csrf` | done |
+| PR-1112 | JSON update/remove on the same cookie cart | done |
 
 ## Track A — SSR packaging
 
@@ -42,4 +53,4 @@ Tracks are independent except that docs (1105 / 1110) should land after their co
 - Alpine in core
 - Embedding themes in the binary
 - Magento layout XML
-- Hybrid mode
+- Hybrid mode (cross-origin). Same-origin JS → SSR cart is Track C.
