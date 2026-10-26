@@ -34,8 +34,8 @@ func TestStamp_ChangesWhenTemplateRewritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stamp: %v", err)
 	}
-	if second <= first {
-		t.Fatalf("stamp did not advance: first=%d second=%d", first, second)
+	if second == first {
+		t.Fatalf("stamp did not change after rewrite")
 	}
 }
 
@@ -68,8 +68,8 @@ func TestStamp_ChildThemeYAMLOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stamp: %v", err)
 	}
-	if first == 0 {
-		t.Fatal("expected non-zero stamp for child theme.yaml")
+	if first == "" {
+		t.Fatal("expected stamp for child theme.yaml")
 	}
 	time.Sleep(5 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(child, "theme.yaml"), []byte("name: child-renamed\nversion: 0.1.0\nparent: ../parent\n"), 0o644); err != nil {
@@ -79,8 +79,79 @@ func TestStamp_ChildThemeYAMLOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stamp: %v", err)
 	}
-	if second <= first {
-		t.Fatalf("child theme.yaml edit did not advance stamp: first=%d second=%d", first, second)
+	if second == first {
+		t.Fatal("child theme.yaml edit did not change stamp")
+	}
+}
+
+func TestStamp_ChangesWhenChildOverrideDeleted(t *testing.T) {
+	parent, child := writeWatchThemePair(t)
+	override := filepath.Join(child, "templates", "home.html")
+	if err := os.MkdirAll(filepath.Join(child, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(override, []byte("{{ define \"content\" }}child{{ end }}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Make the parent template newer so a max-mtime stamp would miss the delete.
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(parent, "templates", "home.html"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	first, err := themeapp.Stamp(child)
+	if err != nil {
+		t.Fatalf("Stamp: %v", err)
+	}
+	if err := os.Remove(override); err != nil {
+		t.Fatal(err)
+	}
+	second, err := themeapp.Stamp(child)
+	if err != nil {
+		t.Fatalf("Stamp after delete: %v", err)
+	}
+	if second == first {
+		t.Fatal("deleting a child override must change the stamp")
+	}
+}
+
+func TestStamp_IncludesAncestorLayoutYAML(t *testing.T) {
+	root := t.TempDir()
+	grand := filepath.Join(root, "grand")
+	mid := filepath.Join(root, "mid")
+	child := filepath.Join(root, "child")
+	for _, d := range []string{filepath.Join(grand, "templates"), mid, child} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(grand, "theme.yaml"), []byte("name: grand\nversion: 0.1.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(grand, "templates", "home.html"), []byte("{{ define \"content\" }}g{{ end }}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mid, "theme.yaml"), []byte("name: mid\nversion: 0.1.0\nparent: ../grand\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mid, "layout.yaml"), []byte("version: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "theme.yaml"), []byte("name: child\nversion: 0.1.0\nparent: ../mid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := themeapp.Stamp(child)
+	if err != nil {
+		t.Fatalf("Stamp: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(mid, "layout.yaml"), []byte("version: \"1\"\nslots: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := themeapp.Stamp(child)
+	if err != nil {
+		t.Fatalf("Stamp: %v", err)
+	}
+	if second == first {
+		t.Fatal("ancestor layout.yaml edit must change the stamp")
 	}
 }
 

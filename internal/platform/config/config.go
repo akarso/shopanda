@@ -658,6 +658,10 @@ type FrontendConfig struct {
 	ThemePath         string `yaml:"theme_path"`
 	CSPEnabled        bool   `yaml:"csp_enabled"`
 	StrictSlotMarkers bool   `yaml:"strict_slot_markers"`
+	// ClaimURL is the shopper-facing claim page (no query string).
+	// Required for claim emails when StorefrontHTML is off; SSR defaults to
+	// {public_base_url}/account/orders/claim.
+	ClaimURL string `yaml:"claim_url"`
 }
 
 // StorefrontHTML reports whether the built-in SSR storefront should be mounted.
@@ -1267,6 +1271,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS"); v != "" {
 		cfg.Frontend.StrictSlotMarkers = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_CLAIM_URL"); v != "" {
+		cfg.Frontend.ClaimURL = v
+	}
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v
 	}
@@ -1503,6 +1510,7 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
 	m["frontend.strict_slot_markers"] = strconv.FormatBool(cfg.Frontend.StrictSlotMarkers)
+	m["frontend.claim_url"] = cfg.Frontend.ClaimURL
 	m["dev.embed_scheduler"] = strconv.FormatBool(cfg.Dev.EmbedScheduler)
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)

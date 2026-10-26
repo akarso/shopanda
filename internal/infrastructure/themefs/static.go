@@ -42,24 +42,22 @@ func ResolveStaticFile(roots []string, rel string) (string, error) {
 		if err != nil || info.IsDir() {
 			continue
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			real, err := filepath.EvalSymlinks(full)
-			if err != nil {
-				continue
-			}
-			realRoot, err := filepath.EvalSymlinks(root)
-			if err != nil {
-				realRoot = root
-			}
-			if !theme.IsPathWithinBoundary(real, realRoot) {
-				continue
-			}
-			realInfo, err := os.Stat(real)
-			if err != nil || realInfo.IsDir() {
-				continue
-			}
+		real, err := filepath.EvalSymlinks(full)
+		if err != nil {
+			continue
 		}
-		return full, nil
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			realRoot = root
+		}
+		if !theme.IsPathWithinBoundary(real, realRoot) {
+			continue
+		}
+		realInfo, err := os.Stat(real)
+		if err != nil || realInfo.IsDir() {
+			continue
+		}
+		return real, nil
 	}
 	return "", os.ErrNotExist
 }

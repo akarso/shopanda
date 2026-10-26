@@ -286,6 +286,10 @@ frontend:
   theme_path: "themes/default"
   # Fail startup when theme templates declare slot anchors outside the standard catalog.
   # strict_slot_markers: false
+  # Shopper-facing guest-order claim page (no query). Required for claim emails
+  # when the HTML storefront is off; SSR defaults to {public_base_url}/account/orders/claim.
+  # Env: SHOPANDA_FRONTEND_CLAIM_URL
+  # claim_url: "https://www.example.com/account/orders/claim"
 
 # --- Development runtime (app dev) --------------------------------------------
 dev:

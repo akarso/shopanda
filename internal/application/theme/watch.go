@@ -2,8 +2,11 @@ package theme
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
@@ -11,19 +14,17 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
-// Stamp is the newest mtime of theme.yaml, layout.yaml, and templates
-// along the inheritance chain. Static files are excluded — FileServer
+// Stamp is a signature of theme.yaml, layout.yaml, and templates along the
+// full parent chain: paths, sizes, and mtimes. Deleting an override or
+// editing an ancestor layout.yaml changes the stamp even when the newest
+// remaining mtime is unchanged. Static files are excluded — FileServer
 // reads them from disk without a reload.
-func Stamp(dir string) (int64, error) {
-	absDir, err := filepath.Abs(dir)
+func Stamp(dir string) (string, error) {
+	chain, err := themefs.ThemeChain(dir)
 	if err != nil {
-		absDir = dir
+		return "", err
 	}
-	resolved, _, err := themefs.ResolveRootTheme(dir)
-	if err != nil {
-		return 0, err
-	}
-	var newest int64
+	var parts []string
 	consider := func(path string) {
 		if path == "" {
 			return
@@ -32,36 +33,21 @@ func Stamp(dir string) (int64, error) {
 		if err != nil {
 			return
 		}
-		if t := info.ModTime().UnixNano(); t > newest {
-			newest = t
-		}
+		parts = append(parts, fmt.Sprintf("%s\t%d\t%d", path, info.Size(), info.ModTime().UnixNano()))
 	}
-	seen := map[string]struct{}{}
-	markDir := func(themeDir string) {
-		if themeDir == "" {
-			return
-		}
-		if _, ok := seen[themeDir]; ok {
-			return
-		}
-		seen[themeDir] = struct{}{}
+	for _, themeDir := range chain {
 		consider(filepath.Join(themeDir, "theme.yaml"))
 		consider(filepath.Join(themeDir, "layout.yaml"))
+		matches, err := filepath.Glob(filepath.Join(themeDir, "templates", "*.html"))
+		if err != nil {
+			continue
+		}
+		for _, path := range matches {
+			consider(path)
+		}
 	}
-	markDir(absDir)
-	if resolved.LayoutFile != "" {
-		markDir(filepath.Dir(filepath.Dir(resolved.LayoutFile)))
-	}
-	for _, path := range resolved.PageFiles {
-		markDir(filepath.Dir(filepath.Dir(path)))
-		consider(path)
-	}
-	for _, path := range resolved.PartialFiles {
-		markDir(filepath.Dir(filepath.Dir(path)))
-		consider(path)
-	}
-	consider(resolved.LayoutFile)
-	return newest, nil
+	sort.Strings(parts)
+	return strings.Join(parts, "\n"), nil
 }
 
 // WatchLoop reloads the theme when template metadata changes.
@@ -96,7 +82,7 @@ func WatchLoop(ctx context.Context, dir string, interval time.Duration, opts []d
 				}
 				continue
 			}
-			if next == 0 || next == stamp {
+			if next == "" || next == stamp {
 				continue
 			}
 			engine, loadErr := Load(dir, opts...)

@@ -61,3 +61,27 @@ func TestRunThemeInit_WritesYAMLAndRejectsBadNames(t *testing.T) {
 		t.Fatal("expected already-exists error")
 	}
 }
+
+func TestRunThemeInit_RejectsExistingDirWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Frontend.ThemePath = filepath.Join(root, "default")
+	dest := filepath.Join(root, "partial")
+	if err := os.MkdirAll(filepath.Join(dest, "static", "css"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(dest, "static", "css", "custom.css")
+	if err := os.WriteFile(custom, []byte("keep-me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runThemeInit(cfg, logger.NewWithWriter(io.Discard, "error"), []string{"partial"}); err == nil {
+		t.Fatal("expected already-exists error")
+	}
+	got, err := os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep-me" {
+		t.Fatalf("custom.css overwritten: %q", got)
+	}
+}

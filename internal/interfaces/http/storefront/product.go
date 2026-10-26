@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // ProductHandler serves product read endpoints.
@@ -92,17 +93,13 @@ func (h *ProductHandler) List() http.HandlerFunc {
 			ctx.Meta[k] = v
 		}
 
-		httpshared.JSON(w, http.StatusOK, listingResponse(ctx, wantSnakeFieldNames(r)))
+		writeCatalogJSON(w, http.StatusOK, listingResponse(ctx, wantSnakeFieldNames(r)))
 	}
 }
 
 func findProductByIDOrSlug(ctx context.Context, repo catalog.ProductRepository, key string) (*catalog.Product, error) {
-	product, err := repo.FindByID(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	if product != nil {
-		return product, nil
+	if id.IsUUID(key) {
+		return repo.FindByID(ctx, key)
 	}
 	return repo.FindBySlug(ctx, key)
 }
@@ -155,7 +152,7 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 
 		h.overlayProductTranslation(r.Context(), ctx.Product)
 
-		httpshared.JSON(w, http.StatusOK, productResponse(ctx, wantSnakeFieldNames(r)))
+		writeCatalogJSON(w, http.StatusOK, productResponse(ctx, wantSnakeFieldNames(r)))
 	}
 }
 

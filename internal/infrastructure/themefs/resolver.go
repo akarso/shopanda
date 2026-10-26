@@ -33,6 +33,41 @@ func ResolveRootTheme(loadDir string) (theme.ResolvedTemplates, theme.Theme, err
 	return resolved, meta, nil
 }
 
+// ThemeChain lists theme directories from the loaded child through each parent.
+func ThemeChain(loadDir string) ([]string, error) {
+	absLoadDir, err := filepath.Abs(loadDir)
+	if err != nil {
+		return nil, fmt.Errorf("themefs: resolve path: %w", err)
+	}
+	boundary := theme.ThemeBoundary(absLoadDir)
+	var dirs []string
+	seen := map[string]struct{}{}
+	cur := absLoadDir
+	for {
+		if _, ok := seen[cur]; ok {
+			return nil, fmt.Errorf("themefs: circular parent chain at %q", cur)
+		}
+		seen[cur] = struct{}{}
+		dirs = append(dirs, cur)
+		meta, err := loadThemeYAML(filepath.Join(cur, "theme.yaml"))
+		if err != nil {
+			return nil, fmt.Errorf("themefs: load metadata: %w", err)
+		}
+		parent := strings.TrimSpace(meta.Parent)
+		if parent == "" {
+			return dirs, nil
+		}
+		next, err := theme.ResolveParentPath(cur, parent, boundary)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(filepath.Join(next, "theme.yaml")); err != nil {
+			return nil, fmt.Errorf("themefs: parent %q not found: %w", parent, err)
+		}
+		cur = next
+	}
+}
+
 func resolveThemeTemplates(themeDir, boundary string, visited map[string]struct{}) (theme.ResolvedTemplates, error) {
 	absDir, err := filepath.Abs(themeDir)
 	if err != nil {

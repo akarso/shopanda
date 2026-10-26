@@ -5,9 +5,16 @@ import (
 	"strings"
 	"time"
 
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 )
+
+func writeCatalogJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Add("Vary", "X-Shopanda-Field-Names")
+	httpshared.JSON(w, status, data)
+}
 
 // wantSnakeFieldNames is the opt-in storefront JSON shape for this release.
 // Default remains Go exported names so existing clients do not break.

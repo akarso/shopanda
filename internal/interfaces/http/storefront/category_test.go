@@ -40,6 +40,9 @@ func (m *mockCategoryRepo) FindBySlug(ctx context.Context, slug string) (*catalo
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
 	}
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, slug)
+	}
 	return nil, nil
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // CategoryHandler serves category read endpoints.
@@ -83,7 +84,7 @@ func (h *CategoryHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+		writeCatalogJSON(w, http.StatusOK, map[string]interface{}{
 			"category": categoryJSON(cat, wantSnakeFieldNames(r)),
 		})
 	}
@@ -136,7 +137,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+		writeCatalogJSON(w, http.StatusOK, map[string]interface{}{
 			"products": productsValuePublicJSON(page.Products, wantSnakeFieldNames(r)),
 			"meta":     visibilityListMeta(page),
 		})
@@ -144,12 +145,8 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 }
 
 func findCategoryByIDOrSlug(ctx context.Context, repo catalog.CategoryRepository, key string) (*catalog.Category, error) {
-	cat, err := repo.FindByID(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	if cat != nil {
-		return cat, nil
+	if id.IsUUID(key) {
+		return repo.FindByID(ctx, key)
 	}
 	return repo.FindBySlug(ctx, key)
 }

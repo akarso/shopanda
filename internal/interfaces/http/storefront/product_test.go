@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -33,6 +34,9 @@ func (m *mockProductRepo) FindByID(ctx context.Context, id string) (*catalog.Pro
 func (m *mockProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
+	}
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, slug)
 	}
 	return nil, nil
 }
@@ -237,6 +241,7 @@ func TestProductHandler_List_RepoError(t *testing.T) {
 }
 
 func TestProductHandler_Get_OK(t *testing.T) {
+	const pid = "550e8400-e29b-41d4-a716-446655440000"
 	repo := &mockProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
 			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
@@ -247,7 +252,7 @@ func TestProductHandler_Get_OK(t *testing.T) {
 	h := storefront.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
+	req := httptest.NewRequest("GET", "/api/v1/products/"+pid, nil)
 	newRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -256,14 +261,15 @@ func TestProductHandler_Get_OK(t *testing.T) {
 	body := parseBody(t, rec)
 	data := body["data"].(map[string]interface{})
 	product := data["product"].(map[string]interface{})
-	if product["ID"] != "p1" {
-		t.Errorf("product ID = %v, want p1", product["ID"])
+	if product["ID"] != pid {
+		t.Errorf("product ID = %v, want %s", product["ID"], pid)
 	}
 }
 
 func TestProductHandler_Get_BySlug(t *testing.T) {
 	repo := &mockProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			t.Fatalf("FindByID must not run for slug %q", id)
 			return nil, nil
 		},
 		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
@@ -289,6 +295,9 @@ func TestProductHandler_Get_BySlug(t *testing.T) {
 	product := data["product"].(map[string]interface{})
 	if product["ID"] != "p1" || product["Slug"] != "widget" {
 		t.Errorf("product = %#v", product)
+	}
+	if rec.Header().Get("Vary") == "" || !strings.Contains(rec.Header().Get("Vary"), "X-Shopanda-Field-Names") {
+		t.Fatalf("Vary = %q, want X-Shopanda-Field-Names", rec.Header().Get("Vary"))
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -755,21 +754,35 @@ Commands:
 }
 
 type storefrontOrderClaimEmailer struct {
-	mailer       mail.Mailer
-	storeBaseURL string
+	mailer   mail.Mailer
+	claimURL string
+}
+
+func storefrontClaimPageURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if u := strings.TrimSpace(cfg.Frontend.ClaimURL); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if cfg.Frontend.StorefrontHTML() {
+		base := strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
+		if base == "" {
+			return ""
+		}
+		return base + "/account/orders/claim"
+	}
+	return ""
 }
 
 func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken string) error {
 	if e.mailer == nil {
 		return fmt.Errorf("storefront order claim emailer: mailer not configured")
 	}
-	baseURL, err := url.Parse(strings.TrimSpace(e.storeBaseURL))
+	baseURL, err := url.Parse(strings.TrimSpace(e.claimURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
-		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
+		return fmt.Errorf("storefront order claim emailer: invalid claim URL")
 	}
-	// Preserve any configured base path so deployments mounted under a
-	// subpath still produce valid claim links.
-	baseURL.Path = path.Join("/", baseURL.Path, "account/orders/claim")
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()

@@ -54,7 +54,7 @@ and enable the storefront.`)
 		themePath = cfg.Frontend.ThemePath
 	}
 	dest := filepath.Join(themeInitThemesRoot(themePath), name)
-	if _, err := os.Stat(filepath.Join(dest, "theme.yaml")); err == nil {
+	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("theme:init: %s already exists", dest)
 	}
 	if err := os.MkdirAll(filepath.Join(dest, "static", "css"), 0o755); err != nil {

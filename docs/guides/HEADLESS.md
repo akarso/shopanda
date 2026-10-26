@@ -60,6 +60,8 @@ Env: `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS=https://www.example.com,http://127.0.0.
 
 `claim-search` accepts `contact_email`. `claim-register` is **register-and-link** (new account), not login-and-link. Fields: `order_id`, `claim_token`, `email`, `password`, optional `first_name` / `last_name`. `Content-Type: application/json` or `application/x-www-form-urlencoded`.
 
+Claim emails link to `frontend.claim_url` (env `SHOPANDA_FRONTEND_CLAIM_URL`), not `server.public_base_url`. Set this to the shopper app's claim page (for example `https://www.example.com/account/orders/claim`). The token is appended as `?claim_token=`. Without it, a headless API host will not send a working HTML claim link — use `claim-register` from the client, or set the URL.
+
 ## Do not use
 
 - `/fragments/*` — HTML holes for full-page cache + htmx

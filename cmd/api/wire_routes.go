@@ -570,7 +570,7 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 			Password: cfg.Mail.SMTP.Password,
 			From:     cfg.Mail.SMTP.From,
 		}),
-		storeBaseURL: cfg.Server.PublicBaseURL,
+		claimURL: storefrontClaimPageURL(cfg),
 	}
 	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
 	sf = sf.

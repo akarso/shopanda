@@ -37,6 +37,9 @@ func (m *mockVariantProductRepo) FindBySlug(ctx context.Context, slug string) (*
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
 	}
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, slug)
+	}
 	return nil, nil
 }
 func (m *mockVariantProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {

@@ -138,3 +138,31 @@ func TestStaticHandler_RejectsPathTraversal(t *testing.T) {
 		t.Fatalf("dev Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))
 	}
 }
+
+func TestStaticHandler_RejectsIntermediateDirectorySymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	themeDir := filepath.Join(root, "theme")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(themeDir, "static"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(outside, "secret.txt"), "top-secret")
+	if err := os.Symlink(outside, filepath.Join(themeDir, "static", "leak")); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{filepath.Join(themeDir, "static")}
+	if _, err := themefs.ResolveStaticFile(roots, "leak/secret.txt"); err == nil {
+		t.Fatal("directory symlink escape must be rejected")
+	}
+	h := themefs.StaticHandler(func() []string { return roots }, true)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/static/leak/secret.txt", nil)
+	req.SetPathValue("path", "leak/secret.txt")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 body=%s", rec.Code, rec.Body.String())
+	}
+}
