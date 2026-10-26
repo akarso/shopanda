@@ -303,6 +303,9 @@ func TestLinkedEligibilityRepo_IsEligible_CaseDifferingSelfInOwnCategory(t *test
 	ctx := productRepoAdminCtx()
 
 	child := mustNewProduct(t, "Self Card", "self-card-"+id.New())
+	// Letters are required: an all-digit UUID has no case distinction, so
+	// ToLower and ToUpper match and the fixture check fails before IsEligible.
+	child.ID = "a1b2c3d4-e5f6-4789-abcd-ef0123456789"
 	if err := productRepo.Create(ctx, &child); err != nil {
 		t.Fatalf("create child: %v", err)
 	}
