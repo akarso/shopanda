@@ -99,7 +99,10 @@ func (h *ProductHandler) List() http.HandlerFunc {
 
 func findProductByIDOrSlug(ctx context.Context, repo catalog.ProductRepository, key string) (*catalog.Product, error) {
 	if id.IsUUID(key) {
-		return repo.FindByID(ctx, key)
+		p, err := repo.FindByID(ctx, key)
+		if err != nil || p != nil {
+			return p, err
+		}
 	}
 	return repo.FindBySlug(ctx, key)
 }

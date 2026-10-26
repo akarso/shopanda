@@ -9,9 +9,11 @@ This is a teaching sample, not a storefront SDK. Use it to see login, cart, and 
 1. Start Shopanda with the storefront off (the default):
 
    ```bash
-   SHOPANDA_FRONTEND_ENABLED=false
-   SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4173
+   export SHOPANDA_FRONTEND_ENABLED=false
+   export SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:4173
    ```
+
+   Start Shopanda in the same shell so it receives both values.
 
 2. Serve this folder on another origin (or same origin behind a reverse proxy):
 
@@ -34,7 +36,7 @@ Same-origin or a BFF/proxy is the safer default. CORS is only required when the 
 | Login | `POST /api/v1/auth/login` → Bearer token |
 | Addresses | `GET /api/v1/account/addresses` (after login) |
 
-Keep `cart_id` and the JWT in `localStorage` yourself. There is no Shopanda cookie for headless clients.
+Keep `cart_id` in `localStorage` yourself. Keep the JWT in page memory after login (a refresh clears it). There is no Shopanda cookie for headless clients.
 
 ## Still missing vs the SSR storefront
 

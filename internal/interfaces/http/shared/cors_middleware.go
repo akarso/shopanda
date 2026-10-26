@@ -55,11 +55,16 @@ func CORSMiddleware(allowedOrigins []string, allowCredentials bool) Middleware {
 				return
 			}
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if len(allowed) > 0 {
+				// Explicit allowlists vary by Origin even when the request
+				// has none or an unlisted one, so caches cannot reuse a
+				// credentialed/reflected response across origins.
+				w.Header().Add("Vary", "Origin")
+			}
 			matchedExplicit := origin != "" && originAllowed(allowed, origin)
 			if matchedExplicit {
 				h := w.Header()
 				h.Set("Access-Control-Allow-Origin", origin)
-				h.Add("Vary", "Origin")
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-Request-ID, X-Shopanda-Field-Names")
 				if allowCredentials {

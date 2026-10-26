@@ -16,6 +16,7 @@ frontend:
 
 - Catalog: `GET /api/v1/products`, `GET /api/v1/products/{idOrSlug}`
 - Nested catalog reads also accept the parent id or slug: `GET /api/v1/products/{idOrSlug}/variants`, `GET /api/v1/products/{idOrSlug}/reviews`
+- UUID-shaped keys try ID first, then slug if that ID is missing (products, categories, and nested variant/review routes)
 - Categories: `GET /api/v1/categories`, `GET /api/v1/categories/{idOrSlug}` (and `.../products`)
 - Search: `GET /api/v1/search`, `GET /api/v1/search/suggest`
 - CMS: pages, menus, content-blocks
@@ -60,7 +61,7 @@ Env: `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS=https://www.example.com,http://127.0.0.
 
 `claim-search` accepts `contact_email`. `claim-register` is **register-and-link** (new account), not login-and-link. Fields: `order_id`, `claim_token`, `email`, `password`, optional `first_name` / `last_name`. `Content-Type: application/json` or `application/x-www-form-urlencoded`.
 
-Claim emails link to `frontend.claim_url` (env `SHOPANDA_FRONTEND_CLAIM_URL`), not `server.public_base_url`. Set this to the shopper app's claim page (for example `https://www.example.com/account/orders/claim`). The token is appended as `?claim_token=`. Without it, a headless API host will not send a working HTML claim link — use `claim-register` from the client, or set the URL.
+Headless claim flows require `frontend.claim_url` (env `SHOPANDA_FRONTEND_CLAIM_URL`). Set this to the shopper app's claim page (for example `https://www.example.com/account/orders/claim`). Claim emails link to this page with `?claim_token=` appended. Without this setting, the headless server cannot send the email containing the token required by `claim-register`. SSR defaults to `{public_base_url}/account/orders/claim`.
 
 ## Do not use
 

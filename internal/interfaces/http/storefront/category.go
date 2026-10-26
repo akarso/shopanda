@@ -146,7 +146,10 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 
 func findCategoryByIDOrSlug(ctx context.Context, repo catalog.CategoryRepository, key string) (*catalog.Category, error) {
 	if id.IsUUID(key) {
-		return repo.FindByID(ctx, key)
+		c, err := repo.FindByID(ctx, key)
+		if err != nil || c != nil {
+			return c, err
+		}
 	}
 	return repo.FindBySlug(ctx, key)
 }

@@ -6,8 +6,10 @@
     return String(baseInput.value || "").replace(/\/$/, "");
   }
 
+  let sessionToken = "";
+
   function token() {
-    return localStorage.getItem("shopanda_token") || "";
+    return sessionToken;
   }
 
   function headers(extra) {
@@ -56,7 +58,7 @@
         })
       });
       if (data && data.token) {
-        localStorage.setItem("shopanda_token", data.token);
+        sessionToken = data.token;
       }
       show(data);
     } catch (err) {
@@ -84,7 +86,7 @@
       const cart = await api("/api/v1/carts", {
         method: "POST",
         headers: headers({ "Content-Type": "application/json" }),
-        body: "{}"
+        body: JSON.stringify({ currency: "EUR" })
       });
       const cartId = cart.id || cart.cart_id || (cart.cart && cart.cart.id);
       const updated = await api("/api/v1/carts/" + encodeURIComponent(cartId) + "/items", {

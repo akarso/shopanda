@@ -224,7 +224,7 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | `SHOPANDA_FRONTEND_ENABLED` | No | `false` | Enable the built-in SSR storefront |
 | `SHOPANDA_FRONTEND_MODE` | No | `ssr` | `ssr` mounts HTML when enabled; `headless` skips HTML even if enabled |
 | `SHOPANDA_FRONTEND_THEME_PATH` | No | `themes/default` | Active storefront theme path |
-| `SHOPANDA_FRONTEND_CLAIM_URL` | Headless claim email | empty | Absolute shopper claim page (no query). SSR defaults to `{public_base_url}/account/orders/claim` |
+| `SHOPANDA_FRONTEND_CLAIM_URL` | Yes, for headless claim | empty | Absolute shopper claim page (no query). Required so claim emails can include the token `claim-register` needs. SSR defaults to `{public_base_url}/account/orders/claim` |
 | `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated browser origins for headless clients (`*` is anonymous) |
 | `SHOPANDA_HTTP_CORS_ALLOW_CREDENTIALS` | No | `false` | Cookie CORS only with an explicit allowlist; `/api/v1` is not CSRF-checked |
 

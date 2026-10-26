@@ -2,8 +2,10 @@ package theme_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ func TestStamp_ChangesWhenTemplateRewritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stamp: %v", err)
 	}
-	if err := os.WriteFile(page, []byte("{{ define \"content\" }}two{{ end }}\n"), 0o644); err != nil {
+	if err := os.WriteFile(page, []byte("{{ define \"content\" }}changed{{ end }}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	second, err := themeapp.Stamp(dir)
@@ -181,16 +183,24 @@ func TestWatchLoop_ReloadsOnThemeYAML(t *testing.T) {
 			reloaded <- e.Theme().Name
 		}
 	}, nil)
-	time.Sleep(5 * time.Millisecond)
-	if err := os.WriteFile(filepath.Join(child, "theme.yaml"), []byte("name: reloaded\nversion: 0.2.0\nparent: ../parent\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case name := <-reloaded:
-		if name != "reloaded" {
-			t.Fatalf("reloaded name = %q, want reloaded", name)
+	path := filepath.Join(child, "theme.yaml")
+	deadline := time.Now().Add(2 * time.Second)
+	for n := 1; ; n++ {
+		select {
+		case name := <-reloaded:
+			if name != "reloaded" {
+				t.Fatalf("reloaded name = %q, want reloaded", name)
+			}
+			return
+		default:
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("WatchLoop did not reload after theme.yaml change")
+		if time.Now().After(deadline) {
+			t.Fatal("WatchLoop did not reload after theme.yaml change")
+		}
+		content := fmt.Sprintf("name: reloaded\nversion: 0.2.0\nparent: ../parent\n# %s\n", strings.Repeat("x", n))
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

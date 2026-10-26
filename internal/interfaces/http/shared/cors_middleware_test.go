@@ -38,6 +38,7 @@ func TestCORSMiddleware_AllowlistAndPreflight(t *testing.T) {
 	if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatal("credentials must be off by default")
 	}
+	assertVaryOrigin(t, rec)
 }
 
 func TestCORSMiddleware_RejectsUnknownOrigin(t *testing.T) {
@@ -53,6 +54,7 @@ func TestCORSMiddleware_RejectsUnknownOrigin(t *testing.T) {
 	if rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatalf("unknown origin must not be reflected")
 	}
+	assertVaryOrigin(t, rec)
 	if rec.Code != http.StatusMethodNotAllowed || !nextCalled {
 		t.Fatalf("unmatched OPTIONS must reach next (code=%d next=%v)", rec.Code, nextCalled)
 	}
@@ -88,6 +90,9 @@ func TestCORSMiddleware_WildcardAnonymous(t *testing.T) {
 	if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatal("anonymous * must not set credentials")
 	}
+	if got := rec.Header().Get("Vary"); got != "" {
+		t.Fatalf("anonymous * must not Vary Origin, got %q", got)
+	}
 }
 
 func TestCORSMiddleware_SkipsAdmin(t *testing.T) {
@@ -113,6 +118,7 @@ func TestCORSMiddleware_MissingOriginFallsThrough(t *testing.T) {
 	if rec.Code != http.StatusTeapot {
 		t.Fatalf("status = %d, want next handler", rec.Code)
 	}
+	assertVaryOrigin(t, rec)
 }
 
 func TestCORSMiddleware_ExplicitCredentials(t *testing.T) {
@@ -126,4 +132,15 @@ func TestCORSMiddleware_ExplicitCredentials(t *testing.T) {
 	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
 		t.Fatal("want credentials on explicit origin")
 	}
+	assertVaryOrigin(t, rec)
+}
+
+func assertVaryOrigin(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	for _, v := range rec.Header().Values("Vary") {
+		if v == "Origin" {
+			return
+		}
+	}
+	t.Fatalf("want Vary: Origin, got %q", rec.Header().Values("Vary"))
 }

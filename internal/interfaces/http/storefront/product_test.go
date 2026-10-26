@@ -301,6 +301,37 @@ func TestProductHandler_Get_BySlug(t *testing.T) {
 	}
 }
 
+func TestProductHandler_Get_ByUUIDShapedSlug(t *testing.T) {
+	const slug = "550e8400-e29b-41d4-a716-446655440099"
+	repo := &mockProductRepo{
+		findByIDFn: func(_ context.Context, _ string) (*catalog.Product, error) {
+			return nil, nil
+		},
+		findBySlugFn: func(_ context.Context, key string) (*catalog.Product, error) {
+			if key == slug {
+				return &catalog.Product{ID: "p-uuid-slug", Name: "UUID Slug", Slug: slug}, nil
+			}
+			return nil, nil
+		},
+	}
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := storefront.NewProductHandler(repo, pdp, plp, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products/"+slug, nil)
+	newRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := parseBody(t, rec)
+	product := body["data"].(map[string]interface{})["product"].(map[string]interface{})
+	if product["ID"] != "p-uuid-slug" || product["Slug"] != slug {
+		t.Errorf("product = %#v", product)
+	}
+}
+
 func TestProductHandler_Get_SnakeFieldNames(t *testing.T) {
 	repo := &mockProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
