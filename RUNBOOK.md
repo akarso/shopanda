@@ -108,7 +108,7 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
 **Check:**
 - Browser network: `/fragments/csrf` is 200 and sets/refreshes `shopanda_csrf`; the logout form’s hidden input is non-empty before submit.
 - Theme includes `hx-get="/fragments/csrf"` **inside** the logout form — a path mention elsewhere on the page is not enough; FPC refuses logout forms without that in-form hole.
-- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
+- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403. Default theme vendors `themes/default/static/js/htmx.min.js` (1.9.12).
 
 ### Cache appears stale after a product/price/content change
 
@@ -124,6 +124,21 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
   - Nuclear: `{"prefix":"fpc:"}` or `{"all": true}`.
 
 **Fix:** restore event publishing / tag wiring on the write path if a tag was never written or an event never fired. Purge-by-URL is a path-scoped escape hatch, not a whole-PLP broom; do not leave a known miss permanently on TTL alone.
+
+In `SHOPANDA_DEV_MODE`, theme watch reloads templates and then deletes `fpc:` keys plus the in-process category-nav cache. If HTML still looks stale after a template edit, confirm watch is running in that process and that you are not hitting a second replica without watch.
+
+### Headless CORS looks wide open
+
+**Symptom:** a browser on another origin can call `/api/v1` with shopper cookies, or every `OPTIONS` returns 204.
+
+**Check:**
+- `http.cors.allowed_origins` / `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS`. Empty means no CORS headers.
+- `*` is anonymous only (`Access-Control-Allow-Origin: *`, no credentials). Combining `*` with `allow_credentials: true` disables the wildcard.
+- Credentials require an explicit origin list. `/api/v1` is **not** CSRF-checked — do not enable cookie credentials unless you add CSRF or stay on Bearer.
+- CORS is storefront prefixes only. Admin/setup/webhooks/docs must not show `Access-Control-Allow-Origin`.
+- Unmatched preflights must fall through (not 204).
+
+See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 ### Full-page cache hit rate unexpectedly low
 
@@ -267,7 +282,9 @@ Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-10
 
 - Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.
 - Changing a live SKU between physical and `virtual`/`downloadable` changes whether **new** checkouts require a shipping method (derived in cart validation). Carts already mid-checkout keep the shipping requirement cached from when they last validated.
-- `bundle` / `grouped` / `configurable` / `downloadable` can be stored before their Phase 12 tracks fully ship; expect incomplete storefront/admin behavior until those PRs land.
+- `bundle` / `grouped` composition is editable in admin and CSV. `configurable` and `downloadable` can be stored before their later tracks fully ship; expect incomplete storefront/admin behavior for those types until those PRs land.
+- Bundle mode fields (`pricing_mode`, `stock_mode`, `explode_order_lines`) save with the product when type is bundle. The explode checkbox is enabled only when both modes are dynamic. Component and member links use dedicated routes, not the product PUT: `GET`/`POST /api/v1/admin/products/{id}/bundle-components`, `DELETE .../bundle-components/{componentId}`, and the grouped-members pair. A parent of the wrong type is 422. Removing a link that is not there is 404. Adding a required bundle component past `catalog.MaxBundleRequiredComponents` (50) is 422 and the link is not saved. `products.read` lists; `products.write` adds and removes.
+- CLI (operator scope, additive — a missing CSV row does not delete a link): `import:bundle-components` / `export:bundle-components` (`parent_slug,component_slug,quantity,required`; empty `required` means true) and `import:grouped-members` / `export:grouped-members` (`parent_slug,member_slug`). Row failures are `line N:` and do not abort the rest of the file. Product CSV exports stored modes and refuses a non-empty mode that does not match an existing product. It does not update modes; use the admin product PUT for that (it still locks the row and rejects dynamic pricing or stock while an own price or stock row exists).
 
 ## Admin store credit issuance
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Option configures theme loading.
@@ -28,8 +29,9 @@ func WithSlotSource(source SlotSource) Option {
 // Each page template is parsed together with layout.html (if present) so that
 // templates like "title" and "content" are scoped per page.
 type Engine struct {
-	theme Theme
-	pages map[string]*template.Template
+	theme       Theme
+	pages       map[string]*template.Template
+	staticRoots []string
 }
 
 // NewEngine builds an engine from already-resolved inherited templates.
@@ -56,17 +58,42 @@ func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine,
 		pages[name] = t
 	}
 
-	return &Engine{theme: meta, pages: pages}, nil
+	return &Engine{
+		theme:       meta,
+		pages:       pages,
+		staticRoots: append([]string(nil), resolved.StaticRoots...),
+	}, nil
+}
+
+// StaticRoots returns inherited static directories, child first.
+func (e *Engine) StaticRoots() []string {
+	if e == nil {
+		return nil
+	}
+	return append([]string(nil), e.staticRoots...)
+}
+
+// StaticURL returns an unversioned /static/ path. Callers that need a
+// cache-buster should hash the file at render time (themefs.StaticURL).
+func (e *Engine) StaticURL(rel string) string {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), "/")
+	return "/static/" + rel
 }
 
 // Theme returns the loaded theme metadata.
 func (e *Engine) Theme() Theme {
+	if e == nil {
+		return Theme{}
+	}
 	return e.theme
 }
 
 // Render executes the named page template and writes the result to w.
 // The name is the template filename without extension (e.g. "product").
 func (e *Engine) Render(w io.Writer, name string, data interface{}) error {
+	if e == nil {
+		return fmt.Errorf("theme: engine is nil")
+	}
 	t, ok := e.pages[name]
 	if !ok {
 		return fmt.Errorf("theme: template %q not found", name)
@@ -76,6 +103,9 @@ func (e *Engine) Render(w io.Writer, name string, data interface{}) error {
 
 // HasTemplate reports whether a page template with the given name is loaded.
 func (e *Engine) HasTemplate(name string) bool {
+	if e == nil {
+		return false
+	}
 	_, ok := e.pages[name]
 	return ok
 }

@@ -97,6 +97,21 @@ func TestCacheControlMiddleware_WriteMethods(t *testing.T) {
 	}
 }
 
+func TestCacheControlMiddleware_StorefrontPrefixNoStore(t *testing.T) {
+	mw := shared.CacheControlMiddleware([]string{"/storefront"})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, path := range []string{"/storefront/csrf", "/storefront/cart/items"} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		handler.ServeHTTP(rr, req)
+		if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
+
 func TestCacheControlMiddleware_StorefrontCacheable(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts"}
 	mw := shared.CacheControlMiddleware(noCachePrefixes)

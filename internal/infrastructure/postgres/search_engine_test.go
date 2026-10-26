@@ -444,6 +444,8 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 			"DELETE FROM variants",
 			"DELETE FROM bundle_components",
 			"DELETE FROM grouped_members",
+			"DELETE FROM linked_eligible_parents",
+			"DELETE FROM linked_eligible_categories",
 			"DELETE FROM products",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
@@ -584,6 +586,8 @@ func TestSearchEngine_Search_DynamicBundleInStockFromComponents(t *testing.T) {
 			"DELETE FROM variants",
 			"DELETE FROM bundle_components",
 			"DELETE FROM grouped_members",
+			"DELETE FROM linked_eligible_parents",
+			"DELETE FROM linked_eligible_categories",
 			"DELETE FROM products",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
@@ -685,6 +689,8 @@ func TestSearchEngine_Search_DynamicBundleVirtualComponentInStock(t *testing.T) 
 			"DELETE FROM variants",
 			"DELETE FROM bundle_components",
 			"DELETE FROM grouped_members",
+			"DELETE FROM linked_eligible_parents",
+			"DELETE FROM linked_eligible_categories",
 			"DELETE FROM products",
 		} {
 			if _, err := db.Exec(stmt); err != nil {

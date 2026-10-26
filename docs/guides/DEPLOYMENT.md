@@ -155,6 +155,8 @@ Environment variables override YAML values.
 | --- | --- | --- | --- |
 | `SHOPANDA_HTTP_MAX_BODY_BYTES` | No | `1048576` (1 MiB) | Default max request body for non-media routes |
 | `SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES` | No | `10485760` (10 MiB) | Max body for admin media upload routes |
+| `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated origins for storefront API prefixes. `*` is anonymous (no credentials) |
+| `SHOPANDA_HTTP_CORS_ALLOW_CREDENTIALS` | No | `false` | Reflect credentials only with an explicit origin list (never with `*`) |
 
 HTTP server timeouts are **fixed** (not env-configurable): **Read 10s**, **Write 30s**, **Idle 60s**. Checkout (and other handlers) use the request context, so WriteTimeout and client disconnect cancel in-flight checkout work. Keep reverse-proxy idle/read timeouts **at least 30s** (preferably a few seconds above WriteTimeout) so the proxy does not cut the connection first and hide the API error. Compensating checkout writes after cancel are documented in [RUNBOOK.md](../../RUNBOOK.md#checkout-cancel-and-timeouts).
 
@@ -220,8 +222,11 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_FRONTEND_ENABLED` | No | `false` | Enable the built-in SSR storefront |
-| `SHOPANDA_FRONTEND_MODE` | No | `ssr` | Frontend rendering mode |
+| `SHOPANDA_FRONTEND_MODE` | No | `ssr` | `ssr` mounts HTML when enabled; `headless` skips HTML even if enabled |
 | `SHOPANDA_FRONTEND_THEME_PATH` | No | `themes/default` | Active storefront theme path |
+| `SHOPANDA_FRONTEND_CLAIM_URL` | Yes, for headless claim | empty | Absolute shopper claim page (no query). Required so claim emails can include the token `claim-register` needs. SSR defaults to `{public_base_url}/account/orders/claim` |
+| `SHOPANDA_HTTP_CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated browser origins for headless clients (`*` is anonymous) |
+| `SHOPANDA_HTTP_CORS_ALLOW_CREDENTIALS` | No | `false` | Cookie CORS only with an explicit allowlist; `/api/v1` is not CSRF-checked |
 
 ### CDN
 

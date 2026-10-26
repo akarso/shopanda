@@ -40,6 +40,9 @@ func (m *mockCategoryRepo) FindBySlug(ctx context.Context, slug string) (*catalo
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
 	}
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, slug)
+	}
 	return nil, nil
 }
 
@@ -255,6 +258,80 @@ func TestCategoryHandler_Get_OK(t *testing.T) {
 	}
 	if len(envelope.Data.Category) == 0 {
 		t.Fatal("response missing 'category' in data")
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(envelope.Data.Category, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["ID"] != "cat-1" || got["Slug"] != "books" {
+		t.Fatalf("category = %#v", got)
+	}
+}
+
+func TestCategoryHandler_Get_BySlug(t *testing.T) {
+	cat := &catalog.Category{ID: "cat-1", Name: "Books", Slug: "books"}
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, _ string) (*catalog.Category, error) {
+			return nil, nil
+		},
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Category, error) {
+			if slug == "books" {
+				return cat, nil
+			}
+			return nil, nil
+		},
+	}
+	h := storefront.NewCategoryHandler(cats, &mockCatProductRepo{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/books", nil)
+	newCategoryRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Category map[string]interface{} `json:"category"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Category["ID"] != "cat-1" || envelope.Data.Category["Name"] != "Books" {
+		t.Fatalf("category = %#v", envelope.Data.Category)
+	}
+}
+
+func TestCategoryHandler_Get_ByUUIDShapedSlug(t *testing.T) {
+	const slug = "550e8400-e29b-41d4-a716-446655440088"
+	cat := &catalog.Category{ID: "cat-uuid-slug", Name: "UUID Slug", Slug: slug}
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, _ string) (*catalog.Category, error) {
+			return nil, nil
+		},
+		findBySlugFn: func(_ context.Context, key string) (*catalog.Category, error) {
+			if key == slug {
+				return cat, nil
+			}
+			return nil, nil
+		},
+	}
+	h := storefront.NewCategoryHandler(cats, &mockCatProductRepo{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/"+slug, nil)
+	newCategoryRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Category map[string]interface{} `json:"category"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Category["ID"] != "cat-uuid-slug" || envelope.Data.Category["Slug"] != slug {
+		t.Fatalf("category = %#v", envelope.Data.Category)
 	}
 }
 

@@ -135,6 +135,9 @@ func (s *BundleService) Add(ctx context.Context, c *catalog.BundleComponent) err
 	if err := componentRepo.Upsert(ctx, c); err != nil {
 		return fmt.Errorf("bundle: upsert component: %w", err)
 	}
+	if err := enforceRequiredComponentCap(ctx, componentRepo, c.BundleProductID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("bundle: commit: %w", err)
 	}
@@ -142,8 +145,9 @@ func (s *BundleService) Add(ctx context.Context, c *catalog.BundleComponent) err
 }
 
 // Remove deletes one component from a bundle.
-// It does not lock either product row. Callers that already hold the ids
-// delete the link only; product deletion is a separate path.
+// It checks the parent type with one FindByID and does not list the
+// composition. It does not lock either product row. Product deletion is a
+// separate path.
 func (s *BundleService) Remove(ctx context.Context, bundleProductID, componentProductID string) error {
 	bundleProductID = strings.TrimSpace(bundleProductID)
 	componentProductID = strings.TrimSpace(componentProductID)
@@ -153,8 +157,38 @@ func (s *BundleService) Remove(ctx context.Context, bundleProductID, componentPr
 	if componentProductID == "" {
 		return apperror.Validation("component product id must not be empty")
 	}
+	bundle, err := s.loadProduct(ctx, bundleProductID)
+	if err != nil {
+		return err
+	}
+	if bundle.Type != catalog.TypeBundle {
+		return apperror.Validation(fmt.Sprintf("only products with type %q can have bundle components", catalog.TypeBundle))
+	}
 	if err := s.components.Remove(ctx, bundleProductID, componentProductID); err != nil {
 		return fmt.Errorf("bundle: remove component: %w", err)
+	}
+	return nil
+}
+
+// enforceRequiredComponentCap rejects a bundle whose required rows exceed
+// catalog.MaxBundleRequiredComponents. Call it after upsert and before commit
+// so the new row is counted and a validation error rolls the write back.
+func enforceRequiredComponentCap(ctx context.Context, components catalog.BundleComponentRepository, bundleID string) error {
+	rows, err := components.ListByBundleID(ctx, bundleID)
+	if err != nil {
+		return fmt.Errorf("bundle: list components: %w", err)
+	}
+	required := 0
+	for _, row := range rows {
+		if row.Required {
+			required++
+		}
+	}
+	if required > catalog.MaxBundleRequiredComponents {
+		return apperror.Validation(fmt.Sprintf(
+			"bundle has %d required components; the maximum is %d",
+			required, catalog.MaxBundleRequiredComponents,
+		))
 	}
 	return nil
 }

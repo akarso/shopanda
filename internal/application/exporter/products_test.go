@@ -135,8 +135,8 @@ func TestExport_BasicCSV(t *testing.T) {
 		t.Fatalf("rows = %d, want 4", len(records))
 	}
 	header := records[0]
-	if strings.Join(header, ",") != "name,slug,sku,description,type,variant_name" {
-		t.Errorf("header = %v, want [name slug sku description type variant_name]", header)
+	if strings.Join(header, ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
+		t.Errorf("header = %v, want [name slug sku description type pricing_mode stock_mode explode_order_lines variant_name]", header)
 	}
 	colIdx := make(map[string]int)
 	for i, h := range header {
@@ -180,7 +180,7 @@ func TestExport_WithAttributes(t *testing.T) {
 	records := parseCSV(t, &buf)
 	header := records[0]
 	// Attribute columns should be sorted: active, color, weight
-	expected := "name,slug,sku,description,type,variant_name,active,color,weight"
+	expected := "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name,active,color,weight"
 	if strings.Join(header, ",") != expected {
 		t.Errorf("header = %q, want %q", strings.Join(header, ","), expected)
 	}
@@ -218,7 +218,7 @@ func TestExport_EmptyDatabase(t *testing.T) {
 	if len(records) != 1 { // header only
 		t.Errorf("rows = %d, want 1 (header only)", len(records))
 	}
-	if strings.Join(records[0], ",") != "name,slug,sku,description,type,variant_name" {
+	if strings.Join(records[0], ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
 		t.Errorf("header = %v, want type column present", records[0])
 	}
 }
@@ -653,5 +653,60 @@ func TestExport_VariantPagination(t *testing.T) {
 	}
 	if records[150][2] != "SKU-150" {
 		t.Errorf("last SKU = %q, want SKU-150", records[150][2])
+	}
+}
+
+func TestExport_BundleModesStored(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{
+				ID: "p1", Name: "Kit", Slug: "kit", Type: catalog.TypeBundle,
+				PricingMode: catalog.PricingModeDynamic, StockMode: catalog.StockModeDynamic, ExplodeOrderLines: true,
+			},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "SKU-K", Attributes: map[string]interface{}{"pricing_mode": "attr", "color": "red"}}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	colIdx := map[string]int{}
+	for i, h := range records[0] {
+		colIdx[h] = i
+	}
+	row := records[1]
+	if row[colIdx["pricing_mode"]] != "dynamic" || row[colIdx["stock_mode"]] != "dynamic" || row[colIdx["explode_order_lines"]] != "true" {
+		t.Fatalf("modes = %q %q %q", row[colIdx["pricing_mode"]], row[colIdx["stock_mode"]], row[colIdx["explode_order_lines"]])
+	}
+	if _, ok := colIdx["color"]; !ok {
+		t.Fatalf("header = %v, want color attribute", records[0])
+	}
+	modeCols := 0
+	for _, h := range records[0] {
+		if h == "pricing_mode" {
+			modeCols++
+		}
+	}
+	if modeCols != 1 {
+		t.Fatalf("pricing_mode columns = %d, header=%v", modeCols, records[0])
+	}
+	if row[colIdx["pricing_mode"]] == "attr" {
+		t.Fatal("attribute overwrote pricing_mode")
+	}
+	warned := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "pricing_mode") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("Warnings = %v, want reserved pricing_mode omission", result.Warnings)
 	}
 }

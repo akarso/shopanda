@@ -1,7 +1,9 @@
 package storefront
 
 import (
+	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -102,12 +104,11 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 			return
 		}
 
-		if err := r.ParseForm(); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid form payload"))
+		contactEmail, err := parseClaimSearchInput(r)
+		if err != nil {
+			httpshared.JSONError(w, err)
 			return
 		}
-
-		contactEmail := strings.ToLower(strings.TrimSpace(r.FormValue("contact_email")))
 		if contactEmail == "" {
 			httpshared.JSONError(w, apperror.Validation("contact_email is required"))
 			return
@@ -156,7 +157,7 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 // orders carrying the verified contact email, then signs the customer in.
 func (h *StorefrontHandler) AccountOrdersClaim() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.orderClaim == nil || h.security == nil || h.orderLinker == nil || !h.engine.HasTemplate("account_orders_claim") {
+		if h.orderClaim == nil || h.security == nil || h.orderLinker == nil || !h.hasTemplate("account_orders_claim") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -174,7 +175,7 @@ func (h *StorefrontHandler) AccountOrdersClaim() http.HandlerFunc {
 
 		page := StorefrontAccountOrdersClaimPageData{
 			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.engine.Theme(),
+			Theme:      h.themeMeta(),
 			CSRFToken:  httpshared.CSRFToken(r),
 			ClaimToken: claimToken,
 		}
@@ -260,18 +261,18 @@ func (h *StorefrontHandler) ClaimLink() http.HandlerFunc {
 			return
 		}
 
-		if err := r.ParseForm(); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid form payload"))
+		in, err := parseClaimRegisterInput(r)
+		if err != nil {
+			httpshared.JSONError(w, err)
 			return
 		}
 
-		// Parse request
-		orderID := strings.TrimSpace(r.FormValue("order_id"))
-		claimToken := strings.TrimSpace(r.FormValue("claim_token"))
-		email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
-		password := r.FormValue("password")
-		firstName := strings.TrimSpace(r.FormValue("first_name"))
-		lastName := strings.TrimSpace(r.FormValue("last_name"))
+		orderID := in.OrderID
+		claimToken := in.ClaimToken
+		email := in.Email
+		password := in.Password
+		firstName := in.FirstName
+		lastName := in.LastName
 
 		if orderID == "" {
 			httpshared.JSONError(w, apperror.Validation("order_id is required"))
@@ -332,4 +333,64 @@ func (h *StorefrontHandler) ClaimLink() http.HandlerFunc {
 
 		httpshared.JSON(w, http.StatusOK, resp)
 	}
+}
+
+type claimSearchInput struct {
+	ContactEmail string `json:"contact_email"`
+}
+
+type claimRegisterInput struct {
+	OrderID    string `json:"order_id"`
+	ClaimToken string `json:"claim_token"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+}
+
+func wantsJSONBody(r *http.Request) bool {
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return false
+	}
+	return media == "application/json"
+}
+
+func parseClaimSearchInput(r *http.Request) (string, error) {
+	if wantsJSONBody(r) {
+		var body claimSearchInput
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return "", apperror.Validation("invalid JSON body")
+		}
+		return strings.ToLower(strings.TrimSpace(body.ContactEmail)), nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return "", apperror.Validation("invalid form payload")
+	}
+	return strings.ToLower(strings.TrimSpace(r.FormValue("contact_email"))), nil
+}
+
+func parseClaimRegisterInput(r *http.Request) (claimRegisterInput, error) {
+	var in claimRegisterInput
+	if wantsJSONBody(r) {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			return claimRegisterInput{}, apperror.Validation("invalid JSON body")
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			return claimRegisterInput{}, apperror.Validation("invalid form payload")
+		}
+		in.OrderID = r.FormValue("order_id")
+		in.ClaimToken = r.FormValue("claim_token")
+		in.Email = r.FormValue("email")
+		in.Password = r.FormValue("password")
+		in.FirstName = r.FormValue("first_name")
+		in.LastName = r.FormValue("last_name")
+	}
+	in.OrderID = strings.TrimSpace(in.OrderID)
+	in.ClaimToken = strings.TrimSpace(in.ClaimToken)
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	in.FirstName = strings.TrimSpace(in.FirstName)
+	in.LastName = strings.TrimSpace(in.LastName)
+	return in, nil
 }

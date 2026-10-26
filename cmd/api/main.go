@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"strings"
 	"syscall"
 	"time"
@@ -119,6 +118,14 @@ func run() error {
 			return runImportProducts(cfg, log)
 		case "export:products":
 			return runExportProducts(cfg, log)
+		case "import:bundle-components":
+			return runImportBundleComponents(cfg, log)
+		case "export:bundle-components":
+			return runExportBundleComponents(cfg, log)
+		case "import:grouped-members":
+			return runImportGroupedMembers(cfg, log)
+		case "export:grouped-members":
+			return runExportGroupedMembers(cfg, log)
 		case "import:stock":
 			return runImportStock(cfg, log)
 		case "export:stock":
@@ -157,6 +164,8 @@ func run() error {
 			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
 		case "cache:purge-url":
 			return runCachePurgeURL(os.Stdout, cfg, log, os.Args[2:])
+		case "theme:init":
+			return runThemeInit(cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -241,7 +250,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		defer rt.rateLimitClose()
 	}
 
-	handler, err := buildServeHandler(cfg, log, rt, conn)
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+	handler, err := buildServeHandler(cfg, log, rt, conn, serveCtx)
 	if err != nil {
 		shutdownTracing()
 		rbac.UnbindRuntime()
@@ -709,6 +720,10 @@ Commands:
   config:import <file> Import configuration from a YAML file
   import:products <f>  Import products from a CSV file
   export:products <f>  Export products to a CSV file
+  import:bundle-components <f>  Import bundle component links from a CSV file
+  export:bundle-components <f>  Export bundle component links to a CSV file
+  import:grouped-members <f>  Import grouped member links from a CSV file
+  export:grouped-members <f>  Export grouped member links to a CSV file
   import:stock <f>     Import stock from a CSV file
   export:stock <f>     Export stock to a CSV file
   import:customers <f> Import customers from a CSV file
@@ -733,26 +748,41 @@ Commands:
   schedule:enable <n>  Re-enable a scheduled task
   schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
+  theme:init <name>    Create a child theme under themes/<name>
   help                 Show this help message
 `))
 }
 
 type storefrontOrderClaimEmailer struct {
-	mailer       mail.Mailer
-	storeBaseURL string
+	mailer   mail.Mailer
+	claimURL string
+}
+
+func storefrontClaimPageURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if u := strings.TrimSpace(cfg.Frontend.ClaimURL); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	if cfg.Frontend.StorefrontHTML() {
+		base := strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
+		if base == "" {
+			return ""
+		}
+		return base + "/account/orders/claim"
+	}
+	return ""
 }
 
 func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken string) error {
 	if e.mailer == nil {
 		return fmt.Errorf("storefront order claim emailer: mailer not configured")
 	}
-	baseURL, err := url.Parse(strings.TrimSpace(e.storeBaseURL))
+	baseURL, err := url.Parse(strings.TrimSpace(e.claimURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
-		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
+		return fmt.Errorf("storefront order claim emailer: invalid claim URL")
 	}
-	// Preserve any configured base path so deployments mounted under a
-	// subpath still produce valid claim links.
-	baseURL.Path = path.Join("/", baseURL.Path, "account/orders/claim")
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()

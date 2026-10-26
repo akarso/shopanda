@@ -23,6 +23,14 @@ const (
 	AuditProductRead   AuditAction = "product.read"
 	AuditProductUpdate AuditAction = "product.update"
 
+	// Bundle and grouped composition (PR-1066)
+	AuditBundleComponentList   AuditAction = "product.bundle_component.list"
+	AuditBundleComponentAdd    AuditAction = "product.bundle_component.add"
+	AuditBundleComponentRemove AuditAction = "product.bundle_component.remove"
+	AuditGroupedMemberList     AuditAction = "product.grouped_member.list"
+	AuditGroupedMemberAdd      AuditAction = "product.grouped_member.add"
+	AuditGroupedMemberRemove   AuditAction = "product.grouped_member.remove"
+
 	// Scoped catalog editing (PR-E catalog slice)
 	AuditProductTranslationRead   AuditAction = "product.translation.read"
 	AuditProductTranslationUpdate AuditAction = "product.translation.update"

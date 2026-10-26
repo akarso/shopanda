@@ -57,6 +57,15 @@ func TestIsValid_AcceptsValidUUID(t *testing.T) {
 	}
 }
 
+func TestIsUUID_AcceptsAnyVersion(t *testing.T) {
+	if !id.IsUUID("550e8400-e29b-31d4-a716-446655440000") {
+		t.Fatal("v3 UUID must look like a UUID for lookup routing")
+	}
+	if id.IsUUID("usb-c-cable") {
+		t.Fatal("slug must not look like a UUID")
+	}
+}
+
 func TestIsValid_RejectsInvalidStrings(t *testing.T) {
 	cases := []string{
 		"",

@@ -24,6 +24,9 @@ func TestFPC_AllowlistFailClosed(t *testing.T) {
 	if cacheapp.Cacheable(cacheapp.RoutePDP, "/cart") {
 		t.Fatal("allowlisted template + denylisted path must fail closed")
 	}
+	if !cacheapp.DeniedPath("/storefront/csrf") || !cacheapp.DeniedPath("/storefront/cart/items") {
+		t.Fatal("/storefront must be denylisted")
+	}
 }
 
 func TestFPC_KeyIgnoresCustomerIdentity(t *testing.T) {

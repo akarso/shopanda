@@ -321,6 +321,18 @@ classDiagram
         +Remove(ctx, groupID, memberID) error
     }
 
+    class LinkedEligibilityRepository {
+        <<interface>>
+        +ListParentsByChildID(ctx, childID) []LinkedEligibleParent
+        +ListCategoriesByChildID(ctx, childID) []LinkedEligibleCategory
+        +CountRulesByChildID(ctx, childID) int
+        +InsertParent(ctx, parent) error
+        +InsertCategory(ctx, category) error
+        +RemoveParent(ctx, childID, parentID) error
+        +RemoveCategory(ctx, childID, categoryID) error
+        +IsEligible(ctx, childID, parentID) bool
+    }
+
     class PricingStep {
         <<interface>>
         +Name() string
@@ -421,6 +433,11 @@ classDiagram
         -db *sql.DB
         -tx *sql.Tx
         +WithTx(tx) GroupedMemberRepository
+    }
+    class PostgresLinkedEligibilityRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) LinkedEligibilityRepository
     }
     class ManualPayProvider {
     }
@@ -667,6 +684,7 @@ classDiagram
     CollectionRepository <|.. PostgresCollectionRepo : implements
     BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
     GroupedMemberRepository <|.. PostgresGroupedMemberRepo : implements
+    LinkedEligibilityRepository <|.. PostgresLinkedEligibilityRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
@@ -715,5 +733,9 @@ classDiagram
 **Admin package split (PR-1022):** Every admin-privileged HTTP handler — the `*_admin.go` files plus `media.go`, `schema_handler.go`, `refund.go` (moved a PR late, in PR-1023, once the naming-convention gap was noticed), and the `admin_*.go` identity/MFA/role/scope/user helpers, which were admin-only despite not matching the `_admin.go` suffix — moved to `internal/interfaces/http/admin`, a new adapter package alongside `shared`. `store_credit.go` was split: the admin handler moved, the customer-facing account handler stayed. New admin code imports `shared` directly (no shim). `cmd/api` wiring now constructs these handlers from `admin` instead of `http`. No route, permission, or response-shape changes.
 
 **Storefront package split (PR-1023):** Every customer-facing handler (REST API + SSR views) moved to `internal/interfaces/http/storefront`, the same way admin did in PR-1022 — including `sitemap.go`/`robots.go` (public SEO surface) and `rewrite_handler.go` (companion to `ResolverMiddleware`, which already lived in `shared`). This PR also finished the `auth_middleware.go` split PR-1021/1022 had deferred: `AuthMiddleware`/`RequireAuth` (customer JWT, coupled to a storefront session-cookie helper) moved to `storefront`; `RequirePermission`/`RequireRole`/`AdminContextMiddleware` (pure RBAC, zero storefront coupling, used exclusively to gate `/api/v1/admin/*`) moved to `admin` instead. `admin` now imports the handful of response-shaping helpers it shares with storefront (`AccountDeleter`, `OrderResponse`/`ToOrderResponse`, `ToReturnResponse(s)`, `ToAdminReviewResponse(s)`, `CategoryHandler`, `VariantHandler`) from `storefront` rather than the legacy `http` package. What's left in `internal/interfaces/http` is genuinely neither admin nor storefront: `docs.go`, `health.go`, `setup.go`, `payment_webhook.go`, `stripe_webhook.go`, and the `shared_compat.go` shim they still use. No route, permission, or response-shape changes.
+
+**Product composition admin (PR-1066):** `ProductCompositionAdminHandler` in `internal/interfaces/http/admin/product_composition_admin.go` lists, upserts, and removes bundle components and grouped members. It calls `BundleService` and `GroupedService` only. Child `name` / `slug` / `type` come from `ProductRepository.FindByID`. Routes are registered in `cmd/api/wire_routes.go` with `products.read` / `products.write`. No new port or container.
+
+**Linked-product eligibility (PR-1067):** `LinkedEligibilityRepository` + `postgres.LinkedEligibilityRepo`. A child product declares an explicit parent allowlist (`linked_eligible_parents`) and/or a category rule (`linked_eligible_categories`); `IsEligible` and `HasRules` are join-table predicates (no product-status check). `IsEligible` is OR across the allowlist and `product_categories` membership. `WithTx` is adapter-only. No admin HTTP or CSV (PR-1073). No new container.
 
 **OpenTelemetry tracing (PR-1024):** New `internal/platform/tracing` package (`Setup`/`Shutdown`) installs an OTLP/HTTP exporter as the global OTel `TracerProvider` when `tracing.enabled` — otherwise every `otel.Tracer(...)` call anywhere in the process resolves to OTel's own no-op tracer, so instrumentation never needs its own enabled-check or nil-guard (unlike the `metrics.Recorder` interface's `Noop()`, tracing needed no equivalent construct in this codebase). `shared.TracingMiddleware` (new, alongside `MetricsMiddleware` in `internal/interfaces/http/shared`) starts one span per HTTP request and reads the matched route template from the same `*routeMatch` context box `MetricsMiddleware` already reads (see PR-1023's CR-follow-up round) rather than re-deriving it. `checkout.Workflow.Execute` gets a root span plus one child span per step. Both `TracingMiddleware` and `checkout.NewWorkflow` resolve their `Tracer` handle at construction time (once per process, in `cmd/api`'s wiring) rather than caching one in a package variable — OTel's global provider only migrates a pre-existing handle to a newly-installed SDK provider once, so a handle obtained before `tracing.Setup` runs would otherwise never see the real provider. DB query spans are deferred: no shared `*sql.DB` access wrapper exists across the ~40 postgres repo files to hang them on.

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
@@ -42,12 +43,39 @@ type adminFakeTxConn struct{}
 
 func (adminFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (adminFakeTxConn) Close() error                        { return nil }
-func (adminFakeTxConn) Begin() (driver.Tx, error)           { return adminFakeTx{}, nil }
+func (adminFakeTxConn) Begin() (driver.Tx, error) {
+	tx := &adminFakeTx{}
+	adminFakeTxCurrent.Store(tx)
+	return tx, nil
+}
 
-type adminFakeTx struct{}
+// adminFakeTx is one driver transaction. Commit runs hooks registered by
+// repository stubs so an in-memory upsert is visible only after commit.
+type adminFakeTx struct {
+	onCommit []func()
+	done     bool
+}
 
-func (adminFakeTx) Commit() error   { return nil }
-func (adminFakeTx) Rollback() error { return nil }
+func (tx *adminFakeTx) Commit() error {
+	if tx.done {
+		return sql.ErrTxDone
+	}
+	tx.done = true
+	for _, fn := range tx.onCommit {
+		fn()
+	}
+	return nil
+}
+
+func (tx *adminFakeTx) Rollback() error {
+	if tx.done {
+		return sql.ErrTxDone
+	}
+	tx.done = true
+	return nil
+}
+
+var adminFakeTxCurrent atomic.Pointer[adminFakeTx]
 
 var (
 	adminFakeTxOnce sync.Once

@@ -46,9 +46,10 @@ C4Component
             Component(cacheAdmin, "CacheAdminHandler", "HTTP", "Stats, clear (prefix/tag/key/all), and FPC purge-url (admin, cache.read/cache.write/cache.clear_all/cache.purge_url)")
             Component(scheduleAdmin, "ScheduleAdminHandler", "HTTP", "List, Trigger, Enable, Disable scheduled tasks (admin, jobs.read/jobs.write)")
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
+            Component(addressHandler, "AddressHandler", "HTTP", "JSON CRUD for saved customer addresses (GET/POST/PUT/DELETE /api/v1/account/addresses)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled). Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.StorefrontHTML — enabled and not mode=headless). Guest claim JSON is always mounted. Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 
@@ -84,6 +85,7 @@ C4Component
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
             Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert and rejects a non-active product unless IncludeNonActiveProducts is set. Remove does not lock product rows. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows (including illicit rows); it fails closed when the repo or tx starter is unwired.")
             Component(groupedService, "GroupedService", "Go", "Grouped display membership (PR-1061): list, add, and remove member links. No quantity. A member may belong to more than one group. Add locks both product rows FOR UPDATE before insert-ignore and rejects a non-active product unless IncludeNonActiveProducts is set. Remove deletes one link and does not lock product rows. Members must be leaf types (simple, virtual, downloadable) and stay independently purchasable — membership does not affect Purchasable or visibility. ValidateComposition is service-only. Fail-closed type-change guards live on ProductAdminHandler, not here.")
+            Component(linkedEligibilityService, "LinkedEligibilityService", "Go", "Linked-product catalog eligibility (PR-1067): child-declared allowlist and/or category rules. AddParent locks both product rows FOR UPDATE before insert-ignore; AddCategory locks the child and checks the category exists. Remove does not lock. IsEligible and HasRules are join-table predicates (no product-status check). IsEligible is OR across explicit parent rows and product_categories membership. Eligibility does not affect Purchasable or visibility (PR-1068). No admin HTTP yet (PR-1073).")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -231,6 +233,7 @@ C4Component
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(bundleService, postgresRepos, "Reads products and writes bundle_components")
     Rel(groupedService, postgresRepos, "Reads products and writes grouped_members")
+    Rel(linkedEligibilityService, postgresRepos, "Reads products/categories and writes linked_eligible_parents / linked_eligible_categories")
     Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components and grouped_members")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")

@@ -33,6 +33,16 @@ When you customize markup:
 
 A theme is a directory pointed to by `frontend.theme_path` (default: `themes/default`).
 
+Create a child theme without copying templates:
+
+```bash
+./shopanda theme:init my-store
+# writes <themes-root>/my-store (name must match [a-z0-9][a-z0-9_-]*)
+# themes-root is the parent of frontend.theme_path, or ./themes
+```
+
+Or copy [`themes/_starter`](../../themes/_starter).
+
 ```text
 themes/my-store/
   theme.yaml
@@ -81,6 +91,7 @@ Child themes extend a parent without copying every template.
 | Inherit | Parent templates used when child has no matching file |
 | Partials | Same child-wins rule for `_*.html` partials |
 | Boundary | Parent must resolve inside the themes tree (no absolute paths) |
+| Static | `/static/*` falls back to parent `static/` when the child file is missing |
 
 ### Example: footer-only override
 
@@ -281,6 +292,8 @@ If you rename `pdp.info` → `product.sidebar`, plugins registering on `pdp.info
 
 **Slots vs fragments:** slots are resolved when the page (or FPC miss) renders — plugin output can be stored inside a full-page cache entry. Fragments are htmx holes that always hit `/fragments/…` with `Cache-Control: no-store` after the shell loads. Use slots for catalog/plugin chrome; use fragments for session, cart, CSRF, or other shopper-private bits.
 
+Same-origin configurator JS that must reach SSR `/cart` should use `/storefront/cart/items` (POST/PUT/DELETE; see [HEADLESS.md](HEADLESS.md#same-origin-storefront-js-hybrid)), not the headless `/api/v1/carts` routes.
+
 ### Verify during development
 
 With dev mode enabled, the slot registry warns when a plugin registers an anchor **not declared** in the active theme (`slots.registration.unmarked_anchor`).
@@ -306,8 +319,8 @@ Response includes the standard catalog plus registered handlers per anchor.
 
 ## Checklist for a new child theme
 
-1. Create `themes/my-store/theme.yaml` with `parent: ../default` (or your base).
-2. Set `frontend.theme_path: themes/my-store` in config.
+1. Run `./shopanda theme:init my-store` (or create `themes/my-store/theme.yaml` with `parent: ../default`).
+2. Set `frontend.theme_path: themes/my-store` in config. Parent `static/` is inherited; override `static/css/custom.css` for CSS.
 3. Override only the templates/partials you need (`_footer.html`, `product.html`, …).
 4. In every overridden file, **keep or intentionally replace** slot markers from the parent.
 5. Run the API in dev mode and enable a reference plugin (`plugins.slotsdemo.enabled: true`) to confirm DOM injection.

@@ -8,13 +8,34 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-const shopandaCSRFCookieName = "shopanda_csrf"
+const (
+	shopandaCSRFCookieName = "shopanda_csrf"
+	// CSRFHeaderName is the header same-origin JSON clients send instead of
+	// a form csrf_token field.
+	CSRFHeaderName = "X-CSRF-Token"
+)
 
 type shopandaCSRFContextKey struct{}
 
 func CSRFMiddleware(trustedProxies ...string) Middleware {
+	return newCSRFMiddleware(defaultGenerateCSRFToken, trustedProxies...)
+}
+
+// CSRFMiddlewareWithGenerator is CSRFMiddleware with an injected token mint.
+// Production wiring uses CSRFMiddleware; tests pass a failing generator here
+// instead of replacing package-wide state.
+func CSRFMiddlewareWithGenerator(generate func() (string, error), trustedProxies ...string) Middleware {
+	if generate == nil {
+		generate = defaultGenerateCSRFToken
+	}
+	return newCSRFMiddleware(generate, trustedProxies...)
+}
+
+func newCSRFMiddleware(generate func() (string, error), trustedProxies ...string) Middleware {
 	trustedNets := ParseTrustedProxies(trustedProxies)
 
 	return func(next http.Handler) http.Handler {
@@ -24,19 +45,31 @@ func CSRFMiddleware(trustedProxies ...string) Middleware {
 				return
 			}
 
-			token, err := shopandaEnsureCSRFToken(w, r, trustedNets)
+			token, err := shopandaEnsureCSRFToken(w, r, trustedNets, generate)
 			if err != nil {
+				if shopandaStorefrontCSRFPath(r.URL.Path) {
+					JSONError(w, apperror.Internal("failed to issue csrf token"))
+					return
+				}
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
 
 			if shopandaRequiresCSRFValidation(r.Method) {
-				if err := r.ParseForm(); err != nil {
-					http.Error(w, "forbidden", http.StatusForbidden)
-					return
+				presented := strings.TrimSpace(r.Header.Get(CSRFHeaderName))
+				storefrontJSON := shopandaStorefrontCSRFPath(r.URL.Path)
+				if presented == "" && !storefrontJSON {
+					if err := r.ParseForm(); err != nil {
+						http.Error(w, "forbidden", http.StatusForbidden)
+						return
+					}
+					presented = strings.TrimSpace(r.FormValue("csrf_token"))
 				}
-				formToken := strings.TrimSpace(r.FormValue("csrf_token"))
-				if formToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(formToken)) != 1 {
+				if presented == "" || subtle.ConstantTimeCompare([]byte(token), []byte(presented)) != 1 {
+					if storefrontJSON {
+						JSONError(w, storefrontCSRFForbidden())
+						return
+					}
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
@@ -69,15 +102,15 @@ func CSRFToken(r *http.Request) string {
 // Used by CSRFMiddleware and by /fragments/csrf so cacheable pages can obtain a
 // token without visiting /account/* or /checkout/*.
 func EnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
-	return shopandaEnsureCSRFToken(w, r, trusted)
+	return shopandaEnsureCSRFToken(w, r, trusted, defaultGenerateCSRFToken)
 }
 
-func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
+func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet, generate func() (string, error)) (string, error) {
 	if cookie, err := r.Cookie(shopandaCSRFCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value, nil
 	}
 
-	token, err := shopandaGenerateCSRFToken()
+	token, err := generate()
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +127,7 @@ func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*
 	return token, nil
 }
 
-func shopandaGenerateCSRFToken() (string, error) {
+func defaultGenerateCSRFToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -112,7 +145,17 @@ func shopandaRequiresCSRFValidation(method string) bool {
 }
 
 func shopandaRequiresCSRFPath(path string) bool {
-	return strings.HasPrefix(path, "/checkout/") || strings.HasPrefix(path, "/account/")
+	return strings.HasPrefix(path, "/checkout/") ||
+		strings.HasPrefix(path, "/account/") ||
+		shopandaStorefrontCSRFPath(path)
+}
+
+func shopandaStorefrontCSRFPath(path string) bool {
+	return strings.HasPrefix(path, "/storefront/")
+}
+
+func storefrontCSRFForbidden() error {
+	return apperror.Forbidden("csrf token missing or invalid")
 }
 
 // IsRequestSecure reports whether r arrived over TLS, either directly or via

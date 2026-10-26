@@ -85,6 +85,10 @@ func SecurityHeadersMiddleware(trustedProxies ...string) Middleware {
 	return shared.SecurityHeadersMiddleware(trustedProxies...)
 }
 
+func CORSMiddleware(allowedOrigins []string, allowCredentials bool) Middleware {
+	return shared.CORSMiddleware(allowedOrigins, allowCredentials)
+}
+
 // --- Body limit ---
 
 func BodyLimitMiddleware(defaultLimit, mediaLimit int64) Middleware {

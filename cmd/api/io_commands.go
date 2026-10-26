@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -662,4 +663,148 @@ func parseOssExportArgs(args []string) (filePath string, summary bool, from, to 
 		return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: --to must be on or after --from")
 	}
 	return filePath, summary, fromDate, toExclusive, nil
+}
+
+func runImportBundleComponents(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("import:bundle-components")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioImport,
+		Path:          path,
+		StartEvent:    "import.bundle_components.start",
+		CompleteEvent: "import.bundle_components.complete",
+		RowErrorEvent: "import.bundle_components.row_error",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		componentRepo, err := postgres.NewBundleComponentRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("bundle component repo: %w", err)
+		}
+		result, err := importer.NewBundleComponentImporter(productRepo, catalogApp.NewBundleService(productRepo, componentRepo, conn)).Import(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("import bundle components: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"added":   result.Added,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runExportBundleComponents(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("export:bundle-components")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioExport,
+		Path:          path,
+		StartEvent:    "export.bundle_components.start",
+		CompleteEvent: "export.bundle_components.complete",
+		RowErrorEvent: "export.bundle_components.row_error",
+		AtomicExport:  true,
+		TempPrefix:    "bundle-components-export-*.csv",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		componentRepo, err := postgres.NewBundleComponentRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("bundle component repo: %w", err)
+		}
+		result, err := exporter.NewBundleComponentExporter(productRepo, catalogApp.NewBundleService(productRepo, componentRepo, conn)).Export(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("export bundle components: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"rows":    result.Rows,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runImportGroupedMembers(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("import:grouped-members")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioImport,
+		Path:          path,
+		StartEvent:    "import.grouped_members.start",
+		CompleteEvent: "import.grouped_members.complete",
+		RowErrorEvent: "import.grouped_members.row_error",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		memberRepo, err := postgres.NewGroupedMemberRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("grouped member repo: %w", err)
+		}
+		result, err := importer.NewGroupedMemberImporter(productRepo, catalogApp.NewGroupedService(productRepo, memberRepo, conn)).Import(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("import grouped members: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"added":   result.Added,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runExportGroupedMembers(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("export:grouped-members")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioExport,
+		Path:          path,
+		StartEvent:    "export.grouped_members.start",
+		CompleteEvent: "export.grouped_members.complete",
+		RowErrorEvent: "export.grouped_members.row_error",
+		AtomicExport:  true,
+		TempPrefix:    "grouped-members-export-*.csv",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		memberRepo, err := postgres.NewGroupedMemberRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("grouped member repo: %w", err)
+		}
+		result, err := exporter.NewGroupedMemberExporter(productRepo, catalogApp.NewGroupedService(productRepo, memberRepo, conn)).Export(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("export grouped members: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"rows":    result.Rows,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
 }

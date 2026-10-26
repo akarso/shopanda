@@ -110,7 +110,7 @@ var storefrontCheckoutCountries = []StorefrontCheckoutOption{
 
 func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.engine.HasTemplate("checkout_address") {
+		if !h.hasTemplate("checkout_address") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -153,7 +153,7 @@ func (h *StorefrontHandler) CheckoutShipping() http.HandlerFunc {
 			http.Redirect(w, r, "/checkout/address", http.StatusSeeOther)
 			return
 		}
-		if !h.engine.HasTemplate("checkout_shipping") {
+		if !h.hasTemplate("checkout_shipping") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -195,7 +195,7 @@ func (h *StorefrontHandler) CheckoutPayment() http.HandlerFunc {
 			http.Redirect(w, r, "/checkout/address", http.StatusSeeOther)
 			return
 		}
-		if !h.engine.HasTemplate("checkout_payment") {
+		if !h.hasTemplate("checkout_payment") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -246,7 +246,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			http.Redirect(w, r, "/checkout/address", http.StatusSeeOther)
 			return
 		}
-		if !h.engine.HasTemplate("checkout_confirm") {
+		if !h.hasTemplate("checkout_confirm") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -574,7 +574,7 @@ func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *
 	}
 	return StorefrontCheckoutPageData{
 		Layout:         layout,
-		Theme:          h.engine.Theme(),
+		Theme:          h.themeMeta(),
 		Progress:       storefrontCheckoutProgress(step, needsShipping),
 		Items:          cartPage.Items,
 		Summary:        cartPage.Summary,

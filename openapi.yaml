@@ -340,6 +340,7 @@ paths:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/VisibilityAfter"
+        - $ref: "#/components/parameters/StorefrontFieldNames"
       responses:
         "200":
           description: OK
@@ -350,14 +351,14 @@ paths:
               example:
                 data:
                   products:
-                    - id: "p1"
-                      name: Widget
-                      slug: widget
-                      description: A fine widget
-                      status: active
-                      attributes: {}
-                      created_at: "2026-01-01T00:00:00Z"
-                      updated_at: "2026-01-01T00:00:00Z"
+                    - ID: "p1"
+                      Name: Widget
+                      Slug: widget
+                      Description: A fine widget
+                      Status: active
+                      Attributes: {}
+                      CreatedAt: "2026-01-01T00:00:00Z"
+                      UpdatedAt: "2026-01-01T00:00:00Z"
                   blocks: []
                   filters: {}
                   meta:
@@ -374,6 +375,7 @@ paths:
       summary: Get product detail (PDP composition pipeline)
       parameters:
         - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/StorefrontFieldNames"
       responses:
         "200":
           description: OK
@@ -384,14 +386,14 @@ paths:
               example:
                 data:
                   product:
-                    id: "p1"
-                    name: Widget
-                    slug: widget
-                    description: A fine widget
-                    status: active
-                    attributes: {}
-                    created_at: "2026-01-01T00:00:00Z"
-                    updated_at: "2026-01-01T00:00:00Z"
+                    ID: "p1"
+                    Name: Widget
+                    Slug: widget
+                    Description: A fine widget
+                    Status: active
+                    Attributes: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
                   blocks: []
                   meta: {}
                 error: null
@@ -490,6 +492,7 @@ paths:
       summary: Get a single category
       parameters:
         - $ref: "#/components/parameters/CategoryId"
+        - $ref: "#/components/parameters/StorefrontFieldNames"
       responses:
         "200":
           description: OK
@@ -500,13 +503,13 @@ paths:
               example:
                 data:
                   category:
-                    id: "cat1"
-                    name: Electronics
-                    slug: electronics
-                    position: 1
-                    meta: {}
-                    created_at: "2026-01-01T00:00:00Z"
-                    updated_at: "2026-01-01T00:00:00Z"
+                    ID: "cat1"
+                    Name: Electronics
+                    Slug: electronics
+                    Position: 1
+                    Meta: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
                 error: null
         "404":
           $ref: "#/components/responses/NotFound"
@@ -521,6 +524,7 @@ paths:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/VisibilityAfter"
+        - $ref: "#/components/parameters/StorefrontFieldNames"
       responses:
         "200":
           description: OK
@@ -901,6 +905,50 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/orders/claim-search:
+    post:
+      operationId: claimOrderSearch
+      tags: [Orders]
+      summary: Request a guest-order claim email (always available, SSR not required)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contact_email]
+              properties:
+                contact_email:
+                  type: string
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [contact_email]
+              properties:
+                contact_email:
+                  type: string
+      responses:
+        "200":
+          description: Generic acknowledgement (does not reveal whether orders exist)
+
+  /api/v1/orders/claim-register:
+    post:
+      operationId: claimOrderRegister
+      tags: [Orders]
+      summary: Register a new account and link one claimed guest order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimRegisterRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/ClaimRegisterRequest"
+      responses:
+        "200":
+          description: Account created and order linked; response includes a JWT
+
   /api/v1/orders/{orderId}:
     get:
       operationId: getOrder
@@ -1076,6 +1124,142 @@ paths:
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/account/addresses:
+    get:
+      operationId: listAccountAddresses
+      tags: [Account]
+      summary: List saved customer addresses
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  addresses:
+                    - id: "a1"
+                      customer_id: "c1"
+                      label: Home
+                      recipient: Ada Lovelace
+                      street: 1 Main St
+                      city: Paris
+                      postcode: "75001"
+                      country: FR
+                      is_default: true
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createAccountAddress
+      tags: [Account]
+      summary: Create a saved address
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient, street, city, postcode, country]
+              properties:
+                label: { type: string }
+                recipient: { type: string }
+                street: { type: string }
+                city: { type: string }
+                postcode: { type: string }
+                country: { type: string }
+                is_default: { type: boolean }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/account/addresses/{addressId}:
+    put:
+      operationId: updateAccountAddress
+      tags: [Account]
+      summary: Update a saved address
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: addressId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient, street, city, postcode, country]
+              properties:
+                label: { type: string }
+                recipient: { type: string }
+                street: { type: string }
+                city: { type: string }
+                postcode: { type: string }
+                country: { type: string }
+                is_default:
+                  type: boolean
+                  description: When omitted, the current default flag is left unchanged.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteAccountAddress
+      tags: [Account]
+      summary: Delete a saved address
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: addressId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/account/addresses/{addressId}/default:
+    post:
+      operationId: setDefaultAccountAddress
+      tags: [Account]
+      summary: Mark a saved address as default
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: addressId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ── Shipping ───────────────────────────────────────────
   /api/v1/shipping/rates:
@@ -1354,6 +1538,204 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  # ── Admin: Bundle / grouped composition ───────────────
+  /api/v1/admin/products/{id}/bundle-components:
+    get:
+      operationId: adminListBundleComponents
+      tags: ["Admin: Products"]
+      summary: List bundle components
+      description: >-
+        422 when the product is not type bundle. Each row includes the child
+        product name, slug, and type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  components:
+                    - component_product_id: "c1"
+                      quantity: 2
+                      required: true
+                      name: "Leaf"
+                      slug: "leaf"
+                      type: simple
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: adminAddBundleComponent
+      tags: ["Admin: Products"]
+      summary: Add or update a bundle component
+      description: >-
+        Upserts quantity and required for the component product. Omitted
+        `required` defaults to true. 422 when the parent is not a bundle or
+        the component is not simple, virtual, or downloadable.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddBundleComponentRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/bundle-components/{componentId}:
+    delete:
+      operationId: adminRemoveBundleComponent
+      tags: ["Admin: Products"]
+      summary: Remove a bundle component
+      description: >-
+        `componentId` is the component product id. 422 when the parent is not
+        a bundle. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: componentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/grouped-members:
+    get:
+      operationId: adminListGroupedMembers
+      tags: ["Admin: Products"]
+      summary: List grouped members
+      description: >-
+        422 when the product is not type grouped. Each row includes the member
+        product name, slug, and type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: adminAddGroupedMember
+      tags: ["Admin: Products"]
+      summary: Add a grouped member
+      description: >-
+        Insert-ignore. A duplicate link succeeds without changing the member.
+        422 when the parent is not grouped or the member is not a leaf type.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddGroupedMemberRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/grouped-members/{memberId}:
+    delete:
+      operationId: adminRemoveGroupedMember
+      tags: ["Admin: Products"]
+      summary: Remove a grouped member
+      description: >-
+        `memberId` is the member product id. 422 when the parent is not
+        grouped. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: memberId
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: OK
@@ -2525,6 +2907,7 @@ components:
       name: id
       in: path
       required: true
+      description: Product UUID or slug.
       schema:
         type: string
     VariantId:
@@ -2545,10 +2928,23 @@ components:
       required: true
       schema:
         type: string
+    StorefrontFieldNames:
+      name: fields
+      in: query
+      required: false
+      description: >
+        Default storefront product/category JSON uses Go exported names
+        (`ID`, `Name`, `Slug`). Set `snake` for `id`/`name`/`slug` maps
+        (also accepted as header `X-Shopanda-Field-Names: snake`).
+        `blocks` and `meta` stay composition output either way.
+      schema:
+        type: string
+        enum: [snake]
     CategoryId:
       name: id
       in: path
       required: true
+      description: Category UUID or slug.
       schema:
         type: string
     GenericId:
@@ -2566,6 +2962,24 @@ components:
           description: Response payload (null on error)
         error:
           $ref: "#/components/schemas/ErrorBody"
+
+    ClaimRegisterRequest:
+      type: object
+      required: [order_id, claim_token, email, password]
+      properties:
+        order_id:
+          type: string
+        claim_token:
+          type: string
+        email:
+          type: string
+        password:
+          type: string
+          format: password
+        first_name:
+          type: string
+        last_name:
+          type: string
 
     VisibilityListMeta:
       type: object
@@ -2884,6 +3298,27 @@ components:
         attributes:
           type: object
           additionalProperties: true
+
+    AddBundleComponentRequest:
+      type: object
+      required: [component_product_id, quantity]
+      properties:
+        component_product_id:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        required:
+          type: boolean
+          description: Omit to default to true.
+
+    AddGroupedMemberRequest:
+      type: object
+      required: [member_product_id]
+      properties:
+        member_product_id:
+          type: string
 
     CreateVariantRequest:
       type: object

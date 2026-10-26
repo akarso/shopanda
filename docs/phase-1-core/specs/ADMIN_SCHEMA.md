@@ -72,6 +72,14 @@ entries. The admin SPA renders each section and shows it only when the product
 and must use their own save APIs — they are not collected by
 `collectProductPayload`. Fill bodies via `[data-product-type-section-body="<id>"]`.
 
+Two sections are exceptions because their controls are core product fields.
+`visibility` (PR-1059, `Types` empty) merges `visibility_modes`. `bundle`
+(PR-1066, `Types: ["bundle"]`) merges `pricing_mode`, `stock_mode`, and
+`explode_order_lines` only when the selected type is `bundle`. Bundle
+components and grouped members (`grouped`, `Types: ["grouped"]`) stay on
+their own routes and are not part of the product payload. `cmd/api/wire_services.go`
+registers those sections with `RegisterProductFormSection`.
+
 ---
 
 ### 4.2 Field Definition

@@ -23,7 +23,8 @@ import (
 // --- mock repos for variant tests ---
 
 type mockVariantProductRepo struct {
-	findByIDFn func(ctx context.Context, id string) (*catalog.Product, error)
+	findByIDFn   func(ctx context.Context, id string) (*catalog.Product, error)
+	findBySlugFn func(ctx context.Context, slug string) (*catalog.Product, error)
 }
 
 func (m *mockVariantProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
@@ -33,6 +34,12 @@ func (m *mockVariantProductRepo) FindByID(ctx context.Context, id string) (*cata
 	return nil, nil
 }
 func (m *mockVariantProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
+	if m.findBySlugFn != nil {
+		return m.findBySlugFn(ctx, slug)
+	}
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, slug)
+	}
 	return nil, nil
 }
 func (m *mockVariantProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
@@ -210,6 +217,37 @@ func TestVariantHandler_AdminList_IncludesDraftProduct(t *testing.T) {
 	}
 	if len(resp.Data.Variants) != 1 {
 		t.Fatalf("len(variants) = %d, want 1", len(resp.Data.Variants))
+	}
+}
+
+func TestVariantHandler_List_BySlug(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{
+		findByIDFn: func(_ context.Context, _ string) (*catalog.Product, error) {
+			return nil, nil
+		},
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existingProduct(), nil
+			}
+			return nil, nil
+		},
+	}
+	var listedFor string
+	varRepo := &mockVariantRepo{
+		listByProductFn: func(_ context.Context, pid string, _, _ int) ([]catalog.Variant, error) {
+			listedFor = pid
+			return []catalog.Variant{{ID: "v1", ProductID: pid, SKU: "SKU-1"}}, nil
+		},
+	}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products/widget/variants", nil)
+	newVariantRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if listedFor != "prod-1" {
+		t.Fatalf("listed for %q, want prod-1", listedFor)
 	}
 }
 
