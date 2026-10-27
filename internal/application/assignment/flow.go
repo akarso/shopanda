@@ -902,10 +902,11 @@ func (f *Flow) childEligibilityIDs(ctx context.Context, productID string) ([]str
 	if err != nil {
 		return nil, err
 	}
-	// Empty means the product does not require a linked parent and has
-	// no such leaf. Fail closed, matching parentEligibleForLeaves.
+	// No linked leaf: still check this product. AssignOwned and
+	// ListOwnedParents must not skip IsEligible after RequiresLinkedParent
+	// is cleared. New admin rows are refused earlier by requireChildLinkedParent.
 	if len(ids) == 0 {
-		return nil, nil
+		return []string{productID}, nil
 	}
 	return ids, nil
 }

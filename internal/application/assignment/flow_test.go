@@ -580,6 +580,77 @@ func TestFlow_ListOwnedParents_UsesLinkedLeavesForBundle(t *testing.T) {
 	}
 }
 
+func TestFlow_AssignOwned_ChecksEligibilityWhenLinkedParentCleared(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	variants := &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}
+	products := stubProducts{byID: map[string]*catalog.Product{
+		"ticket-prod": {ID: "ticket-prod", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+
+	repo := &stubRepo{}
+	if _, err := app.NewService(repo).CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	ineligible := &stubEligibility{}
+	flow := newFlow(t, repo, ineligible, orders, variants).WithLinkedLeaves(products, stubComponents{})
+	_, err := flow.AssignOwned(context.Background(), "cust-1", childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentNotEligibleMessage) {
+		t.Fatalf("ineligible parent = %v", err)
+	}
+	if ineligible.calls == 0 {
+		t.Fatal("cleared RequiresLinkedParent skipped IsEligible")
+	}
+	if len(repo.updates) != 0 {
+		t.Fatalf("updates = %d, want none", len(repo.updates))
+	}
+
+	eligible := &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}
+	flow = newFlow(t, repo, eligible, orders, variants).WithLinkedLeaves(products, stubComponents{})
+	got, err := flow.AssignOwned(context.Background(), "cust-1", childUnit, parentUnit)
+	if err != nil {
+		t.Fatalf("eligible parent: %v", err)
+	}
+	if got.Status() != assignment.StatusAssigned || got.ParentOrderItemID != parentUnit {
+		t.Fatalf("got %+v", got)
+	}
+	if eligible.calls == 0 {
+		t.Fatal("eligible bind did not check IsEligible")
+	}
+}
+
+func TestFlow_ListOwnedParents_WhenLinkedParentCleared(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	elig := &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}
+	flow := newFlow(t, nil, elig, &stubOrders{
+		byID:       map[string]*order.Order{parentOrder.ID: parentOrder},
+		byCustomer: map[string][]order.Order{"cust-1": {*parentOrder}},
+	}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var": {ID: "card-var", ProductID: "card-prod"},
+	}}).WithLinkedLeaves(stubProducts{byID: map[string]*catalog.Product{
+		"ticket-prod": {ID: "ticket-prod", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}, stubComponents{})
+	got, err := flow.ListOwnedParents(context.Background(), "cust-1", "ticket-prod")
+	if err != nil {
+		t.Fatalf("ListOwnedParents: %v", err)
+	}
+	if len(got) != 1 || got[0].UnitID != assignment.UnitID(parentOrder.ID, "card-var") {
+		t.Fatalf("parents = %+v", got)
+	}
+	if elig.calls == 0 {
+		t.Fatal("cleared RequiresLinkedParent skipped IsEligible")
+	}
+}
+
 func TestFlow_AssignOwned_CanonicalizesPaddedUnitIDs(t *testing.T) {
 	parentOrder := mustOrder(t, "cust-1", "card-var")
 	childOrder := mustOrder(t, "cust-1", "ticket-var")
