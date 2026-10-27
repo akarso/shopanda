@@ -34,7 +34,7 @@ const AssignmentConflictMessage = "the same product cannot be assigned to differ
 type storeCreditService interface {
 	GetBalance(ctx context.Context, customerID, currency string) (shared.Money, error)
 	Redeem(ctx context.Context, customerID, orderID string, amount shared.Money) error
-	Issue(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error
+	Restore(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error
 }
 
 type extensionSnapshotter interface {
@@ -320,7 +320,7 @@ func (s *CreateOrderStep) rollbackAppliedCredit(ctx context.Context, cctx *Conte
 	// attempt, so it can never collide) nor cctx.CartID (stable,
 	// but unsafe: see that comment) is a correct choice without a
 	// bigger fix this rollback call alone can't provide.
-	rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "")
+	rollbackErr := s.credits.Restore(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "")
 	rbcancel()
 	if rollbackErr != nil {
 		return fmt.Errorf("%w (store credit rollback failed: %v)", cause, rollbackErr)
@@ -907,7 +907,7 @@ func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o
 	if err := o.ApplyStoreCredit(creditMoney); err != nil {
 		rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
 		// No idempotency key — see this function's doc comment above.
-		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID), "")
+		rollbackErr := s.credits.Restore(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID), "")
 		rbcancel()
 		if rollbackErr != nil {
 			return nil, fmt.Errorf("create_order: apply store credit: %w (rollback failed: %v)", err, rollbackErr)

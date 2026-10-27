@@ -533,7 +533,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		repos.orderRepo,
 		repos.variantRepo,
 		repos.paymentRepo,
-	)
+	).WithLinkedLeaves(repos.productRepo, repos.bundleComponentRepo)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})

@@ -34,12 +34,26 @@ func RegisterPaymentFailedCompensation(
 	if bus == nil {
 		return
 	}
-	bus.On(payment.EventPaymentFailed, func(ctx context.Context, evt event.Event) error {
-		data, ok := evt.Data.(payment.PaymentStatusChangedData)
-		if !ok || strings.TrimSpace(data.OrderID) == "" {
+	handle := func(ctx context.Context, orderID string) error {
+		orderID = strings.TrimSpace(orderID)
+		if orderID == "" {
 			return nil
 		}
-		return compensateFailedPayment(ctx, orders, credits, assignments, data.OrderID)
+		return compensateFailedPayment(ctx, orders, credits, assignments, orderID)
+	}
+	bus.On(payment.EventPaymentFailed, func(ctx context.Context, evt event.Event) error {
+		data, ok := evt.Data.(payment.PaymentStatusChangedData)
+		if !ok {
+			return nil
+		}
+		return handle(ctx, data.OrderID)
+	})
+	bus.On(EventUnpaidFailed, func(ctx context.Context, evt event.Event) error {
+		data, ok := evt.Data.(UnpaidFailedData)
+		if !ok {
+			return nil
+		}
+		return handle(ctx, data.OrderID)
 	})
 }
 
@@ -56,17 +70,15 @@ func compensateFailedPayment(
 	var failErr, creditErr, revokeErr error
 	var o *order.Order
 	if orders != nil {
-		found, err := orders.FindByID(persistCtx, orderID)
-		if err != nil {
-			failErr = fmt.Errorf("checkout: payment.failed lookup order: %w", err)
-		} else {
-			o = found
+		if _, err := orders.FailIfPending(persistCtx, orderID); err != nil {
+			failErr = fmt.Errorf("checkout: payment.failed persist order: %w", err)
 		}
-		if failErr == nil && o != nil && o.Status() == order.OrderStatusPending {
-			if err := o.Fail(); err != nil {
-				failErr = fmt.Errorf("checkout: payment.failed fail order: %w", err)
-			} else if err := orders.UpdateStatus(persistCtx, o); err != nil {
-				failErr = fmt.Errorf("checkout: payment.failed persist order: %w", err)
+		if failErr == nil {
+			found, err := orders.FindByID(persistCtx, orderID)
+			if err != nil {
+				failErr = fmt.Errorf("checkout: payment.failed lookup order: %w", err)
+			} else {
+				o = found
 			}
 		}
 		if failErr == nil && o != nil && o.Status() == order.OrderStatusFailed {

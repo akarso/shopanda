@@ -374,3 +374,15 @@ func TestUnitID_EmptyParts(t *testing.T) {
 		t.Fatal("empty order must not parse")
 	}
 }
+
+func TestCanonicalUnitID_RebuildsPaddedParts(t *testing.T) {
+	orderID := id.New()
+	variantID := id.New()
+	got, ok := assignment.CanonicalUnitID(" " + orderID + " / " + variantID + " ")
+	if !ok || got != orderID+"/"+variantID {
+		t.Fatalf("CanonicalUnitID = %q ok=%v, want minted form", got, ok)
+	}
+	if _, ok := assignment.CanonicalUnitID("no-separator"); ok {
+		t.Fatal("non-unit id must not canonicalize")
+	}
+}

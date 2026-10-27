@@ -448,3 +448,143 @@ func TestFlow_RevokeForOrder_ClearsCurrent(t *testing.T) {
 		t.Fatalf("current = %+v, want nil after revoke", current)
 	}
 }
+
+type stubProducts struct {
+	byID map[string]*catalog.Product
+}
+
+func (s stubProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	if s.byID == nil {
+		return nil, nil
+	}
+	return s.byID[id], nil
+}
+
+type stubComponents struct {
+	byBundle map[string][]catalog.BundleComponent
+}
+
+func (s stubComponents) ListByBundleID(_ context.Context, bundleID string) ([]catalog.BundleComponent, error) {
+	if s.byBundle == nil {
+		return nil, nil
+	}
+	return s.byBundle[bundleID], nil
+}
+
+func TestFlow_AssignOwned_UsesLinkedLeavesForBundle(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "bundle-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "bundle-var")
+	repo := &stubRepo{}
+	elig := &stubEligibility{ok: map[string]bool{"ticket-leaf|card-prod": true}}
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	variants := &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"bundle-var": {ID: "bundle-var", ProductID: "bundle-prod"},
+	}}
+	leaf, err := catalog.NewBundleComponent("bundle-prod", "ticket-leaf", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	flow := newFlow(t, repo, elig, orders, variants).WithLinkedLeaves(
+		stubProducts{byID: map[string]*catalog.Product{
+			"bundle-prod": {ID: "bundle-prod", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+			"ticket-leaf": {ID: "ticket-leaf", Type: catalog.TypeSimple, Status: catalog.StatusActive, RequiresLinkedParent: true},
+		}},
+		stubComponents{byBundle: map[string][]catalog.BundleComponent{"bundle-prod": {*leaf}}},
+	)
+	got, err := flow.AssignOwned(context.Background(), "cust-1", childUnit, parentUnit)
+	if err != nil {
+		t.Fatalf("AssignOwned: %v", err)
+	}
+	if got.ParentOrderItemID != parentUnit {
+		t.Fatalf("parent = %q", got.ParentOrderItemID)
+	}
+}
+
+func TestFlow_ListOwnedParents_UsesLinkedLeavesForBundle(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	elig := &stubEligibility{ok: map[string]bool{"ticket-leaf|card-prod": true}}
+	orders := &stubOrders{
+		byID:       map[string]*order.Order{parentOrder.ID: parentOrder},
+		byCustomer: map[string][]order.Order{"cust-1": {*parentOrder}},
+	}
+	variants := &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var": {ID: "card-var", ProductID: "card-prod"},
+	}}
+	leaf, err := catalog.NewBundleComponent("bundle-prod", "ticket-leaf", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	flow := newFlow(t, nil, elig, orders, variants).WithLinkedLeaves(
+		stubProducts{byID: map[string]*catalog.Product{
+			"bundle-prod": {ID: "bundle-prod", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+			"ticket-leaf": {ID: "ticket-leaf", Type: catalog.TypeSimple, Status: catalog.StatusActive, RequiresLinkedParent: true},
+		}},
+		stubComponents{byBundle: map[string][]catalog.BundleComponent{"bundle-prod": {*leaf}}},
+	)
+	got, err := flow.ListOwnedParents(context.Background(), "cust-1", "bundle-prod")
+	if err != nil {
+		t.Fatalf("ListOwnedParents: %v", err)
+	}
+	if len(got) != 1 || got[0].ProductID != "card-prod" {
+		t.Fatalf("parents = %+v, want eligible card for bundle leaves", got)
+	}
+}
+
+func TestFlow_AssignOwned_CanonicalizesPaddedUnitIDs(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	got, err := flow.AssignOwned(context.Background(), "cust-1", " "+childUnit+" ", " "+parentUnit+" ")
+	if err != nil {
+		t.Fatalf("AssignOwned: %v", err)
+	}
+	if got.ChildOrderItemID != childUnit || got.ParentOrderItemID != parentUnit {
+		t.Fatalf("got child=%q parent=%q, want minted ids", got.ChildOrderItemID, got.ParentOrderItemID)
+	}
+	current, err := svc.CurrentByChild(context.Background(), childUnit)
+	if err != nil || current == nil || current.ID != got.ID {
+		t.Fatalf("CurrentByChild = %+v err=%v, want the same row", current, err)
+	}
+}
+
+func TestFlow_RecordPurchase_CanonicalizesParentUnit(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	repo := &stubRepo{}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var": {ID: "card-var", ProductID: "card-prod"},
+	}})
+	if err := flow.RecordPurchase(context.Background(), "cust-1", childOrder.ID, []app.PurchaseLine{{
+		ChildVariantID: "ticket-var",
+		ChildProductID: "ticket",
+		Assignment:     catalog.AssignmentContext{ParentUnitID: " " + parentUnit + " "},
+	}}); err != nil {
+		t.Fatalf("RecordPurchase: %v", err)
+	}
+	if len(repo.inserts) != 1 || repo.inserts[0].ParentOrderItemID != parentUnit {
+		t.Fatalf("inserts = %+v, want canonical parent", repo.inserts)
+	}
+}

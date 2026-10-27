@@ -360,6 +360,25 @@ func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order
 }
 
 // UpdateStatus updates only the status and updated_at of an existing order.
+// FailIfPending sets status to failed only when the stored row is still
+// pending. Returns true when this call made the transition.
+func (r *OrderRepo) FailIfPending(ctx context.Context, orderID string) (bool, error) {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return false, fmt.Errorf("order_repo: fail if pending: order id must not be empty")
+	}
+	const q = `UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4`
+	res, err := r.db.ExecContext(ctx, q, string(order.OrderStatusFailed), time.Now().UTC(), orderID, string(order.OrderStatusPending))
+	if err != nil {
+		return false, fmt.Errorf("order_repo: fail if pending: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("order_repo: fail if pending rows affected: %w", err)
+	}
+	return n == 1, nil
+}
+
 func (r *OrderRepo) UpdateStatus(ctx context.Context, o *order.Order) error {
 	if o == nil {
 		return fmt.Errorf("order_repo: update status: order must not be nil")

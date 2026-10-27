@@ -27,6 +27,7 @@ const (
 	EventStepCompleted     = "checkout.step.completed"
 	EventCheckoutFailed    = "checkout.failed"
 	EventCheckoutCompleted = "checkout.completed"
+	EventUnpaidFailed      = "checkout.unpaid_failed"
 )
 
 // StepStartedData is the event payload for step lifecycle events.
@@ -54,9 +55,16 @@ type CheckoutCompletedData struct {
 	OrderID string
 }
 
+// UnpaidFailedData is published after an unpaid checkout order is
+// marked failed so a later republish can finish store-credit restore.
+type UnpaidFailedData struct {
+	CartID  string
+	OrderID string
+}
+
 type unpaidOrderWriter interface {
 	FindByID(ctx context.Context, id string) (*order.Order, error)
-	UpdateStatus(ctx context.Context, order *order.Order) error
+	FailIfPending(ctx context.Context, orderID string) (bool, error)
 }
 
 type storeCreditIssuer interface {
@@ -119,13 +127,13 @@ func (w *Workflow) WithMetrics(m metrics.Recorder) *Workflow {
 	return w
 }
 
-// WithUnpaidOrderCompensation fails a still-pending order and revokes
-// its current assignments when checkout fails after create_order and
-// no charge has been accepted. A completed payment and an accepted
-// pending payment (pending + provider ref) are left for the webhook.
+// WithUnpaidOrderCompensation fails a still-pending order (WHERE status
+// is pending) and revokes its current assignments when checkout fails
+// after create_order and no charge has been accepted. A completed
+// payment and an accepted pending payment are left for the webhook.
 // Payable 0, a decline, and a provider error before accept still
-// compensate. Store credit redeemed on a failed unpaid order is issued
-// back once, with an order-id idempotency key.
+// compensate. Store credit on a failed unpaid order is restored once
+// with an order-id key, including when the order is already failed.
 func (w *Workflow) WithUnpaidOrderCompensation(
 	orders unpaidOrderWriter,
 	assignments *assignmentapp.Flow,
@@ -405,31 +413,27 @@ func (w *Workflow) compensateUnpaidOrder(ctx context.Context, cctx *Context) err
 	}
 	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
 	defer persistCancel()
-	o := cctx.Order
-	if o == nil || strings.TrimSpace(o.ID) != orderID {
-		o, err = w.orders.FindByID(persistCtx, orderID)
-		if err != nil {
-			return fmt.Errorf("checkout: compensate lookup order: %w", err)
-		}
+	if _, err := w.orders.FailIfPending(persistCtx, orderID); err != nil {
+		return fmt.Errorf("checkout: compensate persist order: %w", err)
+	}
+	o, err := w.orders.FindByID(persistCtx, orderID)
+	if err != nil {
+		return fmt.Errorf("checkout: compensate lookup order: %w", err)
 	}
 	if o == nil {
 		return nil
 	}
-	failedPending := false
-	if o.Status() == order.OrderStatusPending {
-		if err := o.Fail(); err != nil {
-			return fmt.Errorf("checkout: compensate fail order: %w", err)
-		}
-		if err := w.orders.UpdateStatus(persistCtx, o); err != nil {
-			return fmt.Errorf("checkout: compensate persist order: %w", err)
-		}
-		cctx.Order = o
-		failedPending = true
+	cctx.Order = o
+	if o.Status() != order.OrderStatusFailed {
+		return nil
 	}
-	var creditErr error
-	if failedPending {
-		creditErr = w.refundCompensatedCredit(persistCtx, cctx, o)
+	if pubErr := w.publishEvent(persistCtx, EventUnpaidFailed, "checkout.workflow", UnpaidFailedData{
+		CartID:  cctx.CartID,
+		OrderID: orderID,
+	}); pubErr != nil {
+		return pubErr
 	}
+	creditErr := w.refundCompensatedCredit(persistCtx, cctx, o)
 	var revokeErr error
 	if w.assignments != nil {
 		revokeErr = w.assignments.RevokeForOrder(persistCtx, orderID)

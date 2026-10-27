@@ -186,8 +186,8 @@ func RejectRequiredLinkedParentLeaves(
 // contributes each required leaf that has the flag. Other types are empty.
 func LinkedParentChildProductIDs(
 	ctx context.Context,
-	products catalog.ProductRepository,
-	components catalog.BundleComponentRepository,
+	products productByID,
+	components bundleComponentsByBundle,
 	p *catalog.Product,
 ) ([]string, error) {
 	if p == nil {
@@ -244,7 +244,15 @@ func BundleCustomerError(detail error) error {
 	return apperror.Wrap(apperror.CodeValidation, catalog.BundleCannotBeReservedMessage, detail)
 }
 
-func loadProductsByID(ctx context.Context, products catalog.ProductRepository, ids []string) (map[string]*catalog.Product, error) {
+type productByID interface {
+	FindByID(ctx context.Context, id string) (*catalog.Product, error)
+}
+
+type bundleComponentsByBundle interface {
+	ListByBundleID(ctx context.Context, bundleProductID string) ([]catalog.BundleComponent, error)
+}
+
+func loadProductsByID(ctx context.Context, products productByID, ids []string) (map[string]*catalog.Product, error) {
 	if lister, ok := products.(productIDLister); ok {
 		byID, err := lister.ListByIDs(ctx, ids)
 		if err != nil {

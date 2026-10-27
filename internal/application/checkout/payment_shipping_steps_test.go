@@ -682,8 +682,16 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from update status")
 	}
-	if _, ok := cctx.GetMeta("payment_initiated"); ok {
-		t.Error("payment_initiated should not be set on error")
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Fatal("payment_initiated must be set before UpdateStatus on a synchronous approve")
+	}
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		t.Fatal("expected payment in meta after synchronous approve")
+	}
+	py := raw.(*payment.Payment)
+	if py.Status() != payment.StatusCompleted {
+		t.Fatalf("payment status = %v, want completed", py.Status())
 	}
 }
 

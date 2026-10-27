@@ -202,7 +202,7 @@ func linkedTicketCatalog() (*mockProductRepo047, *mockVariantRepo037) {
 func TestCreateOrderStep_AssignmentRequiresSharedTx(t *testing.T) {
 	products, variants := linkedTicketCatalog()
 	orders := &mockOrderRepo{}
-	credits := &mockStoreCreditService{balance: 1500}
+	credits := &restoreOnlyStoreCredit{mockStoreCreditService: mockStoreCreditService{balance: 1500}}
 	assignRepo := &txAssignRepo{}
 	flow := assignmentapp.NewFlow(
 		assignmentapp.NewService(assignRepo), assignRepo, assignmentEligMap{},
@@ -239,7 +239,7 @@ func TestCreateOrderStep_AssignmentRequiresSharedTx(t *testing.T) {
 func TestCreateOrderStep_AssignmentInsertFailRollsBackOrderAndCredit(t *testing.T) {
 	products, variants := linkedTicketCatalog()
 	orders := &splitOrderRepo{}
-	credits := &mockStoreCreditService{balance: 1500}
+	credits := &restoreOnlyStoreCredit{mockStoreCreditService: mockStoreCreditService{balance: 1500}}
 	assignRepo := &txAssignRepo{insertErr: errors.New("assignment down")}
 	flow := assignmentapp.NewFlow(
 		assignmentapp.NewService(assignRepo), assignRepo, assignmentEligMap{},
@@ -603,6 +603,127 @@ func TestWorkflow_CompletedPaymentSkipsCompensation(t *testing.T) {
 	}
 	if len(credits.issued) != 0 {
 		t.Fatalf("issued = %v, want no credit refund after completed payment", credits.issued)
+	}
+}
+
+func TestWorkflow_ConfirmedOrderSkipsCompensation(t *testing.T) {
+	orders := &bindableOrderRepo{}
+	assignRepo := &txAssignRepo{}
+	credits := &restoreOnlyStoreCredit{}
+	o := mustCheckoutOrder(t, "cust-1", "v1", 1000)
+	if err := o.ApplyStoreCredit(shared.MustNewMoney(500, "EUR")); err != nil {
+		t.Fatalf("ApplyStoreCredit: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	orders.saved = o
+	flow := assignmentapp.NewFlow(
+		assignmentapp.NewService(assignRepo), assignRepo, assignmentEligMap{},
+		orders, &mockVariantRepo037{variants: variantMap037("v1")}, assignmentPaymentStub{},
+	)
+	if err := flow.RecordPurchase(context.Background(), "cust-1", o.ID, []assignmentapp.PurchaseLine{{
+		ChildVariantID: "v1",
+		ChildProductID: "prod-1",
+		Assignment:     catalog.AssignmentContext{Deferred: true},
+	}}); err != nil {
+		t.Fatalf("RecordPurchase: %v", err)
+	}
+	fail := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error {
+		return apperror.Validation("selected shipping method is unavailable")
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{fail}, testBus(t), testLogger()).
+		WithUnpaidOrderCompensation(orders, flow, assignmentPaymentStub{}, credits)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = o
+	cctx.SetMeta("created_order_id", o.ID)
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected shipping failure")
+	}
+	if o.Status() != order.OrderStatusConfirmed {
+		t.Fatalf("status = %s, want confirmed", o.Status())
+	}
+	if len(credits.issued) != 0 {
+		t.Fatalf("issued = %v, want no refund after confirm", credits.issued)
+	}
+	current, err := assignmentapp.NewService(assignRepo).CurrentByChild(context.Background(), assignment.UnitID(o.ID, "v1"))
+	if err != nil {
+		t.Fatalf("CurrentByChild: %v", err)
+	}
+	if current == nil || !current.Status().IsCurrent() {
+		t.Fatalf("current = %+v, want still current", current)
+	}
+}
+
+func TestWorkflow_AlreadyFailedRestoresCredit(t *testing.T) {
+	orders := &bindableOrderRepo{}
+	credits := &restoreOnlyStoreCredit{}
+	o := mustCheckoutOrder(t, "cust-1", "v1", 200000)
+	if err := o.ApplyStoreCredit(shared.MustNewMoney(150000, "EUR")); err != nil {
+		t.Fatalf("ApplyStoreCredit: %v", err)
+	}
+	if err := o.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	orders.saved = o
+	flow := assignmentapp.NewFlow(
+		assignmentapp.NewService(&txAssignRepo{}), &txAssignRepo{}, assignmentEligMap{},
+		orders, &mockVariantRepo037{variants: variantMap037("v1")}, assignmentPaymentStub{},
+	)
+	fail := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error {
+		return apperror.Validation("selected shipping method is unavailable")
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{fail}, testBus(t), testLogger()).
+		WithUnpaidOrderCompensation(orders, flow, assignmentPaymentStub{}, credits)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = o
+	cctx.SetMeta("created_order_id", o.ID)
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected shipping failure")
+	}
+	if len(credits.issued) != 1 || credits.issued[0] != 150000 {
+		t.Fatalf("issued = %v, want restore on already-failed order", credits.issued)
+	}
+}
+
+func TestWorkflow_SyncCompleteUpdateStatusErrorDoesNotRefund(t *testing.T) {
+	products, variants := linkedTicketCatalog()
+	orders := &bindableOrderRepo{}
+	assignRepo := &txAssignRepo{}
+	credits := &restoreOnlyStoreCredit{mockStoreCreditService: mockStoreCreditService{balance: 1500}}
+	flow := assignmentapp.NewFlow(
+		assignmentapp.NewService(assignRepo), assignRepo, assignmentEligMap{},
+		orders, variants, assignmentPaymentStub{},
+	)
+	create := checkout.NewCreateOrderStep(orders, variants, credits, nil, products, idleComponents(), idlePrices()).
+		WithAssignmentFlow(flow, assignmentTestDB())
+	pay := checkout.NewInitiatePaymentStep(
+		paymentRegistryWith(&mockPaymentProvider047{
+			method: payment.MethodManual,
+			result: payment.ProviderResult{ProviderRef: "manual:ok", Success: true},
+		}),
+		&mockPaymentRepo047{updateErr: errors.New("conflict")},
+	).WithAssignmentFlow(flow)
+	wf := checkout.NewWorkflow([]checkout.Step{create, pay}, testBus(t), testLogger()).
+		WithUnpaidOrderCompensation(orders, flow, assignmentPaymentStub{}, credits)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Input.StoreCreditAmount = 1000
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.Cart.SetItemAssignment("v1", "", "", true)
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected UpdateStatus failure")
+	}
+	if cctx.Order == nil || cctx.Order.Status() != order.OrderStatusPending {
+		t.Fatalf("order status = %v, want pending after approved charge", cctx.Order)
+	}
+	if len(credits.issued) != 0 {
+		t.Fatalf("issued = %v, want no refund after synchronous approve", credits.issued)
 	}
 }
 

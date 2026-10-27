@@ -32,3 +32,13 @@ func SplitUnitID(unitID string) (orderID, variantID string, ok bool) {
 	}
 	return orderID, variantID, true
 }
+
+// CanonicalUnitID rebuilds a unit id after SplitUnitID so padded or
+// spaced input matches the minted orderID/variantID form used in writes.
+func CanonicalUnitID(unitID string) (string, bool) {
+	orderID, variantID, ok := SplitUnitID(unitID)
+	if !ok {
+		return "", false
+	}
+	return UnitID(orderID, variantID), true
+}

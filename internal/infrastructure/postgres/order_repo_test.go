@@ -346,6 +346,40 @@ func TestOrderRepo_UpdateStatus(t *testing.T) {
 	}
 }
 
+func TestOrderRepo_FailIfPending(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+	o := mustNewOrder(t, "cust-1", "EUR")
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	changed, err := repo.FailIfPending(ctx, o.ID)
+	if err != nil || !changed {
+		t.Fatalf("FailIfPending pending = %v err=%v, want true", changed, err)
+	}
+	got, err := repo.FindByID(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Status() != order.OrderStatusFailed {
+		t.Fatalf("status = %q, want failed", got.Status())
+	}
+	changed, err = repo.FailIfPending(ctx, o.ID)
+	if err != nil || changed {
+		t.Fatalf("FailIfPending already failed = %v err=%v, want false", changed, err)
+	}
+}
+
 func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

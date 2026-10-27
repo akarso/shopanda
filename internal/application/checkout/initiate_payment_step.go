@@ -133,15 +133,17 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 		}
 	}
 
+	// Record the provider outcome before UpdateStatus so a persist error
+	// after a synchronous approve does not look like "no charge."
+	cctx.SetMeta("payment", &py)
+	cctx.SetMeta("payment_initiated", true)
+
 	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
 	err = s.payments.UpdateStatus(persistCtx, &py, prevUpdatedAt)
 	persistCancel()
 	if err != nil {
 		return fmt.Errorf("initiate_payment: update status: %w", err)
 	}
-
-	cctx.SetMeta("payment", &py)
-	cctx.SetMeta("payment_initiated", true)
 
 	if !result.Success {
 		if revErr := s.revokeAssignments(ctx, cctx); revErr != nil {

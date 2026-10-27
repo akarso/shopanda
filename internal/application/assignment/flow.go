@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	domain "github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -47,6 +48,17 @@ type OrderLookup interface {
 // VariantLookup is the variant read Flow needs to resolve a unit's product.
 type VariantLookup interface {
 	FindByID(ctx context.Context, id string) (*catalog.Variant, error)
+}
+
+// ProductLookup is the product read used to resolve required linked
+// leaves for a non-exploded bundle (AssignOwned and ListOwnedParents).
+type ProductLookup interface {
+	FindByID(ctx context.Context, id string) (*catalog.Product, error)
+}
+
+// BundleComponentLookup lists required bundle leaves for eligibility.
+type BundleComponentLookup interface {
+	ListByBundleID(ctx context.Context, bundleID string) ([]catalog.BundleComponent, error)
 }
 
 // VariantBatchLookup is an optional batch read. postgres implements it
@@ -102,6 +114,8 @@ type Flow struct {
 	orders      OrderLookup
 	variants    VariantLookup
 	payments    PaymentLookup
+	products    ProductLookup
+	components  BundleComponentLookup
 }
 
 // NewFlow creates the assignment flow. Every dependency is required so
@@ -140,6 +154,18 @@ func NewFlow(
 		variants:    variants,
 		payments:    payments,
 	}
+}
+
+// WithLinkedLeaves lets AssignOwned and ListOwnedParents resolve required
+// linked leaves the same way checkout does. Optional; without it, a
+// non-exploded bundle is checked as its own product id.
+func (f *Flow) WithLinkedLeaves(products ProductLookup, components BundleComponentLookup) *Flow {
+	if f == nil {
+		return nil
+	}
+	f.products = products
+	f.components = components
+	return f
 }
 
 // WithTx returns a flow whose writes use the bound assignment repo.
@@ -226,7 +252,11 @@ func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, l
 		}
 		parentUnit := strings.TrimSpace(line.Assignment.ParentUnitID)
 		if parentUnit != "" {
-			if _, err := f.assignments.CreateAssigned(ctx, parentUnit, childUnit); err != nil {
+			canonical, ok := domain.CanonicalUnitID(parentUnit)
+			if !ok {
+				return apperror.Validation(ParentNotOwnedMessage)
+			}
+			if _, err := f.assignments.CreateAssigned(ctx, canonical, childUnit); err != nil {
 				return err
 			}
 			continue
@@ -311,17 +341,29 @@ func (f *Flow) AssignOwned(ctx context.Context, customerID, childUnitID, parentU
 	if customerID == "" {
 		return nil, apperror.Validation(ParentUnitSignInMessage)
 	}
-	child, err := f.requireOwnedUnit(ctx, customerID, childUnitID, ChildNotOwnedMessage)
+	childUnit, ok := domain.CanonicalUnitID(childUnitID)
+	if !ok {
+		return nil, apperror.Validation(ChildNotOwnedMessage)
+	}
+	parentUnit, ok := domain.CanonicalUnitID(parentUnitID)
+	if !ok {
+		return nil, apperror.Validation(ParentNotOwnedMessage)
+	}
+	child, err := f.requireOwnedUnit(ctx, customerID, childUnit, ChildNotOwnedMessage)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.requireOwnedUnit(ctx, customerID, parentUnitID, ParentNotOwnedMessage); err != nil {
+	if _, err := f.requireOwnedUnit(ctx, customerID, parentUnit, ParentNotOwnedMessage); err != nil {
 		return nil, err
 	}
-	if err := f.CheckPurchase(ctx, customerID, child.ProductID, catalog.AssignmentContext{ParentUnitID: parentUnitID}); err != nil {
+	ids, err := f.childEligibilityIDs(ctx, child.ProductID)
+	if err != nil {
 		return nil, err
 	}
-	current, err := f.assignments.CurrentByChild(ctx, childUnitID)
+	if err := f.CheckPurchaseAll(ctx, customerID, ids, catalog.AssignmentContext{ParentUnitID: parentUnit}); err != nil {
+		return nil, err
+	}
+	current, err := f.assignments.CurrentByChild(ctx, childUnit)
 	if err != nil {
 		return nil, err
 	}
@@ -329,9 +371,9 @@ func (f *Flow) AssignOwned(ctx context.Context, customerID, childUnitID, parentU
 		return nil, apperror.Conflict(AlreadyAssignedMessage)
 	}
 	if current != nil {
-		return f.assignments.Assign(ctx, current.ID, parentUnitID)
+		return f.assignments.Assign(ctx, current.ID, parentUnit)
 	}
-	return f.assignments.CreateAssigned(ctx, parentUnitID, childUnitID)
+	return f.assignments.CreateAssigned(ctx, parentUnit, childUnit)
 }
 
 // CurrentOwned returns the live assignment for a child unit the customer owns.
@@ -339,10 +381,14 @@ func (f *Flow) CurrentOwned(ctx context.Context, customerID, childUnitID string)
 	if f == nil {
 		return nil, fmt.Errorf("assignment flow: not configured")
 	}
-	if _, err := f.requireOwnedUnit(ctx, strings.TrimSpace(customerID), childUnitID, ChildNotOwnedMessage); err != nil {
+	childUnit, ok := domain.CanonicalUnitID(childUnitID)
+	if !ok {
+		return nil, apperror.Validation(ChildNotOwnedMessage)
+	}
+	if _, err := f.requireOwnedUnit(ctx, strings.TrimSpace(customerID), childUnit, ChildNotOwnedMessage); err != nil {
 		return nil, err
 	}
-	return f.assignments.CurrentByChild(ctx, strings.TrimSpace(childUnitID))
+	return f.assignments.CurrentByChild(ctx, childUnit)
 }
 
 // ListOwnedParents returns owned order lines that are eligible parents
@@ -359,6 +405,10 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 	}
 	if childProductID == "" {
 		return nil, apperror.Validation("child product id must not be empty")
+	}
+	leafIDs, err := f.childEligibilityIDs(ctx, childProductID)
+	if err != nil {
+		return nil, err
 	}
 	orders, err := f.orders.FindByCustomerID(ctx, customerID)
 	if err != nil {
@@ -414,12 +464,9 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 		}
 		ok, seen := eligible[v.ProductID]
 		if !seen {
-			ok, err = f.eligibility.IsEligible(ctx, childProductID, v.ProductID)
+			ok, err = f.parentEligibleForLeaves(ctx, leafIDs, v.ProductID)
 			if err != nil {
-				if apperror.Is(err, apperror.CodeValidation) {
-					return nil, err
-				}
-				return nil, fmt.Errorf("assignment flow: eligibility: %w", err)
+				return nil, err
 			}
 			eligible[v.ProductID] = ok
 		}
@@ -460,8 +507,55 @@ type ownedUnit struct {
 	ProductID string
 }
 
+func (f *Flow) childEligibilityIDs(ctx context.Context, productID string) ([]string, error) {
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return nil, nil
+	}
+	if f.products == nil {
+		return []string{productID}, nil
+	}
+	p, err := f.products.FindByID(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("assignment flow: lookup product: %w", err)
+	}
+	if p == nil {
+		return []string{productID}, nil
+	}
+	ids, err := catalogapp.LinkedParentChildProductIDs(ctx, f.products, f.components, p)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []string{productID}, nil
+	}
+	return ids, nil
+}
+
+func (f *Flow) parentEligibleForLeaves(ctx context.Context, leafIDs []string, parentProductID string) (bool, error) {
+	if len(leafIDs) == 0 {
+		return false, nil
+	}
+	for _, leafID := range leafIDs {
+		ok, err := f.eligibility.IsEligible(ctx, leafID, parentProductID)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeValidation) {
+				return false, err
+			}
+			return false, fmt.Errorf("assignment flow: eligibility: %w", err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (f *Flow) requireOwnedUnit(ctx context.Context, customerID, unitID, notOwned string) (ownedUnit, error) {
-	unitID = strings.TrimSpace(unitID)
+	unitID, ok := domain.CanonicalUnitID(unitID)
+	if !ok {
+		return ownedUnit{}, apperror.Validation(notOwned)
+	}
 	orderID, variantID, ok := domain.SplitUnitID(unitID)
 	if !ok {
 		return ownedUnit{}, apperror.Validation(notOwned)
