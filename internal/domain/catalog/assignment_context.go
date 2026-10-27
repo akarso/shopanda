@@ -18,23 +18,28 @@ const RequiresLinkedParentCode = "requires_linked_parent"
 
 // AssignmentContext is the purchase-time hint that a RequiresLinkedParent
 // product is being bought against a parent (PR-1068). Cart lines persist
-// ParentProductID and Deferred so claim, qty increase, and checkout can
-// re-read the same context. HTTP writers are PR-1070.
+// ParentProductID, ParentUnitID, and Deferred so claim, qty increase, and
+// checkout can re-read the same context. HTTP writers are PR-1070.
 //
-// Deferred or any non-whitespace ParentProductID leaves the gate. That
-// parent string is not checked for existence, eligibility, or ownership
-// until PR-1070. Storefront must not set Deferred on every request or the
-// flag is meaningless. IsEligible runs in PR-1070 when a parent is present.
+// Deferred, a non-whitespace ParentProductID, or a non-whitespace
+// ParentUnitID leaves the purchasability gate. ParentProductID is the
+// catalog parent (IsEligible). ParentUnitID is the owned instance
+// (CreateAssigned). Storefront must not set Deferred on every request or
+// the flag is meaningless. IsEligible and ownership run in PR-1070 when a
+// parent product or unit is present.
 type AssignmentContext struct {
 	ParentProductID string
+	ParentUnitID    string
 	Deferred        bool
 }
 
 // Empty reports whether the context supplies no parent and is not deferred.
-// A whitespace-only ParentProductID is empty. A nil-equivalent zero value
-// is empty.
+// A whitespace-only ParentProductID or ParentUnitID is empty. A
+// nil-equivalent zero value is empty.
 func (a AssignmentContext) Empty() bool {
-	return !a.Deferred && strings.TrimSpace(a.ParentProductID) == ""
+	return !a.Deferred &&
+		strings.TrimSpace(a.ParentProductID) == "" &&
+		strings.TrimSpace(a.ParentUnitID) == ""
 }
 
 type assignmentContextKey struct{}
@@ -47,6 +52,7 @@ func WithAssignmentContext(ctx context.Context, ac AssignmentContext) context.Co
 		ctx = context.Background()
 	}
 	ac.ParentProductID = strings.TrimSpace(ac.ParentProductID)
+	ac.ParentUnitID = strings.TrimSpace(ac.ParentUnitID)
 	return context.WithValue(ctx, assignmentContextKey{}, ac)
 }
 
@@ -62,6 +68,7 @@ func AssignmentContextFrom(ctx context.Context) AssignmentContext {
 		return AssignmentContext{}
 	}
 	ac.ParentProductID = strings.TrimSpace(ac.ParentProductID)
+	ac.ParentUnitID = strings.TrimSpace(ac.ParentUnitID)
 	return ac
 }
 
@@ -87,6 +94,7 @@ func WithPurchaseAssignments(ctx context.Context, byVariant map[string]Assignmen
 	copied := make(map[string]AssignmentContext, len(byVariant))
 	for id, ac := range byVariant {
 		ac.ParentProductID = strings.TrimSpace(ac.ParentProductID)
+		ac.ParentUnitID = strings.TrimSpace(ac.ParentUnitID)
 		copied[id] = ac
 	}
 	return context.WithValue(ctx, purchaseAssignmentsKey{}, copied)

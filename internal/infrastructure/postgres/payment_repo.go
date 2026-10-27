@@ -79,6 +79,31 @@ func (r *PaymentRepo) FindByID(ctx context.Context, id string) (*payment.Payment
 	return p, nil
 }
 
+// FindByOrderIDs returns payments keyed by order ID. Missing orders are omitted.
+func (r *PaymentRepo) FindByOrderIDs(ctx context.Context, orderIDs []string) (map[string]*payment.Payment, error) {
+	if len(orderIDs) == 0 {
+		return map[string]*payment.Payment{}, nil
+	}
+	q := `SELECT ` + paymentColumns + ` FROM payments WHERE order_id = ANY($1)`
+	rows, err := r.db.QueryContext(ctx, q, orderIDs)
+	if err != nil {
+		return nil, fmt.Errorf("payment_repo: find by order ids: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]*payment.Payment, len(orderIDs))
+	for rows.Next() {
+		p, err := hydratePaymentFromScanner(rows)
+		if err != nil {
+			return nil, fmt.Errorf("payment_repo: find by order ids: %w", err)
+		}
+		out[p.OrderID] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("payment_repo: find by order ids: %w", err)
+	}
+	return out, nil
+}
+
 // FindByOrderID returns the payment for a given order.
 // Returns (nil, nil) when no payment exists for the order.
 func (r *PaymentRepo) FindByOrderID(ctx context.Context, orderID string) (*payment.Payment, error) {

@@ -15,11 +15,12 @@ type Item struct {
 	UnitPrice shared.Money
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	// AssignmentParentProductID and AssignmentDeferred persist the
-	// purchase-time assignment context on the line (PR-1068). Empty
-	// means the line has no stored context; callers then fall back to
-	// the request context. PR-1070 writes these via HTTP.
+	// AssignmentParentProductID, AssignmentParentUnitID, and
+	// AssignmentDeferred persist the purchase-time assignment context
+	// on the line (PR-1068 / PR-1070). Empty means the line has no
+	// stored context; callers then fall back to the request context.
 	AssignmentParentProductID string
+	AssignmentParentUnitID    string
 	AssignmentDeferred        bool
 }
 
@@ -54,7 +55,12 @@ func (i Item) AssignmentParent() string {
 	return strings.TrimSpace(i.AssignmentParentProductID)
 }
 
-// HasStoredAssignment reports whether the line carries a parent or deferred flag.
+// AssignmentUnit returns the trimmed stored parent unit id.
+func (i Item) AssignmentUnit() string {
+	return strings.TrimSpace(i.AssignmentParentUnitID)
+}
+
+// HasStoredAssignment reports whether the line carries a parent, unit, or deferred flag.
 func (i Item) HasStoredAssignment() bool {
-	return i.AssignmentDeferred || i.AssignmentParent() != ""
+	return i.AssignmentDeferred || i.AssignmentParent() != "" || i.AssignmentUnit() != ""
 }

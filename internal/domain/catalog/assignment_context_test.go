@@ -23,6 +23,12 @@ func TestAssignmentContext_Empty(t *testing.T) {
 	if (catalog.AssignmentContext{ParentProductID: "  ", Deferred: true}).Empty() {
 		t.Fatal("deferred with whitespace parent should not be empty")
 	}
+	if (catalog.AssignmentContext{ParentUnitID: " order/var "}).Empty() {
+		t.Fatal("parent unit id should not be empty")
+	}
+	if !(catalog.AssignmentContext{ParentUnitID: "  \t"}).Empty() {
+		t.Fatal("whitespace unit should be empty")
+	}
 }
 
 func TestAssignmentContextFrom_MissingIsEmpty(t *testing.T) {
@@ -88,6 +94,9 @@ func TestLinkedParentBlocksPurchase(t *testing.T) {
 	}
 	if catalog.LinkedParentBlocksPurchase(on, catalog.AssignmentContext{ParentProductID: "card-1"}) {
 		t.Fatal("parent id must not block")
+	}
+	if catalog.LinkedParentBlocksPurchase(on, catalog.AssignmentContext{ParentUnitID: "order/var"}) {
+		t.Fatal("parent unit must not block")
 	}
 }
 

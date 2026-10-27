@@ -692,6 +692,15 @@ paths:
                 quantity:
                   type: integer
                   minimum: 1
+                assignment_parent_product_id:
+                  type: string
+                  description: Catalog parent product selected at cart time (PR-1070)
+                assignment_parent_unit_id:
+                  type: string
+                  description: Owned parent instance unit id (orderID/variantID)
+                assignment_deferred:
+                  type: boolean
+                  description: Purchase now, assign the instance after purchase
       responses:
         "200":
           description: OK
@@ -989,6 +998,87 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ── Account / GDPR ────────────────────────────────────
+  /api/v1/account/assignment-parents:
+    get:
+      operationId: listAccountAssignmentParents
+      tags: [Account]
+      summary: List owned parent instances eligible for a child product
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: child_product_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/account/assignments:
+    get:
+      operationId: getAccountAssignment
+      tags: [Account]
+      summary: Get the current assignment for an owned child unit
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: child_unit_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: assignAccountAssignment
+      tags: [Account]
+      summary: Assign an unassigned owned child unit to an owned parent unit
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [child_unit_id, parent_unit_id]
+              properties:
+                child_unit_id:
+                  type: string
+                parent_unit_id:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
+
   /api/v1/account/consent:
     get:
       operationId: getConsent
@@ -3471,6 +3561,12 @@ components:
           type: integer
           format: int64
           description: quantity * unit_price
+        assignment_parent_product_id:
+          type: string
+        assignment_parent_unit_id:
+          type: string
+        assignment_deferred:
+          type: boolean
 
   responses:
     Unauthorized:

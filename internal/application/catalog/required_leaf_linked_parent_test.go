@@ -30,3 +30,30 @@ func TestRejectRequiredLinkedParentLeaves(t *testing.T) {
 		t.Fatalf("deferred assignment: %v", err)
 	}
 }
+
+func TestLinkedParentChildProductIDs(t *testing.T) {
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"ticket":  {ID: "ticket", Status: catalog.StatusActive, Type: catalog.TypeSimple, RequiresLinkedParent: true},
+		"bundle":  {ID: "bundle", Status: catalog.StatusActive, Type: catalog.TypeBundle},
+		"child-1": {ID: "child-1", Status: catalog.StatusActive, Type: catalog.TypeSimple, RequiresLinkedParent: true},
+		"child-2": {ID: "child-2", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+	}}
+	comp1, err := catalog.NewBundleComponent("bundle", "child-1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	comp2, err := catalog.NewBundleComponent("bundle", "child-2", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	components := &stubBundleComponentRepo{list: []catalog.BundleComponent{*comp1, *comp2}}
+
+	ids, err := catalogApp.LinkedParentChildProductIDs(context.Background(), products, components, products.byID["ticket"])
+	if err != nil || len(ids) != 1 || ids[0] != "ticket" {
+		t.Fatalf("ticket ids = %v err=%v", ids, err)
+	}
+	ids, err = catalogApp.LinkedParentChildProductIDs(context.Background(), products, components, products.byID["bundle"])
+	if err != nil || len(ids) != 1 || ids[0] != "child-1" {
+		t.Fatalf("bundle ids = %v err=%v, want linked leaf only", ids, err)
+	}
+}

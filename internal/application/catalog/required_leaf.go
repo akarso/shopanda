@@ -181,6 +181,54 @@ func RejectRequiredLinkedParentLeaves(
 	return nil
 }
 
+// LinkedParentChildProductIDs is the products IsEligible must accept for
+// this cart/order line. A RequiresLinkedParent product is itself. A bundle
+// contributes each required leaf that has the flag. Other types are empty.
+func LinkedParentChildProductIDs(
+	ctx context.Context,
+	products productByID,
+	components bundleComponentsByBundle,
+	p *catalog.Product,
+) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if p.RequiresLinkedParent {
+		return []string{p.ID}, nil
+	}
+	if p.Type != catalog.TypeBundle || products == nil || components == nil {
+		return nil, nil
+	}
+	rows, err := components.ListByBundleID(ctx, p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("bundle %s components: %w", p.ID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, id := range ids {
+		if byID[id] != nil && byID[id].RequiresLinkedParent {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 // BundleCustomerError returns a validation error whose Message is
 // catalog.BundleCannotBeReservedMessage. detail stays available via Unwrap
 // for logs. A detail that already uses that message is returned unchanged
@@ -196,7 +244,15 @@ func BundleCustomerError(detail error) error {
 	return apperror.Wrap(apperror.CodeValidation, catalog.BundleCannotBeReservedMessage, detail)
 }
 
-func loadProductsByID(ctx context.Context, products catalog.ProductRepository, ids []string) (map[string]*catalog.Product, error) {
+type productByID interface {
+	FindByID(ctx context.Context, id string) (*catalog.Product, error)
+}
+
+type bundleComponentsByBundle interface {
+	ListByBundleID(ctx context.Context, bundleProductID string) ([]catalog.BundleComponent, error)
+}
+
+func loadProductsByID(ctx context.Context, products productByID, ids []string) (map[string]*catalog.Product, error) {
 	if lister, ok := products.(productIDLister); ok {
 		byID, err := lister.ListByIDs(ctx, ids)
 		if err != nil {

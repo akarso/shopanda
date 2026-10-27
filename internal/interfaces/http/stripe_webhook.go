@@ -134,9 +134,18 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Idempotency: if the payment is no longer pending, it was already
-	// processed by a previous delivery of this (or a related) event.
+	success := evt.Type == "payment_intent.succeeded"
+
+	// Idempotency: a completed or refunded payment is already processed.
+	// A failed payment still publishes payment.failed so a retry after a
+	// revoke error can finish (RevokeForOrder skips missing current rows).
 	if p.Status() != payment.StatusPending {
+		if !success && p.Status() == payment.StatusFailed {
+			if err := publishPaymentFailed(h.bus, r.Context(), "payment.stripe_webhook", p, p.Status()); err != nil {
+				JSONError(w, err)
+				return
+			}
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"status": "already_processed",
 		})
@@ -145,8 +154,6 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 
 	prevUpdatedAt := p.UpdatedAt
 	oldStatus := p.Status()
-
-	success := evt.Type == "payment_intent.succeeded"
 
 	if success {
 		if err := p.Complete(evt.Data.Object.ID); err != nil {
@@ -169,13 +176,16 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 	if !success {
 		evtName = payment.EventPaymentFailed
 	}
-	_ = h.bus.Publish(r.Context(), event.New(evtName, "payment.stripe_webhook", payment.PaymentStatusChangedData{
+	if err := h.bus.Publish(r.Context(), event.New(evtName, "payment.stripe_webhook", payment.PaymentStatusChangedData{
 		PaymentID:   p.ID,
 		OrderID:     p.OrderID,
 		OldStatus:   oldStatus,
 		NewStatus:   p.Status(),
 		ProviderRef: p.ProviderRef,
-	}))
+	})); err != nil && evtName == payment.EventPaymentFailed {
+		JSONError(w, err)
+		return
+	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"status": "accepted",
