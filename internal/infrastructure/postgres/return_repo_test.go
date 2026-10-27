@@ -418,3 +418,78 @@ func saveRequestedReturn(t *testing.T, db *sql.DB) (*postgres.ReturnRepo, string
 	}
 	return repo, ret.ID
 }
+
+func TestReturnRepo_WithTx_Save_RollbackInvisible(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM order_return_items")
+	mustExec(t, db, "DELETE FROM order_returns")
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM order_return_items")
+		mustExec(t, db, "DELETE FROM order_returns")
+		mustExec(t, db, "DELETE FROM order_items")
+		mustExec(t, db, "DELETE FROM orders")
+	})
+
+	orderRepo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	repo, err := postgres.NewReturnRepo(db)
+	if err != nil {
+		t.Fatalf("NewReturnRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	ord := mustNewOrder(t, "cust-1", "EUR")
+	if err := ord.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if err := ord.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	if err := orderRepo.Save(ctx, &ord); err != nil {
+		t.Fatalf("Save order: %v", err)
+	}
+
+	item, err := domainReturns.NewItem("var-1", "SKU-001", "Test Product", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	ret, err := domainReturns.NewReturn(id.New(), ord.ID, ord.CustomerID, "damaged", "EUR", []domainReturns.Item{item})
+	if err != nil {
+		t.Fatalf("NewReturn: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Save(ctx, &ret); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("Save in tx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	got, err := repo.FindByID(ctx, ret.ID)
+	if err != nil || got != nil {
+		t.Fatalf("rolled-back Save visible: %+v %v", got, err)
+	}
+
+	tx, err = db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Save(ctx, &ret); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("Save in tx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	got, err = repo.FindByID(ctx, ret.ID)
+	if err != nil || got == nil || got.ID != ret.ID {
+		t.Fatalf("committed FindByID = %+v %v", got, err)
+	}
+}

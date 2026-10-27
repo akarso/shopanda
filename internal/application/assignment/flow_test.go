@@ -259,6 +259,60 @@ func TestFlow_RecordPurchase_AssignedWhenParentUnitEligible(t *testing.T) {
 	}
 }
 
+func TestFlow_RecordPurchase_BatchLocksAllAssignedParents(t *testing.T) {
+	// Two assigned lines must succeed in one RecordPurchase call (lock-all-
+	// first path). Ordering of parents is intentional (B then A) so the
+	// batch collects both before any CreateAssigned.
+	parentA := mustOrder(t, "cust-1", "card-a")
+	parentB := mustOrder(t, "cust-1", "card-b")
+	unitA := assignment.UnitID(parentA.ID, "card-a")
+	unitB := assignment.UnitID(parentB.ID, "card-b")
+	repo := &stubRepo{}
+	elig := &stubEligibility{ok: map[string]bool{
+		"ticket|card-prod-a": true,
+		"ticket|card-prod-b": true,
+	}}
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentA.ID: parentA,
+		parentB.ID: parentB,
+	}}
+	variants := &stubVariants{byID: map[string]*catalog.Variant{
+		"card-a": {ID: "card-a", ProductID: "card-prod-a"},
+		"card-b": {ID: "card-b", ProductID: "card-prod-b"},
+	}}
+	flow := newFlow(t, repo, elig, orders, variants)
+
+	orderID := id.New()
+	err := flow.RecordPurchase(context.Background(), "cust-1", orderID, []app.PurchaseLine{
+		{
+			ChildVariantID: "ticket-b",
+			ChildProductID: "ticket",
+			Assignment:     catalog.AssignmentContext{ParentUnitID: unitB, ParentProductID: "card-prod-b"},
+		},
+		{
+			ChildVariantID: "ticket-a",
+			ChildProductID: "ticket",
+			Assignment:     catalog.AssignmentContext{ParentUnitID: unitA, ParentProductID: "card-prod-a"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RecordPurchase: %v", err)
+	}
+	if len(repo.inserts) != 2 {
+		t.Fatalf("inserts = %d, want 2", len(repo.inserts))
+	}
+	parents := map[string]bool{}
+	for _, a := range repo.inserts {
+		if a.Status() != assignment.StatusAssigned {
+			t.Fatalf("status = %q", a.Status())
+		}
+		parents[a.ParentOrderItemID] = true
+	}
+	if !parents[unitA] || !parents[unitB] {
+		t.Fatalf("parents = %#v, want %q and %q", parents, unitA, unitB)
+	}
+}
+
 func TestFlow_CheckPurchase_RejectsIneligibleParent(t *testing.T) {
 	flow := newFlow(t, nil, &stubEligibility{ok: map[string]bool{}}, nil, nil)
 	err := flow.CheckPurchase(context.Background(), "cust-1", "ticket", catalog.AssignmentContext{ParentProductID: "card-prod"})

@@ -415,6 +415,12 @@ func (f *Flow) CheckPurchase(ctx context.Context, customerID, childProductID str
 // RecordPurchase writes one ProductAssignment per RequiresLinkedParent
 // line. A parent unit becomes CreateAssigned; deferred or product-only
 // becomes CreateUnassigned. This is the only checkout write policy.
+//
+// Assigned lines lock every parent+child unit id once (sorted inside
+// LockAssignmentUnits) before any CreateAssigned write. Checkout holds
+// one TX across the batch; locking line-by-line in line order can
+// deadlock two concurrent checkouts that name the same parents in
+// opposite order.
 func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, lines []PurchaseLine) error {
 	if f == nil {
 		return fmt.Errorf("assignment flow: not configured")
@@ -424,6 +430,15 @@ func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, l
 		return apperror.Validation("order id must not be empty")
 	}
 	customerID = strings.TrimSpace(customerID)
+
+	type assignedWrite struct {
+		parent string
+		child  string
+	}
+	assigned := make([]assignedWrite, 0, len(lines))
+	unassigned := make([]string, 0, len(lines))
+	lockPairs := make([][2]string, 0, len(lines))
+
 	for _, line := range lines {
 		childVariantID := strings.TrimSpace(line.ChildVariantID)
 		childUnit := domain.UnitID(orderID, childVariantID)
@@ -439,23 +454,60 @@ func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, l
 			if !ok {
 				return apperror.Validation(ParentNotOwnedMessage)
 			}
-			// Fail-fast, then lock+recheck immediately before CreateAssigned
-			// inside runAssignedWrite (same TX as checkout when WithTx'd).
+			// Fail-fast open-return check; recheck again under the batch
+			// lock inside runAssignedWrite (same TX as checkout when WithTx'd).
 			if err := f.assertUnitsNotOnOpenReturn(ctx, canonical, childUnit); err != nil {
 				return err
 			}
-			if _, err := f.runAssignedWrite(ctx, []string{canonical, childUnit}, func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error) {
-				return bound.assignments.CreateAssigned(ctx, canonical, childUnit)
-			}); err != nil {
-				return err
-			}
+			assigned = append(assigned, assignedWrite{parent: canonical, child: childUnit})
+			lockPairs = append(lockPairs, [2]string{canonical, childUnit})
 			continue
 		}
-		if _, err := f.assignments.CreateUnassigned(ctx, childUnit); err != nil {
-			return err
+		unassigned = append(unassigned, childUnit)
+	}
+
+	writeLines := func(ctx context.Context, bound *Flow) error {
+		for _, a := range assigned {
+			if _, err := bound.assignments.CreateAssigned(ctx, a.parent, a.child); err != nil {
+				return err
+			}
+		}
+		for _, childUnit := range unassigned {
+			if _, err := bound.assignments.CreateUnassigned(ctx, childUnit); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if len(assigned) == 0 {
+		return writeLines(ctx, f)
+	}
+
+	lockIDs := assignedPurchaseLockUnitIDs(lockPairs)
+	_, err := f.runAssignedWrite(ctx, lockIDs, func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error) {
+		if err := writeLines(ctx, bound); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	return err
+}
+
+// assignedPurchaseLockUnitIDs flattens parent+child unit pairs for a
+// RecordPurchase batch. LockAssignmentUnits sorts and dedups so the
+// full set is ordered once before any line write.
+func assignedPurchaseLockUnitIDs(pairs [][2]string) []string {
+	out := make([]string, 0, len(pairs)*2)
+	for _, p := range pairs {
+		if p[0] != "" {
+			out = append(out, p[0])
+		}
+		if p[1] != "" {
+			out = append(out, p[1])
 		}
 	}
-	return nil
+	return out
 }
 
 func (line PurchaseLine) eligibilityIDs() []string {
