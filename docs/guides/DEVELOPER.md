@@ -1083,7 +1083,21 @@ List, current, and revoke JSON include `child_customer_id`, `child_order_status`
 
 Revoke is `Service.Revoke`. An already-revoked id is 200 with the same body, including those live facts, and does not write another `assignment.revoke` audit entry. The row stays, including force columns.
 
-Create uses the same assignment JSON. The request field is `reason`. Create and a first revoke audit `assignment.create` and `assignment.revoke`. A failed create uses the attempted child unit id as the audit resource id. `ListByChild` still returns the full child history with no limit; a page cap is a follow-up if that read is exposed over HTTP. Returns integration is PR-1072. CSV and the admin GUI are PR-1073.
+Create uses the same assignment JSON. The request field is `reason`. Create and a first revoke audit `assignment.create` and `assignment.revoke`. A failed create uses the attempted child unit id as the audit resource id. `ListByChild` still returns the full child history with no limit; a page cap is a follow-up if that read is exposed over HTTP.
+
+### Returns and ProductAssignment (PR-1072)
+
+Ticket (child) order lines stay independently returnable through the existing Returns/RMA service — returning a ticket does not add or remove the card's order line. `returns.Service` is wired with `WithAssignmentFlow`; `assignment.Flow` gets `WithOpenReturnChecker(returnService)`.
+
+**Revoke (Approve / Refund).** Domain status transition runs first in memory. Then revoke + return `Update` share one DB transaction (`Flow.WithTx` + returns `WithTx`). Wrong-status calls never revoke. On commit, returns publishes `assignment.revoked` with reason `return_approved` or `return_refunded`. `RequestReturn` does not revoke. Missing assignment rows are skipped; Refund revoke is idempotent.
+
+**Parent gate.** Returning a parent that still has live assigned children **not also on this RMA** is blocked at `RequestReturn`, `Approve`, `Receive`, and `Refund` via `Flow.AssertParentReturnable`. Children that are themselves lines on the current request are skipped (same-order "return card and its tickets"). Message: `cannot return a parent unit that still has assigned children; revoke or return those children first (required: <child unit ids>)`. Cascade-revoke and warn-only were rejected.
+
+**Assign / purchase while RMA open.** `AssignOwned`, `AdminAssign`, `CheckPurchase`, and `RecordPurchase` call `AssertNotOnOpenReturn` for the parent unit (and the child when it already exists). Checkout stamping a new ticket onto a card that is on a non-terminal RMA is refused the same way as post-purchase assign. `ListOwnedParents` omits parents on an open RMA so account assign UI does not offer a 422 card. Non-terminal statuses are `requested` / `approved` / `received`. Message: `cannot assign a unit that is on an open return`.
+
+**ReturnableLines.** A parent card is listed only when every live assigned child is also still returnable on the same order (same-RMA skip). Storefronts that select the card **must** include those ticket lines on the same `RequestReturn`; card-only submit still 422s with the required child unit ids. Cross-order assigned tickets hide the card entirely.
+
+Nil assignment flow skips the hooks (tests). CSV and the admin GUI are PR-1073.
 
 ### Bundle and grouped pricing (PR-1062)
 

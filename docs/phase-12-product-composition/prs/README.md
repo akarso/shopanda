@@ -26,7 +26,7 @@
 | PR-1069 | D | done | [`ProductAssignment` instance domain](PR-1069.md) |
 | PR-1070 | D | done | [Assignment flow: cart-time + post-purchase](PR-1070.md) |
 | PR-1071 | D | done | [Admin API for assignment](PR-1071.md) |
-| PR-1072 | D | planned | [Returns integration for assigned children](PR-1072.md) |
+| PR-1072 | D | done | [Returns integration for assigned children](PR-1072.md) |
 | PR-1073 | D | planned | [CSV import/export + admin GUI](PR-1073.md) |
 | PR-1074 | E | planned | [`Downloadable` type + file asset attachment](PR-1074.md) |
 | PR-1075 | E | planned | [`DownloadGrant` domain](PR-1075.md) |

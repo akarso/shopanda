@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	domainAssignment "github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -48,17 +51,27 @@ type restockReturnRepo interface {
 	UpdateIfUnrestocked(ctx context.Context, ret *domainReturns.Return) error
 }
 
+// assignmentHooks is the ProductAssignment surface returns needs
+// (PR-1072). *assignmentapp.Flow satisfies it.
+type assignmentHooks interface {
+	AssertParentReturnable(ctx context.Context, parentUnitID string, skipChildUnitIDs ...string) error
+	RevokeForUnit(ctx context.Context, childUnitID, reason string) (*domainAssignment.ProductAssignment, error)
+	BindsTx() bool
+	WithTx(tx *sql.Tx) *assignmentapp.Flow
+}
+
 // Service orchestrates the return (RMA) workflow.
 type Service struct {
-	returns   domainReturns.Repository
-	orders    order.OrderRepository
-	stock     inventory.StockRepository
-	variants  catalog.VariantRepository
-	payments  payment.PaymentRepository
-	refunder  payment.Refunder
-	bus       *event.Bus
-	log       logger.Logger
-	txStarter TxStarter
+	returns     domainReturns.Repository
+	orders      order.OrderRepository
+	stock       inventory.StockRepository
+	variants    catalog.VariantRepository
+	payments    payment.PaymentRepository
+	refunder    payment.Refunder
+	bus         *event.Bus
+	log         logger.Logger
+	txStarter   TxStarter
+	assignments assignmentHooks
 }
 
 // WithTxStarter wires the transaction used by Receive. Without it, Receive
@@ -69,6 +82,52 @@ func (s *Service) WithTxStarter(starter TxStarter) *Service {
 	}
 	s.txStarter = starter
 	return s
+}
+
+// WithAssignmentFlow hooks ProductAssignment into returns (PR-1072).
+// Nil skips the parent-with-children block and revoke-on-approve/refund
+// (tests without assignment). Production always wires the flow.
+func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
+	if s == nil {
+		return nil
+	}
+	s.assignments = flow
+	return s
+}
+
+// AssertNotOnOpenReturn fails when unitID appears on a non-terminal
+// return (requested / approved / received). Wired into assignment.Flow
+// so AssignOwned / AdminAssign cannot re-bind while an RMA is open.
+func (s *Service) AssertNotOnOpenReturn(ctx context.Context, unitID string) error {
+	if s == nil {
+		return nil
+	}
+	unitID = strings.TrimSpace(unitID)
+	if unitID == "" {
+		return nil
+	}
+	orderID, variantID, ok := domainAssignment.SplitUnitID(unitID)
+	if !ok {
+		return nil
+	}
+	if canon, ok := domainAssignment.CanonicalUnitID(unitID); ok {
+		orderID, variantID, _ = domainAssignment.SplitUnitID(canon)
+	}
+	list, err := s.returns.FindByOrderID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("returns: open-return check: %w", err)
+	}
+	for _, ret := range list {
+		if ret.Status().IsTerminal() {
+			continue
+		}
+		for _, item := range ret.Items() {
+			if item.VariantID == variantID {
+				return apperror.Validation(assignmentapp.UnitOnOpenReturnMessage)
+			}
+		}
+	}
+	return nil
 }
 
 // NewService creates a return workflow service.
@@ -156,6 +215,9 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 	if err := s.validateReturnQuantities(ctx, orderID, orderItems, returnItems); err != nil {
 		return nil, err
 	}
+	if err := s.assertParentsReturnable(ctx, orderID, returnItems); err != nil {
+		return nil, err
+	}
 
 	ret, err := domainReturns.NewReturn(id.New(), orderID, ord.CustomerID, reason, ord.Currency, returnItems)
 	if err != nil {
@@ -169,15 +231,23 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 }
 
 // Approve transitions requested → approved.
+//
+// PR-1072: a parent unit with live assigned children not also on this
+// return is refused. The status transition runs in memory first; then
+// revoke + Update commit in one transaction so a failed persist leaves
+// assignments intact. Refund also revokes as an idempotent safety net.
 func (s *Service) Approve(ctx context.Context, returnID string) (*domainReturns.Return, error) {
 	ret, err := s.loadReturn(ctx, returnID)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return nil, err
+	}
 	if err := ret.Approve(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "approve"); err != nil {
+	if err := s.persistReturnWithAssignmentRevoke(ctx, ret, assignmentapp.RevokeReasonReturnApproved, "approve"); err != nil {
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnApproved, *ret)
@@ -243,6 +313,10 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 	}
 	if ret.Status() != domainReturns.StatusApproved && ret.Status() != domainReturns.StatusReceived {
 		return nil, apperror.Validation("return is not in a receivable state")
+	}
+	// Re-check parent gate: an assignment may have landed after approve.
+	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return nil, err
 	}
 
 	ord, err := s.orders.FindByID(ctx, ret.OrderID)
@@ -369,6 +443,11 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 }
 
 // Refund transitions received → refunded and issues a provider refund when configured.
+//
+// PR-1072: parent gate re-checks; status transition runs first; revoke +
+// Update share one transaction. Revoke is idempotent so a return approved
+// before assignment wiring, or a child rebound outside Flow, still ends
+// revoked.
 func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.Return, error) {
 	ret, err := s.loadReturn(ctx, returnID)
 	if err != nil {
@@ -389,11 +468,15 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, apperror.Validation("payment is not in a refundable state")
 	}
 
+	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	if err := ret.MarkRefunded(now); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "refund"); err != nil {
+	if err := s.persistReturnWithAssignmentRevoke(ctx, ret, assignmentapp.RevokeReasonReturnRefunded, "refund"); err != nil {
 		return nil, err
 	}
 
@@ -503,11 +586,33 @@ func (s *Service) ReturnableLines(ctx context.Context, orderID, customerID strin
 		}
 	}
 
+	// Units still returnable on this order — used as same-RMA skip when
+	// deciding whether a parent card is blocked by assigned children.
+	returnableUnits := make([]string, 0, len(ord.Items()))
+	for _, item := range ord.Items() {
+		if item.Quantity-already[item.VariantID] > 0 {
+			returnableUnits = append(returnableUnits, domainAssignment.UnitID(orderID, item.VariantID))
+		}
+	}
+
 	out := make([]ReturnableLine, 0, len(ord.Items()))
 	for _, item := range ord.Items() {
 		returnable := item.Quantity - already[item.VariantID]
 		if returnable <= 0 {
 			continue
+		}
+		unit := domainAssignment.UnitID(orderID, item.VariantID)
+		if s.assignments != nil {
+			// Keep a parent only when every live assigned child is also
+			// still returnable on this order (same-RMA skip). Storefront
+			// must submit the card together with those ticket lines;
+			// card-only RequestReturn still 422s with required child ids.
+			if err := s.assignments.AssertParentReturnable(ctx, unit, returnableUnits...); err != nil {
+				if apperror.Is(err, apperror.CodeValidation) {
+					continue
+				}
+				return nil, err
+			}
 		}
 		out = append(out, ReturnableLine{
 			VariantID:  item.VariantID,
@@ -533,6 +638,111 @@ func (s *Service) assertOrderCustomer(ctx context.Context, orderID, customerID s
 		return apperror.Forbidden("order not found")
 	}
 	return nil
+}
+
+// assertParentsReturnable blocks returning a unit that still has live
+// assigned children not also listed on this return. Children that are
+// themselves lines on the current request are skipped so same-order
+// "return card and its tickets" succeeds. Ticket-only returns are
+// unaffected. Nil assignment flow skips the gate.
+func (s *Service) assertParentsReturnable(ctx context.Context, orderID string, items []domainReturns.Item) error {
+	if s.assignments == nil {
+		return nil
+	}
+	returning := make([]string, 0, len(items))
+	for _, item := range items {
+		returning = append(returning, domainAssignment.UnitID(orderID, item.VariantID))
+	}
+	for _, item := range items {
+		unit := domainAssignment.UnitID(orderID, item.VariantID)
+		if err := s.assignments.AssertParentReturnable(ctx, unit, returning...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// persistReturnWithAssignmentRevoke commits revoke + return Update in
+// one transaction when assignment is wired. Domain transition must
+// already have succeeded in memory. Without assignment, updates directly.
+func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *domainReturns.Return, revokeReason, op string) error {
+	if s.assignments == nil {
+		return persistReturnUpdate(s.returns.Update(ctx, ret), op)
+	}
+	if s.txStarter == nil {
+		return apperror.Internal("returns: transaction starter is required")
+	}
+	if !s.assignments.BindsTx() {
+		return apperror.Internal("returns: assignment repository does not support transactions")
+	}
+	txReturns, ok := s.returns.(txReturnRepo)
+	if !ok {
+		return apperror.Internal("returns: return repository does not support transactions")
+	}
+	tx, err := s.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("returns: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	bound := s.assignments.WithTx(tx)
+	revoked, err := revokeAssignmentsForReturn(ctx, bound, ret, revokeReason)
+	if err != nil {
+		return err
+	}
+	boundReturns := txReturns.WithTx(tx)
+	if err := persistReturnUpdate(boundReturns.Update(ctx, ret), op); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("returns: %s commit: %w", op, err)
+	}
+	for _, a := range revoked {
+		s.publishAssignmentRevoked(ctx, a, revokeReason)
+	}
+	return nil
+}
+
+// revokeAssignmentsForReturn revokes the current ProductAssignment for
+// each return line's child unit (assigned or never-assigned unassigned).
+// Missing rows are skipped. Returns the rows that were revoked for event
+// publishing after commit.
+func revokeAssignmentsForReturn(ctx context.Context, hooks assignmentHooks, ret *domainReturns.Return, reason string) ([]*domainAssignment.ProductAssignment, error) {
+	if hooks == nil || ret == nil {
+		return nil, nil
+	}
+	out := make([]*domainAssignment.ProductAssignment, 0, len(ret.Items()))
+	for _, item := range ret.Items() {
+		unit := domainAssignment.UnitID(ret.OrderID, item.VariantID)
+		revoked, err := hooks.RevokeForUnit(ctx, unit, reason)
+		if err != nil {
+			return nil, err
+		}
+		if revoked != nil {
+			out = append(out, revoked)
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) publishAssignmentRevoked(ctx context.Context, a *domainAssignment.ProductAssignment, reason string) {
+	if s == nil || a == nil {
+		return
+	}
+	data := domainAssignment.AssignmentRevokedData{
+		AssignmentID:      a.ID,
+		ChildOrderItemID:  a.ChildOrderItemID,
+		ParentOrderItemID: a.ParentOrderItemID,
+		Reason:            reason,
+	}
+	if err := s.bus.Publish(ctx, event.New(domainAssignment.EventAssignmentRevoked, "returns.service", data)); err != nil {
+		s.log.Warn("returns: publish assignment revoked failed", map[string]interface{}{
+			"event":         domainAssignment.EventAssignmentRevoked,
+			"assignment_id": a.ID,
+			"reason":        reason,
+			"error":         err.Error(),
+		})
+	}
 }
 
 // persistReturnUpdate maps a lost status check to a conflict. Other update

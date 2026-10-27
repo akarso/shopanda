@@ -69,7 +69,26 @@ const (
 	// ForceNotApplicableMessage is returned when force is set and both
 	// orders are already bindable. The override is not stored.
 	ForceNotApplicableMessage = "force not applicable"
+	// ParentHasAssignedChildrenMessage is returned when a return targets
+	// a parent unit that still has live assigned children (PR-1072).
+	ParentHasAssignedChildrenMessage = "cannot return a parent unit that still has assigned children; revoke or return those children first"
+	// UnitOnOpenReturnMessage is returned when AssignOwned / AdminAssign /
+	// CheckPurchase / RecordPurchase targets a unit that appears on a
+	// non-terminal return (PR-1072).
+	UnitOnOpenReturnMessage = "cannot assign a unit that is on an open return"
+	// RevokeReasonReturnApproved is the assignment.revoked reason when
+	// returns Approve revokes the child unit.
+	RevokeReasonReturnApproved = "return_approved"
+	// RevokeReasonReturnRefunded is the assignment.revoked reason when
+	// returns Refund revokes the child unit.
+	RevokeReasonReturnRefunded = "return_refunded"
 )
+
+// OpenReturnChecker blocks bind when a unit is on a non-terminal RMA
+// (requested / approved / received). returns.Service implements it.
+type OpenReturnChecker interface {
+	AssertNotOnOpenReturn(ctx context.Context, unitID string) error
+}
 
 // AdminAssignRequest is an operator bind. Force with a non-empty reason
 // overrides a cancelled, failed, or unpaid parent or child order. The
@@ -191,7 +210,8 @@ type repositoryTxBinder interface {
 // the request sets force and a reason. A new row also requires
 // RequiresLinkedParent (or a required linked leaf); an existing
 // unassigned row may be assigned without that flag. State transitions
-// stay on Service.
+// stay on Service. OpenReturnChecker (PR-1072) blocks bind while a
+// unit is on a non-terminal return.
 type Flow struct {
 	assignments *Service
 	repo        domain.Repository
@@ -201,6 +221,7 @@ type Flow struct {
 	payments    PaymentLookup
 	products    ProductLookup
 	components  BundleComponentLookup
+	openReturns OpenReturnChecker
 }
 
 // NewFlow creates the assignment flow. Every dependency is required so
@@ -250,6 +271,18 @@ func (f *Flow) WithLinkedLeaves(products ProductLookup, components BundleCompone
 	}
 	f.products = products
 	f.components = components
+	return f
+}
+
+// WithOpenReturnChecker blocks AssignOwned / AdminAssign / CheckPurchase /
+// RecordPurchase when the child or parent unit is on a non-terminal
+// return (PR-1072). ListOwnedParents also omits parents on an open RMA.
+// Nil skips the gate (tests without returns).
+func (f *Flow) WithOpenReturnChecker(checker OpenReturnChecker) *Flow {
+	if f == nil {
+		return nil
+	}
+	f.openReturns = checker
 	return f
 }
 
@@ -311,6 +344,13 @@ func (f *Flow) CheckPurchase(ctx context.Context, customerID, childProductID str
 	if !ok {
 		return apperror.Validation(ParentNotEligibleMessage)
 	}
+	// Parent unit on an open RMA must not accept a new stamped ticket
+	// at cart/checkout (same gate as AssignOwned).
+	if ac.ParentUnitID != "" {
+		if err := f.assertUnitsNotOnOpenReturn(ctx, ac.ParentUnitID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -340,6 +380,11 @@ func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, l
 			canonical, ok := domain.CanonicalUnitID(parentUnit)
 			if !ok {
 				return apperror.Validation(ParentNotOwnedMessage)
+			}
+			// Re-check parent + newly minted child before CreateAssigned
+			// (CheckPurchase already gated the parent; child is usually clean).
+			if err := f.assertUnitsNotOnOpenReturn(ctx, canonical, childUnit); err != nil {
+				return err
 			}
 			if _, err := f.assignments.CreateAssigned(ctx, canonical, childUnit); err != nil {
 				return err
@@ -401,18 +446,96 @@ func (f *Flow) RevokeForOrder(ctx context.Context, orderID string) error {
 	}
 	for _, item := range o.Items() {
 		childUnit := domain.UnitID(orderID, item.VariantID)
-		current, err := f.assignments.CurrentByChild(ctx, childUnit)
-		if err != nil {
-			return err
-		}
-		if current == nil {
-			continue
-		}
-		if _, _, err := f.assignments.Revoke(ctx, current.ID); err != nil {
+		if _, err := f.RevokeForUnit(ctx, childUnit, ""); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// AssertParentReturnable fails when parentUnitID still has live
+// assigned children that are not listed in skipChildUnitIDs. Returning
+// the card while other tickets remain assigned is blocked (PR-1072).
+// Children that are themselves lines on the same return request are
+// passed as skipChildUnitIDs so a same-order "return card and its
+// tickets" RMA is allowed. A parent with only revoked history, or no
+// rows, is returnable. The validation message lists the required child
+// unit ids so a card-only submit can show which ticket lines to add.
+func (f *Flow) AssertParentReturnable(ctx context.Context, parentUnitID string, skipChildUnitIDs ...string) error {
+	if f == nil {
+		return fmt.Errorf("assignment flow: not configured")
+	}
+	skip := make(map[string]struct{}, len(skipChildUnitIDs))
+	for _, id := range skipChildUnitIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if canon, ok := domain.CanonicalUnitID(id); ok {
+			id = canon
+		}
+		skip[id] = struct{}{}
+	}
+	blocking := make([]string, 0)
+	seenBlock := make(map[string]struct{})
+	offset := 0
+	for {
+		rows, hasMore, err := f.assignments.ListByParent(ctx, parentUnitID, ParentListQuery{
+			Status: ParentListStatusAssigned,
+			Limit:  ParentListMaxLimit,
+			Offset: offset,
+		})
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			child := row.ChildOrderItemID
+			if canon, ok := domain.CanonicalUnitID(child); ok {
+				child = canon
+			}
+			if _, ok := skip[child]; ok {
+				continue
+			}
+			if _, ok := seenBlock[child]; ok {
+				continue
+			}
+			seenBlock[child] = struct{}{}
+			blocking = append(blocking, child)
+		}
+		if !hasMore || len(rows) == 0 {
+			break
+		}
+		offset += len(rows)
+	}
+	if len(blocking) == 0 {
+		return nil
+	}
+	return apperror.Validation(fmt.Sprintf("%s (required: %s)", ParentHasAssignedChildrenMessage, strings.Join(blocking, ", ")))
+}
+
+// RevokeForUnit revokes the current (unassigned or assigned) row for
+// childUnitID when one exists. Missing rows return (nil, nil). An
+// already-revoked current is not expected (CurrentByChild skips them);
+// a successful revoke returns the revoked row. reason is a stable token
+// for callers that publish assignment.revoked (e.g. return_approved).
+// Used by returns on approve/refund (PR-1072) and by RevokeForOrder.
+func (f *Flow) RevokeForUnit(ctx context.Context, childUnitID, reason string) (*domain.ProductAssignment, error) {
+	if f == nil {
+		return nil, fmt.Errorf("assignment flow: not configured")
+	}
+	_ = reason // caller publishes; kept on the signature for audit context
+	current, err := f.assignments.CurrentByChild(ctx, childUnitID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, nil
+	}
+	revoked, _, err := f.assignments.Revoke(ctx, current.ID)
+	if err != nil {
+		return nil, err
+	}
+	return revoked, nil
 }
 
 // AssignOwned binds an unassigned child the customer owns to a parent
@@ -439,6 +562,9 @@ func (f *Flow) AssignOwned(ctx context.Context, customerID, childUnitID, parentU
 		return nil, err
 	}
 	if _, err := f.requireOwnedUnit(ctx, customerID, parentUnit, ParentNotOwnedMessage); err != nil {
+		return nil, err
+	}
+	if err := f.assertUnitsNotOnOpenReturn(ctx, childUnit, parentUnit); err != nil {
 		return nil, err
 	}
 	ids, err := f.childEligibilityIDs(ctx, child.ProductID)
@@ -496,6 +622,9 @@ func (f *Flow) AdminAssign(ctx context.Context, req AdminAssignRequest) (*AdminA
 	}
 	parentResolved, err := f.resolveAdminUnit(ctx, parentUnit, ParentUnitMissingMessage, ParentVariantMissingMessage)
 	if err != nil {
+		return nil, err
+	}
+	if err := f.assertUnitsNotOnOpenReturn(ctx, childUnit, parentUnit); err != nil {
 		return nil, err
 	}
 	childFacts, err := f.unitOrderFacts(ctx, childResolved.Order)
@@ -678,6 +807,30 @@ func refuseUnbindable(facts orderBindFacts, force bool, msg string) error {
 	return apperror.Validation(fmt.Sprintf("%s (order_status=%s, payment_status=%s)", msg, facts.OrderStatus, facts.PaymentStatus))
 }
 
+func (f *Flow) assertUnitsNotOnOpenReturn(ctx context.Context, unitIDs ...string) error {
+	if f == nil || f.openReturns == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(unitIDs))
+	for _, unitID := range unitIDs {
+		unitID = strings.TrimSpace(unitID)
+		if unitID == "" {
+			continue
+		}
+		if canon, ok := domain.CanonicalUnitID(unitID); ok {
+			unitID = canon
+		}
+		if _, ok := seen[unitID]; ok {
+			continue
+		}
+		seen[unitID] = struct{}{}
+		if err := f.openReturns.AssertNotOnOpenReturn(ctx, unitID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // FactsForUnits resolves live order context for unit ids (orderID/variantID).
 // The result is keyed by CanonicalUnitID, not the caller's original string.
 // A missing order yields no entry. Callers use it on list and current
@@ -849,8 +1002,17 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 		if !ok {
 			continue
 		}
+		unitID := domain.UnitID(cand.order.ID, cand.item.VariantID)
+		// Hide cards on an open RMA so account assign UI does not offer
+		// a parent that AssignOwned would 422 (PR-1072).
+		if err := f.assertUnitsNotOnOpenReturn(ctx, unitID); err != nil {
+			if apperror.Is(err, apperror.CodeValidation) {
+				continue
+			}
+			return nil, err
+		}
 		out = append(out, OwnedParent{
-			UnitID:    domain.UnitID(cand.order.ID, cand.item.VariantID),
+			UnitID:    unitID,
 			OrderID:   cand.order.ID,
 			VariantID: cand.item.VariantID,
 			ProductID: v.ProductID,

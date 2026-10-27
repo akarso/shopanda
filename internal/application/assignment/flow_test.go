@@ -493,6 +493,93 @@ func TestFlow_RevokeForOrder_ClearsCurrent(t *testing.T) {
 	}
 }
 
+func TestFlow_AssertParentReturnable_BlocksAssignedChildren(t *testing.T) {
+	parent := mustOrder(t, "cust-1", "card-var")
+	child := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parent.ID, "card-var")
+	childUnit := assignment.UnitID(child.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+	flow := newFlow(t, repo, nil, &stubOrders{}, nil)
+
+	err := flow.AssertParentReturnable(context.Background(), parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentHasAssignedChildrenMessage) {
+		t.Fatalf("err = %v, want parent-has-children", err)
+	}
+
+	if _, _, err := svc.Revoke(context.Background(), repo.inserts[0].ID); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if err := flow.AssertParentReturnable(context.Background(), parentUnit); err != nil {
+		t.Fatalf("after revoke: %v", err)
+	}
+}
+
+func TestFlow_AssertParentReturnable_SkipsChildrenOnSameRequest(t *testing.T) {
+	parent := mustOrder(t, "cust-1", "card-var")
+	child := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parent.ID, "card-var")
+	childUnit := assignment.UnitID(child.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+	flow := newFlow(t, repo, nil, &stubOrders{}, nil)
+
+	if err := flow.AssertParentReturnable(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("skip child on request: %v", err)
+	}
+	err := flow.AssertParentReturnable(context.Background(), parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("without skip = %v, want validation", err)
+	}
+}
+
+func TestFlow_RevokeForUnit_AssignedAndUnassigned(t *testing.T) {
+	parent := mustOrder(t, "cust-1", "card-var")
+	child := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parent.ID, "card-var")
+	childUnit := assignment.UnitID(child.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	flow := newFlow(t, repo, nil, &stubOrders{}, nil)
+
+	if _, err := flow.RevokeForUnit(context.Background(), childUnit, ""); err != nil {
+		t.Fatalf("missing row: %v", err)
+	}
+
+	if _, err := svc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+	if _, err := flow.RevokeForUnit(context.Background(), childUnit, ""); err != nil {
+		t.Fatalf("RevokeForUnit assigned: %v", err)
+	}
+	current, err := svc.CurrentByChild(context.Background(), childUnit)
+	if err != nil || current != nil {
+		t.Fatalf("current after assigned revoke = %+v %v", current, err)
+	}
+	if _, err := flow.RevokeForUnit(context.Background(), childUnit, ""); err != nil {
+		t.Fatalf("idempotent revoke: %v", err)
+	}
+
+	unassignedChild := mustOrder(t, "cust-1", "ticket-2")
+	unassignedUnit := assignment.UnitID(unassignedChild.ID, "ticket-2")
+	if _, err := svc.CreateUnassigned(context.Background(), unassignedUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	if _, err := flow.RevokeForUnit(context.Background(), unassignedUnit, ""); err != nil {
+		t.Fatalf("RevokeForUnit unassigned: %v", err)
+	}
+	current, err = svc.CurrentByChild(context.Background(), unassignedUnit)
+	if err != nil || current != nil {
+		t.Fatalf("current after unassigned revoke = %+v %v", current, err)
+	}
+}
+
 type stubProducts struct {
 	byID map[string]*catalog.Product
 }
