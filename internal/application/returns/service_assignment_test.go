@@ -927,6 +927,65 @@ func TestFlow_ListOwnedParents_HidesParentOnOpenReturn(t *testing.T) {
 	}
 }
 
+func TestFlow_ListOwnedParents_OpenReturnCheckOncePerOrder(t *testing.T) {
+	orderID := id.New()
+	ord := paidOrderWithVariants(t, orderID, "card-a-var", "card-b-var")
+	pay := completedPayment(t, orderID)
+
+	assignRepo := &assignmentStubRepo{}
+	assignSvc := assignmentapp.NewService(assignRepo)
+	orders := &assignmentOrdersByCustomer{
+		byID:       map[string]*order.Order{orderID: ord},
+		byCustomer: map[string][]order.Order{"c1": {*ord}},
+	}
+	flow := assignmentapp.NewFlow(
+		assignSvc,
+		assignRepo,
+		assignmentEligOK{},
+		orders,
+		assignmentVariantsStub{},
+		assignmentPaymentsStub{byOrder: map[string]*payment.Payment{orderID: pay}},
+	).WithLinkedLeaves(assignmentProductsStub{}, nil)
+
+	base := newMemReturnRepo()
+	returns := &countingFindByOrderReturnRepo{memReturnRepo: base}
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	svc := returnsApp.NewService(
+		returns,
+		&memOrderRepo{order: ord},
+		&memStockRepo{qty: map[string]int{"card-a-var": 5, "card-b-var": 5}},
+		memVariantRepo{},
+		&memPaymentRepo{payment: pay},
+		&stubRefunder{},
+		bus,
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB()).WithAssignmentFlow(flow)
+	flow.WithTxStarter(returnsFakeTxDB()).WithOpenReturnChecker(svc)
+
+	got, err := flow.ListOwnedParents(context.Background(), "c1", "ticket-prod")
+	if err != nil {
+		t.Fatalf("ListOwnedParents: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want 2 parents from same order", got)
+	}
+	if returns.findByOrderIDCalls != 1 {
+		t.Fatalf("FindByOrderID calls = %d, want 1 for one order with two parents", returns.findByOrderIDCalls)
+	}
+}
+
+type countingFindByOrderReturnRepo struct {
+	*memReturnRepo
+	findByOrderIDCalls int
+}
+
+func (r *countingFindByOrderReturnRepo) FindByOrderID(ctx context.Context, orderID string) ([]domainReturns.Return, error) {
+	r.findByOrderIDCalls++
+	return r.memReturnRepo.FindByOrderID(ctx, orderID)
+}
+
+func (r *countingFindByOrderReturnRepo) WithTx(*sql.Tx) domainReturns.Repository { return r }
+
 // assignmentOrdersByCustomer extends the single-order stub with customer list.
 type assignmentOrdersByCustomer struct {
 	byID       map[string]*order.Order
@@ -1139,6 +1198,10 @@ func (h *openReturnAfterFirstOK) AssertNotOnOpenReturn(ctx context.Context, unit
 		h.afterFirstOK = nil
 	}
 	return err
+}
+
+func (h *openReturnAfterFirstOK) UnitsOnBlockingReturn(ctx context.Context, unitIDs []string) (map[string]struct{}, error) {
+	return h.next.UnitsOnBlockingReturn(ctx, unitIDs)
 }
 
 func TestService_ReturnableLines_HidesChainWhenGrandchildCrossOrder(t *testing.T) {

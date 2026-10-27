@@ -90,6 +90,10 @@ const (
 // cancelled do not block. returns.Service implements it.
 type OpenReturnChecker interface {
 	AssertNotOnOpenReturn(ctx context.Context, unitID string) error
+	// UnitsOnBlockingReturn reports which of unitIDs are on an open or
+	// refunded return. Implementations load once per unique order ID.
+	// Empty/unparseable IDs are omitted (same skip as AssertNotOnOpenReturn).
+	UnitsOnBlockingReturn(ctx context.Context, unitIDs []string) (map[string]struct{}, error)
 }
 
 // TxStarter begins the transaction used to lock units and persist an
@@ -950,6 +954,15 @@ func (f *Flow) assertUnitsNotOnOpenReturn(ctx context.Context, unitIDs ...string
 	return nil
 }
 
+// unitsOnBlockingReturn batches the open/refunded-RMA filter for
+// ListOwnedParents (one load per unique order ID via the checker).
+func (f *Flow) unitsOnBlockingReturn(ctx context.Context, unitIDs []string) (map[string]struct{}, error) {
+	if f == nil || f.openReturns == nil {
+		return map[string]struct{}{}, nil
+	}
+	return f.openReturns.UnitsOnBlockingReturn(ctx, unitIDs)
+}
+
 // runAssignedWrite serializes a bind against return mutations: optional
 // advisory locks on the unit ids, open-return recheck, then write on a
 // TX-bound flow. When already inside WithTx (checkout), reuses that TX.
@@ -1165,14 +1178,6 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 			continue
 		}
 		unitID := domain.UnitID(cand.order.ID, cand.item.VariantID)
-		// Hide cards on an open or refunded RMA so account assign UI does
-		// not offer a parent that AssignOwned would 422 (PR-1072).
-		if err := f.assertUnitsNotOnOpenReturn(ctx, unitID); err != nil {
-			if apperror.Is(err, apperror.CodeValidation) {
-				continue
-			}
-			return nil, err
-		}
 		out = append(out, OwnedParent{
 			UnitID:    unitID,
 			OrderID:   cand.order.ID,
@@ -1181,7 +1186,32 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 			Name:      cand.item.Name,
 		})
 	}
-	return out, nil
+	// Hide cards on an open or refunded RMA so account assign UI does
+	// not offer a parent that AssignOwned would 422 (PR-1072). Check once
+	// per unique order ID rather than once per candidate line.
+	blocked, err := f.unitsOnBlockingReturn(ctx, ownedParentUnitIDs(out))
+	if err != nil {
+		return nil, err
+	}
+	if len(blocked) == 0 {
+		return out, nil
+	}
+	filtered := make([]OwnedParent, 0, len(out))
+	for _, p := range out {
+		if _, skip := blocked[p.UnitID]; skip {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered, nil
+}
+
+func ownedParentUnitIDs(parents []OwnedParent) []string {
+	ids := make([]string, 0, len(parents))
+	for _, p := range parents {
+		ids = append(ids, p.UnitID)
+	}
+	return ids
 }
 
 func (f *Flow) resolveParentProduct(ctx context.Context, customerID string, ac catalog.AssignmentContext) (string, error) {

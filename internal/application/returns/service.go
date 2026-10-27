@@ -108,38 +108,73 @@ func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
 // RecordPurchase / ListOwnedParents cannot treat a refunded ticket as a
 // fresh parent or child.
 func (s *Service) AssertNotOnOpenReturn(ctx context.Context, unitID string) error {
-	if s == nil {
-		return nil
-	}
-	unitID = strings.TrimSpace(unitID)
-	if unitID == "" {
-		return nil
-	}
-	orderID, variantID, ok := domainAssignment.SplitUnitID(unitID)
-	if !ok {
-		return nil
-	}
-	if canon, ok := domainAssignment.CanonicalUnitID(unitID); ok {
-		orderID, variantID, _ = domainAssignment.SplitUnitID(canon)
-	}
-	list, err := s.returns.FindByOrderID(ctx, orderID)
+	blocked, err := s.UnitsOnBlockingReturn(ctx, []string{unitID})
 	if err != nil {
-		return fmt.Errorf("returns: open-return check: %w", err)
+		return err
 	}
-	for _, ret := range list {
-		st := ret.Status()
-		// Rejected/cancelled no longer block; refunded stays blocked so a
-		// returned unit cannot be re-bound as if the RMA never happened.
-		if st.IsTerminal() && st != domainReturns.StatusRefunded {
+	if len(blocked) > 0 {
+		return apperror.Validation(assignmentapp.UnitOnOpenReturnMessage)
+	}
+	return nil
+}
+
+// UnitsOnBlockingReturn reports which of unitIDs appear on an open or
+// refunded return. Loads returns once per unique order ID so
+// ListOwnedParents does not N+1 FindByOrderID across sibling lines.
+func (s *Service) UnitsOnBlockingReturn(ctx context.Context, unitIDs []string) (map[string]struct{}, error) {
+	blocked := make(map[string]struct{})
+	if s == nil {
+		return blocked, nil
+	}
+	type unitRef struct {
+		unitID    string
+		variantID string
+	}
+	byOrder := make(map[string][]unitRef)
+	seen := make(map[string]struct{}, len(unitIDs))
+	for _, unitID := range unitIDs {
+		unitID = strings.TrimSpace(unitID)
+		if unitID == "" {
 			continue
 		}
-		for _, item := range ret.Items() {
-			if item.VariantID == variantID {
-				return apperror.Validation(assignmentapp.UnitOnOpenReturnMessage)
+		orderID, variantID, ok := domainAssignment.SplitUnitID(unitID)
+		if !ok {
+			continue
+		}
+		if canon, ok := domainAssignment.CanonicalUnitID(unitID); ok {
+			unitID = canon
+			orderID, variantID, _ = domainAssignment.SplitUnitID(canon)
+		}
+		if _, dup := seen[unitID]; dup {
+			continue
+		}
+		seen[unitID] = struct{}{}
+		byOrder[orderID] = append(byOrder[orderID], unitRef{unitID: unitID, variantID: variantID})
+	}
+	for orderID, refs := range byOrder {
+		list, err := s.returns.FindByOrderID(ctx, orderID)
+		if err != nil {
+			return nil, fmt.Errorf("returns: open-return check: %w", err)
+		}
+		blockingVariants := make(map[string]struct{})
+		for _, ret := range list {
+			st := ret.Status()
+			// Rejected/cancelled no longer block; refunded stays blocked so a
+			// returned unit cannot be re-bound as if the RMA never happened.
+			if st.IsTerminal() && st != domainReturns.StatusRefunded {
+				continue
+			}
+			for _, item := range ret.Items() {
+				blockingVariants[item.VariantID] = struct{}{}
+			}
+		}
+		for _, ref := range refs {
+			if _, ok := blockingVariants[ref.variantID]; ok {
+				blocked[ref.unitID] = struct{}{}
 			}
 		}
 	}
-	return nil
+	return blocked, nil
 }
 
 // NewService creates a return workflow service.
