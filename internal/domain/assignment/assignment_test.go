@@ -386,3 +386,53 @@ func TestCanonicalUnitID_RebuildsPaddedParts(t *testing.T) {
 		t.Fatal("non-unit id must not canonicalize")
 	}
 }
+
+func TestCanonicalUnitID_LowercasesOrderUUIDOnly(t *testing.T) {
+	orderID := id.New()
+	variantID := "Ticket-VAR"
+	got, ok := assignment.CanonicalUnitID(" " + strings.ToUpper(orderID) + " / " + variantID + " ")
+	if !ok || got != orderID+"/"+variantID {
+		t.Fatalf("CanonicalUnitID = %q ok=%v, want lowercase order and original variant", got, ok)
+	}
+}
+
+func TestSetForced_AssignedOnly(t *testing.T) {
+	a := mustAssigned(t, "parent", "child")
+	if err := a.SetForced("  correct a bind  ", time.Now().UTC()); err != nil {
+		t.Fatalf("SetForced: %v", err)
+	}
+	if !a.Forced() || a.ForcedReason != "correct a bind" || a.ForcedAt == nil {
+		t.Fatalf("forced = %+v", a)
+	}
+	unassigned := mustUnassigned(t, "child-2")
+	if err := unassigned.SetForced("nope", time.Now().UTC()); err == nil {
+		t.Fatal("unassigned force must fail")
+	}
+	exact := strings.Repeat("a", assignment.MaxForcedReasonLen)
+	if err := a.SetForced(exact, time.Now().UTC()); err != nil {
+		t.Fatalf("SetForced %d chars: %v", assignment.MaxForcedReasonLen, err)
+	}
+	if err := a.SetForced(exact+"b", time.Now().UTC()); err == nil || !strings.Contains(err.Error(), assignment.ForcedReasonTooLongMessage) {
+		t.Fatalf("SetForced over cap = %v", err)
+	}
+}
+
+func TestValidate_AllowsOversizedForcedReason(t *testing.T) {
+	a := mustAssigned(t, "parent", "child")
+	at := time.Now().UTC()
+	a.ForcedAt = &at
+	a.ForcedReason = strings.Repeat("é", assignment.MaxForcedReasonLen+1)
+	if err := a.Validate(); err != nil {
+		t.Fatalf("Validate must load an over-long stored reason: %v", err)
+	}
+}
+
+func TestCanonicalUnitID_RejectsNonUUIDOrder(t *testing.T) {
+	if _, ok := assignment.CanonicalUnitID("foo/bar"); ok {
+		t.Fatal("non-uuid order part must not canonicalize")
+	}
+	variant := "bar"
+	if _, ok := assignment.CanonicalUnitID(id.New() + "/" + variant); !ok {
+		t.Fatal("uuid order with a non-uuid variant must canonicalize")
+	}
+}

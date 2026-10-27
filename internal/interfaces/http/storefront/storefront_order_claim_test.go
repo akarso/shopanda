@@ -35,6 +35,20 @@ func (r *storefrontOrderClaimRepoStub) FindByID(_ context.Context, orderID strin
 	return nil, nil
 }
 
+func (r *storefrontOrderClaimRepoStub) FindByIDs(ctx context.Context, ids []string) (map[string]*domainOrder.Order, error) {
+	out := make(map[string]*domainOrder.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
+
 func (r *storefrontOrderClaimRepoStub) FindByCustomerID(_ context.Context, _ string) ([]domainOrder.Order, error) {
 	return nil, nil
 }

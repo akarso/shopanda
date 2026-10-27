@@ -14,14 +14,17 @@ import (
 
 type stubRepo struct {
 	assignment.Repository
-	byID      map[string]*assignment.ProductAssignment
-	current   map[string]*assignment.ProductAssignment
-	list      []assignment.ProductAssignment
-	inserts   []*assignment.ProductAssignment
-	updates   []*assignment.ProductAssignment
-	insertErr error
-	updateErr error
-	findErr   error
+	byID       map[string]*assignment.ProductAssignment
+	current    map[string]*assignment.ProductAssignment
+	list       []assignment.ProductAssignment
+	byParent   map[string][]assignment.ProductAssignment
+	lastParent string
+	lastChild  string
+	inserts    []*assignment.ProductAssignment
+	updates    []*assignment.ProductAssignment
+	insertErr  error
+	updateErr  error
+	findErr    error
 }
 
 func (s *stubRepo) Insert(_ context.Context, a *assignment.ProductAssignment) error {
@@ -95,7 +98,8 @@ func (s *stubRepo) FindCurrentByChildID(_ context.Context, childOrderItemID stri
 	return &cp, nil
 }
 
-func (s *stubRepo) ListByChildID(_ context.Context, _ string) ([]assignment.ProductAssignment, error) {
+func (s *stubRepo) ListByChildID(_ context.Context, childOrderItemID string) ([]assignment.ProductAssignment, error) {
+	s.lastChild = childOrderItemID
 	if s.findErr != nil {
 		return nil, s.findErr
 	}
@@ -103,6 +107,49 @@ func (s *stubRepo) ListByChildID(_ context.Context, _ string) ([]assignment.Prod
 		return []assignment.ProductAssignment{}, nil
 	}
 	return s.list, nil
+}
+
+func (s *stubRepo) ListByParentID(_ context.Context, parentOrderItemID string, page assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	if s.findErr != nil {
+		return nil, false, s.findErr
+	}
+	s.lastParent = parentOrderItemID
+	rows := []assignment.ProductAssignment{}
+	if s.byParent != nil && s.byParent[parentOrderItemID] != nil {
+		rows = s.byParent[parentOrderItemID]
+	}
+	paged, hasMore := pageParentRows(rows, page)
+	return paged, hasMore, nil
+}
+
+func pageParentRows(rows []assignment.ProductAssignment, page assignment.ParentPage) ([]assignment.ProductAssignment, bool) {
+	status := page.Status
+	if status == "" {
+		status = string(assignment.StatusAssigned)
+	}
+	limit := page.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := page.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	filtered := make([]assignment.ProductAssignment, 0, len(rows))
+	for _, row := range rows {
+		if status != "all" && string(row.Status()) != status {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	if offset >= len(filtered) {
+		return []assignment.ProductAssignment{}, false
+	}
+	rest := filtered[offset:]
+	if len(rest) > limit {
+		return rest[:limit], true
+	}
+	return rest, false
 }
 
 func TestService_CreateUnassignedAndAssigned(t *testing.T) {
@@ -172,19 +219,20 @@ func TestService_AssignAndRevoke(t *testing.T) {
 		t.Fatalf("stored after update = %q", assigned.StoredStatus())
 	}
 
-	revoked, err := svc.Revoke(ctx, assigned.ID)
+	revoked, idempotent, err := svc.Revoke(ctx, assigned.ID)
 	if err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if revoked.Status() != assignment.StatusRevoked || revoked.RevokedAt == nil {
-		t.Fatalf("revoked = %+v", revoked)
+	if idempotent || revoked.Status() != assignment.StatusRevoked || revoked.RevokedAt == nil {
+		t.Fatalf("revoked = %+v idempotent=%v", revoked, idempotent)
 	}
 
 	if _, err := svc.Assign(ctx, revoked.ID, "parent-2"); !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("assign revoked = %v", err)
 	}
-	if _, err := svc.Revoke(ctx, revoked.ID); !apperror.Is(err, apperror.CodeValidation) {
-		t.Fatalf("revoke revoked = %v", err)
+	again, idempotent, err := svc.Revoke(ctx, revoked.ID)
+	if err != nil || !idempotent || again.ID != revoked.ID || again.Status() != assignment.StatusRevoked {
+		t.Fatalf("idempotent revoke = %+v %v idempotent=%v", again, err, idempotent)
 	}
 
 	// History stays; a new assigned row can replace the revoked one.
@@ -202,22 +250,23 @@ func TestService_RevokeUnassigned(t *testing.T) {
 	svc := app.NewService(repo)
 	ctx := context.Background()
 
-	u, err := svc.CreateUnassigned(ctx, "child-1")
+	child := assignment.UnitID(id.New(), "child-var")
+	u, err := svc.CreateUnassigned(ctx, child)
 	if err != nil {
 		t.Fatalf("CreateUnassigned: %v", err)
 	}
-	revoked, err := svc.Revoke(ctx, u.ID)
-	if err != nil {
-		t.Fatalf("Revoke unassigned: %v", err)
+	revoked, idempotent, err := svc.Revoke(ctx, u.ID)
+	if err != nil || idempotent {
+		t.Fatalf("Revoke unassigned: %v idempotent=%v", err, idempotent)
 	}
 	if revoked.Status() != assignment.StatusRevoked || revoked.ParentOrderItemID != "" {
 		t.Fatalf("revoked = %+v", revoked)
 	}
-	current, err := svc.CurrentByChild(ctx, "child-1")
+	current, err := svc.CurrentByChild(ctx, " "+child+" ")
 	if err != nil || current != nil {
 		t.Fatalf("CurrentByChild after unassigned revoke = %+v %v", current, err)
 	}
-	next, err := svc.CreateAssigned(ctx, "parent-1", "child-1")
+	next, err := svc.CreateAssigned(ctx, assignment.UnitID(id.New(), "parent-var"), child)
 	if err != nil {
 		t.Fatalf("CreateAssigned after unassigned revoke: %v", err)
 	}
@@ -243,7 +292,9 @@ func TestService_GetAndList(t *testing.T) {
 		t.Fatalf("missing get = %v", err)
 	}
 
-	created, err := svc.CreateAssigned(ctx, "parent-1", "child-1")
+	parent := assignment.UnitID(id.New(), "card-var")
+	child := assignment.UnitID(id.New(), "ticket-var")
+	created, err := svc.CreateAssigned(ctx, parent, child)
 	if err != nil {
 		t.Fatalf("CreateAssigned: %v", err)
 	}
@@ -252,25 +303,84 @@ func TestService_GetAndList(t *testing.T) {
 		t.Fatalf("Get = %+v %v", got, err)
 	}
 
-	current, err := svc.CurrentByChild(ctx, " child-1 ")
+	current, err := svc.CurrentByChild(ctx, " "+child+" ")
 	if err != nil || current == nil || current.ID != created.ID {
 		t.Fatalf("CurrentByChild = %+v %v", current, err)
 	}
-	missing, err := svc.CurrentByChild(ctx, "other")
+	missing, err := svc.CurrentByChild(ctx, assignment.UnitID(id.New(), "other-var"))
 	if err != nil || missing != nil {
 		t.Fatalf("CurrentByChild missing = %+v %v", missing, err)
 	}
 	if _, err := svc.CurrentByChild(ctx, "  "); !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("empty current = %v", err)
 	}
+	if _, err := svc.CurrentByChild(ctx, "foo/bar"); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("non-uuid current = %v", err)
+	}
 
 	repo.list = nil
-	rows, err := svc.ListByChild(ctx, "child-1")
+	rows, err := svc.ListByChild(ctx, child)
 	if err != nil || rows == nil {
 		t.Fatalf("ListByChild nil = %v %v", rows, err)
 	}
 	if _, err := svc.ListByChild(ctx, ""); !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("empty list = %v", err)
+	}
+	if _, err := svc.ListByChild(ctx, "foo/bar"); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("non-uuid list = %v", err)
+	}
+	orderID, variantID, ok := assignment.SplitUnitID(child)
+	if !ok {
+		t.Fatalf("split child %q", child)
+	}
+	if _, err := svc.ListByChild(ctx, strings.ToUpper(orderID)+"/"+variantID); err != nil {
+		t.Fatalf("uppercase list: %v", err)
+	}
+	if repo.lastChild != child {
+		t.Fatalf("ListByChild canonical = %q, want %q", repo.lastChild, child)
+	}
+
+	revokedHistory, err := assignment.NewAssigned(id.New(), parent, assignment.UnitID(id.New(), "old-var"))
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if err := revokedHistory.Revoke(); err != nil {
+		t.Fatalf("history revoke: %v", err)
+	}
+	repo.byParent = map[string][]assignment.ProductAssignment{
+		parent: {*created, *revokedHistory},
+	}
+	parents, hasMore, err := svc.ListByParent(ctx, " "+parent+" ", app.ParentListQuery{})
+	if err != nil || hasMore || len(parents) != 1 || parents[0].ID != created.ID {
+		t.Fatalf("ListByParent default = %+v hasMore=%v %v", parents, hasMore, err)
+	}
+	if repo.lastParent != parent {
+		t.Fatalf("parent passed to repo = %q", repo.lastParent)
+	}
+	all, hasMore, err := svc.ListByParent(ctx, parent, app.ParentListQuery{Status: app.ParentListStatusAll})
+	if err != nil || hasMore || len(all) != 2 {
+		t.Fatalf("ListByParent all = %+v hasMore=%v %v", all, hasMore, err)
+	}
+	onlyRevoked, hasMore, err := svc.ListByParent(ctx, parent, app.ParentListQuery{Status: app.ParentListStatusRevoked})
+	if err != nil || hasMore || len(onlyRevoked) != 1 || onlyRevoked[0].Status() != assignment.StatusRevoked {
+		t.Fatalf("ListByParent revoked = %+v hasMore=%v %v", onlyRevoked, hasMore, err)
+	}
+	first, hasMore, err := svc.ListByParent(ctx, parent, app.ParentListQuery{Status: app.ParentListStatusAll, Limit: 1})
+	if err != nil || !hasMore || len(first) != 1 || first[0].ID != created.ID {
+		t.Fatalf("ListByParent first page = %+v hasMore=%v %v", first, hasMore, err)
+	}
+	page, hasMore, err := svc.ListByParent(ctx, parent, app.ParentListQuery{Status: app.ParentListStatusAll, Limit: 1, Offset: 1})
+	if err != nil || hasMore || len(page) != 1 || page[0].ID != revokedHistory.ID {
+		t.Fatalf("ListByParent page = %+v hasMore=%v %v", page, hasMore, err)
+	}
+	if _, _, err := svc.ListByParent(ctx, "  ", app.ParentListQuery{}); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("empty parent list = %v", err)
+	}
+	if _, _, err := svc.ListByParent(ctx, "foo/bar", app.ParentListQuery{}); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("non-uuid parent list = %v", err)
+	}
+	if _, _, err := svc.ListByParent(ctx, parent, app.ParentListQuery{Status: "nope"}); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("bad status = %v", err)
 	}
 }
 

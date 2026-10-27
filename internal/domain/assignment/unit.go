@@ -1,6 +1,10 @@
 package assignment
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/akarso/shopanda/internal/platform/id"
+)
 
 const unitIDSep = "/"
 
@@ -35,10 +39,15 @@ func SplitUnitID(unitID string) (orderID, variantID string, ok bool) {
 
 // CanonicalUnitID rebuilds a unit id after SplitUnitID so padded or
 // spaced input matches the minted orderID/variantID form used in writes.
+// The order part must be a UUID. It is lowercased so an uppercase order
+// UUID hits the same row as the lowercase id minted at purchase. The
+// variant part is left as written. A non-UUID order id is rejected here
+// so callers do not send it to a UUID column (PostgreSQL 22P02).
 func CanonicalUnitID(unitID string) (string, bool) {
 	orderID, variantID, ok := SplitUnitID(unitID)
-	if !ok {
+	if !ok || !id.IsUUID(orderID) {
 		return "", false
 	}
+	orderID = strings.ToLower(orderID)
 	return UnitID(orderID, variantID), true
 }

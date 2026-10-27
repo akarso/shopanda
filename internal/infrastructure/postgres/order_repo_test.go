@@ -133,6 +133,46 @@ func TestOrderRepo_FindByID_NotFound(t *testing.T) {
 	}
 }
 
+func TestOrderRepo_FindByIDs(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+	first := mustNewOrder(t, "cust-1", "EUR")
+	second := mustNewOrder(t, "cust-2", "EUR")
+	if err := repo.Save(ctx, &first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	if err := repo.Save(ctx, &second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+
+	empty, err := repo.FindByIDs(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("FindByIDs(nil) = %+v %v", empty, err)
+	}
+	got, err := repo.FindByIDs(ctx, []string{first.ID, second.ID, first.ID, id.New()})
+	if err != nil {
+		t.Fatalf("FindByIDs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (missing id omitted)", len(got))
+	}
+	if got[first.ID] == nil || got[first.ID].CustomerID != "cust-1" || len(got[first.ID].Items()) != 1 {
+		t.Fatalf("first = %+v", got[first.ID])
+	}
+	if got[second.ID] == nil || got[second.ID].CustomerID != "cust-2" || len(got[second.ID].Items()) != 1 {
+		t.Fatalf("second = %+v", got[second.ID])
+	}
+}
+
 func TestOrderRepo_FindByCustomerID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

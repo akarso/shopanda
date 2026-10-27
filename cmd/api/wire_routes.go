@@ -76,6 +76,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// Permission-based middleware for admin routes.
 	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	requireAssignmentsRead := admin.RequirePermission(rbac.AssignmentsRead)
+	requireAssignmentsWrite := admin.RequirePermission(rbac.AssignmentsWrite)
 	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
 	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
 	requireCustomersRead := admin.RequirePermission(rbac.CustomersRead)
@@ -175,6 +177,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/products/{id}/grouped-members", requireProductsRead(rt.productCompositionAdmin.ListGroupedMembers()))
 	router.Handle("POST /api/v1/admin/products/{id}/grouped-members", requireProductsWrite(rt.productCompositionAdmin.AddGroupedMember()))
 	router.Handle("DELETE /api/v1/admin/products/{id}/grouped-members/{memberId}", requireProductsWrite(rt.productCompositionAdmin.RemoveGroupedMember()))
+	// Unit ids are orderID/variantID and contain "/", so list and current
+	// take them as query parameters (PR-1071).
+	router.Handle("GET /api/v1/admin/assignments", requireAssignmentsRead(rt.assignmentAdmin.ListByParent()))
+	router.Handle("GET /api/v1/admin/assignments/current", requireAssignmentsRead(rt.assignmentAdmin.GetCurrent()))
+	router.Handle("POST /api/v1/admin/assignments", requireAssignmentsWrite(rt.assignmentAdmin.Create()))
+	router.Handle("POST /api/v1/admin/assignments/{id}/revoke", requireAssignmentsWrite(rt.assignmentAdmin.Revoke()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(rt.statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/customers", requireCustomersRead(rt.customerAdmin.List()))
 	router.Handle("GET /api/v1/admin/customers/{customerId}", requireCustomersRead(rt.customerAdmin.Get()))

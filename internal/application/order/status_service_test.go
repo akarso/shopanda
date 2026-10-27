@@ -23,6 +23,20 @@ func (s *statusRepoStub) FindByID(_ context.Context, id string) (*domainOrder.Or
 	return &cp, nil
 }
 
+func (s *statusRepoStub) FindByIDs(ctx context.Context, ids []string) (map[string]*domainOrder.Order, error) {
+	out := make(map[string]*domainOrder.Order, len(ids))
+	for _, id := range ids {
+		o, err := s.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
+
 func (s *statusRepoStub) FindByCustomerID(context.Context, string) ([]domainOrder.Order, error) {
 	return nil, nil
 }

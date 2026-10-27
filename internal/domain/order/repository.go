@@ -11,6 +11,12 @@ type OrderRepository interface {
 	// Returns (nil, nil) when not found.
 	FindByID(ctx context.Context, id string) (*Order, error)
 
+	// FindByIDs returns orders with their items keyed by ID. Missing ids
+	// are omitted. An empty ids slice returns an empty map. This is the
+	// batch read used by assignment FactsForUnits, same shape as
+	// PaymentRepo.FindByOrderIDs.
+	FindByIDs(ctx context.Context, ids []string) (map[string]*Order, error)
+
 	// FindByCustomerID returns all orders for a customer, newest first.
 	FindByCustomerID(ctx context.Context, customerID string) ([]Order, error)
 

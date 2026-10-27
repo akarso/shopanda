@@ -39,4 +39,22 @@ type Repository interface {
 	// ListByChildID returns every row for childOrderItemID, newest first
 	// (revoked history included). Always returns a non-nil slice.
 	ListByChildID(ctx context.Context, childOrderItemID string) ([]ProductAssignment, error)
+
+	// ListByParentID returns a page of rows whose parent is
+	// parentOrderItemID, newest first. page.Status is assigned, revoked,
+	// or all. page.Limit is the page size; the adapter reads one extra
+	// row and reports hasMore. page.Offset skips that many matches after
+	// the status filter. Unassigned rows have a null parent and are not
+	// included. The slice is non-nil when the query succeeds.
+	ListByParentID(ctx context.Context, parentOrderItemID string, page ParentPage) ([]ProductAssignment, bool, error)
+}
+
+// ParentPage is the SQL page for ListByParentID.
+// Status is assigned, revoked, or all. An empty status means assigned.
+// Limit is the maximum rows returned. Offset skips matches after the
+// status filter.
+type ParentPage struct {
+	Status string
+	Limit  int
+	Offset int
 }

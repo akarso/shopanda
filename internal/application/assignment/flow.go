@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	domain "github.com/akarso/shopanda/internal/domain/assignment"
@@ -12,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 const (
@@ -32,7 +34,78 @@ const (
 	// AlreadyAssignedMessage is returned when post-purchase assign
 	// finds a live assigned row.
 	AlreadyAssignedMessage = "child already has an active assignment"
+	// ChildUnitInvalidMessage is returned when an admin unit id is not
+	// orderID/variantID.
+	ChildUnitInvalidMessage = "assignment child unit id is invalid"
+	// ParentUnitInvalidMessage is returned when an admin parent unit id
+	// is not orderID/variantID.
+	ParentUnitInvalidMessage = "assignment parent unit id is invalid"
+	// ChildUnitMissingMessage is returned when admin assign cannot
+	// resolve the child order line.
+	ChildUnitMissingMessage = "assignment child unit was not found"
+	// ParentUnitMissingMessage is returned when admin assign cannot
+	// resolve the parent order line.
+	ParentUnitMissingMessage = "assignment parent unit was not found"
+	// ChildVariantMissingMessage is returned when the child order line
+	// exists but its catalog variant does not.
+	ChildVariantMissingMessage = "assignment child catalog variant was not found"
+	// ParentVariantMissingMessage is returned when the parent order line
+	// exists but its catalog variant does not.
+	ParentVariantMissingMessage = "assignment parent catalog variant was not found"
+	// ChildProductMissingMessage is returned when the child variant's
+	// product cannot be loaded.
+	ChildProductMissingMessage = "assignment child product was not found"
+	// ChildNotLinkedMessage is returned when a new bind's child product
+	// does not require a linked parent and has no such required leaf.
+	ChildNotLinkedMessage = "assignment child does not require a linked parent"
+	// ChildOrderNotBindableMessage is returned when the child order is
+	// cancelled, failed, or unpaid and the request did not force it.
+	ChildOrderNotBindableMessage = "assignment child order is not bindable without force and a reason"
+	// ParentOrderNotBindableMessage is returned when the parent order is
+	// cancelled, failed, or unpaid and the request did not force it.
+	ParentOrderNotBindableMessage = "assignment parent order is not bindable without force and a reason"
+	// ForceReasonRequiredMessage is returned when force is set without a reason.
+	ForceReasonRequiredMessage = "reason is required when force is true"
+	// ForceNotApplicableMessage is returned when force is set and both
+	// orders are already bindable. The override is not stored.
+	ForceNotApplicableMessage = "force not applicable"
 )
+
+// AdminAssignRequest is an operator bind. Force with a non-empty reason
+// overrides a cancelled, failed, or unpaid parent or child order. The
+// reason is stored on the assignment row (forced_at, forced_reason) only
+// when a side is not bindable, returned as `reason`, and written to the
+// audit entry. force on an already-bindable pair is rejected.
+type AdminAssignRequest struct {
+	ChildUnitID  string
+	ParentUnitID string
+	Force        bool
+	Reason       string
+}
+
+// UnitFacts is the order context returned with an admin bind so a later
+// reader can see which orders were involved.
+type UnitFacts struct {
+	CustomerID    string
+	OrderStatus   string
+	PaymentStatus string
+}
+
+// AdminAssignResult is a successful operator bind. Created is true when
+// a new assigned row was inserted. It is false when an unassigned row
+// was updated.
+type AdminAssignResult struct {
+	Assignment *domain.ProductAssignment
+	Created    bool
+	Reason     string
+	Child      UnitFacts
+	Parent     UnitFacts
+}
+
+type orderBindFacts struct {
+	UnitFacts
+	Bindable bool
+}
 
 // Eligibility is the catalog-rule predicate used when a parent is present.
 type Eligibility interface {
@@ -43,6 +116,12 @@ type Eligibility interface {
 type OrderLookup interface {
 	FindByID(ctx context.Context, id string) (*order.Order, error)
 	FindByCustomerID(ctx context.Context, customerID string) ([]order.Order, error)
+}
+
+// OrderBatchLookup is an optional batch read. postgres OrderRepository
+// implements it so FactsForUnits does not FindByID once per order.
+type OrderBatchLookup interface {
+	FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error)
 }
 
 // VariantLookup is the variant read Flow needs to resolve a unit's product.
@@ -106,7 +185,13 @@ type repositoryTxBinder interface {
 
 // Flow is the PR-1070 assignment path: eligibility and ownership when a
 // parent is present, cart-time CreateAssigned / CreateUnassigned on
-// purchase, and post-purchase Assign. State transitions stay on Service.
+// purchase, and post-purchase Assign. AdminAssign (PR-1071) is the
+// operator path. It does not require both units to belong to one
+// customer. Cancelled, failed, and unpaid orders are refused unless
+// the request sets force and a reason. A new row also requires
+// RequiresLinkedParent (or a required linked leaf); an existing
+// unassigned row may be assigned without that flag. State transitions
+// stay on Service.
 type Flow struct {
 	assignments *Service
 	repo        domain.Repository
@@ -323,7 +408,7 @@ func (f *Flow) RevokeForOrder(ctx context.Context, orderID string) error {
 		if current == nil {
 			continue
 		}
-		if _, err := f.assignments.Revoke(ctx, current.ID); err != nil {
+		if _, _, err := f.assignments.Revoke(ctx, current.ID); err != nil {
 			return err
 		}
 	}
@@ -374,6 +459,297 @@ func (f *Flow) AssignOwned(ctx context.Context, customerID, childUnitID, parentU
 		return f.assignments.Assign(ctx, current.ID, parentUnit)
 	}
 	return f.assignments.CreateAssigned(ctx, parentUnit, childUnit)
+}
+
+// AdminAssign binds a child unit to a parent unit for an operator.
+// Canonical unit ids reject a non-UUID order part before any order read.
+// The order line must exist; a missing catalog variant is a different
+// error from a missing unit. A new row requires RequiresLinkedParent (or
+// a required linked leaf). An existing unassigned row may be assigned
+// without that flag; eligibility then uses the product on the order line.
+// A live assigned row is a conflict. Cancelled, failed, and unpaid orders
+// are refused unless force is true and reason is non-empty. Force is
+// stored only when a side is not bindable. force on an already-bindable
+// pair is rejected. Customer id is not an ownership check.
+func (f *Flow) AdminAssign(ctx context.Context, req AdminAssignRequest) (*AdminAssignResult, error) {
+	if f == nil {
+		return nil, fmt.Errorf("assignment flow: not configured")
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if req.Force && reason == "" {
+		return nil, apperror.Validation(ForceReasonRequiredMessage)
+	}
+	if req.Force && utf8.RuneCountInString(reason) > domain.MaxForcedReasonLen {
+		return nil, apperror.Validation(domain.ForcedReasonTooLongMessage)
+	}
+	childUnit, ok := domain.CanonicalUnitID(req.ChildUnitID)
+	if !ok {
+		return nil, apperror.Validation(ChildUnitInvalidMessage)
+	}
+	parentUnit, ok := domain.CanonicalUnitID(req.ParentUnitID)
+	if !ok {
+		return nil, apperror.Validation(ParentUnitInvalidMessage)
+	}
+	childResolved, err := f.resolveAdminUnit(ctx, childUnit, ChildUnitMissingMessage, ChildVariantMissingMessage)
+	if err != nil {
+		return nil, err
+	}
+	parentResolved, err := f.resolveAdminUnit(ctx, parentUnit, ParentUnitMissingMessage, ParentVariantMissingMessage)
+	if err != nil {
+		return nil, err
+	}
+	childFacts, err := f.unitOrderFacts(ctx, childResolved.Order)
+	if err != nil {
+		return nil, err
+	}
+	parentFacts, err := f.unitOrderFacts(ctx, parentResolved.Order)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseUnbindable(childFacts, req.Force, ChildOrderNotBindableMessage); err != nil {
+		return nil, err
+	}
+	if err := refuseUnbindable(parentFacts, req.Force, ParentOrderNotBindableMessage); err != nil {
+		return nil, err
+	}
+	needsForce := !childFacts.Bindable || !parentFacts.Bindable
+	if req.Force && !needsForce {
+		return nil, apperror.Validation(ForceNotApplicableMessage)
+	}
+	current, err := f.assignments.CurrentByChild(ctx, childUnit)
+	if err != nil {
+		return nil, err
+	}
+	if current != nil && current.Status() == domain.StatusAssigned {
+		return nil, apperror.Conflict(AlreadyAssignedMessage)
+	}
+	if current == nil {
+		if err := f.requireChildLinkedParent(ctx, childResolved.ProductID); err != nil {
+			return nil, err
+		}
+	}
+	ids, err := f.childEligibilityIDs(ctx, childResolved.ProductID)
+	if err != nil {
+		return nil, err
+	}
+	// A current unassigned row was written at purchase, when the product
+	// required a linked parent. Clearing that flag later must not block
+	// the bind. Eligibility then uses the product on the order line.
+	if current != nil && len(ids) == 0 && strings.TrimSpace(childResolved.ProductID) != "" {
+		ids = []string{childResolved.ProductID}
+	}
+	eligible, err := f.parentEligibleForLeaves(ctx, ids, parentResolved.ProductID)
+	if err != nil {
+		return nil, err
+	}
+	if !eligible {
+		return nil, apperror.Validation(ParentNotEligibleMessage)
+	}
+	var saved *domain.ProductAssignment
+	created := false
+	if current != nil {
+		if needsForce {
+			saved, err = f.assignments.AssignForced(ctx, current.ID, parentUnit, reason)
+		} else {
+			saved, err = f.assignments.Assign(ctx, current.ID, parentUnit)
+		}
+	} else {
+		if needsForce {
+			saved, err = f.assignments.CreateAssignedForced(ctx, parentUnit, childUnit, reason)
+		} else {
+			saved, err = f.assignments.CreateAssigned(ctx, parentUnit, childUnit)
+		}
+		created = err == nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	storedReason := ""
+	if needsForce {
+		storedReason = reason
+	}
+	return &AdminAssignResult{
+		Assignment: saved,
+		Created:    created,
+		Reason:     storedReason,
+		Child:      childFacts.UnitFacts,
+		Parent:     parentFacts.UnitFacts,
+	}, nil
+}
+
+type resolvedAdminUnit struct {
+	Order     *order.Order
+	ProductID string
+}
+
+// resolveAdminUnit confirms the order and the order line, then loads the
+// product id from the line's catalog variant. A missing order or line is
+// missingUnit. A missing variant is missingVariant.
+func (f *Flow) resolveAdminUnit(ctx context.Context, unitID, missingUnit, missingVariant string) (resolvedAdminUnit, error) {
+	orderID, variantID, ok := domain.SplitUnitID(unitID)
+	if !ok {
+		return resolvedAdminUnit{}, apperror.Validation(missingUnit)
+	}
+	o, err := f.orders.FindByID(ctx, orderID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) {
+			return resolvedAdminUnit{}, apperror.Validation(missingUnit)
+		}
+		return resolvedAdminUnit{}, fmt.Errorf("assignment flow: lookup order: %w", err)
+	}
+	if o == nil {
+		return resolvedAdminUnit{}, apperror.Validation(missingUnit)
+	}
+	found := false
+	for _, item := range o.Items() {
+		if item.VariantID == variantID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resolvedAdminUnit{}, apperror.Validation(missingUnit)
+	}
+	v, err := f.variants.FindByID(ctx, variantID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) {
+			return resolvedAdminUnit{}, apperror.Validation(missingVariant)
+		}
+		return resolvedAdminUnit{}, fmt.Errorf("assignment flow: lookup variant: %w", err)
+	}
+	if v == nil || strings.TrimSpace(v.ProductID) == "" {
+		return resolvedAdminUnit{}, apperror.Validation(missingVariant)
+	}
+	return resolvedAdminUnit{Order: o, ProductID: v.ProductID}, nil
+}
+
+func (f *Flow) requireChildLinkedParent(ctx context.Context, productID string) error {
+	if f.products == nil {
+		return apperror.Validation(ChildProductMissingMessage)
+	}
+	p, err := f.products.FindByID(ctx, productID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) {
+			return apperror.Validation(ChildProductMissingMessage)
+		}
+		return fmt.Errorf("assignment flow: lookup product: %w", err)
+	}
+	if p == nil {
+		return apperror.Validation(ChildProductMissingMessage)
+	}
+	if p.RequiresLinkedParent {
+		return nil
+	}
+	ids, err := catalogapp.LinkedParentChildProductIDs(ctx, f.products, f.components, p)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return apperror.Validation(ChildNotLinkedMessage)
+	}
+	return nil
+}
+
+func (f *Flow) unitOrderFacts(ctx context.Context, o *order.Order) (orderBindFacts, error) {
+	facts := orderBindFacts{UnitFacts: UnitFacts{
+		CustomerID:  strings.TrimSpace(o.CustomerID),
+		OrderStatus: string(o.Status()),
+	}}
+	byPayment, err := f.lookupPayments(ctx, []string{o.ID})
+	if err != nil {
+		return facts, err
+	}
+	py := byPayment[o.ID]
+	if py != nil {
+		facts.PaymentStatus = string(py.Status())
+	}
+	ok, err := f.orderOwnedWithPayment(o, py)
+	if err != nil {
+		return facts, err
+	}
+	facts.Bindable = ok
+	return facts, nil
+}
+
+func refuseUnbindable(facts orderBindFacts, force bool, msg string) error {
+	if facts.Bindable || force {
+		return nil
+	}
+	return apperror.Validation(fmt.Sprintf("%s (order_status=%s, payment_status=%s)", msg, facts.OrderStatus, facts.PaymentStatus))
+}
+
+// FactsForUnits resolves live order context for unit ids (orderID/variantID).
+// The result is keyed by CanonicalUnitID, not the caller's original string.
+// A missing order yields no entry. Callers use it on list and current
+// reads so a cancelled or unpaid unit stays visible after the bind.
+// A UUID order id is lowercased before the order map lookup so an
+// uppercase unit hits the lowercase id stored on the order.
+func (f *Flow) FactsForUnits(ctx context.Context, unitIDs []string) (map[string]UnitFacts, error) {
+	if f == nil {
+		return nil, fmt.Errorf("assignment flow: not configured")
+	}
+	type unitOrder struct {
+		unit    string
+		orderID string
+	}
+	pairs := make([]unitOrder, 0, len(unitIDs))
+	orderIDs := make([]string, 0, len(unitIDs))
+	seenOrder := make(map[string]struct{}, len(unitIDs))
+	for _, unit := range unitIDs {
+		unit = strings.TrimSpace(unit)
+		if unit == "" {
+			continue
+		}
+		orderID, _, ok := domain.SplitUnitID(unit)
+		if !ok {
+			continue
+		}
+		// Key the result by the canonical unit id. FindByIDs keys by the
+		// stored order id, which is the lowercase UUID minted at purchase.
+		key := unit
+		if canon, ok := domain.CanonicalUnitID(unit); ok {
+			key = canon
+			if oid, _, splitOK := domain.SplitUnitID(canon); splitOK {
+				orderID = oid
+			}
+		}
+		pairs = append(pairs, unitOrder{unit: key, orderID: orderID})
+		if _, ok := seenOrder[orderID]; ok {
+			continue
+		}
+		seenOrder[orderID] = struct{}{}
+		orderIDs = append(orderIDs, orderID)
+	}
+	orders, err := f.lookupOrders(ctx, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	payIDs := make([]string, 0, len(orderIDs))
+	for _, orderID := range orderIDs {
+		if orders[orderID] != nil {
+			payIDs = append(payIDs, orders[orderID].ID)
+		}
+	}
+	byPayment, err := f.lookupPayments(ctx, payIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]UnitFacts, len(pairs))
+	for _, pair := range pairs {
+		o := orders[pair.orderID]
+		if o == nil {
+			continue
+		}
+		facts := UnitFacts{
+			CustomerID:  strings.TrimSpace(o.CustomerID),
+			OrderStatus: string(o.Status()),
+		}
+		if py := byPayment[o.ID]; py != nil {
+			facts.PaymentStatus = string(py.Status())
+		}
+		out[pair.unit] = facts
+	}
+	return out, nil
 }
 
 // CurrentOwned returns the live assignment for a child unit the customer owns.
@@ -526,6 +902,9 @@ func (f *Flow) childEligibilityIDs(ctx context.Context, productID string) ([]str
 	if err != nil {
 		return nil, err
 	}
+	// No linked leaf: still check this product. AssignOwned and
+	// ListOwnedParents must not skip IsEligible after RequiresLinkedParent
+	// is cleared. New admin rows are refused earlier by requireChildLinkedParent.
 	if len(ids) == 0 {
 		return []string{productID}, nil
 	}
@@ -533,10 +912,13 @@ func (f *Flow) childEligibilityIDs(ctx context.Context, productID string) ([]str
 }
 
 func (f *Flow) parentEligibleForLeaves(ctx context.Context, leafIDs []string, parentProductID string) (bool, error) {
-	if len(leafIDs) == 0 {
-		return false, nil
-	}
+	checked := false
 	for _, leafID := range leafIDs {
+		leafID = strings.TrimSpace(leafID)
+		if leafID == "" {
+			continue
+		}
+		checked = true
 		ok, err := f.eligibility.IsEligible(ctx, leafID, parentProductID)
 		if err != nil {
 			if apperror.Is(err, apperror.CodeValidation) {
@@ -547,6 +929,9 @@ func (f *Flow) parentEligibleForLeaves(ctx context.Context, leafIDs []string, pa
 		if !ok {
 			return false, nil
 		}
+	}
+	if !checked {
+		return false, nil
 	}
 	return true, nil
 }
@@ -565,6 +950,9 @@ func (f *Flow) requireOwnedUnit(ctx context.Context, customerID, unitID, notOwne
 	}
 	o, err := f.orders.FindByID(ctx, orderID)
 	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) {
+			return ownedUnit{}, apperror.Validation(notOwned)
+		}
 		return ownedUnit{}, fmt.Errorf("assignment flow: lookup order: %w", err)
 	}
 	if o == nil || strings.TrimSpace(o.CustomerID) != customerID {
@@ -589,6 +977,9 @@ func (f *Flow) requireOwnedUnit(ctx context.Context, customerID, unitID, notOwne
 	}
 	v, err := f.variants.FindByID(ctx, variantID)
 	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) {
+			return ownedUnit{}, apperror.Validation(notOwned)
+		}
 		return ownedUnit{}, fmt.Errorf("assignment flow: lookup variant: %w", err)
 	}
 	if v == nil || strings.TrimSpace(v.ProductID) == "" {
@@ -626,6 +1017,45 @@ func (f *Flow) orderOwnedWithPayment(o *order.Order, py *payment.Payment) (bool,
 		return false, fmt.Errorf("assignment flow: payable amount: %w", err)
 	}
 	return payable.Amount() == 0, nil
+}
+
+func (f *Flow) lookupOrders(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	unique := uniqueNonEmpty(ids)
+	if len(unique) == 0 {
+		return map[string]*order.Order{}, nil
+	}
+	batchIDs := make([]string, 0, len(unique))
+	for _, orderID := range unique {
+		if id.IsUUID(orderID) {
+			batchIDs = append(batchIDs, orderID)
+		}
+	}
+	if batch, ok := f.orders.(OrderBatchLookup); ok && len(batchIDs) > 0 {
+		found, err := batch.FindByIDs(ctx, batchIDs)
+		if err == nil {
+			if found == nil {
+				return map[string]*order.Order{}, nil
+			}
+			return found, nil
+		}
+		if !apperror.Is(err, apperror.CodeValidation) {
+			return nil, fmt.Errorf("assignment flow: lookup orders: %w", err)
+		}
+	}
+	out := make(map[string]*order.Order, len(unique))
+	for _, orderID := range unique {
+		o, err := f.orders.FindByID(ctx, orderID)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeValidation) {
+				continue
+			}
+			return nil, fmt.Errorf("assignment flow: lookup order: %w", err)
+		}
+		if o != nil {
+			out[orderID] = o
+		}
+	}
+	return out, nil
 }
 
 func (f *Flow) lookupPayments(ctx context.Context, ids []string) (map[string]*payment.Payment, error) {

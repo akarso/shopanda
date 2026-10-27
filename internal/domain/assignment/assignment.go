@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Status is the ProductAssignment state machine.
@@ -16,6 +17,16 @@ const (
 	StatusUnassigned Status = "unassigned"
 	StatusAssigned   Status = "assigned"
 	StatusRevoked    Status = "revoked"
+)
+
+const (
+	// MaxForcedReasonLen is the write cap for ForcedReason, in runes.
+	// SetForced and the admin HTTP create path enforce it. Validate does
+	// not, so a longer value already stored can still be scanned.
+	MaxForcedReasonLen = 500
+	// ForcedReasonTooLongMessage is returned when a force reason exceeds
+	// MaxForcedReasonLen. HTTP decode uses the same text for 422.
+	ForcedReasonTooLongMessage = "reason must be at most 500 characters"
 )
 
 // IsValid reports whether s is a known assignment status.
@@ -66,6 +77,11 @@ type ProductAssignment struct {
 	storedParent string
 	CreatedAt    time.Time
 	RevokedAt    *time.Time
+	// ForcedAt and ForcedReason record an operator override (PR-1071).
+	// Both are empty on checkout and self-service binds. AdminAssign sets
+	// them together only when a side is not bindable. Revoke keeps them.
+	ForcedAt     *time.Time
+	ForcedReason string
 }
 
 // NewUnassigned builds a current assignment with no parent. IDs are
@@ -203,7 +219,58 @@ func (a *ProductAssignment) Validate() error {
 			return errors.New("product assignment: revoked_at must not be zero")
 		}
 	}
+	if err := a.validateForced(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (a *ProductAssignment) validateForced() error {
+	if a.ForcedAt != nil && a.ForcedAt.IsZero() {
+		return errors.New("product assignment: forced_at must not be zero")
+	}
+	hasAt := a.ForcedAt != nil
+	hasReason := strings.TrimSpace(a.ForcedReason) != ""
+	if hasAt != hasReason {
+		return errors.New("product assignment: forced_at and forced_reason must be set together")
+	}
+	if a.status == StatusUnassigned && hasAt {
+		return errors.New("product assignment: unassigned row cannot record a force override")
+	}
+	// Length is a write concern (SetForced, HTTP). A longer stored reason
+	// must still scan so one row cannot fail a list.
+	return nil
+}
+
+// SetForced records an operator override. reason is trimmed. at must not
+// be zero. The row must already be assigned or revoked.
+func (a *ProductAssignment) SetForced(reason string, at time.Time) error {
+	if a == nil {
+		return errors.New("product assignment must not be nil")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" || at.IsZero() {
+		return errors.New("product assignment: forced reason and time are required")
+	}
+	if utf8.RuneCountInString(reason) > MaxForcedReasonLen {
+		return errors.New(ForcedReasonTooLongMessage)
+	}
+	prevAt := a.ForcedAt
+	prevReason := a.ForcedReason
+	t := at.UTC()
+	a.ForcedAt = &t
+	a.ForcedReason = reason
+	if err := a.Validate(); err != nil {
+		a.ForcedAt = prevAt
+		a.ForcedReason = prevReason
+		return err
+	}
+	return nil
+}
+
+// Forced reports whether this row records an operator force-bind.
+func (a *ProductAssignment) Forced() bool {
+	return a != nil && a.ForcedAt != nil
 }
 
 // Assign transitions unassigned → assigned and sets the parent unit.

@@ -145,6 +145,10 @@ const (
 	AuditLogList   AuditAction = "audit.list"
 	AuditLogExport AuditAction = "audit.export"
 
+	// Product assignment admin operations (PR-1071)
+	AuditAssignmentCreate AuditAction = "assignment.create"
+	AuditAssignmentRevoke AuditAction = "assignment.revoke"
+
 	// Job admin operations (PR-1029)
 	AuditJobList   AuditAction = "job.list"
 	AuditJobRead   AuditAction = "job.read"
@@ -202,6 +206,14 @@ func (a *Auditor) SetAuditLogRepository(repo domainadmin.AuditLogRepository) {
 		return
 	}
 	a.repo = repo
+}
+
+// Warn logs an operational warning. It is not an audit result.
+func (a *Auditor) Warn(event string, fields map[string]interface{}) {
+	if a == nil || a.log == nil || event == "" {
+		return
+	}
+	a.log.Warn(event, fields)
 }
 
 // LogAction records an admin action to the audit log.

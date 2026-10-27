@@ -109,6 +109,9 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 		return nil, nil
 	}
 	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid order id"); mapped != nil {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("order_repo: find by id: %w", err)
 	}
 	items, err := r.loadItems(ctx, o.ID)
@@ -119,6 +122,64 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 		return nil, fmt.Errorf("order_repo: set items: %w", err)
 	}
 	return o, nil
+}
+
+// FindByIDs returns orders with their items keyed by ID. Missing ids are
+// omitted. An empty ids slice returns an empty map and does not query.
+func (r *OrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return map[string]*order.Order{}, nil
+	}
+	const q = `SELECT ` + orderSelectColumns + `
+		FROM orders WHERE id = ANY($1)`
+	rows, err := r.db.QueryContext(ctx, q, unique)
+	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid order id"); mapped != nil {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("order_repo: find by ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*order.Order, len(unique))
+	loaded := make([]string, 0, len(unique))
+	for rows.Next() {
+		o, err := r.hydrateOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: find by ids scan: %w", err)
+		}
+		out[o.ID] = o
+		loaded = append(loaded, o.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: find by ids rows: %w", err)
+	}
+	if len(loaded) == 0 {
+		return out, nil
+	}
+	itemMap, err := r.loadItemsBatch(ctx, loaded)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range loaded {
+		if err := out[id].SetItemsFromDB(itemMap[id]); err != nil {
+			return nil, fmt.Errorf("order_repo: set items: %w", err)
+		}
+	}
+	return out, nil
 }
 
 // FindByCustomerID returns all orders for a customer, newest first.

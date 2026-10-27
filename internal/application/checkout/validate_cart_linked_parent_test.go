@@ -282,6 +282,9 @@ func (checkoutAssignRepoStub) FindCurrentByChildID(context.Context, string) (*as
 func (checkoutAssignRepoStub) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
 	return nil, nil
 }
+func (checkoutAssignRepoStub) ListByParentID(context.Context, string, assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	return nil, false, nil
+}
 
 type checkoutOrderStub struct{}
 

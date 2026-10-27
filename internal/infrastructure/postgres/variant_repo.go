@@ -54,6 +54,9 @@ func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant
 		return nil, nil
 	}
 	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid variant id"); mapped != nil {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("variant_repo: find by id: %w", err)
 	}
 	return v, nil
@@ -102,6 +105,9 @@ func (r *VariantRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*
 
 	rows, err := querier.QueryContext(ctx, q, ids)
 	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid variant id"); mapped != nil {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("variant_repo: find by ids: %w", err)
 	}
 	defer rows.Close()
