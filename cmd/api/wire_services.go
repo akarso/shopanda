@@ -817,7 +817,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log).
 		WithTxStarter(conn).
 		WithAssignmentFlow(assignmentFlow)
-	assignmentFlow.WithOpenReturnChecker(returnService)
+	assignmentFlow.WithTxStarter(conn).WithOpenReturnChecker(returnService)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)

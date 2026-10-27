@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -73,9 +74,9 @@ const (
 	// a parent unit that still has live assigned children (PR-1072).
 	ParentHasAssignedChildrenMessage = "cannot return a parent unit that still has assigned children; revoke or return those children first"
 	// UnitOnOpenReturnMessage is returned when AssignOwned / AdminAssign /
-	// CheckPurchase / RecordPurchase targets a unit that appears on a
-	// non-terminal return (PR-1072).
-	UnitOnOpenReturnMessage = "cannot assign a unit that is on an open return"
+	// CheckPurchase / RecordPurchase targets a unit that appears on an
+	// open or refunded return (PR-1072).
+	UnitOnOpenReturnMessage = "cannot assign a unit that is on an open or refunded return"
 	// RevokeReasonReturnApproved is the assignment.revoked reason when
 	// returns Approve revokes the child unit.
 	RevokeReasonReturnApproved = "return_approved"
@@ -84,10 +85,52 @@ const (
 	RevokeReasonReturnRefunded = "return_refunded"
 )
 
-// OpenReturnChecker blocks bind when a unit is on a non-terminal RMA
-// (requested / approved / received). returns.Service implements it.
+// OpenReturnChecker blocks bind when a unit is on an open or refunded
+// RMA (requested / approved / received / refunded). Rejected and
+// cancelled do not block. returns.Service implements it.
 type OpenReturnChecker interface {
 	AssertNotOnOpenReturn(ctx context.Context, unitID string) error
+}
+
+// TxStarter begins the transaction used to lock units and persist an
+// assignment write. *sql.DB satisfies it.
+type TxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+const assignmentUnitLockPrefix = "assignment:unit:"
+
+// LockAssignmentUnits acquires transaction-scoped advisory locks for each
+// unit id (sorted) so assign writes and return mutations serialize on the
+// same keys. No-op when tx is nil. Shared by assignment.Flow and
+// returns.Service (PR-1072 race fix).
+func LockAssignmentUnits(ctx context.Context, tx *sql.Tx, unitIDs ...string) error {
+	if tx == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(unitIDs))
+	seen := make(map[string]struct{}, len(unitIDs))
+	for _, unitID := range unitIDs {
+		unitID = strings.TrimSpace(unitID)
+		if unitID == "" {
+			continue
+		}
+		if canon, ok := domain.CanonicalUnitID(unitID); ok {
+			unitID = canon
+		}
+		if _, ok := seen[unitID]; ok {
+			continue
+		}
+		seen[unitID] = struct{}{}
+		keys = append(keys, assignmentUnitLockPrefix+unitID)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, key); err != nil {
+			return fmt.Errorf("assignment flow: unit lock: %w", err)
+		}
+	}
+	return nil
 }
 
 // AdminAssignRequest is an operator bind. Force with a non-empty reason
@@ -211,7 +254,8 @@ type repositoryTxBinder interface {
 // RequiresLinkedParent (or a required linked leaf); an existing
 // unassigned row may be assigned without that flag. State transitions
 // stay on Service. OpenReturnChecker (PR-1072) blocks bind while a
-// unit is on a non-terminal return.
+// unit is on an open or refunded return. Optional TxStarter serializes
+// assign writes with return mutations via LockAssignmentUnits.
 type Flow struct {
 	assignments *Service
 	repo        domain.Repository
@@ -222,6 +266,8 @@ type Flow struct {
 	products    ProductLookup
 	components  BundleComponentLookup
 	openReturns OpenReturnChecker
+	txStarter   TxStarter
+	writeTx     *sql.Tx
 }
 
 // NewFlow creates the assignment flow. Every dependency is required so
@@ -275,14 +321,25 @@ func (f *Flow) WithLinkedLeaves(products ProductLookup, components BundleCompone
 }
 
 // WithOpenReturnChecker blocks AssignOwned / AdminAssign / CheckPurchase /
-// RecordPurchase when the child or parent unit is on a non-terminal
-// return (PR-1072). ListOwnedParents also omits parents on an open RMA.
+// RecordPurchase when the child or parent unit is on an open or refunded
+// return (PR-1072). ListOwnedParents also omits those parents.
 // Nil skips the gate (tests without returns).
 func (f *Flow) WithOpenReturnChecker(checker OpenReturnChecker) *Flow {
 	if f == nil {
 		return nil
 	}
 	f.openReturns = checker
+	return f
+}
+
+// WithTxStarter enables AssignOwned / AdminAssign / RecordPurchase to
+// persist under LockAssignmentUnits + an open-return recheck in one TX
+// (PR-1072). Nil keeps the fail-fast check only (unit tests without DB).
+func (f *Flow) WithTxStarter(starter TxStarter) *Flow {
+	if f == nil {
+		return nil
+	}
+	f.txStarter = starter
 	return f
 }
 
@@ -302,6 +359,7 @@ func (f *Flow) WithTx(tx *sql.Tx) *Flow {
 	cp := *f
 	cp.repo = bound
 	cp.assignments = NewService(bound)
+	cp.writeTx = tx
 	return &cp
 }
 
@@ -381,12 +439,14 @@ func (f *Flow) RecordPurchase(ctx context.Context, customerID, orderID string, l
 			if !ok {
 				return apperror.Validation(ParentNotOwnedMessage)
 			}
-			// Re-check parent + newly minted child before CreateAssigned
-			// (CheckPurchase already gated the parent; child is usually clean).
+			// Fail-fast, then lock+recheck immediately before CreateAssigned
+			// inside runAssignedWrite (same TX as checkout when WithTx'd).
 			if err := f.assertUnitsNotOnOpenReturn(ctx, canonical, childUnit); err != nil {
 				return err
 			}
-			if _, err := f.assignments.CreateAssigned(ctx, canonical, childUnit); err != nil {
+			if _, err := f.runAssignedWrite(ctx, []string{canonical, childUnit}, func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error) {
+				return bound.assignments.CreateAssigned(ctx, canonical, childUnit)
+			}); err != nil {
 				return err
 			}
 			continue
@@ -581,10 +641,16 @@ func (f *Flow) AssignOwned(ctx context.Context, customerID, childUnitID, parentU
 	if current != nil && current.Status() == domain.StatusAssigned {
 		return nil, apperror.Conflict(AlreadyAssignedMessage)
 	}
+	currentID := ""
 	if current != nil {
-		return f.assignments.Assign(ctx, current.ID, parentUnit)
+		currentID = current.ID
 	}
-	return f.assignments.CreateAssigned(ctx, parentUnit, childUnit)
+	return f.runAssignedWrite(ctx, []string{childUnit, parentUnit}, func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error) {
+		if currentID != "" {
+			return bound.assignments.Assign(ctx, currentID, parentUnit)
+		}
+		return bound.assignments.CreateAssigned(ctx, parentUnit, childUnit)
+	})
 }
 
 // AdminAssign binds a child unit to a parent unit for an operator.
@@ -674,22 +740,23 @@ func (f *Flow) AdminAssign(ctx context.Context, req AdminAssignRequest) (*AdminA
 	if !eligible {
 		return nil, apperror.Validation(ParentNotEligibleMessage)
 	}
-	var saved *domain.ProductAssignment
-	created := false
+	currentID := ""
 	if current != nil {
-		if needsForce {
-			saved, err = f.assignments.AssignForced(ctx, current.ID, parentUnit, reason)
-		} else {
-			saved, err = f.assignments.Assign(ctx, current.ID, parentUnit)
-		}
-	} else {
-		if needsForce {
-			saved, err = f.assignments.CreateAssignedForced(ctx, parentUnit, childUnit, reason)
-		} else {
-			saved, err = f.assignments.CreateAssigned(ctx, parentUnit, childUnit)
-		}
-		created = err == nil
+		currentID = current.ID
 	}
+	created := currentID == ""
+	saved, err := f.runAssignedWrite(ctx, []string{childUnit, parentUnit}, func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error) {
+		if currentID != "" {
+			if needsForce {
+				return bound.assignments.AssignForced(ctx, currentID, parentUnit, reason)
+			}
+			return bound.assignments.Assign(ctx, currentID, parentUnit)
+		}
+		if needsForce {
+			return bound.assignments.CreateAssignedForced(ctx, parentUnit, childUnit, reason)
+		}
+		return bound.assignments.CreateAssigned(ctx, parentUnit, childUnit)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -829,6 +896,49 @@ func (f *Flow) assertUnitsNotOnOpenReturn(ctx context.Context, unitIDs ...string
 		}
 	}
 	return nil
+}
+
+// runAssignedWrite serializes a bind against return mutations: optional
+// advisory locks on the unit ids, open-return recheck, then write on a
+// TX-bound flow. When already inside WithTx (checkout), reuses that TX.
+// Without a tx starter (unit tests), still rechecks immediately before write.
+func (f *Flow) runAssignedWrite(
+	ctx context.Context,
+	unitIDs []string,
+	write func(ctx context.Context, bound *Flow) (*domain.ProductAssignment, error),
+) (*domain.ProductAssignment, error) {
+	execute := func(ctx context.Context, bound *Flow, tx *sql.Tx) (*domain.ProductAssignment, error) {
+		if err := LockAssignmentUnits(ctx, tx, unitIDs...); err != nil {
+			return nil, err
+		}
+		if err := bound.assertUnitsNotOnOpenReturn(ctx, unitIDs...); err != nil {
+			return nil, err
+		}
+		return write(ctx, bound)
+	}
+	if f.writeTx != nil {
+		return execute(ctx, f, f.writeTx)
+	}
+	if f.txStarter != nil && f.BindsTx() {
+		tx, err := f.txStarter.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("assignment flow: begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		bound := f.WithTx(tx)
+		saved, err := execute(ctx, bound, tx)
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("assignment flow: commit: %w", err)
+		}
+		return saved, nil
+	}
+	if err := f.assertUnitsNotOnOpenReturn(ctx, unitIDs...); err != nil {
+		return nil, err
+	}
+	return write(ctx, f)
 }
 
 // FactsForUnits resolves live order context for unit ids (orderID/variantID).
@@ -1003,8 +1113,8 @@ func (f *Flow) ListOwnedParents(ctx context.Context, customerID, childProductID 
 			continue
 		}
 		unitID := domain.UnitID(cand.order.ID, cand.item.VariantID)
-		// Hide cards on an open RMA so account assign UI does not offer
-		// a parent that AssignOwned would 422 (PR-1072).
+		// Hide cards on an open or refunded RMA so account assign UI does
+		// not offer a parent that AssignOwned would 422 (PR-1072).
 		if err := f.assertUnitsNotOnOpenReturn(ctx, unitID); err != nil {
 			if apperror.Is(err, apperror.CodeValidation) {
 				continue

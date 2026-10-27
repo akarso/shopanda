@@ -277,7 +277,7 @@ func newReturnsWithAssignments(t *testing.T, ord *order.Order, assignRepo *assig
 		bus,
 		logger.NewWithWriter(io.Discard, "info"),
 	).WithTxStarter(returnsFakeTxDB()).WithAssignmentFlow(flow)
-	flow.WithOpenReturnChecker(svc)
+	flow.WithTxStarter(returnsFakeTxDB()).WithOpenReturnChecker(svc)
 	return returnsWithAssignments{svc: svc, assignSvc: assignSvc, flow: flow, repo: assignRepo, bus: bus}
 }
 
@@ -696,7 +696,10 @@ func TestService_Approve_PersistFailureRollsBackAssignment(t *testing.T) {
 		t.Fatalf("RequestReturn: %v", err)
 	}
 	// Snapshot after request (assignment still assigned) for rollback restore.
+	// RequestReturn may have committed its own lock TX; reset so Approve's
+	// rollback path is what restore/commit counters observe.
 	snap = assignRepo.clone()
+	returnsCaptureCommits.Store(0)
 
 	_, err = svc.Approve(context.Background(), ret.ID)
 	if err == nil {
@@ -899,7 +902,7 @@ func TestFlow_ListOwnedParents_HidesParentOnOpenReturn(t *testing.T) {
 		bus,
 		logger.NewWithWriter(io.Discard, "info"),
 	).WithTxStarter(returnsFakeTxDB()).WithAssignmentFlow(flow)
-	flow.WithOpenReturnChecker(svc)
+	flow.WithTxStarter(returnsFakeTxDB()).WithOpenReturnChecker(svc)
 
 	before, err := flow.ListOwnedParents(context.Background(), "c1", "ticket-prod")
 	if err != nil {
@@ -936,4 +939,257 @@ func (s *assignmentOrdersByCustomer) FindByID(_ context.Context, id string) (*or
 
 func (s *assignmentOrdersByCustomer) FindByCustomerID(_ context.Context, customerID string) ([]order.Order, error) {
 	return s.byCustomer[customerID], nil
+}
+
+func TestFlow_AssignOwned_BlockedAfterRefunded_AllowedAfterReject(t *testing.T) {
+	orderID := id.New()
+	ord := paidOrderWithVariants(t, orderID, "card-var", "ticket-var")
+	parentUnit := assignment.UnitID(orderID, "card-var")
+	childUnit := assignment.UnitID(orderID, "ticket-var")
+
+	h := newReturnsWithAssignments(t, ord, &assignmentStubRepo{})
+	if _, err := h.assignSvc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+
+	ret, err := h.svc.RequestReturn(context.Background(), orderID, "c1", "unused", []returnsApp.RequestLine{
+		{VariantID: "ticket-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	if _, err := h.svc.Approve(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := h.svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if _, err := h.svc.Refund(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+
+	_, err = h.flow.AssignOwned(context.Background(), "c1", childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.UnitOnOpenReturnMessage) {
+		t.Fatalf("AssignOwned after refund = %v, want refunded block", err)
+	}
+	_, err = h.flow.AdminAssign(context.Background(), assignmentapp.AdminAssignRequest{
+		ChildUnitID:  childUnit,
+		ParentUnitID: parentUnit,
+	})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.UnitOnOpenReturnMessage) {
+		t.Fatalf("AdminAssign after refund = %v, want refunded block", err)
+	}
+	err = h.flow.RecordPurchase(context.Background(), "c1", id.New(), []assignmentapp.PurchaseLine{{
+		ChildVariantID: "ticket-var-2",
+		ChildProductID: "ticket-prod",
+		Assignment: catalog.AssignmentContext{
+			ParentUnitID:    childUnit, // refunded ticket must not become a parent
+			ParentProductID: "prod-ticket-var",
+		},
+	}})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.UnitOnOpenReturnMessage) {
+		t.Fatalf("RecordPurchase onto refunded unit = %v, want block", err)
+	}
+
+	// Refunded parent card must be hidden from ListOwnedParents.
+	cardOrderID := id.New()
+	cardOrd := paidOrderWithVariants(t, cardOrderID, "card-var")
+	pay := completedPayment(t, cardOrderID)
+	assignRepo := &assignmentStubRepo{}
+	assignSvc := assignmentapp.NewService(assignRepo)
+	orders := &assignmentOrdersByCustomer{
+		byID:       map[string]*order.Order{cardOrderID: cardOrd},
+		byCustomer: map[string][]order.Order{"c1": {*cardOrd}},
+	}
+	cardFlow := assignmentapp.NewFlow(
+		assignSvc,
+		assignRepo,
+		assignmentEligOK{},
+		orders,
+		assignmentVariantsStub{},
+		assignmentPaymentsStub{byOrder: map[string]*payment.Payment{cardOrderID: pay}},
+	).WithLinkedLeaves(assignmentProductsStub{}, nil)
+	cardReturns := newMemReturnRepo()
+	cardBus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	cardSvc := returnsApp.NewService(
+		cardReturns,
+		&memOrderRepo{order: cardOrd},
+		&memStockRepo{qty: map[string]int{"card-var": 5}},
+		memVariantRepo{},
+		&memPaymentRepo{payment: pay},
+		&stubRefunder{},
+		cardBus,
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB()).WithAssignmentFlow(cardFlow)
+	cardFlow.WithTxStarter(returnsFakeTxDB()).WithOpenReturnChecker(cardSvc)
+	retCard, err := cardSvc.RequestReturn(context.Background(), cardOrderID, "c1", "unused", []returnsApp.RequestLine{
+		{VariantID: "card-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn card: %v", err)
+	}
+	if _, err := cardSvc.Approve(context.Background(), retCard.ID); err != nil {
+		t.Fatalf("Approve card: %v", err)
+	}
+	if _, err := cardSvc.Receive(context.Background(), retCard.ID); err != nil {
+		t.Fatalf("Receive card: %v", err)
+	}
+	if _, err := cardSvc.Refund(context.Background(), retCard.ID); err != nil {
+		t.Fatalf("Refund card: %v", err)
+	}
+	parents, err := cardFlow.ListOwnedParents(context.Background(), "c1", "ticket-prod")
+	if err != nil {
+		t.Fatalf("ListOwnedParents after refunded card: %v", err)
+	}
+	for _, p := range parents {
+		if p.OrderID == cardOrderID {
+			t.Fatalf("ListOwnedParents still lists refunded card %+v", p)
+		}
+	}
+
+	// Rejected RMA must not trap the unit.
+	orderID2 := id.New()
+	ord2 := paidOrderWithVariants(t, orderID2, "card-var", "ticket-var")
+	parent2 := assignment.UnitID(orderID2, "card-var")
+	child2 := assignment.UnitID(orderID2, "ticket-var")
+	h2 := newReturnsWithAssignments(t, ord2, &assignmentStubRepo{})
+	if _, err := h2.assignSvc.CreateUnassigned(context.Background(), child2); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	ret2, err := h2.svc.RequestReturn(context.Background(), orderID2, "c1", "unused", []returnsApp.RequestLine{
+		{VariantID: "ticket-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn 2: %v", err)
+	}
+	if _, err := h2.svc.Reject(context.Background(), ret2.ID); err != nil {
+		t.Fatalf("Reject: %v", err)
+	}
+	if _, err := h2.flow.AssignOwned(context.Background(), "c1", child2, parent2); err != nil {
+		t.Fatalf("AssignOwned after reject: %v", err)
+	}
+
+	// Cancelled RMA likewise allows assign.
+	orderID3 := id.New()
+	ord3 := paidOrderWithVariants(t, orderID3, "card-var", "ticket-var")
+	parent3 := assignment.UnitID(orderID3, "card-var")
+	child3 := assignment.UnitID(orderID3, "ticket-var")
+	h3 := newReturnsWithAssignments(t, ord3, &assignmentStubRepo{})
+	if _, err := h3.assignSvc.CreateUnassigned(context.Background(), child3); err != nil {
+		t.Fatalf("CreateUnassigned 3: %v", err)
+	}
+	ret3, err := h3.svc.RequestReturn(context.Background(), orderID3, "c1", "unused", []returnsApp.RequestLine{
+		{VariantID: "ticket-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn 3: %v", err)
+	}
+	if _, err := h3.svc.Cancel(context.Background(), ret3.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if _, err := h3.flow.AssignOwned(context.Background(), "c1", child3, parent3); err != nil {
+		t.Fatalf("AssignOwned after cancel: %v", err)
+	}
+}
+
+func TestFlow_AssignOwned_RechecksOpenReturnBeforeWrite(t *testing.T) {
+	orderID := id.New()
+	ord := paidOrderWithVariants(t, orderID, "card-var", "ticket-var")
+	parentUnit := assignment.UnitID(orderID, "card-var")
+	childUnit := assignment.UnitID(orderID, "ticket-var")
+
+	h := newReturnsWithAssignments(t, ord, &assignmentStubRepo{})
+	if _, err := h.assignSvc.CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+
+	hook := &openReturnAfterFirstOK{next: h.svc}
+	hook.afterFirstOK = func() {
+		if _, err := h.svc.RequestReturn(context.Background(), orderID, "c1", "race", []returnsApp.RequestLine{
+			{VariantID: "ticket-var", Quantity: 1},
+		}); err != nil {
+			t.Fatalf("RequestReturn in hook: %v", err)
+		}
+	}
+	h.flow.WithOpenReturnChecker(hook)
+
+	_, err := h.flow.AssignOwned(context.Background(), "c1", childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignmentapp.UnitOnOpenReturnMessage) {
+		t.Fatalf("AssignOwned = %v, want recheck block after raced RequestReturn", err)
+	}
+	if cur := currentOrNil(t, h.assignSvc, childUnit); cur == nil || cur.Status() != assignment.StatusUnassigned {
+		t.Fatalf("child should stay unassigned after raced return, got %+v", cur)
+	}
+	if hook.calls < 2 {
+		t.Fatalf("open-return checks = %d, want at least fail-fast + recheck", hook.calls)
+	}
+}
+
+type openReturnAfterFirstOK struct {
+	next         assignmentapp.OpenReturnChecker
+	afterFirstOK func()
+	calls        int
+}
+
+func (h *openReturnAfterFirstOK) AssertNotOnOpenReturn(ctx context.Context, unitID string) error {
+	err := h.next.AssertNotOnOpenReturn(ctx, unitID)
+	h.calls++
+	if err == nil && h.calls == 1 && h.afterFirstOK != nil {
+		h.afterFirstOK()
+		h.afterFirstOK = nil
+	}
+	return err
+}
+
+func TestService_ReturnableLines_HidesChainWhenGrandchildCrossOrder(t *testing.T) {
+	orderID := id.New()
+	ord := paidOrderWithVariants(t, orderID, "card-var", "mid-var")
+	parentUnit := assignment.UnitID(orderID, "card-var")
+	midUnit := assignment.UnitID(orderID, "mid-var")
+	otherOrderID := id.New()
+	leafUnit := assignment.UnitID(otherOrderID, "leaf-var")
+
+	h := newReturnsWithAssignments(t, ord, &assignmentStubRepo{})
+	if _, err := h.assignSvc.CreateAssigned(context.Background(), parentUnit, midUnit); err != nil {
+		t.Fatalf("CreateAssigned A→B: %v", err)
+	}
+	if _, err := h.assignSvc.CreateAssigned(context.Background(), midUnit, leafUnit); err != nil {
+		t.Fatalf("CreateAssigned B→C: %v", err)
+	}
+
+	lines, err := h.svc.ReturnableLines(context.Background(), orderID, "c1")
+	if err != nil {
+		t.Fatalf("ReturnableLines: %v", err)
+	}
+	for _, line := range lines {
+		if line.VariantID == "card-var" || line.VariantID == "mid-var" {
+			t.Fatalf("expected A and B hidden for A→B(same)→C(other); got %+v", lines)
+		}
+	}
+}
+
+func TestService_WithAssignmentFlow_ClearsTypedNil(t *testing.T) {
+	orderID := id.New()
+	ord := paidOrderWithVariants(t, orderID, "card-var", "ticket-var")
+	parentUnit := assignment.UnitID(orderID, "card-var")
+	childUnit := assignment.UnitID(orderID, "ticket-var")
+
+	h := newReturnsWithAssignments(t, ord, &assignmentStubRepo{})
+	if _, err := h.assignSvc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+	var nilFlow *assignmentapp.Flow
+	h.svc.WithAssignmentFlow(nilFlow)
+
+	// Typed-nil must clear the interface so parent gate is skipped, not
+	// "assignment flow: not configured".
+	ret, err := h.svc.RequestReturn(context.Background(), orderID, "c1", "unused", []returnsApp.RequestLine{
+		{VariantID: "card-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn with cleared flow: %v", err)
+	}
+	if ret == nil {
+		t.Fatal("expected return")
+	}
 }

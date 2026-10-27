@@ -87,17 +87,26 @@ func (s *Service) WithTxStarter(starter TxStarter) *Service {
 // WithAssignmentFlow hooks ProductAssignment into returns (PR-1072).
 // Nil skips the parent-with-children block and revoke-on-approve/refund
 // (tests without assignment). Production always wires the flow.
+// A typed-nil *Flow must clear the interface; storing it would make
+// s.assignments != nil while method calls still hit a nil receiver.
 func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
 	if s == nil {
 		return nil
 	}
-	s.assignments = flow
+	if flow == nil {
+		s.assignments = nil
+	} else {
+		s.assignments = flow
+	}
 	return s
 }
 
-// AssertNotOnOpenReturn fails when unitID appears on a non-terminal
-// return (requested / approved / received). Wired into assignment.Flow
-// so AssignOwned / AdminAssign cannot re-bind while an RMA is open.
+// AssertNotOnOpenReturn fails when unitID appears on a return that still
+// blocks rebinding: requested / approved / received, or refunded.
+// Rejected and cancelled are skipped so a closed RMA does not trap the
+// unit. Wired into assignment.Flow so AssignOwned / AdminAssign /
+// RecordPurchase / ListOwnedParents cannot treat a refunded ticket as a
+// fresh parent or child.
 func (s *Service) AssertNotOnOpenReturn(ctx context.Context, unitID string) error {
 	if s == nil {
 		return nil
@@ -118,7 +127,10 @@ func (s *Service) AssertNotOnOpenReturn(ctx context.Context, unitID string) erro
 		return fmt.Errorf("returns: open-return check: %w", err)
 	}
 	for _, ret := range list {
-		if ret.Status().IsTerminal() {
+		st := ret.Status()
+		// Rejected/cancelled no longer block; refunded stays blocked so a
+		// returned unit cannot be re-bound as if the RMA never happened.
+		if st.IsTerminal() && st != domainReturns.StatusRefunded {
 			continue
 		}
 		for _, item := range ret.Items() {
@@ -223,8 +235,8 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 	if err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Save(ctx, &ret); err != nil {
-		return nil, fmt.Errorf("returns: save: %w", err)
+	if err := s.persistNewReturnLocked(ctx, &ret); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRequested, ret)
 	return &ret, nil
@@ -586,41 +598,64 @@ func (s *Service) ReturnableLines(ctx context.Context, orderID, customerID strin
 		}
 	}
 
-	// Units still returnable on this order — used as same-RMA skip when
-	// deciding whether a parent card is blocked by assigned children.
-	returnableUnits := make([]string, 0, len(ord.Items()))
-	for _, item := range ord.Items() {
-		if item.Quantity-already[item.VariantID] > 0 {
-			returnableUnits = append(returnableUnits, domainAssignment.UnitID(orderID, item.VariantID))
-		}
+	// Candidate lines still returnable on this order. Same-RMA skip must
+	// use only lines that remain mutually returnable: a blocked child is
+	// dropped from the skip set so its parent cannot stay listed alone.
+	type candidateLine struct {
+		item       order.Item
+		returnable int
+		unit       string
 	}
-
-	out := make([]ReturnableLine, 0, len(ord.Items()))
+	candidates := make([]candidateLine, 0, len(ord.Items()))
 	for _, item := range ord.Items() {
 		returnable := item.Quantity - already[item.VariantID]
 		if returnable <= 0 {
 			continue
 		}
-		unit := domainAssignment.UnitID(orderID, item.VariantID)
-		if s.assignments != nil {
-			// Keep a parent only when every live assigned child is also
-			// still returnable on this order (same-RMA skip). Storefront
-			// must submit the card together with those ticket lines;
-			// card-only RequestReturn still 422s with required child ids.
-			if err := s.assignments.AssertParentReturnable(ctx, unit, returnableUnits...); err != nil {
-				if apperror.Is(err, apperror.CodeValidation) {
-					continue
+		candidates = append(candidates, candidateLine{
+			item:       item,
+			returnable: returnable,
+			unit:       domainAssignment.UnitID(orderID, item.VariantID),
+		})
+	}
+
+	if s.assignments != nil && len(candidates) > 0 {
+		remaining := make([]candidateLine, len(candidates))
+		copy(remaining, candidates)
+		for {
+			skip := make([]string, 0, len(remaining))
+			for _, c := range remaining {
+				skip = append(skip, c.unit)
+			}
+			next := make([]candidateLine, 0, len(remaining))
+			dropped := false
+			for _, c := range remaining {
+				if err := s.assignments.AssertParentReturnable(ctx, c.unit, skip...); err != nil {
+					if apperror.Is(err, apperror.CodeValidation) {
+						dropped = true
+						continue
+					}
+					return nil, err
 				}
-				return nil, err
+				next = append(next, c)
+			}
+			remaining = next
+			if !dropped {
+				break
 			}
 		}
+		candidates = remaining
+	}
+
+	out := make([]ReturnableLine, 0, len(candidates))
+	for _, c := range candidates {
 		out = append(out, ReturnableLine{
-			VariantID:  item.VariantID,
-			SKU:        item.SKU,
-			Name:       item.Name,
-			Ordered:    item.Quantity,
-			Returnable: returnable,
-			UnitPrice:  item.UnitPrice,
+			VariantID:  c.item.VariantID,
+			SKU:        c.item.SKU,
+			Name:       c.item.Name,
+			Ordered:    c.item.Quantity,
+			Returnable: c.returnable,
+			UnitPrice:  c.item.UnitPrice,
 		})
 	}
 	return out, nil
@@ -662,6 +697,56 @@ func (s *Service) assertParentsReturnable(ctx context.Context, orderID string, i
 	return nil
 }
 
+// persistNewReturnLocked saves a new RMA under the same per-unit advisory
+// locks assignment writes take, then re-checks the parent gate so an
+// AssignOwned that raced the first check cannot land under an open RMA.
+func (s *Service) persistNewReturnLocked(ctx context.Context, ret *domainReturns.Return) error {
+	if ret == nil {
+		return nil
+	}
+	txReturns, ok := s.returns.(txReturnRepo)
+	// Only serialize with assignment writes when the flow is wired.
+	if s.assignments == nil || s.txStarter == nil || !ok {
+		return persistReturnSave(s.returns.Save(ctx, ret))
+	}
+	tx, err := s.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("returns: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if err := assignmentapp.LockAssignmentUnits(ctx, tx, returnUnitIDs(ret)...); err != nil {
+		return err
+	}
+	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return err
+	}
+	if err := persistReturnSave(txReturns.WithTx(tx).Save(ctx, ret)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("returns: save commit: %w", err)
+	}
+	return nil
+}
+
+func persistReturnSave(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("returns: save: %w", err)
+}
+
+func returnUnitIDs(ret *domainReturns.Return) []string {
+	if ret == nil {
+		return nil
+	}
+	out := make([]string, 0, len(ret.Items()))
+	for _, item := range ret.Items() {
+		out = append(out, domainAssignment.UnitID(ret.OrderID, item.VariantID))
+	}
+	return out
+}
+
 // persistReturnWithAssignmentRevoke commits revoke + return Update in
 // one transaction when assignment is wired. Domain transition must
 // already have succeeded in memory. Without assignment, updates directly.
@@ -684,6 +769,15 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 		return fmt.Errorf("returns: begin tx: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Serialize against AssignOwned / AdminAssign / RecordPurchase on the
+	// same unit ids (advisory locks + their open-return recheck).
+	if err := assignmentapp.LockAssignmentUnits(ctx, tx, returnUnitIDs(ret)...); err != nil {
+		return err
+	}
+	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return err
+	}
 
 	bound := s.assignments.WithTx(tx)
 	revoked, err := revokeAssignmentsForReturn(ctx, bound, ret, revokeReason)
