@@ -170,6 +170,9 @@ func (r *txAssignRepo) FindCurrentByChildID(_ context.Context, child string) (*a
 func (r *txAssignRepo) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
 	return nil, nil
 }
+func (r *txAssignRepo) ListByParentID(context.Context, string, assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	return nil, false, nil
+}
 
 type assignmentEligMap struct {
 	ok map[string]bool

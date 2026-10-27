@@ -89,6 +89,20 @@ type mockOrderRepo struct {
 func (r *mockOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
 	return nil, nil
 }
+
+func (r *mockOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (r *mockOrderRepo) FindByCustomerID(_ context.Context, _ string) ([]order.Order, error) {
 	return nil, nil
 }

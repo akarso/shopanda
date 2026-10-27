@@ -34,6 +34,20 @@ func (r *mockOrderRepository) FindByID(ctx context.Context, id string) (*domainO
 	return &clone, nil
 }
 
+func (r *mockOrderRepository) FindByIDs(ctx context.Context, ids []string) (map[string]*domainOrder.Order, error) {
+	out := make(map[string]*domainOrder.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
+
 func (r *mockOrderRepository) FindByCustomerID(ctx context.Context, customerID string) ([]domainOrder.Order, error) {
 	var orders []domainOrder.Order
 	for _, o := range r.orders {

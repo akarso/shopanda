@@ -55,6 +55,9 @@ func (r *acctAssignRepo) FindCurrentByChildID(_ context.Context, child string) (
 func (r *acctAssignRepo) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
 	return nil, nil
 }
+func (r *acctAssignRepo) ListByParentID(context.Context, string, assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	return nil, false, nil
+}
 
 type acctOrders struct {
 	byID map[string]*order.Order

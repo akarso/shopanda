@@ -24,6 +24,7 @@ func AdminRoles() []identity.Role {
 func CorePermissions() []Permission {
 	return []Permission{
 		ProductsRead, ProductsWrite,
+		AssignmentsRead, AssignmentsWrite,
 		OrdersRead, OrdersWrite,
 		CategoriesRead, CategoriesWrite,
 		CustomersRead, CustomersWrite, StoreCreditWrite,

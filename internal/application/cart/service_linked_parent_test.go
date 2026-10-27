@@ -588,6 +588,9 @@ func (cartAssignRepoStub) FindCurrentByChildID(context.Context, string) (*assign
 func (cartAssignRepoStub) ListByChildID(context.Context, string) ([]assignment.ProductAssignment, error) {
 	return nil, nil
 }
+func (cartAssignRepoStub) ListByParentID(context.Context, string, assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	return nil, false, nil
+}
 
 type cartOrderStub struct{}
 

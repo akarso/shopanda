@@ -19,7 +19,7 @@ var _ assignment.Repository = (*ProductAssignmentRepo)(nil)
 const (
 	productAssignmentsChildCurrentIndex = "product_assignments_child_current"
 	productAssignmentsPK                = "product_assignments_pkey"
-	productAssignmentSelectColumns      = `id, parent_order_item_id, child_order_item_id, status, created_at, revoked_at`
+	productAssignmentSelectColumns      = `id, parent_order_item_id, child_order_item_id, status, created_at, revoked_at, forced_at, forced_reason`
 )
 
 // ProductAssignmentRepo implements assignment.Repository using PostgreSQL.
@@ -94,8 +94,8 @@ func (r *ProductAssignmentRepo) Insert(ctx context.Context, a *assignment.Produc
 		return apperror.Validation(err.Error())
 	}
 	const q = `INSERT INTO product_assignments
-		(id, parent_order_item_id, child_order_item_id, status, created_at, revoked_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		(id, parent_order_item_id, child_order_item_id, status, created_at, revoked_at, forced_at, forced_reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.queryer().ExecContext(ctx, q,
 		a.ID,
 		nullIfEmpty(a.ParentOrderItemID),
@@ -103,6 +103,8 @@ func (r *ProductAssignmentRepo) Insert(ctx context.Context, a *assignment.Produc
 		string(a.Status()),
 		a.CreatedAt,
 		nullTime(a.RevokedAt),
+		nullTime(a.ForcedAt),
+		nullIfEmpty(a.ForcedReason),
 	)
 	if err != nil {
 		return mapProductAssignmentExecError(err)
@@ -130,12 +132,16 @@ func (r *ProductAssignmentRepo) Update(ctx context.Context, a *assignment.Produc
 		q = `UPDATE product_assignments
 			SET status = $1,
 				parent_order_item_id = $2,
-				revoked_at = COALESCE(revoked_at, $3)
-			WHERE id = $4 AND status = $5`
+				revoked_at = COALESCE(revoked_at, $3),
+				forced_at = $4,
+				forced_reason = $5
+			WHERE id = $6 AND status = $7`
 		args = []interface{}{
 			string(a.Status()),
 			nullIfEmpty(a.ParentOrderItemID),
 			nullTime(a.RevokedAt),
+			nullTime(a.ForcedAt),
+			nullIfEmpty(a.ForcedReason),
 			a.ID,
 			string(a.StoredStatus()),
 		}
@@ -243,6 +249,59 @@ func (r *ProductAssignmentRepo) ListByChildID(ctx context.Context, childOrderIte
 	return out, nil
 }
 
+// ListByParentID returns one page for the parent, newest first. The
+// predicate is parent_order_item_id equality, which uses
+// product_assignments_parent (partial index, parent IS NOT NULL), plus
+// the status filter. Limit is applied in SQL. One extra row is read so
+// hasMore is true when another match exists. Unassigned rows are
+// excluded because their parent is null. The slice is non-nil when the
+// query succeeds.
+func (r *ProductAssignmentRepo) ListByParentID(ctx context.Context, parentOrderItemID string, page assignment.ParentPage) ([]assignment.ProductAssignment, bool, error) {
+	if parentOrderItemID == "" {
+		return nil, false, fmt.Errorf("product_assignment_repo: list by parent: empty parent order item id")
+	}
+	status := page.Status
+	if status == "" {
+		status = "assigned"
+	}
+	limit := page.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := page.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	const q = `SELECT ` + productAssignmentSelectColumns + `
+		FROM product_assignments
+		WHERE parent_order_item_id = $1
+		  AND ($2 = 'all' OR status = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4`
+	rows, err := r.queryer().QueryContext(ctx, q, parentOrderItemID, status, limit+1, offset)
+	if err != nil {
+		return nil, false, fmt.Errorf("product_assignment_repo: list by parent: %w", err)
+	}
+	defer rows.Close()
+	out := make([]assignment.ProductAssignment, 0)
+	for rows.Next() {
+		a, err := scanProductAssignment(rows)
+		if err != nil {
+			return nil, false, fmt.Errorf("product_assignment_repo: list by parent scan: %w", err)
+		}
+		out = append(out, *a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("product_assignment_repo: list by parent rows: %w", err)
+	}
+	hasMore := false
+	if len(out) > limit {
+		hasMore = true
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
 type productAssignmentRow interface {
 	Scan(dest ...interface{}) error
 }
@@ -253,8 +312,10 @@ func scanProductAssignment(row productAssignmentRow) (*assignment.ProductAssignm
 		parent            sql.NullString
 		created           time.Time
 		revoked           sql.NullTime
+		forcedAt          sql.NullTime
+		forcedReason      sql.NullString
 	)
-	if err := row.Scan(&id, &parent, &child, &status, &created, &revoked); err != nil {
+	if err := row.Scan(&id, &parent, &child, &status, &created, &revoked, &forcedAt, &forcedReason); err != nil {
 		return nil, err
 	}
 	a := &assignment.ProductAssignment{
@@ -268,6 +329,13 @@ func scanProductAssignment(row productAssignmentRow) (*assignment.ProductAssignm
 	if revoked.Valid {
 		t := revoked.Time.UTC()
 		a.RevokedAt = &t
+	}
+	if forcedAt.Valid {
+		t := forcedAt.Time.UTC()
+		a.ForcedAt = &t
+	}
+	if forcedReason.Valid {
+		a.ForcedReason = forcedReason.String
 	}
 	if err := a.SetStatusFromDB(status); err != nil {
 		return nil, err

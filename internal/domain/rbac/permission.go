@@ -9,6 +9,12 @@ const (
 	ProductsRead  Permission = "products.read"
 	ProductsWrite Permission = "products.write"
 
+	// AssignmentsRead/AssignmentsWrite gate the operator assignment API
+	// (PR-1071). Separate from products.* so Support can correct a binding
+	// without catalog write, and Editor (catalog write) cannot.
+	AssignmentsRead  Permission = "assignments.read"
+	AssignmentsWrite Permission = "assignments.write"
+
 	OrdersRead  Permission = "orders.read"
 	OrdersWrite Permission = "orders.write"
 

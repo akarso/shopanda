@@ -18,6 +18,20 @@ type stubOssOrderRepo struct {
 }
 
 func (s *stubOssOrderRepo) FindByID(context.Context, string) (*order.Order, error) { return nil, nil }
+
+func (s *stubOssOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := s.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (s *stubOssOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }

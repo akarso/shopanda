@@ -31,9 +31,19 @@ func (s *stubEligibility) IsEligible(_ context.Context, childID, parentID string
 type stubOrders struct {
 	byID       map[string]*order.Order
 	byCustomer map[string][]order.Order
+	calls      int
+	batchCalls int
+	err        error
 }
 
 func (s *stubOrders) FindByID(_ context.Context, id string) (*order.Order, error) {
+	if s == nil {
+		return nil, nil
+	}
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	if s.byID == nil {
 		return nil, nil
 	}
@@ -47,14 +57,35 @@ func (s *stubOrders) FindByCustomerID(_ context.Context, customerID string) ([]o
 	return s.byCustomer[customerID], nil
 }
 
+func (s *stubOrders) FindByIDs(_ context.Context, ids []string) (map[string]*order.Order, error) {
+	s.batchCalls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		if s.byID == nil {
+			continue
+		}
+		if o := s.byID[id]; o != nil {
+			out[id] = o
+		}
+	}
+	return out, nil
+}
+
 type stubVariants struct {
 	byID       map[string]*catalog.Variant
 	idCalls    int
 	batchCalls int
+	err        error
 }
 
 func (s *stubVariants) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
 	s.idCalls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	if s.byID == nil {
 		return nil, nil
 	}
@@ -114,6 +145,19 @@ func mustOrder(t *testing.T, customerID, variantID string) *order.Order {
 		t.Fatalf("NewOrder: %v", err)
 	}
 	return &o
+}
+
+func adminBind(flow *app.Flow, child, parent string) (*app.AdminAssignResult, error) {
+	return flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  child,
+		ParentUnitID: parent,
+	})
+}
+
+func linkChild(flow *app.Flow, productID string) *app.Flow {
+	return flow.WithLinkedLeaves(stubProducts{byID: map[string]*catalog.Product{
+		productID: {ID: productID, Type: catalog.TypeSimple, Status: catalog.StatusActive, RequiresLinkedParent: true},
+	}}, stubComponents{})
 }
 
 func newFlow(t *testing.T, repo *stubRepo, elig *stubEligibility, orders *stubOrders, variants *stubVariants) *app.Flow {
@@ -563,6 +607,580 @@ func TestFlow_AssignOwned_CanonicalizesPaddedUnitIDs(t *testing.T) {
 	current, err := svc.CurrentByChild(context.Background(), childUnit)
 	if err != nil || current == nil || current.ID != got.ID {
 		t.Fatalf("CurrentByChild = %+v err=%v, want the same row", current, err)
+	}
+}
+
+func TestFlow_AdminAssign_UnassignedThenAssign(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	got, err := adminBind(flow, " "+childUnit+" ", " "+parentUnit+" ")
+	if err != nil {
+		t.Fatalf("AdminAssign: %v", err)
+	}
+	if got.Created || got.Assignment.Status() != assignment.StatusAssigned || got.Assignment.ParentOrderItemID != parentUnit || got.Assignment.ChildOrderItemID != childUnit {
+		t.Fatalf("got %+v", got)
+	}
+	if len(repo.inserts) != 1 {
+		t.Fatalf("inserts = %d, want the unassigned row only", len(repo.inserts))
+	}
+}
+
+func TestFlow_AdminAssign_CreatesAssignedWhenNoCurrentRow(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	repo := &stubRepo{}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	flow = linkChild(flow, "ticket-prod")
+	got, err := adminBind(flow,
+		assignment.UnitID(childOrder.ID, "ticket-var"),
+		assignment.UnitID(parentOrder.ID, "card-var"))
+	if err != nil {
+		t.Fatalf("AdminAssign: %v", err)
+	}
+	if !got.Created || got.Assignment.Status() != assignment.StatusAssigned || len(repo.inserts) != 1 {
+		t.Fatalf("got %+v inserts=%d", got, len(repo.inserts))
+	}
+	if got.Child.CustomerID != "cust-1" || got.Child.OrderStatus != string(order.OrderStatusPending) {
+		t.Fatalf("child facts = %+v", got.Child)
+	}
+}
+
+func TestFlow_AdminAssign_RejectsLiveAssigned(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateAssigned(context.Background(), parentUnit, childUnit); err != nil {
+		t.Fatalf("CreateAssigned: %v", err)
+	}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	_, err := adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeConflict) || !strings.Contains(err.Error(), app.AlreadyAssignedMessage) {
+		t.Fatalf("err = %v, want conflict", err)
+	}
+}
+
+func TestFlow_AdminAssign_SkipsCustomerOwnership(t *testing.T) {
+	parent, _ := mustPaidOrder(t, "other-customer", "card-var", 1000)
+	child := mustOrder(t, "cust-1", "ticket-var")
+	if err := child.SetStatusFromDB(string(order.OrderStatusCancelled)); err != nil {
+		t.Fatalf("SetStatusFromDB: %v", err)
+	}
+	payments := &stubPayments{}
+	repo := &stubRepo{}
+	flow := newFlowWithPayments(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parent.ID: parent,
+		child.ID:  child,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}, payments)
+	flow = linkChild(flow, "ticket-prod")
+	childUnit := assignment.UnitID(child.ID, "ticket-var")
+	parentUnit := assignment.UnitID(parent.ID, "card-var")
+	_, err := adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildOrderNotBindableMessage) {
+		t.Fatalf("without force = %v", err)
+	}
+	got, err := flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  childUnit,
+		ParentUnitID: parentUnit,
+		Force:        true,
+		Reason:       "correct a cancelled ticket",
+	})
+	if err != nil {
+		t.Fatalf("force AdminAssign: %v", err)
+	}
+	if got.Assignment.Status() != assignment.StatusAssigned || got.Reason != "correct a cancelled ticket" {
+		t.Fatalf("got %+v", got)
+	}
+	if got.Child.CustomerID != "cust-1" || got.Parent.CustomerID != "other-customer" {
+		t.Fatalf("facts child=%+v parent=%+v", got.Child, got.Parent)
+	}
+	if got.Child.OrderStatus != string(order.OrderStatusCancelled) {
+		t.Fatalf("child order status = %q", got.Child.OrderStatus)
+	}
+	if !got.Assignment.Forced() || got.Assignment.ForcedReason != "correct a cancelled ticket" {
+		t.Fatalf("forced = at:%v reason:%q", got.Assignment.ForcedAt, got.Assignment.ForcedReason)
+	}
+	current, err := app.NewService(repo).CurrentByChild(context.Background(), strings.ToUpper(child.ID)+"/ticket-var")
+	if err != nil || current == nil || current.ID != got.Assignment.ID || current.ChildOrderItemID != childUnit {
+		t.Fatalf("uppercase CurrentByChild = %+v %v, want the lowercase row", current, err)
+	}
+	if len(repo.inserts) != 1 {
+		t.Fatalf("inserts = %d, want one row for the uppercase order uuid", len(repo.inserts))
+	}
+}
+
+func TestFlow_AdminAssign_UppercaseOrderUUIDHitsExistingRow(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	repo := &stubRepo{}
+	svc := app.NewService(repo)
+	if _, err := svc.CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	flow := newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	upperChild := strings.ToUpper(childOrder.ID) + "/ticket-var"
+	upperParent := strings.ToUpper(parentOrder.ID) + "/card-var"
+	got, err := adminBind(flow, upperChild, upperParent)
+	if err != nil {
+		t.Fatalf("AdminAssign uppercase: %v", err)
+	}
+	if got.Created || got.Assignment.ID == "" || got.Assignment.ChildOrderItemID != childUnit || got.Assignment.ParentOrderItemID != parentUnit {
+		t.Fatalf("got %+v, want the existing lowercase row", got)
+	}
+	if len(repo.inserts) != 1 {
+		t.Fatalf("inserts = %d, want the unassigned row only", len(repo.inserts))
+	}
+	current, err := svc.CurrentByChild(context.Background(), upperChild)
+	if err != nil || current == nil || current.ID != got.Assignment.ID {
+		t.Fatalf("CurrentByChild uppercase = %+v %v", current, err)
+	}
+}
+
+func TestFlow_AdminAssign_RejectsIneligibleAndMissing(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	flow := newFlow(t, nil, &stubEligibility{ok: map[string]bool{}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	flow = linkChild(flow, "ticket-prod")
+	_, err := adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentNotEligibleMessage) {
+		t.Fatalf("ineligible = %v", err)
+	}
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	flow = newFlow(t, nil, &stubEligibility{ok: map[string]bool{}}, orders, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	_, err = adminBind(flow, "foo/bar", parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildUnitInvalidMessage) {
+		t.Fatalf("invalid child = %v", err)
+	}
+	if orders.calls != 0 {
+		t.Fatalf("non-uuid order part looked up the order %d times", orders.calls)
+	}
+	_, err = adminBind(flow, childUnit, "not-a-unit")
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentUnitInvalidMessage) {
+		t.Fatalf("invalid parent = %v", err)
+	}
+	_, err = adminBind(flow, assignment.UnitID(id.New(), "ticket-var"), parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildUnitMissingMessage) {
+		t.Fatalf("missing child = %v", err)
+	}
+	_, err = adminBind(flow, childUnit, assignment.UnitID(id.New(), "card-var"))
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentUnitMissingMessage) {
+		t.Fatalf("missing parent = %v", err)
+	}
+}
+
+func TestFlow_AdminAssign_UsesLinkedLeavesForBundle(t *testing.T) {
+	parentOrder := mustOrder(t, "other", "card-var")
+	childOrder := mustOrder(t, "cust-1", "bundle-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "bundle-var")
+	repo := &stubRepo{}
+	elig := &stubEligibility{ok: map[string]bool{"ticket-leaf|card-prod": true}}
+	leaf, err := catalog.NewBundleComponent("bundle-prod", "ticket-leaf", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	flow := newFlow(t, repo, elig, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"bundle-var": {ID: "bundle-var", ProductID: "bundle-prod"},
+	}}).WithLinkedLeaves(
+		stubProducts{byID: map[string]*catalog.Product{
+			"bundle-prod": {ID: "bundle-prod", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+			"ticket-leaf": {ID: "ticket-leaf", Type: catalog.TypeSimple, Status: catalog.StatusActive, RequiresLinkedParent: true},
+		}},
+		stubComponents{byBundle: map[string][]catalog.BundleComponent{"bundle-prod": {*leaf}}},
+	)
+	got, err := adminBind(flow, childUnit, parentUnit)
+	if err != nil {
+		t.Fatalf("AdminAssign: %v", err)
+	}
+	if got.Assignment.ParentOrderItemID != parentUnit || elig.calls == 0 {
+		t.Fatalf("got %+v calls=%d", got, elig.calls)
+	}
+}
+
+func TestFlow_AdminAssign_MissingVariantAndUUIDSyntax(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	flow := newFlow(t, nil, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, orders, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var": {ID: "card-var", ProductID: "card-prod"},
+	}})
+	_, err := adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildVariantMissingMessage) || strings.Contains(err.Error(), app.ChildUnitMissingMessage) {
+		t.Fatalf("missing variant = %v", err)
+	}
+
+	badOrders := &stubOrders{err: apperror.Validation("invalid order id")}
+	flow = newFlow(t, nil, &stubEligibility{}, badOrders, &stubVariants{})
+	_, err = adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildUnitMissingMessage) || strings.Contains(err.Error(), "lookup order") {
+		t.Fatalf("order validation = %v, want child-unit validation", err)
+	}
+
+	flow = newFlow(t, nil, &stubEligibility{}, orders, &stubVariants{err: apperror.Validation("invalid variant id")})
+	_, err = adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildVariantMissingMessage) || strings.Contains(err.Error(), "lookup variant") {
+		t.Fatalf("variant validation = %v, want missing-variant validation", err)
+	}
+}
+
+func TestFlow_AdminAssign_RequiresLinkedParentOrCurrentRow(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	parentUnit := assignment.UnitID(parentOrder.ID, "card-var")
+	childUnit := assignment.UnitID(childOrder.ID, "ticket-var")
+	elig := &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}
+	flow := newFlow(t, nil, elig, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}).WithLinkedLeaves(stubProducts{byID: map[string]*catalog.Product{
+		"ticket-prod": {ID: "ticket-prod", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}, stubComponents{})
+	_, err := adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildNotLinkedMessage) {
+		t.Fatalf("not linked = %v", err)
+	}
+	if elig.calls != 0 {
+		t.Fatalf("eligibility calls = %d, want none before the linked-parent gate", elig.calls)
+	}
+
+	repo := &stubRepo{}
+	if _, err := app.NewService(repo).CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	elig = &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}
+	flow = newFlow(t, repo, elig, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}).WithLinkedLeaves(stubProducts{byID: map[string]*catalog.Product{
+		"ticket-prod": {ID: "ticket-prod", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}, stubComponents{})
+	got, err := adminBind(flow, childUnit, parentUnit)
+	if err != nil {
+		t.Fatalf("unassigned without flag: %v", err)
+	}
+	if got.Created || got.Assignment.Status() != assignment.StatusAssigned || got.Assignment.ParentOrderItemID != parentUnit {
+		t.Fatalf("unassigned without flag = %+v", got)
+	}
+	if elig.calls == 0 {
+		t.Fatal("unassigned row did not check eligibility for the order-line product")
+	}
+
+	repo = &stubRepo{}
+	if _, err := app.NewService(repo).CreateUnassigned(context.Background(), childUnit); err != nil {
+		t.Fatalf("CreateUnassigned: %v", err)
+	}
+	flow = newFlow(t, repo, &stubEligibility{ok: map[string]bool{}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}).WithLinkedLeaves(stubProducts{byID: map[string]*catalog.Product{
+		"ticket-prod": {ID: "ticket-prod", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}, stubComponents{})
+	_, err = adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ParentNotEligibleMessage) {
+		t.Fatalf("unassigned ineligible parent = %v", err)
+	}
+}
+
+func TestFlow_AdminAssign_RefusesUnpaidWithoutForce(t *testing.T) {
+	parent := mustOrder(t, "cust-1", "card-var")
+	item, err := order.NewItem("ticket-var", "SKU-1", "Ticket", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	childOrder, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	child := &childOrder
+	flow := newFlow(t, nil, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parent.ID: parent,
+		child.ID:  child,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}})
+	flow = linkChild(flow, "ticket-prod")
+	childUnit := assignment.UnitID(child.ID, "ticket-var")
+	parentUnit := assignment.UnitID(parent.ID, "card-var")
+	_, err = adminBind(flow, childUnit, parentUnit)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ChildOrderNotBindableMessage) {
+		t.Fatalf("unpaid = %v", err)
+	}
+	got, err := flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  childUnit,
+		ParentUnitID: parentUnit,
+		Force:        true,
+		Reason:       "bind an unpaid ticket",
+	})
+	if err != nil {
+		t.Fatalf("force unpaid: %v", err)
+	}
+	if !got.Created || got.Reason != "bind an unpaid ticket" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestFlow_AdminAssign_ForceNotApplicableWhenBindable(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	repo := &stubRepo{}
+	flow := linkChild(newFlow(t, repo, &stubEligibility{ok: map[string]bool{"ticket-prod|card-prod": true}}, &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}, &stubVariants{byID: map[string]*catalog.Variant{
+		"card-var":   {ID: "card-var", ProductID: "card-prod"},
+		"ticket-var": {ID: "ticket-var", ProductID: "ticket-prod"},
+	}}), "ticket-prod")
+	_, err := flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  assignment.UnitID(childOrder.ID, "ticket-var"),
+		ParentUnitID: assignment.UnitID(parentOrder.ID, "card-var"),
+		Force:        true,
+		Reason:       "not needed",
+	})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ForceNotApplicableMessage) {
+		t.Fatalf("force on bindable pair = %v", err)
+	}
+	if len(repo.inserts) != 0 {
+		t.Fatalf("inserts = %d, want none", len(repo.inserts))
+	}
+}
+
+func TestFlow_AdminAssign_ForceReasonTooLong(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	flow := newFlow(t, nil, &stubEligibility{}, orders, &stubVariants{})
+	_, err := flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  assignment.UnitID(childOrder.ID, "ticket-var"),
+		ParentUnitID: assignment.UnitID(parentOrder.ID, "card-var"),
+		Force:        true,
+		Reason:       strings.Repeat("x", assignment.MaxForcedReasonLen+1),
+	})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), assignment.ForcedReasonTooLongMessage) {
+		t.Fatalf("long reason = %v", err)
+	}
+	if orders.calls != 0 || orders.batchCalls != 0 {
+		t.Fatalf("long reason looked up orders calls=%d batch=%d", orders.calls, orders.batchCalls)
+	}
+}
+
+func TestFlow_FactsForUnits_BatchesOrders(t *testing.T) {
+	first := mustOrder(t, "cust-1", "card-var")
+	second := mustOrder(t, "cust-2", "ticket-var")
+	orders := &stubOrders{byID: map[string]*order.Order{
+		first.ID:  first,
+		second.ID: second,
+	}}
+	flow := newFlow(t, nil, nil, orders, nil)
+	unitA := assignment.UnitID(first.ID, "card-var")
+	unitB := assignment.UnitID(first.ID, "other-var")
+	unitC := assignment.UnitID(second.ID, "ticket-var")
+	got, err := flow.FactsForUnits(context.Background(), []string{unitA, unitB, unitC, unitA, "not-a-unit"})
+	if err != nil {
+		t.Fatalf("FactsForUnits: %v", err)
+	}
+	if orders.batchCalls != 1 {
+		t.Fatalf("FindByIDs calls = %d, want 1", orders.batchCalls)
+	}
+	if orders.calls != 0 {
+		t.Fatalf("FindByID calls = %d, want 0", orders.calls)
+	}
+	if len(got) != 3 || got[unitA].CustomerID != "cust-1" || got[unitC].CustomerID != "cust-2" {
+		t.Fatalf("facts = %+v", got)
+	}
+}
+
+type orderFindByIDOnly struct {
+	byID  map[string]*order.Order
+	calls int
+}
+
+func (s *orderFindByIDOnly) FindByID(_ context.Context, id string) (*order.Order, error) {
+	s.calls++
+	return s.byID[id], nil
+}
+
+func (s *orderFindByIDOnly) FindByCustomerID(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
+
+type orderFactsByStoredID struct {
+	byID map[string]*order.Order
+}
+
+func (s *orderFactsByStoredID) FindByID(_ context.Context, id string) (*order.Order, error) {
+	if s == nil || s.byID == nil {
+		return nil, nil
+	}
+	if o := s.byID[id]; o != nil {
+		return o, nil
+	}
+	return s.byID[strings.ToLower(id)], nil
+}
+
+func (s *orderFactsByStoredID) FindByCustomerID(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
+
+func (s *orderFactsByStoredID) FindByIDs(_ context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o := s.byID[id]
+		if o == nil {
+			o = s.byID[strings.ToLower(id)]
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
+
+func TestFlow_FactsForUnits_CanonicalizesOrderID(t *testing.T) {
+	item, err := order.NewItem("card-var", "SKU-1", "Card", 1, shared.MustNewMoney(0, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	firstOrder, err := order.NewOrder("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "cust-9", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	first := &firstOrder
+	orders := &orderFactsByStoredID{byID: map[string]*order.Order{first.ID: first}}
+	flow := app.NewFlow(app.NewService(&stubRepo{}), &stubRepo{}, &stubEligibility{}, orders, &stubVariants{}, &stubPayments{})
+	upper := assignment.UnitID(strings.ToUpper(first.ID), "card-var")
+	got, err := flow.FactsForUnits(context.Background(), []string{upper})
+	if err != nil {
+		t.Fatalf("FactsForUnits: %v", err)
+	}
+	canon, ok := assignment.CanonicalUnitID(upper)
+	if !ok {
+		t.Fatalf("CanonicalUnitID(%q) failed", upper)
+	}
+	if got[canon].CustomerID != "cust-9" || got[canon].OrderStatus == "" {
+		t.Fatalf("facts = %+v, want customer cust-9 keyed by %q", got, canon)
+	}
+	if upper == canon {
+		t.Fatal("fixture order id did not change case")
+	}
+	if _, found := got[upper]; found {
+		t.Fatalf("facts keyed by original case %q: %+v", upper, got)
+	}
+}
+
+func TestFlow_FactsForUnits_FallsBackToFindByID(t *testing.T) {
+	first := mustOrder(t, "cust-1", "card-var")
+	second := mustOrder(t, "cust-2", "ticket-var")
+	orders := &orderFindByIDOnly{byID: map[string]*order.Order{
+		first.ID:  first,
+		second.ID: second,
+	}}
+	flow := app.NewFlow(app.NewService(&stubRepo{}), &stubRepo{}, &stubEligibility{}, orders, &stubVariants{}, &stubPayments{})
+	_, err := flow.FactsForUnits(context.Background(), []string{
+		assignment.UnitID(first.ID, "card-var"),
+		assignment.UnitID(second.ID, "ticket-var"),
+		assignment.UnitID(first.ID, "card-var"),
+	})
+	if err != nil {
+		t.Fatalf("FactsForUnits: %v", err)
+	}
+	if orders.calls != 2 {
+		t.Fatalf("FindByID calls = %d, want 2 unique orders", orders.calls)
+	}
+}
+
+func TestFlow_AdminAssign_ForceRequiresReason(t *testing.T) {
+	parentOrder := mustOrder(t, "cust-1", "card-var")
+	childOrder := mustOrder(t, "cust-1", "ticket-var")
+	orders := &stubOrders{byID: map[string]*order.Order{
+		parentOrder.ID: parentOrder,
+		childOrder.ID:  childOrder,
+	}}
+	flow := newFlow(t, nil, &stubEligibility{}, orders, &stubVariants{})
+	_, err := flow.AdminAssign(context.Background(), app.AdminAssignRequest{
+		ChildUnitID:  assignment.UnitID(childOrder.ID, "ticket-var"),
+		ParentUnitID: assignment.UnitID(parentOrder.ID, "card-var"),
+		Force:        true,
+	})
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), app.ForceReasonRequiredMessage) {
+		t.Fatalf("force without reason = %v", err)
+	}
+	if orders.calls != 0 {
+		t.Fatalf("force without reason looked up orders %d times", orders.calls)
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 )
 
 // AssignmentAccountHandler is the storefront self-service assignment API (PR-1070).
-// Admin list/create/revoke is PR-1071.
+// Admin list/create/revoke is AssignmentAdminHandler (PR-1071).
 type AssignmentAccountHandler struct {
 	flow *assignmentapp.Flow
 }

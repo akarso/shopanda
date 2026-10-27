@@ -124,7 +124,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1068 | `RequiresLinkedParent` purchasability gate | **done.** Explicit `requires_linked_parent` flag (not `HasRules`). Empty assignment context forces the purchasable axis false, including when mode is `visible`. Display axes are unchanged. Cart and checkout enforce it even when visibility is bypassed or facts are nil. Guest claim drops the line. Admin create/update accepts the bool. Assignment context writers are PR-1070. See [`prs/PR-1068.md`](prs/PR-1068.md). |
 | PR-1069 | `ProductAssignment` instance domain | **done.** `assignment.ProductAssignment` binds one purchased/issued child unit to one purchased parent unit. State machine: `unassigned → assigned → revoked`, or `unassigned → revoked` with a null parent so a never-assigned unit can be released. Revoke, not delete. Reassignment inserts a new `assigned` record. Parent is written only on insert-assigned or `unassigned → assigned`. Unit ids are opaque TEXT (not FKs — `order_items` has no unique id; a serialized digital unit is not an order line). At most one current row per child. `ProductAssignmentService` is CreateUnassigned / CreateAssigned / Assign / Revoke / Get / CurrentByChild / ListByChild. No eligibility or purchasability checks (PR-1070). No admin HTTP (PR-1071). See [`prs/PR-1069.md`](prs/PR-1069.md). |
 | PR-1070 | Assignment flow: cart-time + post-purchase | **done.** HTTP writers stamp `AssignmentContext` (parent product, parent unit `orderID/variantID`, or deferred). `IsEligible` and ownership run when a parent is present. Ownership is payment completed or payable 0. Checkout failure after `create_order` fails a still-pending unpaid order and revokes; an accepted pending Stripe charge is left for the webhook. Decline / provider error also revoke. One `payment.failed` handler fails the pending order, restores store credit without the issuance cap, then revokes (`payment.failed` publish errors return 500). `Flow.RecordPurchase` fails closed unless order + assignment share one transaction. Exploded linked leaves are the units and collapse when two bundles share a leaf. Post-purchase self-service: `POST /api/v1/account/assignments`. Unassigned is not “not purchasable.” Admin API is PR-1071. See [`prs/PR-1070.md`](prs/PR-1070.md). |
-| PR-1071 | Admin API for assignment | List/create/revoke assignments; "this card's assigned tickets" and "this ticket's current card" views. |
+| PR-1071 | Admin API for assignment | **done.** List and current use `assignments.read`. Create and revoke use `assignments.write` (Admin, Manager, Support; not Editor). The card list defaults to `status=assigned`, limit 100 in SQL, and returns `has_more`. List, current, and revoke include live order facts (`OrderRepository.FindByIDs`, keyed by `CanonicalUnitID`). A fact-read failure returns those rows with empty fact fields. `AdminAssign` requires a linked parent for a new row and refuses cancelled, failed, or unpaid orders unless `force` and a `reason` (max 500 characters, enforced on write; migration `103` checks `char_length`) are set. Force is stored (`forced_at` / `forced_reason`) only when a side is not bindable and returned as `reason`. `force` on an already-bindable pair is 422. Revoke is idempotent and does not audit a second time. See [`prs/PR-1071.md`](prs/PR-1071.md). |
 | PR-1072 | Returns integration for assigned children | Return a single assigned ticket without touching the card's order line — extends Returns/RMA (Phase 6) the same way PR-1064 did for bundle components, at assignment granularity instead of bundle-component granularity. |
 | PR-1073 | CSV import/export + admin GUI | Bulk eligibility-rule import/export; card detail page showing assigned tickets, ticket detail showing its current card (if any), assign/revoke actions. |
 
@@ -221,7 +221,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1068 | D | done |
 | 1069 | D | done |
 | 1070 | D | done |
-| 1071–1073 | D | planned |
+| 1071 | D | done |
+| 1072–1073 | D | planned |
 | 1074–1078 | E | planned |
 | 1079–1083 | F | planned |
 
@@ -235,4 +236,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1070 done — Track D next: admin assignment API PR-1071; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1071 done — Track D next: returns integration PR-1072; numbering collides with Phase 11 — disambiguate by phase folder) |
