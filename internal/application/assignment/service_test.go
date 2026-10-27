@@ -43,6 +43,12 @@ func (s *stubRepo) Insert(_ context.Context, a *assignment.ProductAssignment) er
 	if a.Status().IsCurrent() {
 		s.current[a.ChildOrderItemID] = &cp
 	}
+	if a.ParentOrderItemID != "" {
+		if s.byParent == nil {
+			s.byParent = map[string][]assignment.ProductAssignment{}
+		}
+		s.byParent[a.ParentOrderItemID] = append(s.byParent[a.ParentOrderItemID], cp)
+	}
 	return nil
 }
 
@@ -64,6 +70,20 @@ func (s *stubRepo) Update(_ context.Context, a *assignment.ProductAssignment) er
 		s.current[a.ChildOrderItemID] = &cp
 	} else {
 		delete(s.current, a.ChildOrderItemID)
+	}
+	if a.ParentOrderItemID != "" {
+		if s.byParent == nil {
+			s.byParent = map[string][]assignment.ProductAssignment{}
+		}
+		rows := s.byParent[a.ParentOrderItemID]
+		for i := range rows {
+			if rows[i].ID == a.ID {
+				rows[i] = cp
+				s.byParent[a.ParentOrderItemID] = rows
+				return nil
+			}
+		}
+		s.byParent[a.ParentOrderItemID] = append(rows, cp)
 	}
 	return nil
 }

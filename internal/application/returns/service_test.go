@@ -681,6 +681,9 @@ type returnsCaptureTxConn struct{}
 func (returnsCaptureTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (returnsCaptureTxConn) Close() error                        { return nil }
 func (returnsCaptureTxConn) Begin() (driver.Tx, error)           { return returnsCaptureTx{}, nil }
+func (returnsCaptureTxConn) Exec(string, []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
 
 type returnsCaptureTx struct{}
 
@@ -707,6 +710,9 @@ type returnsFakeTxConn struct{}
 func (returnsFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (returnsFakeTxConn) Close() error                        { return nil }
 func (returnsFakeTxConn) Begin() (driver.Tx, error)           { return returnsFakeTx{}, nil }
+func (returnsFakeTxConn) Exec(string, []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
 
 type returnsFakeTx struct{}
 
