@@ -664,3 +664,49 @@ func (mapProductRepo) FindByCategoryID(context.Context, string, int, int) ([]cat
 func (mapProductRepo) Create(context.Context, *catalog.Product) error { return nil }
 
 func (mapProductRepo) Update(context.Context, *catalog.Product) error { return nil }
+
+// countingBatchVariants implements FindByIDs (postgres-style) and counts
+// singular vs batch reads so tax-class recalculate can prove batching.
+type countingBatchVariants struct {
+	mapVariantRepo
+	findByIDCalls  int
+	findByIDsCalls int
+}
+
+func (r *countingBatchVariants) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
+	r.findByIDCalls++
+	return r.mapVariantRepo.FindByID(ctx, id)
+}
+
+func (r *countingBatchVariants) FindByIDs(_ context.Context, ids []string) (map[string]*catalog.Variant, error) {
+	r.findByIDsCalls++
+	out := make(map[string]*catalog.Variant, len(ids))
+	for _, id := range ids {
+		if v := r.variants[id]; v != nil {
+			out[id] = v
+		}
+	}
+	return out, nil
+}
+
+type countingBatchProducts struct {
+	mapProductRepo
+	findByIDCalls  int
+	listByIDsCalls int
+}
+
+func (r *countingBatchProducts) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	r.findByIDCalls++
+	return r.mapProductRepo.FindByID(ctx, id)
+}
+
+func (r *countingBatchProducts) ListByIDs(_ context.Context, ids []string) (map[string]*catalog.Product, error) {
+	r.listByIDsCalls++
+	out := make(map[string]*catalog.Product, len(ids))
+	for _, id := range ids {
+		if p := r.products[id]; p != nil {
+			out[id] = p
+		}
+	}
+	return out, nil
+}

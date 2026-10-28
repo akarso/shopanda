@@ -791,45 +791,136 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	return nil
 }
 
+// variantBatchLookup is an optional batch read. postgres implements it so
+// ensureTaxClasses does not FindByID once per cart line on every recalculate.
+type variantBatchLookup interface {
+	FindByIDs(ctx context.Context, ids []string) (map[string]*catalog.Variant, error)
+}
+
+// productIDLister is an optional batch read. postgres implements it so
+// ensureTaxClasses does not FindByID once per distinct product.
+type productIDLister interface {
+	ListByIDs(ctx context.Context, ids []string) (map[string]*catalog.Product, error)
+}
+
 // ensureTaxClasses fills Meta["tax_classes"] (variantID → class) from product
 // type via shared appPricing.EnsureTaxClasses. Existing keys (hooks /
 // explicit overrides) are left untouched; empty/unknown overrides error.
+//
+// Variants and products needed for fill-missing are loaded in one batch each
+// when the repositories expose FindByIDs / ListByIDs (postgres); otherwise
+// FindByID is used per id. BasePriceStep still resolves unit prices through
+// its own catalog reads — sharing those maps would require a larger pricing
+// refactor (no Meta catalog cache on the cart pipeline today).
 func (s *Service) ensureTaxClasses(ctx context.Context, c *domainCart.Cart, meta map[string]interface{}) error {
-	lines := make([]appPricing.LineTaxClass, 0, len(c.Items))
-	productsByID := make(map[string]*catalog.Product)
 	overrides := appPricing.TaxClassesFromMeta(meta)
+	needVariant := make([]string, 0, len(c.Items))
+	seenVariant := make(map[string]struct{}, len(c.Items))
 	for _, item := range c.Items {
-		// Hook / explicit override already present — skip catalog lookup.
+		if overrides != nil {
+			if _, ok := overrides[item.VariantID]; ok {
+				continue
+			}
+		}
+		if _, ok := seenVariant[item.VariantID]; ok {
+			continue
+		}
+		seenVariant[item.VariantID] = struct{}{}
+		needVariant = append(needVariant, item.VariantID)
+	}
+
+	variants, err := s.lookupVariantsForTaxClasses(ctx, needVariant)
+	if err != nil {
+		return err
+	}
+	productIDs := make([]string, 0, len(variants))
+	seenProduct := make(map[string]struct{}, len(variants))
+	for _, v := range variants {
+		if v == nil || v.ProductID == "" {
+			continue
+		}
+		if _, ok := seenProduct[v.ProductID]; ok {
+			continue
+		}
+		seenProduct[v.ProductID] = struct{}{}
+		productIDs = append(productIDs, v.ProductID)
+	}
+	products, err := s.lookupProductsForTaxClasses(ctx, productIDs)
+	if err != nil {
+		return err
+	}
+
+	lines := make([]appPricing.LineTaxClass, 0, len(c.Items))
+	for _, item := range c.Items {
 		if overrides != nil {
 			if _, ok := overrides[item.VariantID]; ok {
 				lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID})
 				continue
 			}
 		}
-		v, err := s.variants.FindByID(ctx, item.VariantID)
-		if err != nil {
-			return fmt.Errorf("cart service: tax class: lookup variant %q: %w", item.VariantID, err)
-		}
 		var typ catalog.Type
-		if v != nil {
-			p, ok := productsByID[v.ProductID]
-			if !ok {
-				p, err = s.products.FindByID(ctx, v.ProductID)
-				if err != nil {
-					return fmt.Errorf("cart service: tax class: lookup product %q: %w", v.ProductID, err)
-				}
-				productsByID[v.ProductID] = p
-			}
-			if p != nil {
+		if v := variants[item.VariantID]; v != nil {
+			if p := products[v.ProductID]; p != nil {
 				typ = p.Type
 			}
 		}
 		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: typ})
 	}
-	if err := appPricing.EnsureTaxClasses(meta, lines); err != nil {
-		return err
+	return appPricing.EnsureTaxClasses(meta, lines)
+}
+
+func (s *Service) lookupVariantsForTaxClasses(ctx context.Context, ids []string) (map[string]*catalog.Variant, error) {
+	if len(ids) == 0 {
+		return map[string]*catalog.Variant{}, nil
 	}
-	return nil
+	if batch, ok := s.variants.(variantBatchLookup); ok {
+		found, err := batch.FindByIDs(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("cart service: tax class: lookup variants: %w", err)
+		}
+		if found == nil {
+			return map[string]*catalog.Variant{}, nil
+		}
+		return found, nil
+	}
+	out := make(map[string]*catalog.Variant, len(ids))
+	for _, id := range ids {
+		v, err := s.variants.FindByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("cart service: tax class: lookup variant %q: %w", id, err)
+		}
+		if v != nil {
+			out[id] = v
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) lookupProductsForTaxClasses(ctx context.Context, ids []string) (map[string]*catalog.Product, error) {
+	if len(ids) == 0 {
+		return map[string]*catalog.Product{}, nil
+	}
+	if lister, ok := s.products.(productIDLister); ok {
+		found, err := lister.ListByIDs(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("cart service: tax class: lookup products: %w", err)
+		}
+		if found == nil {
+			return map[string]*catalog.Product{}, nil
+		}
+		return found, nil
+	}
+	out := make(map[string]*catalog.Product, len(ids))
+	for _, id := range ids {
+		p, err := s.products.FindByID(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("cart service: tax class: lookup product %q: %w", id, err)
+		}
+		if p != nil {
+			out[id] = p
+		}
+	}
+	return out, nil
 }
 
 func resultingLineQty(c *domainCart.Cart, variantID string, add int) (int, error) {
