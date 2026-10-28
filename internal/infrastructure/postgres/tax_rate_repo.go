@@ -83,6 +83,26 @@ func (r *TaxRateRepo) ListByCountry(ctx context.Context, country string) ([]tax.
 	}
 	defer rows.Close()
 
+	return scanTaxRates(rows)
+}
+
+// ListByClass returns every rate with the given class across all countries
+// and store scopes, ordered by country then store_id. Used by TaxSeeder to
+// backfill digital rows alongside every existing standard rate.
+func (r *TaxRateRepo) ListByClass(ctx context.Context, class string) ([]tax.TaxRate, error) {
+	const q = `SELECT id, country, class, store_id, rate
+		FROM tax_rates WHERE class = $1 ORDER BY country, store_id`
+
+	rows, err := r.query(ctx, q, class)
+	if err != nil {
+		return nil, fmt.Errorf("tax_rate_repo: list by class: %w", err)
+	}
+	defer rows.Close()
+
+	return scanTaxRates(rows)
+}
+
+func scanTaxRates(rows *sql.Rows) ([]tax.TaxRate, error) {
 	var rates []tax.TaxRate
 	for rows.Next() {
 		var tr tax.TaxRate

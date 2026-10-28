@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/tax"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // mockRateRepo is a test double for tax.RateRepository.
@@ -26,8 +27,14 @@ func (m *mockRateRepo) FindByCountryClassAndStore(_ context.Context, country, cl
 func (m *mockRateRepo) ListByCountry(_ context.Context, _ string) ([]tax.TaxRate, error) {
 	return nil, nil
 }
+func (m *mockRateRepo) ListByClass(_ context.Context, _ string) ([]tax.TaxRate, error) {
+	return nil, nil
+}
 func (m *mockRateRepo) Upsert(_ context.Context, _ *tax.TaxRate) error { return nil }
-func (m *mockRateRepo) Delete(_ context.Context, _ string) error       { return nil }
+func (m *mockRateRepo) CreateIfNotExists(_ context.Context, _ *tax.TaxRate) (bool, error) {
+	return false, nil
+}
+func (m *mockRateRepo) Delete(_ context.Context, _ string) error { return nil }
 
 func taxPricingContext(t *testing.T, currency, country, mode string, items ...pricing.PricingItem) pricing.PricingContext {
 	t.Helper()
@@ -200,6 +207,116 @@ func TestTaxStep_PerVariantClassOverride(t *testing.T) {
 	}
 	if pctx.Items[1].Adjustments[0].Code != "tax.DE.reduced" {
 		t.Errorf("v2 code = %q, want %q", pctx.Items[1].Adjustments[0].Code, "tax.DE.reduced")
+	}
+}
+
+func TestTaxStep_DigitalClass(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:digital:":  {ID: "r2", Country: "DE", Class: "digital", Rate: 1900},
+	}}
+	step := appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(repo, "standard"))
+
+	item1, _ := pricing.NewPricingItem("v-simple", 1, shared.MustNewMoney(10000, "EUR"))
+	item2, _ := pricing.NewPricingItem("v-digital", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item1, item2)
+	pctx.Meta["tax_classes"] = map[string]string{
+		"v-simple":  "standard",
+		"v-digital": "digital",
+	}
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if got := pctx.Items[0].Adjustments[0].Amount.Amount(); got != 1900 {
+		t.Errorf("simple tax = %d, want 1900", got)
+	}
+	if pctx.Items[0].Adjustments[0].Code != "tax.DE.standard" {
+		t.Errorf("simple code = %q, want tax.DE.standard", pctx.Items[0].Adjustments[0].Code)
+	}
+	if got := pctx.Items[1].Adjustments[0].Amount.Amount(); got != 1900 {
+		t.Errorf("digital tax = %d, want 1900", got)
+	}
+	if pctx.Items[1].Adjustments[0].Code != "tax.DE.digital" {
+		t.Errorf("digital code = %q, want tax.DE.digital", pctx.Items[1].Adjustments[0].Code)
+	}
+}
+
+func TestTaxStep_DigitalVsStandardDifferentBPS(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "r1", Country: "DE", Class: tax.TaxClassStandard, Rate: 1900},
+		"DE:digital:":  {ID: "r2", Country: "DE", Class: tax.TaxClassDigital, Rate: 700},
+	}}
+	step := appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(repo, "standard"))
+
+	item1, _ := pricing.NewPricingItem("v-std", 1, shared.MustNewMoney(10000, "EUR"))
+	item2, _ := pricing.NewPricingItem("v-dig", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item1, item2)
+	pctx.Meta["tax_classes"] = map[string]string{
+		"v-std": tax.TaxClassStandard,
+		"v-dig": tax.TaxClassDigital,
+	}
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	stdTax := pctx.Items[0].Adjustments[0].Amount.Amount()
+	digTax := pctx.Items[1].Adjustments[0].Amount.Amount()
+	if stdTax != 1900 {
+		t.Errorf("standard tax = %d, want 1900", stdTax)
+	}
+	if digTax != 700 {
+		t.Errorf("digital tax = %d, want 700", digTax)
+	}
+	if stdTax == digTax {
+		t.Fatal("expected digital and standard tax amounts to differ")
+	}
+}
+
+func TestTaxStep_DigitalMissingRate_FailsClosed(t *testing.T) {
+	// Destination FR has only a DE digital rate — must refuse, not invent 0%.
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:digital:":  {ID: "r1", Country: "DE", Class: tax.TaxClassDigital, Rate: 1900},
+		"FR:standard:": {ID: "r2", Country: "FR", Class: tax.TaxClassStandard, Rate: 2000},
+	}}
+	step := appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(repo, "standard"))
+
+	item, _ := pricing.NewPricingItem("v-dig", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "FR", "exclusive", item)
+	pctx.Meta["tax_classes"] = map[string]string{"v-dig": tax.TaxClassDigital}
+
+	err := step.Apply(context.Background(), &pctx)
+	if err == nil {
+		t.Fatal("expected error when digital rate missing for destination")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("error code: got %v, want validation (%v)", err, apperror.CodeValidation)
+	}
+	if len(pctx.Items[0].Adjustments) != 0 {
+		t.Fatalf("adjustments = %d, want 0 (must not apply 0%% VAT)", len(pctx.Items[0].Adjustments))
+	}
+}
+
+func TestTaxStep_DigitalZeroBPS_FailsClosed(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:digital:": {ID: "r1", Country: "DE", Class: tax.TaxClassDigital, Rate: 0},
+	}}
+	step := appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(repo, "standard"))
+
+	item, _ := pricing.NewPricingItem("v-dig", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item)
+	pctx.Meta["tax_classes"] = map[string]string{"v-dig": tax.TaxClassDigital}
+
+	err := step.Apply(context.Background(), &pctx)
+	if err == nil {
+		t.Fatal("expected error when digital rate is 0 bps")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("error code: got %v, want validation", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 0 {
+		t.Fatalf("adjustments = %d, want 0", len(pctx.Items[0].Adjustments))
 	}
 }
 

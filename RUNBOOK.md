@@ -302,6 +302,37 @@ Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-10
 6. Approve/refund of a return **revokes** grants for those lines (same TX as assignment revoke). Operator consequence: refunded downloadables lose access.
 7. If `order.paid` published but the async issuer failed, there is no durable outbox in this PR — re-deliver the payment webhook / admin paid update / `ApplyStatus(paid)` (they republish `order.paid` on already-completed/already-paid) or call `IssueForOrder`. UNIQUE + IssueIdempotent leave existing rows unchanged (including revoked — paid redelivery does **not** resurrect). Support re-issue is PR-1078. Delivery endpoint is PR-1077. Confirmation email on republish is claimed in `notification_dedupe` `(subject_key, kind=order_confirmed)` as `pending` before enqueue and marked `completed` after success (queue job-id alone is not enough on SQS/RabbitMQ); enqueue failure deletes the pending claim so a later paid signal can retry.
 
+## Digital-goods tax class (PR-1076)
+
+- `downloadable` lines use tax class `digital`; `virtual` and other types (including bundle parents) use `standard`. Cart + checkout share `EnsureTaxClasses` (existing Meta keys are not overwritten).
+- **Release requirement:** run `shopanda migrate` (migration `108` creates `digital` rows from every non-zero `standard` rate, `ON CONFLICT DO NOTHING`). Optionally run seed afterward — TaxSeeder is a second idempotent backfill via `tax.RateRepository` (`ListByClass` + `CreateIfNotExists`). Fail-closed must not ship without migrate-path data.
+- **Fail-closed:** if a line is `digital` and there is no usable `tax_rates` row for the destination country (+ store scope fallback), or the digital row has `rate = 0`, checkout recalculate / pricing returns a **validation error** — it does **not** apply 0% VAT. Intentional 0% VAT must use class `zero`, not a zero-bps `digital` row. Operators must still ensure destination coverage for every country they sell into.
+- **Zero-rate policy:** migration/seed do **not** copy zero-bps `standard` into `digital`. Application `Upsert` of a `standard` rate does **not** create a matching digital row (no Tax settings UI / RateService yet).
+- **After migrate — new destinations:** when you add a new `standard` rate for a country (or store scope) after migration `108`, you must also insert a matching `digital` row. Migrate only backfills rows that exist at migrate time; later standard-only inserts leave downloadable checkout fail-closed for that destination.
+- **Existing `digital` rows with `rate = 0`:** after this release they fail checkout. `UPDATE` the bps, `DELETE` the row (then insert a correct digital rate), or move intentional 0% VAT to class `zero` (and stop using class `digital` for that line).
+- **Hook / Meta override risk:** a trusted hook that pre-sets `tax_classes` for a downloadable to a non-digital class (e.g. `standard`) skips digital fail-closed for that line — treat as trusted-VAT risk.
+- Place of supply at **checkout** is the address country (`tax_country`). Cart tax preview may use the **store** country when no destination is set — not OSS place-of-supply.
+- There is **no Tax settings admin UI** yet. Insert a digital rate with SQL, e.g.:
+
+```sql
+-- Insert digital for a destination (leave existing digital untouched).
+INSERT INTO tax_rates (id, country, class, store_id, rate)
+VALUES (gen_random_uuid(), 'FR', 'digital', '', 2000)
+ON CONFLICT (country, class, store_id) DO NOTHING;
+
+-- Or copy non-zero bps from that country's standard rate (use after adding a new standard destination):
+INSERT INTO tax_rates (id, country, class, store_id, rate)
+SELECT gen_random_uuid(), country, 'digital', store_id, rate
+FROM tax_rates WHERE class = 'standard' AND country = 'FR' AND rate > 0
+ON CONFLICT (country, class, store_id) DO NOTHING;
+
+-- Fix a leftover zero-bps digital row (example: set to standard bps, or DELETE):
+-- UPDATE tax_rates SET rate = 2000 WHERE country = 'FR' AND class = 'digital' AND store_id = '' AND rate = 0;
+-- DELETE FROM tax_rates WHERE country = 'FR' AND class = 'digital' AND store_id = '' AND rate = 0;
+```
+
+- Reverse charge / VAT ID is not implemented. OSS CSV columns are unchanged (PR-534). Plugin tax calculators (e.g. `taxdemo`) ignore `tax_classes` — an operator trap if you expect class-aware rates from a flat plugin. Treat live EU digital VAT as needing tax-domain sign-off; this PR is a seam, not compliance-complete.
+
 ## Admin store credit issuance
 
 - `POST /api/v1/admin/customers/{customerId}/store-credit/issue` mints store credit; gated by the dedicated `customers.store_credit.write` permission (`RoleAdmin` only by default), not `customers.write`.

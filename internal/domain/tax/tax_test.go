@@ -25,6 +25,37 @@ func TestNewTaxClass(t *testing.T) {
 	})
 }
 
+func TestIsKnownClass(t *testing.T) {
+	for _, code := range []string{tax.TaxClassStandard, tax.TaxClassDigital, tax.TaxClassReduced, tax.TaxClassZero} {
+		if !tax.IsKnownClass(code) {
+			t.Errorf("IsKnownClass(%q) = false, want true", code)
+		}
+	}
+	if tax.IsKnownClass("") || tax.IsKnownClass("luxury") {
+		t.Error("empty/unknown codes must not be known")
+	}
+}
+
+func TestMissingRateFailsClosed(t *testing.T) {
+	zeroDigital := &tax.TaxRate{Class: tax.TaxClassDigital, Rate: 0}
+	okDigital := &tax.TaxRate{Class: tax.TaxClassDigital, Rate: 1900}
+	if !tax.MissingRateFailsClosed(tax.TaxClassDigital, nil) {
+		t.Error("digital + nil rate must fail closed")
+	}
+	if !tax.MissingRateFailsClosed(tax.TaxClassDigital, zeroDigital) {
+		t.Error("digital + Rate==0 must fail closed")
+	}
+	if tax.MissingRateFailsClosed(tax.TaxClassDigital, okDigital) {
+		t.Error("digital + positive rate must not fail closed")
+	}
+	if tax.MissingRateFailsClosed(tax.TaxClassStandard, nil) {
+		t.Error("standard + nil must not fail closed (legacy skip-as-zero)")
+	}
+	if tax.MissingRateFailsClosed(tax.TaxClassStandard, &tax.TaxRate{Rate: 0}) {
+		t.Error("standard + Rate==0 must not fail closed")
+	}
+}
+
 func TestNewTaxRate(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		r, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "standard", "", 1900)

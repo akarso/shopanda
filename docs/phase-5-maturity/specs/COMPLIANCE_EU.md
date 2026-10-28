@@ -13,7 +13,7 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 | **WEEE** | Register as producer; display symbol + reg. number; take-back info | Product attributes + store config + PDP/footer templates | **Done (PR-531)** — opt-in `legal.weee_enabled`, WEEE attribute group |
 | **EPR (packaging)** | Report packaging placed on market; registration per member state | Product/variant attributes + CSV export | **Done (PR-532)** — opt-in `legal.epr_enabled`, EPR attribute group |
 | **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Product attributes + PDP templates | **Done (PR-533)** — opt-in `legal.gpsr_enabled`, GPSR attribute group |
-| **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | **Done (PR-534)** — opt-in `legal.oss_enabled`, CSV export helpers |
+| **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | **Done (PR-534)** — opt-in `legal.oss_enabled`, CSV export helpers. **PR-1076** adds a `digital` tax-class seam + fail-closed rate lookup for downloadables — **not** EU digital VAT complete; tax-domain sign-off still required |
 | **E-invoicing (Peppol, etc.)** | Structured invoices in B2G/B2B markets | PDF invoices + credit notes | Future core plugin (out of PR-534 scope) |
 | **Consumer Rights Directive** | Withdrawal period, clear pre-contract info | Order emails, CMS pages (merchant-authored) | Returns workflow (PR-502–503) supports withdrawal handling |
 | **DSA** (marketplaces) | Trader traceability, complaint handling | N/A for single-merchant stores | Marketplace mode explicitly out of scope |
@@ -121,6 +121,28 @@ Shopanda supports **country-based tax rates** and store scoping. Merchants still
 - Export order tax breakdown by destination country (detail + summary CSV)
 - Opt-in store toggle `legal.oss_enabled`
 - E-invoice generation via Peppol as **core plugin**, not mandatory core (still deferred)
+
+### Digital goods tax class seam (PR-1076)
+
+EU electronically supplied services / digital goods generally use the **customer's location** as place of supply (destination country). At **checkout**, Shopanda sets pricing Meta `tax_country` from the address country. **Cart** recalculate may still use the store country when no destination is present — do not treat cart tax preview as OSS place-of-supply.
+
+**What shipped (engineering seam only):**
+
+- Product type `downloadable` → tax class `digital`; `virtual` → `standard` (ESS virtual needs a future opt-in). Other types (including bundle parents of downloadables) use `standard`.
+- Shared `EnsureTaxClasses` fills Meta `tax_classes` on cart + checkout.
+- Missing `digital` rate for the destination **fails closed** (validation error) — never silent 0% VAT. A `digital` row with `rate = 0` is also refused; intentional 0% uses class `zero`.
+- **Operators must run `shopanda migrate`** (migration `108` inserts `digital` from every non-zero `standard` rate, idempotent). Optional seed is a second idempotent backfill — do not rely on seed alone for fail-closed coverage. Operators still need destination-country coverage for markets they sell into. No Tax settings admin UI yet — adjust via SQL (see RUNBOOK).
+- Hook overrides that set a downloadable line to a non-`digital` class can skip fail-closed — trusted-VAT risk (document in RUNBOOK).
+
+**Explicitly not shipped / not claimed done:**
+
+- “EU digital-goods VAT complete” or Track E VAT requirement closed
+- Reverse charge / B2B VAT ID capture
+- OSS return column changes or filing automation beyond PR-534 CSV helpers
+- Admin UI for per-country digital rates
+- Legal determination that a given `virtual` SKU is EU “electronically supplied”
+
+**Tax-domain sign-off required** before live EU digital sales.
 
 ---
 

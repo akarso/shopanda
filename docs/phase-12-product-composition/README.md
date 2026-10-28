@@ -25,12 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1075 are done. Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D (linked products & assignment) is complete through CSV/admin GUI (PR-1073). Track E: PR-1074 (file attachment) + PR-1075 (`DownloadGrant` on `order.paid`). Next: PR-1076 (digital-goods VAT). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048–1076 are done (engineering). Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D (linked products & assignment) is complete through CSV/admin GUI (PR-1073). Track E: PR-1074 (file attachment) + PR-1075 (`DownloadGrant` on `order.paid`) + PR-1076 (tax class seam — not EU digital VAT complete; tax-domain sign-off still required). Next: PR-1077 (storefront download delivery). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1075 done — Track E grants; next PR-1076; ids collide with Phase 11 — use phase folder) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1076 engineering done — Track E tax class seam; VAT sign-off open; next PR-1077; ids collide with Phase 11 — use phase folder) |
 | Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |

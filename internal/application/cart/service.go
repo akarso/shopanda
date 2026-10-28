@@ -768,6 +768,9 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	// leaf check cannot reuse a sibling line's parent.
 	priceCtx := catalog.WithIncludeNonActiveProducts(ctx)
 	priceCtx = catalog.WithPurchaseAssignments(priceCtx, purchaseAssignments(ctx, c))
+	if err := s.ensureTaxClasses(priceCtx, c, pctx.Meta); err != nil {
+		return err
+	}
 	if err := s.pipeline.Execute(priceCtx, &pctx); err != nil {
 		if customer, ok := s.bundlePriceCustomerError(priceCtx, err); ok {
 			return customer
@@ -785,6 +788,47 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		}
 	}
 
+	return nil
+}
+
+// ensureTaxClasses fills Meta["tax_classes"] (variantID → class) from product
+// type via shared appPricing.EnsureTaxClasses. Existing keys (hooks /
+// explicit overrides) are left untouched; empty/unknown overrides error.
+func (s *Service) ensureTaxClasses(ctx context.Context, c *domainCart.Cart, meta map[string]interface{}) error {
+	lines := make([]appPricing.LineTaxClass, 0, len(c.Items))
+	productsByID := make(map[string]*catalog.Product)
+	overrides := appPricing.TaxClassesFromMeta(meta)
+	for _, item := range c.Items {
+		// Hook / explicit override already present — skip catalog lookup.
+		if overrides != nil {
+			if _, ok := overrides[item.VariantID]; ok {
+				lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID})
+				continue
+			}
+		}
+		v, err := s.variants.FindByID(ctx, item.VariantID)
+		if err != nil {
+			return fmt.Errorf("cart service: tax class: lookup variant %q: %w", item.VariantID, err)
+		}
+		var typ catalog.Type
+		if v != nil {
+			p, ok := productsByID[v.ProductID]
+			if !ok {
+				p, err = s.products.FindByID(ctx, v.ProductID)
+				if err != nil {
+					return fmt.Errorf("cart service: tax class: lookup product %q: %w", v.ProductID, err)
+				}
+				productsByID[v.ProductID] = p
+			}
+			if p != nil {
+				typ = p.Type
+			}
+		}
+		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: typ})
+	}
+	if err := appPricing.EnsureTaxClasses(meta, lines); err != nil {
+		return err
+	}
 	return nil
 }
 

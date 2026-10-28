@@ -23,7 +23,12 @@ func ensureTaxRatesTable(t *testing.T, db *sql.DB) {
 
 func mustNewTaxRate(t *testing.T, country, class string, rate int) tax.TaxRate {
 	t.Helper()
-	tr, err := tax.NewTaxRate(id.New(), country, class, "", rate)
+	return mustNewTaxRateStore(t, country, class, "", rate)
+}
+
+func mustNewTaxRateStore(t *testing.T, country, class, storeID string, rate int) tax.TaxRate {
+	t.Helper()
+	tr, err := tax.NewTaxRate(id.New(), country, class, storeID, rate)
 	if err != nil {
 		t.Fatalf("NewTaxRate: %v", err)
 	}
@@ -153,6 +158,60 @@ func TestTaxRateRepo_CreateIfNotExists(t *testing.T) {
 	}
 }
 
+func TestTaxRateRepo_ListByClass(t *testing.T) {
+	db := testDB(t)
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
+
+	repo, err := postgres.NewTaxRateRepo(db)
+	if err != nil {
+		t.Fatalf("NewTaxRateRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	// Two countries × two store scopes for digital; noise from other classes.
+	rows := []tax.TaxRate{
+		mustNewTaxRateStore(t, "DE", tax.TaxClassDigital, "", 1900),
+		mustNewTaxRateStore(t, "DE", tax.TaxClassDigital, "store-a", 1600),
+		mustNewTaxRateStore(t, "FR", tax.TaxClassDigital, "", 2000),
+		mustNewTaxRateStore(t, "FR", tax.TaxClassDigital, "store-b", 2100),
+		mustNewTaxRate(t, "DE", tax.TaxClassStandard, 1900),
+		mustNewTaxRate(t, "FR", tax.TaxClassReduced, 550),
+	}
+	for i := range rows {
+		if err := repo.Upsert(ctx, &rows[i]); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+
+	list, err := repo.ListByClass(ctx, tax.TaxClassDigital)
+	if err != nil {
+		t.Fatalf("ListByClass: %v", err)
+	}
+	if len(list) != 4 {
+		t.Fatalf("ListByClass digital: got %d, want 4", len(list))
+	}
+	want := []struct {
+		country, store string
+		rate           int
+	}{
+		{"DE", "", 1900},
+		{"DE", "store-a", 1600},
+		{"FR", "", 2000},
+		{"FR", "store-b", 2100},
+	}
+	for i, w := range want {
+		if list[i].Country != w.country || list[i].StoreID != w.store || list[i].Rate != w.rate {
+			t.Errorf("list[%d] = {%s,%s,%d}, want {%s,%s,%d}",
+				i, list[i].Country, list[i].StoreID, list[i].Rate, w.country, w.store, w.rate)
+		}
+		if list[i].Class != tax.TaxClassDigital {
+			t.Errorf("list[%d].Class = %q, want digital", i, list[i].Class)
+		}
+	}
+}
+
 func TestTaxRateRepo_ListByCountry(t *testing.T) {
 	db := testDB(t)
 	ensureTaxRatesTable(t, db)
@@ -271,5 +330,61 @@ func TestTaxRateRepo_CreateIfNotExists_Nil(t *testing.T) {
 
 	if _, err := repo.CreateIfNotExists(context.Background(), nil); err == nil {
 		t.Fatal("expected error for nil rate")
+	}
+}
+
+// TestTaxRateRepo_Migration108StyleInsert mirrors migrations/108: copy every
+// non-zero standard rate into digital without clobbering an existing digital row
+// or inventing digital from zero-bps standard.
+func TestTaxRateRepo_Migration108StyleInsert(t *testing.T) {
+	db := testDB(t)
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
+
+	repo, err := postgres.NewTaxRateRepo(db)
+	if err != nil {
+		t.Fatalf("NewTaxRateRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	stdDE := mustNewTaxRate(t, "DE", tax.TaxClassStandard, 1900)
+	stdFR := mustNewTaxRateStore(t, "FR", tax.TaxClassStandard, "store-1", 2000)
+	stdLU := mustNewTaxRate(t, "LU", tax.TaxClassStandard, 0)
+	existingDigital := mustNewTaxRate(t, "DE", tax.TaxClassDigital, 700)
+	for _, r := range []*tax.TaxRate{&stdDE, &stdFR, &stdLU, &existingDigital} {
+		if err := repo.Upsert(ctx, r); err != nil {
+			t.Fatalf("Upsert setup: %v", err)
+		}
+	}
+
+	mustExec(t, db, `
+INSERT INTO tax_rates (id, country, class, store_id, rate)
+SELECT gen_random_uuid(), country, 'digital', store_id, rate
+FROM tax_rates
+WHERE class = 'standard'
+  AND rate > 0
+ON CONFLICT (country, class, store_id) DO NOTHING`)
+
+	gotDE, err := repo.FindByCountryClassAndStore(ctx, "DE", tax.TaxClassDigital, "")
+	if err != nil {
+		t.Fatalf("Find DE digital: %v", err)
+	}
+	if gotDE == nil || gotDE.Rate != 700 {
+		t.Fatalf("DE digital clobbered: %+v", gotDE)
+	}
+	gotFR, err := repo.FindByCountryClassAndStore(ctx, "FR", tax.TaxClassDigital, "store-1")
+	if err != nil {
+		t.Fatalf("Find FR digital: %v", err)
+	}
+	if gotFR == nil || gotFR.Rate != 2000 {
+		t.Fatalf("FR digital = %+v, want rate 2000", gotFR)
+	}
+	gotLU, err := repo.FindByCountryClassAndStore(ctx, "LU", tax.TaxClassDigital, "")
+	if err != nil {
+		t.Fatalf("Find LU digital: %v", err)
+	}
+	if gotLU != nil {
+		t.Fatalf("zero-bps standard must not create digital, got %+v", gotLU)
 	}
 }
