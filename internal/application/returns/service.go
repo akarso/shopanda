@@ -71,6 +71,12 @@ type grantHooks interface {
 	WithTx(tx *sql.Tx) *downloadapp.Service
 }
 
+// grantIssuer retries DownloadGrant issuance after a blocking return is
+// rejected or cancelled (PR-1075). *downloadapp.Issuer satisfies it.
+type grantIssuer interface {
+	IssueForOrder(ctx context.Context, orderID string) (int, error)
+}
+
 // Service orchestrates the return (RMA) workflow.
 type Service struct {
 	returns     domainReturns.Repository
@@ -84,6 +90,7 @@ type Service struct {
 	txStarter   TxStarter
 	assignments assignmentHooks
 	grants      grantHooks
+	issuer      grantIssuer
 }
 
 // WithTxStarter wires the transaction used by Receive. Without it, Receive
@@ -126,6 +133,34 @@ func (s *Service) WithDownloadGrants(grants *downloadapp.Service) *Service {
 		s.grants = grants
 	}
 	return s
+}
+
+// WithDownloadGrantIssuer hooks grant re-issuance after Reject/Cancel so
+// lines skipped while a return was requested still get grants once the
+// blocking return is gone. Nil skips retry (tests). Production wires the
+// issuer. Failures are logged — they must not undo a closed return.
+func (s *Service) WithDownloadGrantIssuer(issuer *downloadapp.Issuer) *Service {
+	if s == nil {
+		return nil
+	}
+	if issuer == nil {
+		s.issuer = nil
+	} else {
+		s.issuer = issuer
+	}
+	return s
+}
+
+func (s *Service) retryDownloadGrantsAfterReturnClosed(ctx context.Context, orderID string) {
+	if s == nil || s.issuer == nil {
+		return
+	}
+	if _, err := s.issuer.IssueForOrder(ctx, orderID); err != nil {
+		s.log.Warn("returns: download grant retry after return closed failed", map[string]interface{}{
+			"order_id": orderID,
+			"error":    err.Error(),
+		})
+	}
 }
 
 // AssertNotOnOpenReturn fails when unitID appears on a return that still
@@ -344,6 +379,8 @@ func (s *Service) Reject(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRejected, *ret)
+	// Requested returns block grant issuance; retry now that the block is gone.
+	s.retryDownloadGrantsAfterReturnClosed(ctx, ret.OrderID)
 	return ret, nil
 }
 
@@ -360,6 +397,8 @@ func (s *Service) Cancel(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnCancelled, *ret)
+	// Requested returns block grant issuance; retry now that the block is gone.
+	s.retryDownloadGrantsAfterReturnClosed(ctx, ret.OrderID)
 	return ret, nil
 }
 

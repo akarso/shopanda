@@ -73,6 +73,17 @@ func (s *Service) BindsTx() bool {
 	return ok
 }
 
+// WithTxRepository returns the grant repository bound to tx when the adapter
+// supports WithTx. Used by media.Delete so purge + live count + asset row
+// delete share one transaction.
+func (s *Service) WithTxRepository(tx *sql.Tx) domain.Repository {
+	bound := s.WithTx(tx)
+	if bound == nil {
+		return nil
+	}
+	return bound.grants
+}
+
 // Issue inserts a new grant. A duplicate (order_item_id, asset_id) is a
 // conflict — callers that need idempotent create should use IssueIdempotent.
 func (s *Service) Issue(ctx context.Context, orderItemID, customerID, assetID string, expiresAt time.Time, downloadLimit int) (*domain.DownloadGrant, error) {

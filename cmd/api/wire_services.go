@@ -401,6 +401,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
 		notification.WithInvoices(repos.invoiceRepo),
 		notification.WithPDFRenderer(invoicePDFRenderer),
+		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 	)
 
 	// Media storage.
@@ -862,7 +863,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log).
 		WithTxStarter(conn).
 		WithAssignmentFlow(assignmentFlow).
-		WithDownloadGrants(downloadGrantService)
+		WithDownloadGrants(downloadGrantService).
+		WithDownloadGrantIssuer(downloadGrantIssuer)
 	assignmentFlow.WithTxStarter(conn).WithOpenReturnChecker(returnService)
 	// Skip grant issuance for lines on open/refunded returns (order.paid heal).
 	downloadGrantIssuer.WithBlockingReturnChecker(returnService)
@@ -892,7 +894,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log).
 		WithAssetAttachments(repos.downloadableFileRepo).
-		WithAssetGrants(downloadGrantService)
+		WithAssetGrants(downloadGrantService).
+		WithTxStarter(conn)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
 		for name := range thumbCfg {

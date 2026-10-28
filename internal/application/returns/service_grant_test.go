@@ -9,6 +9,7 @@ import (
 
 	downloadapp "github.com/akarso/shopanda/internal/application/download"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domain "github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -222,5 +223,179 @@ func TestService_RequestReturn_RejectsPartialDownloadable(t *testing.T) {
 	})
 	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("partial downloadable return = %v, want validation", err)
+	}
+}
+
+type grantIssueVariants map[string]*catalog.Variant
+
+func (m grantIssueVariants) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return m[id], nil
+}
+
+type grantIssueProducts map[string]*catalog.Product
+
+func (m grantIssueProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return m[id], nil
+}
+
+type grantIssueFiles map[string][]catalog.DownloadableFile
+
+func (m grantIssueFiles) ListByProductID(_ context.Context, productID string) ([]catalog.DownloadableFile, error) {
+	if rows, ok := m[productID]; ok {
+		return rows, nil
+	}
+	return []catalog.DownloadableFile{}, nil
+}
+
+func newDownloadIssuerForReturn(t *testing.T, ord *order.Order, grantSvc *downloadapp.Service, returns *returnsApp.Service) *downloadapp.Issuer {
+	t.Helper()
+	productID := "dl-prod"
+	return downloadapp.NewIssuer(
+		&memOrderRepo{order: ord},
+		grantIssueVariants{"dl-var": {ID: "dl-var", ProductID: productID, SKU: "SKU-DL", Name: "Download"}},
+		grantIssueProducts{productID: {ID: productID, Type: catalog.TypeDownloadable, Status: catalog.StatusActive}},
+		grantIssueFiles{productID: {{ProductID: productID, AssetID: "asset-dl"}}},
+		nil,
+		grantSvc,
+		domain.Defaults{Expiry: time.Hour, DownloadLimit: 3},
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB()).WithBlockingReturnChecker(returns)
+}
+
+func TestService_Reject_RetriesSkippedGrantIssuance(t *testing.T) {
+	ord := paidDownloadableOrder(t, 1)
+	grantRepo := newMemGrantRepoTX()
+	grantSvc := downloadapp.NewService(grantRepo, nil)
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	pay := completedPayment(t, ord.ID)
+	svc := returnsApp.NewService(
+		newMemReturnRepo(),
+		&memOrderRepo{order: ord},
+		&memStockRepo{qty: map[string]int{}},
+		memVariantRepo{},
+		&memPaymentRepo{payment: pay},
+		&stubRefunder{},
+		bus,
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB())
+	issuer := newDownloadIssuerForReturn(t, ord, grantSvc, svc)
+	svc.WithDownloadGrantIssuer(issuer)
+
+	orderItemID := domain.OrderItemID(ord.ID, "dl-var")
+	ret, err := svc.RequestReturn(context.Background(), ord.ID, "c1", "change of mind", []returnsApp.RequestLine{
+		{VariantID: "dl-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	n, err := issuer.IssueForOrder(context.Background(), ord.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("IssueForOrder during requested return n=%d err=%v, want skip", n, err)
+	}
+
+	if _, err := svc.Reject(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Reject: %v", err)
+	}
+	rows, err := grantSvc.ListByOrderItem(context.Background(), orderItemID)
+	if err != nil {
+		t.Fatalf("ListByOrderItem: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("after Reject want 1 grant, got %d", len(rows))
+	}
+}
+
+func TestService_Cancel_RetriesSkippedGrantIssuance(t *testing.T) {
+	ord := paidDownloadableOrder(t, 1)
+	grantRepo := newMemGrantRepoTX()
+	grantSvc := downloadapp.NewService(grantRepo, nil)
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	pay := completedPayment(t, ord.ID)
+	svc := returnsApp.NewService(
+		newMemReturnRepo(),
+		&memOrderRepo{order: ord},
+		&memStockRepo{qty: map[string]int{}},
+		memVariantRepo{},
+		&memPaymentRepo{payment: pay},
+		&stubRefunder{},
+		bus,
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB())
+	issuer := newDownloadIssuerForReturn(t, ord, grantSvc, svc)
+	svc.WithDownloadGrantIssuer(issuer)
+
+	orderItemID := domain.OrderItemID(ord.ID, "dl-var")
+	ret, err := svc.RequestReturn(context.Background(), ord.ID, "c1", "cancel me", []returnsApp.RequestLine{
+		{VariantID: "dl-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	n, err := issuer.IssueForOrder(context.Background(), ord.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("IssueForOrder during requested return n=%d err=%v, want skip", n, err)
+	}
+
+	if _, err := svc.Cancel(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	rows, err := grantSvc.ListByOrderItem(context.Background(), orderItemID)
+	if err != nil {
+		t.Fatalf("ListByOrderItem: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("after Cancel want 1 grant, got %d", len(rows))
+	}
+}
+
+func TestService_Refunded_StillBlocksGrantIssuance(t *testing.T) {
+	ord := paidDownloadableOrder(t, 1)
+	grantRepo := newMemGrantRepoTX()
+	grantSvc := downloadapp.NewService(grantRepo, nil)
+	orderItemID := domain.OrderItemID(ord.ID, "dl-var")
+	if _, err := grantSvc.Issue(context.Background(), orderItemID, "c1", "asset-dl", time.Now().UTC().Add(24*time.Hour), 5); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	pay := completedPayment(t, ord.ID)
+	svc := returnsApp.NewService(
+		newMemReturnRepo(),
+		&memOrderRepo{order: ord},
+		&memStockRepo{qty: map[string]int{}},
+		memVariantRepo{},
+		&memPaymentRepo{payment: pay},
+		&stubRefunder{},
+		bus,
+		logger.NewWithWriter(io.Discard, "info"),
+	).WithTxStarter(returnsFakeTxDB()).WithDownloadGrants(grantSvc)
+	issuer := newDownloadIssuerForReturn(t, ord, grantSvc, svc)
+
+	ret, err := svc.RequestReturn(context.Background(), ord.ID, "c1", "refund", []returnsApp.RequestLine{
+		{VariantID: "dl-var", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	if _, err := svc.Approve(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if _, err := svc.Refund(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+
+	n, err := issuer.IssueForOrder(context.Background(), ord.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("IssueForOrder after refund n=%d err=%v, want skip", n, err)
+	}
+	rows, err := grantSvc.ListByOrderItem(context.Background(), orderItemID)
+	if err != nil {
+		t.Fatalf("ListByOrderItem: %v", err)
+	}
+	if len(rows) != 1 || !rows[0].Expired(time.Now().UTC()) {
+		t.Fatalf("refunded line must keep revoked grant only: %+v", rows)
 	}
 }

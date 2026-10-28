@@ -35,6 +35,7 @@ type serveRepos struct {
 	downloadableFileRepo          *postgres.DownloadableFileRepo
 	downloadGrantRepo             *postgres.DownloadGrantRepo
 	downloadableGrantSettingsRepo *postgres.DownloadableGrantSettingsRepo
+	notificationDedupeRepo        *postgres.NotificationDedupeRepo
 	productAssignmentRepo         *postgres.ProductAssignmentRepo
 	taxRateRepo                   *postgres.TaxRateRepo
 	promotionRepo                 *postgres.PromotionRepo
@@ -191,6 +192,13 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	// downloadGrantRepo + settings: opened at serve start. wire_services
 	// constructs DownloadGrant Service + order.paid Issuer (PR-1075).
 	// Delivery HTTP is PR-1077; admin grant HTTP is PR-1078.
+
+	repos.notificationDedupeRepo, err = postgres.NewNotificationDedupeRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("notificationDedupeRepo", err)
+	}
+	// notificationDedupeRepo: order confirmation email claim store so
+	// order.paid republish does not depend on queue-driver job-id PK.
 
 	repos.productAssignmentRepo, err = postgres.NewProductAssignmentRepo(conn)
 	if err != nil {

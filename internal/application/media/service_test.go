@@ -3,11 +3,15 @@ package media
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
+	domainDownload "github.com/akarso/shopanda/internal/domain/download"
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -261,6 +265,147 @@ func (m mockAssetGrants) CountByAssetID(context.Context, string) (int, error) {
 	return m.count, m.err
 }
 
+// trackingGrantGate tracks expired-row purge so tests can assert history
+// survives a rejected Delete (live grants still present).
+type trackingGrantGate struct {
+	live    int
+	expired int
+	purged  int
+}
+
+func (g *trackingGrantGate) CountByAssetID(context.Context, string) (int, error) {
+	return g.live, nil
+}
+
+func (g *trackingGrantGate) DeleteExpiredOrRevokedByAssetID(context.Context, string) (int, error) {
+	n := g.expired
+	g.purged += n
+	g.expired = 0
+	return n, nil
+}
+
+// txGrantGate implements grantTXBinder for the preferred TX purge path.
+// Rollback restores expired rows via mediaFakeTx hooks.
+type txGrantGate struct {
+	mu      sync.Mutex
+	live    int
+	expired int
+	snapshotExpired int
+}
+
+func (g *txGrantGate) CountByAssetID(context.Context, string) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.live, nil
+}
+
+func (g *txGrantGate) DeleteExpiredOrRevokedByAssetID(context.Context, string) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := g.expired
+	g.expired = 0
+	return n, nil
+}
+
+func (g *txGrantGate) BindsTx() bool { return true }
+
+func (g *txGrantGate) WithTxRepository(tx *sql.Tx) domainDownload.Repository {
+	g.mu.Lock()
+	g.snapshotExpired = g.expired
+	snap := g.snapshotExpired
+	g.mu.Unlock()
+	mediaTxOnRollback(func() {
+		g.mu.Lock()
+		g.expired = snap
+		g.mu.Unlock()
+	})
+	return g
+}
+
+func (g *txGrantGate) Insert(context.Context, *domainDownload.DownloadGrant) error {
+	return nil
+}
+func (g *txGrantGate) Update(context.Context, *domainDownload.DownloadGrant) error {
+	return nil
+}
+func (g *txGrantGate) UpdateCount(context.Context, string, int, int) error { return nil }
+func (g *txGrantGate) FindByID(context.Context, string) (*domainDownload.DownloadGrant, error) {
+	return nil, nil
+}
+func (g *txGrantGate) FindByOrderItemAndAsset(context.Context, string, string) (*domainDownload.DownloadGrant, error) {
+	return nil, nil
+}
+func (g *txGrantGate) ListByCustomerID(context.Context, string) ([]domainDownload.DownloadGrant, error) {
+	return nil, nil
+}
+func (g *txGrantGate) ListByOrderItemID(context.Context, string) ([]domainDownload.DownloadGrant, error) {
+	return nil, nil
+}
+
+type txAssetRepo struct {
+	*mockAssetRepo
+}
+
+func (r *txAssetRepo) WithTx(*sql.Tx) domainMedia.AssetRepository { return r }
+
+var (
+	mediaFakeTxOnce   sync.Once
+	mediaFakeTxDBConn *sql.DB
+	mediaTxHookMu     sync.Mutex
+	mediaTxHooks      []func()
+)
+
+func init() {
+	sql.Register("shopanda-media-fake-tx", mediaFakeTxDriver{})
+}
+
+type mediaFakeTxDriver struct{}
+
+func (mediaFakeTxDriver) Open(string) (driver.Conn, error) { return mediaFakeTxConn{}, nil }
+
+type mediaFakeTxConn struct{}
+
+func (mediaFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (mediaFakeTxConn) Close() error                        { return nil }
+func (mediaFakeTxConn) Begin() (driver.Tx, error)           { return mediaFakeTx{}, nil }
+
+type mediaFakeTx struct{}
+
+func (mediaFakeTx) Commit() error {
+	mediaTxHookMu.Lock()
+	mediaTxHooks = nil
+	mediaTxHookMu.Unlock()
+	return nil
+}
+
+func (mediaFakeTx) Rollback() error {
+	mediaTxHookMu.Lock()
+	hooks := mediaTxHooks
+	mediaTxHooks = nil
+	mediaTxHookMu.Unlock()
+	for _, h := range hooks {
+		h()
+	}
+	return nil
+}
+
+func mediaTxOnRollback(h func()) {
+	mediaTxHookMu.Lock()
+	mediaTxHooks = append(mediaTxHooks, h)
+	mediaTxHookMu.Unlock()
+}
+
+func mediaFakeTxDB() *sql.DB {
+	mediaFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-media-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		mediaFakeTxDBConn = db
+	})
+	return mediaFakeTxDBConn
+}
+
 func TestDelete_NilAttachmentsFailsClosed(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
@@ -377,6 +522,60 @@ func TestDelete_DeletesAssetRowBeforeBlob(t *testing.T) {
 	}
 	if len(order) < 2 || order[0] != "row:asset-1" || !strings.HasPrefix(order[1], "blob:") {
 		t.Fatalf("order = %#v, want row then blob", order)
+	}
+}
+
+func TestDelete_LiveGrantRejects_PreservesExpiredRows(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	grants := &trackingGrantGate{live: 1, expired: 2}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 0}).
+		WithAssetGrants(grants)
+
+	err = svc.Delete(context.Background(), "asset-1")
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want validation for live grant", err)
+	}
+	if grants.expired != 2 || grants.purged != 0 {
+		t.Fatalf("expired=%d purged=%d, want expired history preserved (no purge)", grants.expired, grants.purged)
+	}
+	if len(repo.deleted) != 0 || len(storage.deleted) != 0 {
+		t.Fatalf("delete must not proceed: repo=%#v storage=%#v", repo.deleted, storage.deleted)
+	}
+}
+
+func TestDelete_LiveGrantInTx_RollsBackPurge(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &txAssetRepo{mockAssetRepo: &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}}
+	grants := &txGrantGate{live: 1, expired: 3}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 0}).
+		WithAssetGrants(grants).
+		WithTxStarter(mediaFakeTxDB())
+
+	err = svc.Delete(context.Background(), "asset-1")
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want validation for live grant", err)
+	}
+	grants.mu.Lock()
+	expired := grants.expired
+	grants.mu.Unlock()
+	if expired != 3 {
+		t.Fatalf("expired=%d after rejected Delete, want 3 (TX rolled back purge)", expired)
+	}
+	if len(repo.deleted) != 0 {
+		t.Fatalf("asset row deleted=%#v, want none", repo.deleted)
 	}
 }
 

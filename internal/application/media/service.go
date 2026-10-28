@@ -3,12 +3,14 @@ package media
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	domainDownload "github.com/akarso/shopanda/internal/domain/download"
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -39,12 +41,28 @@ type assetGrantCounter interface {
 	CountByAssetID(ctx context.Context, assetID string) (int, error)
 }
 
+// TxStarter begins the transaction that wraps grant purge + live count +
+// asset row delete (PR-1075). *sql.DB satisfies it.
+type TxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+// grantTXBinder binds grant purge/count into the same TX as assets.Delete.
+// *download.Service satisfies it when the postgres grant repo supports WithTx.
+type grantTXBinder interface {
+	CountByAssetID(ctx context.Context, assetID string) (int, error)
+	DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error)
+	BindsTx() bool
+	WithTxRepository(tx *sql.Tx) domainDownload.Repository
+}
+
 // Service orchestrates media use cases.
 type Service struct {
 	storage          domainMedia.Storage
 	assets           domainMedia.AssetRepository
 	assetAttachments assetAttachmentCounter
 	assetGrants      assetGrantCounter
+	txStarter        TxStarter
 	bus              *event.Bus
 	log              logger.Logger
 	processor        domainMedia.ImageProcessor
@@ -108,6 +126,18 @@ func (s *Service) WithAssetAttachments(c assetAttachmentCounter) *Service {
 // download_grants FK 23503 distinctly from attachments.
 func (s *Service) WithAssetGrants(c assetGrantCounter) *Service {
 	s.assetGrants = c
+	return s
+}
+
+// WithTxStarter wires the transaction used by Delete for grant purge +
+// live count + asset row delete. Without it (or without TX-capable repos),
+// Delete counts live grants first so a rejected delete does not erase
+// expired/revoked history.
+func (s *Service) WithTxStarter(starter TxStarter) *Service {
+	if s == nil {
+		return nil
+	}
+	s.txStarter = starter
 	return s
 }
 
@@ -355,25 +385,9 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 	if s.assetGrants == nil {
 		return apperror.Internal("media: asset grant counter is not configured")
 	}
-	// Purge expired/revoked grant rows before the live count + RESTRICT delete.
-	// CountByAssetID is live-only; FK RESTRICT still sees non-live rows.
-	if purger, ok := s.assetGrants.(interface {
-		DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error)
-	}); ok {
-		if _, err := purger.DeleteExpiredOrRevokedByAssetID(ctx, asset.ID); err != nil {
-			return fmt.Errorf("media: purge expired/revoked grants: %w", err)
-		}
-	}
-	gn, err := s.assetGrants.CountByAssetID(ctx, asset.ID)
-	if err != nil {
-		return fmt.Errorf("media: count asset grants: %w", err)
-	}
-	if gn > 0 {
-		return apperror.Validation("asset is referenced by a download grant")
-	}
-
-	// Row first: RESTRICT fails closed if a join appeared after the count.
-	if err := s.assets.Delete(ctx, asset.ID); err != nil {
+	// Purge + live count + asset row delete: one TX when possible so a
+	// live-grant rejection rolls back the expired/revoked purge.
+	if err := s.deleteAssetRowPurgingGrants(ctx, asset.ID); err != nil {
 		return err
 	}
 
@@ -419,6 +433,63 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 	}
 
 	return nil
+}
+
+// deleteAssetRowPurgingGrants removes expired/revoked grant rows then the
+// assets row. Preferred path: one TX (purge → live count → delete) so a
+// live-grant rejection rolls the purge back. Fallback (no TX wiring): count
+// live first so rejected deletes never erase grant history.
+func (s *Service) deleteAssetRowPurgingGrants(ctx context.Context, assetID string) error {
+	binder, canBind := s.assetGrants.(grantTXBinder)
+	assetsTX, assetsBind := s.assets.(interface {
+		WithTx(tx *sql.Tx) domainMedia.AssetRepository
+	})
+	if s.txStarter != nil && canBind && binder.BindsTx() && assetsBind {
+		tx, err := s.txStarter.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("media: begin tx: %w", err)
+		}
+		defer tx.Rollback()
+
+		grants := binder.WithTxRepository(tx)
+		if grants == nil {
+			return apperror.Internal("media: grant repository missing after WithTx")
+		}
+		if _, err := grants.DeleteExpiredOrRevokedByAssetID(ctx, assetID); err != nil {
+			return fmt.Errorf("media: purge expired/revoked grants: %w", err)
+		}
+		gn, err := grants.CountByAssetID(ctx, assetID)
+		if err != nil {
+			return fmt.Errorf("media: count asset grants: %w", err)
+		}
+		if gn > 0 {
+			return apperror.Validation("asset is referenced by a download grant")
+		}
+		if err := assetsTX.WithTx(tx).Delete(ctx, assetID); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("media: commit asset delete: %w", err)
+		}
+		return nil
+	}
+
+	// Fallback: refuse before purge when live grants exist.
+	gn, err := s.assetGrants.CountByAssetID(ctx, assetID)
+	if err != nil {
+		return fmt.Errorf("media: count asset grants: %w", err)
+	}
+	if gn > 0 {
+		return apperror.Validation("asset is referenced by a download grant")
+	}
+	if purger, ok := s.assetGrants.(interface {
+		DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error)
+	}); ok {
+		if _, err := purger.DeleteExpiredOrRevokedByAssetID(ctx, assetID); err != nil {
+			return fmt.Errorf("media: purge expired/revoked grants: %w", err)
+		}
+	}
+	return s.assets.Delete(ctx, assetID)
 }
 
 func (s *Service) assetView(asset domainMedia.Asset) AssetView {
