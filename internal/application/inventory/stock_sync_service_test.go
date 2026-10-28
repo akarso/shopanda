@@ -233,27 +233,27 @@ func (stockSyncProductRepo) FindByCategoryID(context.Context, string, int, int) 
 func (stockSyncProductRepo) Create(context.Context, *catalog.Product) error { return nil }
 func (stockSyncProductRepo) Update(context.Context, *catalog.Product) error { return nil }
 func (r stockSyncProductRepo) WithTx(*sql.Tx) catalog.ProductRepository     { return r }
-func (r stockSyncProductRepo) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+func (r stockSyncProductRepo) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
 	if r.lockOverride != nil {
 		if p, ok := r.lockOverride[id]; ok {
 			if p == nil {
-				return "", "", "", false, apperror.NotFound("product not found")
+				return "", "", "", false, "", apperror.NotFound("product not found")
 			}
-			return p.Type, catalog.PricingModeFixed, p.StockMode, p.ExplodeOrderLines, nil
+			return p.Type, catalog.PricingModeFixed, p.StockMode, p.ExplodeOrderLines, p.Status, nil
 		}
 	}
 	p, err := r.FindByID(context.Background(), id)
 	if err != nil {
-		return "", "", "", false, err
+		return "", "", "", false, "", err
 	}
 	if p == nil {
-		return "", "", "", false, apperror.NotFound("product not found")
+		return "", "", "", false, "", apperror.NotFound("product not found")
 	}
 	mode := p.StockMode
 	if mode == "" {
 		mode = catalog.StockModeFixed
 	}
-	return p.Type, catalog.PricingModeFixed, mode, p.ExplodeOrderLines, nil
+	return p.Type, catalog.PricingModeFixed, mode, p.ExplodeOrderLines, p.Status, nil
 }
 
 func newTestStockSync(variants *stockSyncVariantRepo, stock *stockSyncStockRepo) *StockSyncService {

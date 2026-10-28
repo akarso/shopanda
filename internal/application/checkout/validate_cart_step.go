@@ -21,13 +21,14 @@ import (
 // order — PR-1050). Cart add previews the same quantity; this step is
 // the checkout gate.
 type ValidateCartStep struct {
-	variants        catalog.VariantRepository
-	products        catalog.ProductRepository
-	components      catalog.BundleComponentRepository
-	stock           inventory.StockRepository
-	visibilityFacts catalog.VisibilityFactsSource
-	visibilityOpts  catalog.VisibilityOptions
-	assignments     *assignmentapp.Flow
+	variants          catalog.VariantRepository
+	products          catalog.ProductRepository
+	components        catalog.BundleComponentRepository
+	stock             inventory.StockRepository
+	visibilityFacts   catalog.VisibilityFactsSource
+	visibilityOpts    catalog.VisibilityOptions
+	downloadableFiles catalogapp.DownloadableFileCounter
+	assignments       *assignmentapp.Flow
 }
 
 // NewValidateCartStep creates a ValidateCartStep.
@@ -75,6 +76,38 @@ func (s *ValidateCartStep) WithAssignmentFlow(flow *assignmentapp.Flow) *Validat
 	}
 	s.assignments = flow
 	return s
+}
+
+// WithDownloadableFiles wires the attachment count used to reject checkout of
+// a downloadable product with zero files (PR-1074). Independent of visibility
+// enforce, bypass, and a nil facts source. Nil fails closed for TypeDownloadable
+// and required downloadable bundle leaves.
+func (s *ValidateCartStep) WithDownloadableFiles(files catalogapp.DownloadableFileCounter) *ValidateCartStep {
+	if s == nil {
+		return nil
+	}
+	s.downloadableFiles = files
+	return s
+}
+
+func (s *ValidateCartStep) ensureDownloadableHasFile(ctx context.Context, p *catalog.Product, variantID string) error {
+	if p == nil || p.Type != catalog.TypeDownloadable {
+		return nil
+	}
+	if s.downloadableFiles == nil {
+		return apperror.Internal("validate_cart: downloadable file repository is not configured")
+	}
+	n, err := s.downloadableFiles.CountByProductID(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("validate_cart: count downloadable files: %w", err)
+	}
+	if catalog.DownloadableMissingFileBlocksPurchase(p, n) {
+		return apperror.Validation(fmt.Sprintf(
+			"validate_cart: product for variant %s: %s",
+			variantID, catalog.DownloadableMissingFileNotPurchasableMessage,
+		))
+	}
+	return nil
 }
 
 func (s *ValidateCartStep) Name() string { return "validate_cart" }
@@ -196,6 +229,9 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 				item.VariantID, catalog.RequiresLinkedParentNotPurchasableMessage,
 			))
 		}
+		if err := s.ensureDownloadableHasFile(ctx, p, item.VariantID); err != nil {
+			return err
+		}
 		if s.assignments != nil && p != nil && (assignment.ParentProductID != "" || assignment.ParentUnitID != "") {
 			if err := s.checkAssignmentPurchase(ctx, cctx.CustomerID, p, assignment); err != nil {
 				return err
@@ -203,6 +239,9 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 		}
 		if p != nil && p.Type == catalog.TypeBundle {
 			if err := catalogapp.RejectRequiredLinkedParentLeaves(ctx, s.products, s.components, p.ID, assignment); err != nil {
+				return err
+			}
+			if err := catalogapp.RejectRequiredMissingDownloadableFileLeaves(ctx, s.products, s.components, s.downloadableFiles, p.ID); err != nil {
 				return err
 			}
 		}

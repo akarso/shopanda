@@ -55,29 +55,30 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 // on status, so draft and archived products lock the same way as active ones.
 // Returns NotFound when no row exists.
 func (r *ProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
-	typ, _, _, _, err := r.LockTypeAndModes(ctx, id)
+	typ, _, _, _, _, err := r.LockTypeAndModes(ctx, id)
 	return typ, err
 }
 
 // LockTypeAndModes locks the product row and returns the type, pricing_mode,
-// stock_mode, and explode_order_lines stored on that row. Type-change updates
-// must read modes and the explode flag here before applying an omitted-field
-// default, so a stale FindByID cannot keep or drop dynamic or the flag.
-func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+// stock_mode, explode_order_lines, and status stored on that row. Type-change
+// updates must read modes, the explode flag, and status here before applying
+// an omitted-field default, so a stale FindByID cannot keep or drop dynamic,
+// the flag, or Active (soft-write / omitted status).
+func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
 	if r.tx == nil {
-		return "", "", "", false, fmt.Errorf("product_repo: lock for update: transaction required")
+		return "", "", "", false, "", fmt.Errorf("product_repo: lock for update: transaction required")
 	}
-	const q = `SELECT type, pricing_mode, stock_mode, explode_order_lines FROM products WHERE id = $1 FOR UPDATE`
-	var rawType, rawPricing, rawStock string
+	const q = `SELECT type, pricing_mode, stock_mode, explode_order_lines, status FROM products WHERE id = $1 FOR UPDATE`
+	var rawType, rawPricing, rawStock, rawStatus string
 	var explode bool
-	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawPricing, &rawStock, &explode)
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawPricing, &rawStock, &explode, &rawStatus)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", false, apperror.NotFound("product not found")
+		return "", "", "", false, "", apperror.NotFound("product not found")
 	}
 	if err != nil {
-		return "", "", "", false, fmt.Errorf("product_repo: lock for update: %w", err)
+		return "", "", "", false, "", fmt.Errorf("product_repo: lock for update: %w", err)
 	}
-	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), explode, nil
+	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), explode, catalog.Status(rawStatus), nil
 }
 
 // RequiresLinkedParentForUpdate reads requires_linked_parent on the current

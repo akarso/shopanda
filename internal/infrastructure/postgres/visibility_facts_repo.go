@@ -36,6 +36,10 @@ import (
 // yet. A future assignment model can flip the column without changing the gate
 // API — until then, catalog.AutoBasisCodeNoStoreAssignment is reserved and
 // cannot appear in AutoBasisFailureCodes output from this repo.
+//
+// MissingDownloadableFile is true only when type is downloadable and the
+// product has zero rows in downloadable_files (PR-1074). Non-downloadable
+// products always get false so AutoBasis and display axes are unaffected.
 type VisibilityFactsRepo struct {
 	db *sql.DB
 }
@@ -139,7 +143,10 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 				SELECT 1
 				FROM product_categories pc
 				WHERE pc.product_id = p.id
-			) AS has_category
+			) AS has_category,
+			(p.type = 'downloadable' AND NOT EXISTS (
+				SELECT 1 FROM downloadable_files df WHERE df.product_id = p.id
+			)) AS missing_downloadable_file
 		FROM products p
 		WHERE p.id = ANY($1)
 			AND ($2::bool = false OR p.status = 'active')`, dynamicBundleQuantityPositiveSQL("p.id"), catalog.MaxBundleRequiredComponents)
@@ -158,12 +165,14 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 			individuallyMode, purchasableMode string
 			requiresLinkedParent              bool
 			qty, price, category              bool
+			missingDownloadableFile           bool
 		)
 		if err := rows.Scan(
 			&id, &status,
 			&catalogMode, &searchMode, &individuallyMode, &purchasableMode,
 			&requiresLinkedParent,
 			&qty, &price, &category,
+			&missingDownloadableFile,
 		); err != nil {
 			return nil, fmt.Errorf("visibility facts scan: %w", err)
 		}
@@ -176,10 +185,11 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 				Purchasable:  catalog.VisibilityMode(purchasableMode),
 			},
 			Inputs: catalog.VisibilityInputs{
-				QuantityPositive:   qty,
-				HasPrice:           price,
-				HasStoreAssignment: true,
-				HasCategory:        category,
+				QuantityPositive:        qty,
+				HasPrice:                price,
+				HasStoreAssignment:      true,
+				HasCategory:             category,
+				MissingDownloadableFile: missingDownloadableFile,
 			},
 			RequiresLinkedParent: requiresLinkedParent,
 		}

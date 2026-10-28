@@ -1347,14 +1347,22 @@
                     var savedType = payload && payload.type ? String(payload.type) : "simple";
                     bindCompositionPicker(typeSectionsHost, productID, savedType);
                     // Refresh purchasable badge from the saved requires_linked_parent
-                    // value (form checkbox matches the payload just persisted).
+                    // value (form checkbox matches the payload just persisted) and
+                    // clear/update missingDownloadableFile for the saved type so a
+                    // downloadable→simple save does not keep "no downloadable file".
+                    // Then re-fetch visibility facts so missing_downloadable_file
+                    // matches the DB (type + join count) without a full reload.
                     var visibilityAPI = productVisibilitySectionAPI();
                     var visState = typeSectionsHost && typeSectionsHost._shopandaVisibilityState;
                     if (visibilityAPI && visState && form) {
                         if (visState.kind === "live") {
                             visState.requiresLinkedParent = !!(payload && payload.requires_linked_parent);
+                            if (savedType !== "downloadable") {
+                                visState.missingDownloadableFile = false;
+                            }
                         }
                         visibilityAPI.refreshLivePreview(document, form, visState, visState.inputFailureCodes || []);
+                        refreshProductVisibilityFactsAfterSave(productID, form, typeSectionsHost, visState);
                     }
                     saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {
@@ -1981,6 +1989,11 @@
             var codes = data.visibility.input_failure_codes;
             if (!Array.isArray(codes)) {
                 codes = [];
+            }
+            if (visibilityAPI.applySavedVisibilityFacts) {
+                visibilityAPI.applySavedVisibilityFacts(state, data.visibility);
+            } else if (state.kind === "live") {
+                state.missingDownloadableFile = !!data.visibility.missing_downloadable_file;
             }
             visibilityAPI.refreshLivePreview(document, form, state, codes);
         }).catch(function () {

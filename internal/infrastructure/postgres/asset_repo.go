@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const maxAssetListLimit = 100
@@ -19,6 +20,14 @@ var _ media.AssetRepository = (*AssetRepo)(nil)
 // AssetRepo implements media.AssetRepository using PostgreSQL.
 type AssetRepo struct {
 	db *sql.DB
+	tx *sql.Tx
+}
+
+// assetQueryer is the subset of *sql.DB and *sql.Tx used by this repo.
+type assetQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
 // NewAssetRepo returns a new AssetRepo backed by db.
@@ -27,6 +36,41 @@ func NewAssetRepo(db *sql.DB) (*AssetRepo, error) {
 		return nil, fmt.Errorf("NewAssetRepo: nil *sql.DB")
 	}
 	return &AssetRepo{db: db}, nil
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *AssetRepo) WithTx(tx *sql.Tx) media.AssetRepository {
+	return &AssetRepo{db: r.db, tx: tx}
+}
+
+func (r *AssetRepo) queryer() assetQueryer {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
+}
+
+// LockForUpdate locks the asset row (SELECT FOR UPDATE) and returns NotFound
+// when missing. The repo must be bound to a transaction via WithTx (same as
+// ProductRepo.LockForUpdate). Used by DownloadableFileService.Attach in the
+// same transaction as the downloadable_files upsert (PR-1074).
+func (r *AssetRepo) LockForUpdate(ctx context.Context, id string) error {
+	if r.tx == nil {
+		return fmt.Errorf("asset_repo: lock for update: transaction required")
+	}
+	if id == "" {
+		return apperror.Validation("asset id must not be empty")
+	}
+	const q = `SELECT id FROM assets WHERE id = $1 FOR UPDATE`
+	var got string
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&got)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.NotFound("asset not found")
+	}
+	if err != nil {
+		return fmt.Errorf("asset_repo: lock for update: %w", err)
+	}
+	return nil
 }
 
 // Save persists a new asset.
@@ -43,7 +87,7 @@ func (r *AssetRepo) Save(ctx context.Context, a *media.Asset) error {
 	const q = `INSERT INTO assets (id, path, filename, mime_type, size, meta, thumbnails, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
-	_, err = r.db.ExecContext(ctx, q,
+	_, err = r.queryer().ExecContext(ctx, q,
 		a.ID, a.Path, a.Filename, a.MimeType, a.Size, metaJSON, thumbJSON, a.CreatedAt,
 	)
 	if err != nil {
@@ -58,7 +102,7 @@ func (r *AssetRepo) FindByID(ctx context.Context, id string) (*media.Asset, erro
 	const q = `SELECT id, path, filename, mime_type, size, meta, thumbnails, created_at
 		FROM assets WHERE id = $1`
 
-	a, err := r.scanAsset(r.db.QueryRowContext(ctx, q, id))
+	a, err := r.scanAsset(r.queryer().QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,7 +126,7 @@ func (r *AssetRepo) List(ctx context.Context, offset, limit int) ([]media.Asset,
 
 	const q = `SELECT id, path, filename, mime_type, size, meta, thumbnails, created_at
 		FROM assets ORDER BY created_at DESC LIMIT $1 OFFSET $2`
-	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	rows, err := r.queryer().QueryContext(ctx, q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("asset_repo: list: %w", err)
 	}
@@ -108,8 +152,15 @@ func (r *AssetRepo) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("asset_repo: delete: empty id")
 	}
 	const q = `DELETE FROM assets WHERE id = $1`
-	res, err := r.db.ExecContext(ctx, q, id)
+	res, err := r.queryer().ExecContext(ctx, q, id)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			// Safety net when a join still references the asset (downloadable_files
+			// ON DELETE RESTRICT). media.Service.Delete deletes the row before
+			// the blob; this mapping covers a concurrent attach after count.
+			return apperror.Validation("asset is still attached to a downloadable product")
+		}
 		return fmt.Errorf("asset_repo: delete: %w", err)
 	}
 	n, err := res.RowsAffected()

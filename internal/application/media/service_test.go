@@ -5,20 +5,23 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // --- mocks ---
 
 type mockStorage struct {
-	name    string
-	saveErr error
-	delErr  error
-	saved   map[string]bool
-	deleted []string
+	name     string
+	saveErr  error
+	delErr   error
+	saved    map[string]bool
+	deleted  []string
+	onDelete func(path string)
 }
 
 func (m *mockStorage) Name() string { return m.name }
@@ -35,6 +38,9 @@ func (m *mockStorage) Save(path string, r io.Reader) error {
 	return nil
 }
 func (m *mockStorage) Delete(path string) error {
+	if m.onDelete != nil {
+		m.onDelete(path)
+	}
 	m.deleted = append(m.deleted, path)
 	return m.delErr
 }
@@ -47,6 +53,7 @@ type mockAssetRepo struct {
 	findByID  map[string]*domainMedia.Asset
 	deleteErr error
 	deleted   []string
+	onDelete  func(id string)
 }
 
 func (m *mockAssetRepo) Save(_ context.Context, a *domainMedia.Asset) error {
@@ -71,6 +78,9 @@ func (m *mockAssetRepo) List(_ context.Context, _ int, _ int) ([]domainMedia.Ass
 func (m *mockAssetRepo) Delete(_ context.Context, id string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
+	}
+	if m.onDelete != nil {
+		m.onDelete(id)
 	}
 	m.deleted = append(m.deleted, id)
 	return nil
@@ -233,7 +243,61 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestDelete(t *testing.T) {
+type mockAssetAttachments struct {
+	count int
+	err   error
+}
+
+func (m mockAssetAttachments) CountByAssetID(context.Context, string) (int, error) {
+	return m.count, m.err
+}
+
+func TestDelete_NilAttachmentsFailsClosed(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	err = svc.Delete(context.Background(), "asset-1")
+	if !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("err = %v, want internal fail-closed when counter nil", err)
+	}
+	if len(storage.deleted) != 0 {
+		t.Fatalf("storage deleted = %#v, want none when counter nil", storage.deleted)
+	}
+	if len(repo.deleted) != 0 {
+		t.Fatalf("repo deleted = %#v, want none when counter nil", repo.deleted)
+	}
+}
+
+func TestDelete_AttachedDownloadableRejected(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 1})
+
+	err = svc.Delete(context.Background(), "asset-1")
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want validation", err)
+	}
+	if len(storage.deleted) != 0 {
+		t.Fatalf("storage deleted = %#v, want none before reject", storage.deleted)
+	}
+	if len(repo.deleted) != 0 {
+		t.Fatalf("repo deleted = %#v, want none", repo.deleted)
+	}
+}
+
+func TestDelete_ZeroAttachmentsAllows(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
 	if err != nil {
@@ -242,7 +306,8 @@ func TestDelete(t *testing.T) {
 	asset.Thumbnails["small"] = "uploads/asset-1/small/photo.jpg"
 	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
 	bus := event.NewBus(mockLogger{})
-	svc := NewService(storage, repo, bus, mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 0})
 
 	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -252,6 +317,73 @@ func TestDelete(t *testing.T) {
 	}
 	if len(storage.deleted) != 2 {
 		t.Fatalf("deleted paths = %d, want 2", len(storage.deleted))
+	}
+}
+
+
+func TestDelete_DeletesAssetRowBeforeBlob(t *testing.T) {
+	var order []string
+	storage := &mockStorage{name: "test", onDelete: func(path string) {
+		order = append(order, "blob:"+path)
+	}}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &mockAssetRepo{
+		findByID: map[string]*domainMedia.Asset{"asset-1": &asset},
+		onDelete: func(id string) {
+			order = append(order, "row:"+id)
+		},
+	}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 0})
+
+	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(order) < 2 || order[0] != "row:asset-1" || !strings.HasPrefix(order[1], "blob:") {
+		t.Fatalf("order = %#v, want row then blob", order)
+	}
+}
+
+func TestDelete_BlobFailureAfterRowDelete_PublishesEventReturnsNil(t *testing.T) {
+	storage := &mockStorage{name: "test", delErr: errors.New("s3 unavailable")}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	asset.Thumbnails["small"] = "uploads/asset-1/small/photo.jpg"
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	log := &capturingLogger{}
+	bus := event.NewBus(log)
+	var published int
+	bus.On(domainMedia.EventAssetDeleted, func(_ context.Context, evt event.Event) error {
+		published++
+		return nil
+	})
+	svc := NewService(storage, repo, bus, log).
+		WithAssetAttachments(mockAssetAttachments{count: 0})
+
+	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
+		t.Fatalf("Delete = %v, want nil after completed unlist", err)
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "asset-1" {
+		t.Fatalf("repo deleted = %#v, want asset row gone", repo.deleted)
+	}
+	if published != 1 {
+		t.Fatalf("EventAssetDeleted published = %d, want 1", published)
+	}
+	foundBlobWarn := false
+	for _, w := range log.warns {
+		if strings.Contains(w, "blob delete failed") {
+			foundBlobWarn = true
+			break
+		}
+	}
+	if !foundBlobWarn {
+		t.Fatalf("warns = %#v, want blob delete failure logged", log.warns)
 	}
 }
 

@@ -40,9 +40,10 @@ type txProductRepo interface {
 }
 
 // lockingProductRepo is a transaction-bound product repository that can lock a row.
+// LockTypeAndModes returns type, modes, explode, and status from the same FOR UPDATE.
 type lockingProductRepo interface {
 	catalog.ProductRepository
-	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error)
 }
 
 // linkedParentLockRepo reads requires_linked_parent from the locked row.
@@ -67,18 +68,28 @@ type txGroupedMemberRepo interface {
 	WithTx(tx *sql.Tx) catalog.GroupedMemberRepository
 }
 
+type downloadableFileTypeGuard interface {
+	CountByProductID(ctx context.Context, productID string) (int, error)
+}
+
+// txDownloadableFileRepo is a downloadable file repository that can bind to a transaction.
+type txDownloadableFileRepo interface {
+	WithTx(tx *sql.Tx) catalog.DownloadableFileRepository
+}
+
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
-	repo             catalog.ProductRepository
-	bundleComponents bundleComponentTypeGuard
-	groupedMembers   groupedMemberTypeGuard
-	variants         catalog.VariantRepository
-	prices           pricing.PriceRepository
-	stock            inventory.StockRepository
-	txStarter        txStarter
-	bus              *event.Bus
-	auditor          *admin.Auditor
-	log              logger.Logger
+	repo              catalog.ProductRepository
+	bundleComponents  bundleComponentTypeGuard
+	groupedMembers    groupedMemberTypeGuard
+	downloadableFiles downloadableFileTypeGuard
+	variants          catalog.VariantRepository
+	prices            pricing.PriceRepository
+	stock             inventory.StockRepository
+	txStarter         txStarter
+	bus               *event.Bus
+	auditor           *admin.Auditor
+	log               logger.Logger
 
 	// facts + opts + enforced back the "visibility" payload on Get. Nil facts
 	// (the default — WithVisibilityFacts not called) omits the
@@ -165,6 +176,18 @@ func (h *ProductAdminHandler) WithBundleComponents(components bundleComponentTyp
 // A type change with a nil guard fails closed. Membership counts do not affect Purchasable or visibility.
 func (h *ProductAdminHandler) WithGroupedMembers(members groupedMemberTypeGuard) *ProductAdminHandler {
 	h.groupedMembers = members
+	return h
+}
+
+// WithDownloadableFiles wires downloadable attachment counts for type-change
+// and StatusActive guards (PR-1074). The field stays optional: updates that
+// do not change type and are not becoming / staying Active downloadable via
+// Create, Draft→Active, or type-change succeed when it is nil. Soft-write on
+// an already-Active file-less downloadable returns before the nil-guard check
+// (sell path still blocks purchase). Create / Draft→Active / type-change onto
+// Active downloadable with a nil guard fail closed.
+func (h *ProductAdminHandler) WithDownloadableFiles(files downloadableFileTypeGuard) *ProductAdminHandler {
+	h.downloadableFiles = files
 	return h
 }
 
@@ -300,7 +323,7 @@ func bindVariantStock(tx *sql.Tx, variants catalog.VariantRepository, stock inve
 	return variants, stock, nil
 }
 
-func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, members groupedMemberTypeGuard, productID string, oldType, newType catalog.Type) error {
+func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, members groupedMemberTypeGuard, files downloadableFileTypeGuard, productID string, oldType, newType catalog.Type) error {
 	if oldType == newType {
 		return nil
 	}
@@ -309,6 +332,9 @@ func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, com
 	}
 	if members == nil {
 		return apperror.Internal("product admin: grouped member repository is not configured")
+	}
+	if files == nil {
+		return apperror.Internal("product admin: downloadable file repository is not configured")
 	}
 	// Row-gated: illicit component rows block a non-bundle target even when the
 	// locked type is not bundle (the stored type can be wrong).
@@ -349,6 +375,50 @@ func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, com
 		if n > 0 {
 			return apperror.Validation("cannot change type: product is used as a grouped member")
 		}
+	}
+	// Leaving downloadable with attached files is blocked (PR-1074). Admin
+	// HTTP for attach/remove is PR-1078; operators must clear rows first.
+	if newType != catalog.TypeDownloadable {
+		n, err := files.CountByProductID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count downloadable files: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product has downloadable files")
+		}
+	}
+	return nil
+}
+
+// ensureActiveDownloadableHasFile rejects becoming StatusActive on a
+// downloadable product with zero attachments (PR-1074). Soft-write: an
+// already-active downloadable with zero files may keep Active for name-only
+// (and other non-activating) updates — sell path and visibility still block
+// purchase. Active→Draft is always allowed. Create / Draft→Active / type
+// change onto active downloadable without files still fail closed. Admin
+// attach HTTP remains PR-1078.
+func (h *ProductAdminHandler) ensureActiveDownloadableHasFile(
+	ctx context.Context,
+	files downloadableFileTypeGuard,
+	product *catalog.Product,
+	previousStatus catalog.Status,
+	previousType catalog.Type,
+) error {
+	if product == nil || product.Type != catalog.TypeDownloadable || product.Status != catalog.StatusActive {
+		return nil
+	}
+	if previousType == catalog.TypeDownloadable && previousStatus == catalog.StatusActive {
+		return nil
+	}
+	if files == nil {
+		return apperror.Internal("product admin: downloadable file repository is not configured")
+	}
+	n, err := files.CountByProductID(ctx, product.ID)
+	if err != nil {
+		return fmt.Errorf("product admin: count downloadable files: %w", err)
+	}
+	if n < 1 {
+		return apperror.Validation(catalog.DownloadableRequiresFileMessage)
 	}
 	return nil
 }
@@ -580,12 +650,13 @@ func (h *ProductAdminHandler) Get() http.HandlerFunc {
 					inputCodes = []string{}
 				}
 				visibilityPayload = map[string]interface{}{
-					"enforced":               h.enforced,
-					"status":                 string(product.Status),
-					"auto_basis":             autoBasis,
-					"failure_codes":          codes,
-					"input_failure_codes":    inputCodes,
-					"requires_linked_parent": product.RequiresLinkedParent,
+					"enforced":                   h.enforced,
+					"status":                     string(product.Status),
+					"auto_basis":                 autoBasis,
+					"failure_codes":              codes,
+					"input_failure_codes":        inputCodes,
+					"requires_linked_parent":     product.RequiresLinkedParent,
+					"missing_downloadable_file":  inputs.MissingDownloadableFile,
 					"axes": map[string]interface{}{
 						"catalog":      newAdminAxisExplanation(axesExp.Catalog),
 						"search":       newAdminAxisExplanation(axesExp.Search),
@@ -836,6 +907,20 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
+		// Defense in depth: create request has no status field today (always
+		// Draft via NewProduct). If Active create is added later, require a file.
+		if err := h.ensureActiveDownloadableHasFile(r.Context(), h.downloadableFiles, &product, "", ""); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        adminAuditMessage(err),
+				Details:      details,
+			})
+			httpshared.JSONError(w, err)
+			return
+		}
 
 		if err := h.repo.Create(r.Context(), &product); err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
@@ -1005,11 +1090,11 @@ func applyProductVisibilityAndAttributes(product *catalog.Product, req updatePro
 // updateProductWithTypeLock locks the product row, validates an optional type
 // change against that locked type, then writes every patched field in the same
 // transaction. Every persisting product update uses it, including a name-only
-// edit. newType nil keeps the locked type. Omitted pricing_mode and stock_mode
-// keep the locked row. An omitted explode_order_lines keeps the locked flag
-// only while the product is still allowed to explode; otherwise it is stored
-// false. ApplyPricingMode, ApplyStockMode, and ApplyExplodeOrderLines do not
-// see the earlier FindByID.
+// edit. newType nil keeps the locked type. Omitted pricing_mode, stock_mode,
+// status, and requires_linked_parent keep the locked row. An omitted
+// explode_order_lines keeps the locked flag only while the product is still
+// allowed to explode; otherwise it is stored false. ApplyPricingMode,
+// ApplyStockMode, and ApplyExplodeOrderLines do not see the earlier FindByID.
 func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType *catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
 	if h.txStarter == nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
@@ -1029,18 +1114,22 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if !ok {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support row locks")
 	}
-	oldType, lockedPricing, lockedStock, lockedExplode, err := locker.LockTypeAndModes(ctx, product.ID)
+	oldType, lockedPricing, lockedStock, lockedExplode, lockedStatus, err := locker.LockTypeAndModes(ctx, product.ID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 		}
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: lock product: %w", err)
 	}
-	// Omitted pricing_mode, stock_mode, and explode_order_lines defaults use the locked row, not the earlier FindByID.
+	// Omitted pricing_mode, stock_mode, explode_order_lines, and status defaults
+	// use the locked row, not the earlier FindByID.
 	product.Type = oldType
 	product.PricingMode = lockedPricing
 	product.StockMode = lockedStock
 	product.ExplodeOrderLines = lockedExplode
+	if req.Status == nil {
+		product.Status = lockedStatus
+	}
 
 	components := h.bundleComponents
 	if h.bundleComponents != nil {
@@ -1058,8 +1147,16 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 		}
 		members = txMembers.WithTx(tx)
 	}
+	files := h.downloadableFiles
+	if h.downloadableFiles != nil {
+		txFiles, ok := h.downloadableFiles.(txDownloadableFileRepo)
+		if !ok {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: downloadable file repository does not support transactions")
+		}
+		files = txFiles.WithTx(tx)
+	}
 	if newType != nil {
-		if err := h.validateProductTypeChange(ctx, components, members, product.ID, oldType, *newType); err != nil {
+		if err := h.validateProductTypeChange(ctx, components, members, files, product.ID, oldType, *newType); err != nil {
 			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 		}
 		product.Type = *newType
@@ -1109,6 +1206,13 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	before, after, changed, err = applyProductVisibilityAndAttributes(product, req)
 	if err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Validation(err.Error())
+	}
+	// Scalars (name/slug/description) were applied on product before the lock
+	// in Update(); status was re-applied from the locked row when omitted.
+	// Soft-write uses locked status and oldType (not FindByID) so a concurrent
+	// Active→Draft or type change cannot skip the file check or overwrite Draft.
+	if err := h.ensureActiveDownloadableHasFile(ctx, files, product, lockedStatus, oldType); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
 	if err := product.Validate(); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Validation(err.Error())
@@ -1218,11 +1322,11 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 
 		var modesBefore, modes catalog.VisibilityAxes
 		visibilityModesChanged := false
-		// Always lock before persisting. An omitted type, pricing_mode, and
-		// stock_mode are taken from the locked row. An omitted explode flag is
-		// cleared when the locked type and the patched modes are no longer
-		// allowed to explode. Writing the earlier FindByID snapshot would
-		// clobber a concurrent switch.
+		// Always lock before persisting. An omitted type, pricing_mode,
+		// stock_mode, and status are taken from the locked row. An omitted
+		// explode flag is cleared when the locked type and the patched modes
+		// are no longer allowed to explode. Writing the earlier FindByID
+		// snapshot would clobber a concurrent switch.
 		modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, newType)
 		if err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{

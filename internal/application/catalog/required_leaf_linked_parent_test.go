@@ -57,3 +57,38 @@ func TestLinkedParentChildProductIDs(t *testing.T) {
 		t.Fatalf("bundle ids = %v err=%v, want linked leaf only", ids, err)
 	}
 }
+
+type stubDownloadableFileCount struct {
+	n   int
+	err error
+}
+
+func (s stubDownloadableFileCount) CountByProductID(context.Context, string) (int, error) {
+	return s.n, s.err
+}
+
+func TestRejectRequiredMissingDownloadableFileLeaves(t *testing.T) {
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"child-1": {ID: "child-1", Status: catalog.StatusActive, Type: catalog.TypeDownloadable},
+	}}
+	comp, err := catalog.NewBundleComponent("bundle-1", "child-1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	components := &stubBundleComponentRepo{list: []catalog.BundleComponent{*comp}}
+
+	err = catalogApp.RejectRequiredMissingDownloadableFileLeaves(context.Background(), products, components, stubDownloadableFileCount{n: 0}, "bundle-1")
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), catalog.DownloadableMissingFileNotPurchasableMessage) {
+		t.Fatalf("err = %v, want missing-file validation", err)
+	}
+
+	err = catalogApp.RejectRequiredMissingDownloadableFileLeaves(context.Background(), products, components, stubDownloadableFileCount{n: 1}, "bundle-1")
+	if err != nil {
+		t.Fatalf("with file: %v", err)
+	}
+
+	err = catalogApp.RejectRequiredMissingDownloadableFileLeaves(context.Background(), products, components, nil, "bundle-1")
+	if !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("nil counter = %v, want internal fail-closed", err)
+	}
+}

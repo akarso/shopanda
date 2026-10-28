@@ -143,8 +143,8 @@ func (permissiveStockImportProducts) Update(context.Context, *catalog.Product) e
 func (permissiveStockImportProducts) WithTx(*sql.Tx) catalog.ProductRepository {
 	return permissiveStockImportProducts{}
 }
-func (permissiveStockImportProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
-	return catalog.TypeSimple, catalog.PricingModeFixed, catalog.StockModeFixed, false, nil
+func (permissiveStockImportProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
+	return catalog.TypeSimple, catalog.PricingModeFixed, catalog.StockModeFixed, false, catalog.StatusActive, nil
 }
 
 type lockingStockImportProducts struct {
@@ -166,16 +166,16 @@ func (lockingStockImportProducts) FindByCategoryID(context.Context, string, int,
 func (lockingStockImportProducts) Create(context.Context, *catalog.Product) error { return nil }
 func (lockingStockImportProducts) Update(context.Context, *catalog.Product) error { return nil }
 func (m lockingStockImportProducts) WithTx(*sql.Tx) catalog.ProductRepository     { return m }
-func (m lockingStockImportProducts) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+func (m lockingStockImportProducts) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
 	p := m.byID[id]
 	if p == nil {
-		return "", "", "", false, apperror.NotFound("product not found")
+		return "", "", "", false, "", apperror.NotFound("product not found")
 	}
 	mode := p.StockMode
 	if mode == "" {
 		mode = catalog.StockModeFixed
 	}
-	return p.Type, catalog.PricingModeFixed, mode, p.ExplodeOrderLines, nil
+	return p.Type, catalog.PricingModeFixed, mode, p.ExplodeOrderLines, p.Status, nil
 }
 
 func writingStockImporter(variants catalog.VariantRepository, stock inventory.StockRepository) *importer.StockImporter {

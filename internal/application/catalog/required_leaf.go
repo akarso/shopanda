@@ -181,6 +181,74 @@ func RejectRequiredLinkedParentLeaves(
 	return nil
 }
 
+// DownloadableFileCounter counts product → asset attachments for sell-path
+// gates (PR-1074). Cart, checkout, and RejectRequiredMissingDownloadableFileLeaves
+// share this shape so the counter cannot drift.
+type DownloadableFileCounter interface {
+	CountByProductID(ctx context.Context, productID string) (int, error)
+}
+
+// RejectRequiredMissingDownloadableFileLeaves denies a bundle whose required
+// child is TypeDownloadable with zero attached files. Used by cart and
+// checkout for every bundle type (fixed and dynamic), not only explode.
+// Optional components are ignored. A missing products or components repo is
+// a no-op. A nil files counter fails closed when a required leaf is
+// downloadable (same as cart ensureDownloadableHasFile). Draft file-less
+// downloadable leaves are rejected too — AutoBasis does not override.
+func RejectRequiredMissingDownloadableFileLeaves(
+	ctx context.Context,
+	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
+	files DownloadableFileCounter,
+	bundleProductID string,
+) error {
+	if products == nil || components == nil {
+		return nil
+	}
+	bundleProductID = strings.TrimSpace(bundleProductID)
+	if bundleProductID == "" {
+		return nil
+	}
+	rows, err := components.ListByBundleID(ctx, bundleProductID)
+	if err != nil {
+		return fmt.Errorf("bundle %s components: %w", bundleProductID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		p := byID[id]
+		if p == nil || p.Type != catalog.TypeDownloadable {
+			continue
+		}
+		if files == nil {
+			return apperror.Internal("downloadable file repository is not configured")
+		}
+		n, err := files.CountByProductID(ctx, p.ID)
+		if err != nil {
+			return fmt.Errorf("bundle %s component %s downloadable files: %w", bundleProductID, p.ID, err)
+		}
+		if catalog.DownloadableMissingFileBlocksPurchase(p, n) {
+			return apperror.Validation(catalog.DownloadableMissingFileNotPurchasableMessage)
+		}
+	}
+	return nil
+}
+
 // LinkedParentChildProductIDs is the products IsEligible must accept for
 // this cart/order line. A RequiresLinkedParent product is itself. A bundle
 // contributes each required leaf that has the flag. Other types are empty.

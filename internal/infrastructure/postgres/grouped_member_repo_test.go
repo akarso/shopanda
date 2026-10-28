@@ -555,9 +555,14 @@ func TestGroupedMemberRepo_MemberInTwoGroups(t *testing.T) {
 		t.Fatalf("CountByMemberID = %d, %v, want 2", n, err)
 	}
 
+	dlRepo, err := postgres.NewDownloadableFileRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadableFileRepo: %v", err)
+	}
 	h := admin.NewProductAdminHandler(productRepo, event.NewBus(logger.New("error"))).
 		WithBundleComponents(bundleRepo).
 		WithGroupedMembers(repo).
+		WithDownloadableFiles(dlRepo).
 		WithTxStarter(db)
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /api/v1/admin/products/{id}", h.Update())
