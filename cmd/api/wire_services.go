@@ -135,6 +135,7 @@ type serveRuntime struct {
 	productHandler                 *storefront.ProductHandler
 	productAdmin                   *admin.ProductAdminHandler
 	productCompositionAdmin        *admin.ProductCompositionAdminHandler
+	linkedEligibilityAdmin         *admin.LinkedEligibilityAdminHandler
 	productTranslationAdmin        *admin.ProductTranslationAdminHandler
 	productPriceAdmin              *admin.ProductPriceAdminHandler
 	variantHandler                 *storefront.VariantHandler
@@ -728,6 +729,13 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}); err != nil {
 		return nil, fmt.Errorf("register grouped form section: %w", err)
 	}
+	// Linked eligibility (PR-1073): type-agnostic — any product may declare
+	// parent/category rules (eligibility is not a product type).
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "linked", Title: "Linked eligibility", Types: nil,
+	}); err != nil {
+		return nil, fmt.Errorf("register linked form section: %w", err)
+	}
 
 	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
@@ -768,6 +776,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVariantStock(repos.stockRepo).
 		WithTxStarter(conn)
 	productCompositionAdmin := admin.NewProductCompositionAdminHandler(repos.productRepo, bundleService, groupedService, sharedAuditor)
+	linkedEligibilityAdmin := admin.NewLinkedEligibilityAdminHandler(repos.productRepo, repos.categoryRepo, linkedEligibilityService, sharedAuditor)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
@@ -1008,6 +1017,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		productHandler:                 productHandler,
 		productAdmin:                   productAdmin,
 		productCompositionAdmin:        productCompositionAdmin,
+		linkedEligibilityAdmin:         linkedEligibilityAdmin,
 		productTranslationAdmin:        productTranslationAdmin,
 		productPriceAdmin:              productPriceAdmin,
 		variantHandler:                 variantHandler,

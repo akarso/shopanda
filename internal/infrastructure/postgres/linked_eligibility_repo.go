@@ -61,7 +61,19 @@ func mapLinkedEligibilityExecError(err error) error {
 	}
 	switch pgErr.Code {
 	case "23503":
-		return apperror.NotFound("not found")
+		// CategoryRepo has no WithTx; AddCategory's pre-check can race a
+		// concurrent category delete. Map that FK to the same message as the
+		// nil FindByID path so operators see "category not found" (PR-1073).
+		switch pgErr.ConstraintName {
+		case "linked_eligible_categories_category_id_fkey":
+			return apperror.NotFound("category not found")
+		case "linked_eligible_categories_child_product_id_fkey",
+			"linked_eligible_parents_child_product_id_fkey",
+			"linked_eligible_parents_parent_product_id_fkey":
+			return apperror.NotFound("product not found")
+		default:
+			return apperror.NotFound("not found")
+		}
 	case "23514":
 		return apperror.Validation("linked eligibility constraint violation")
 	case "22P02":
@@ -255,6 +267,65 @@ func (r *LinkedEligibilityRepo) RemoveCategory(ctx context.Context, childProduct
 		return apperror.NotFound("linked eligible category not found")
 	}
 	return nil
+}
+
+
+// ListAllParentSlugRows returns every allowlist row joined to product slugs.
+func (r *LinkedEligibilityRepo) ListAllParentSlugRows(ctx context.Context) ([]catalog.LinkedEligibleParentSlugRow, error) {
+	const q = `SELECT child.slug, parent.slug
+		FROM linked_eligible_parents lep
+		INNER JOIN products child ON child.id = lep.child_product_id
+		INNER JOIN products parent ON parent.id = lep.parent_product_id
+		ORDER BY child.slug ASC, parent.slug ASC`
+	rows, err := r.queryer().QueryContext(ctx, q)
+	if err != nil {
+		if mapped := mapLinkedEligibilityExecError(err); mapped != err {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("linked_eligibility_repo: list all parent slug rows: %w", err)
+	}
+	defer rows.Close()
+	out := []catalog.LinkedEligibleParentSlugRow{}
+	for rows.Next() {
+		var row catalog.LinkedEligibleParentSlugRow
+		if err := rows.Scan(&row.ChildSlug, &row.ParentSlug); err != nil {
+			return nil, fmt.Errorf("linked_eligibility_repo: scan parent slug row: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("linked_eligibility_repo: iterate parent slug rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListAllCategorySlugRows returns every category rule joined to product and category slugs.
+func (r *LinkedEligibilityRepo) ListAllCategorySlugRows(ctx context.Context) ([]catalog.LinkedEligibleCategorySlugRow, error) {
+	const q = `SELECT child.slug, cat.slug
+		FROM linked_eligible_categories lec
+		INNER JOIN products child ON child.id = lec.child_product_id
+		INNER JOIN categories cat ON cat.id = lec.category_id
+		ORDER BY child.slug ASC, cat.slug ASC`
+	rows, err := r.queryer().QueryContext(ctx, q)
+	if err != nil {
+		if mapped := mapLinkedEligibilityExecError(err); mapped != err {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("linked_eligibility_repo: list all category slug rows: %w", err)
+	}
+	defer rows.Close()
+	out := []catalog.LinkedEligibleCategorySlugRow{}
+	for rows.Next() {
+		var row catalog.LinkedEligibleCategorySlugRow
+		if err := rows.Scan(&row.ChildSlug, &row.CategorySlug); err != nil {
+			return nil, fmt.Errorf("linked_eligibility_repo: scan category slug row: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("linked_eligibility_repo: iterate category slug rows: %w", err)
+	}
+	return out, nil
 }
 
 // IsEligible is true when an explicit parent row exists or the parent product

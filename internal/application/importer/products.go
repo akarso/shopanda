@@ -81,8 +81,9 @@ var requiredColumns = []string{"name", "slug", "sku"}
 //
 // "type" is reserved for product taxonomy (PR-1052). pricing_mode, stock_mode,
 // explode_order_lines are reserved for bundle mode columns (PR-1066).
-// requires_linked_parent is reserved (PR-1068); CSV does not set the flag
-// until PR-1073, so the header is ignored rather than stored as an attribute.
+// requires_linked_parent is a product flag (PR-1068/PR-1073). Empty cells on
+// create are false. A non-empty consensus that differs from the stored value
+// on an existing product is an error — CSV does not update the flag.
 // A CSV that previously used a free-form attribute column with one of these
 // names must rename that attribute; values in the reserved columns are never
 // stored in variant.Attributes.
@@ -103,6 +104,7 @@ var knownColumns = map[string]struct{}{
 //	pricing_mode — fixed or dynamic (optional; empty → fixed on create; bundle-only dynamic)
 //	stock_mode   — fixed or dynamic (optional; empty → fixed on create; bundle-only dynamic)
 //	explode_order_lines — true or false (optional; empty → false on create; only when both modes are dynamic)
+//	requires_linked_parent — true or false (optional; empty → false on create; create-only)
 //	sku          — variant SKU (required)
 //	variant_name — variant display name (optional)
 //
@@ -179,6 +181,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 		}
 		explodeRaw, explodeOK := normalizeExplodeCell(colValRow(rowMap, "explode_order_lines"))
+		linkedRaw, linkedOK := normalizeBoolCell(colValRow(rowMap, "requires_linked_parent"))
 		row := productImportRow{
 			lineNum:     lineNum,
 			name:        colValRow(rowMap, "name"),
@@ -190,6 +193,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			stockMode:   colValRow(rowMap, "stock_mode"),
 			explodeRaw:  explodeRaw,
 			explodeOK:   explodeOK,
+			linkedRaw:   linkedRaw,
+			linkedOK:    linkedOK,
 			variantName: colValRow(rowMap, "variant_name"),
 		}
 		if len(attrColumns) > 0 {
@@ -237,6 +242,10 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid explode_order_lines %q", row.lineNum, row.explodeRaw))
 			rowFailed = true
 		}
+		if !row.linkedOK {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid requires_linked_parent %q", row.lineNum, row.linkedRaw))
+			rowFailed = true
+		}
 		if rowFailed {
 			result.Skipped++
 			failedLines[row.lineNum] = struct{}{}
@@ -265,7 +274,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		groupPricing, pricingConflict, pricingSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.pricingMode }, string(catalog.PricingModeFixed))
 		groupStock, stockConflict, stockSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.stockMode }, string(catalog.StockModeFixed))
 		groupExplode, explodeConflict, explodeSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.explodeRaw }, "false")
-		if pricingConflict || stockConflict || explodeConflict {
+		groupLinked, linkedConflict, linkedSeen := slugGroupConsensus(rows, func(row productImportRow) string { return row.linkedRaw }, "false")
+		if pricingConflict || stockConflict || explodeConflict || linkedConflict {
 			for _, row := range rows {
 				if pricingConflict {
 					result.Errors = append(result.Errors, fmt.Sprintf(
@@ -283,6 +293,12 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 					result.Errors = append(result.Errors, fmt.Sprintf(
 						"line %d: conflicting explode_order_lines values for slug %q: %s (empty cells count as false when any explode_order_lines is set)",
 						row.lineNum, slug, strings.Join(explodeSeen, ", "),
+					))
+				}
+				if linkedConflict {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: conflicting requires_linked_parent values for slug %q: %s (empty cells count as false when any requires_linked_parent is set)",
+						row.lineNum, slug, strings.Join(linkedSeen, ", "),
 					))
 				}
 				result.Skipped++
@@ -330,6 +346,17 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
+			if groupLinked != "" && existing.RequiresLinkedParent != (groupLinked == "true") {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: requires_linked_parent updates via CSV are not supported (product %q has requires_linked_parent %v, CSV has %q)",
+						row.lineNum, slug, existing.RequiresLinkedParent, groupLinked,
+					))
+					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
+				}
+				continue
+			}
 			product = existing
 		} else {
 			p, err := catalog.NewProduct(id.New(), rows[0].name, slug)
@@ -354,6 +381,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 					failedLines[row.lineNum] = struct{}{}
 				}
 				continue
+			}
+			if groupLinked != "" {
+				p.RequiresLinkedParent = groupLinked == "true"
 			}
 			if err := p.Validate(); err != nil {
 				for _, row := range rows {
@@ -546,6 +576,8 @@ type productImportRow struct {
 	stockMode   string
 	explodeRaw  string
 	explodeOK   bool
+	linkedRaw   string
+	linkedOK    bool
 	variantName string
 	rawAttrs    map[string]string
 }
@@ -553,6 +585,12 @@ type productImportRow struct {
 // normalizeExplodeCell accepts empty, true, and false (case-insensitive).
 // An invalid token is returned unchanged with ok false so the row error can quote it.
 func normalizeExplodeCell(raw string) (string, bool) {
+	return normalizeBoolCell(raw)
+}
+
+// normalizeBoolCell accepts empty, true, and false (case-insensitive).
+// An invalid token is returned unchanged with ok false so the row error can quote it.
+func normalizeBoolCell(raw string) (string, bool) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return "", true

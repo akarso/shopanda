@@ -1843,6 +1843,179 @@ paths:
           $ref: "#/components/responses/Validation"
 
   # ── Admin: Product assignments ─────────────────────────
+  /api/v1/admin/products/{id}/linked-eligible-parents:
+    get:
+      operationId: adminListLinkedEligibleParents
+      tags: ["Admin: Products"]
+      summary: List linked-eligible parent products for a child
+      description: >-
+        Explicit parent allowlist rows for the child product (PR-1073).
+        `products.read`. Enrichment of name/slug/type is best-effort.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAddLinkedEligibleParent
+      tags: ["Admin: Products"]
+      summary: Add a linked-eligible parent product
+      description: >-
+        Insert-ignore an allowlist row. `products.write`. Body
+        `{parent_product_id}`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLinkedEligibleParentRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /api/v1/admin/products/{id}/linked-eligible-parents/{parentId}:
+    delete:
+      operationId: adminRemoveLinkedEligibleParent
+      tags: ["Admin: Products"]
+      summary: Remove a linked-eligible parent product
+      description: >-
+        `parentId` is the parent product id. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: parentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/admin/products/{id}/linked-eligible-categories:
+    get:
+      operationId: adminListLinkedEligibleCategories
+      tags: ["Admin: Products"]
+      summary: List linked-eligible categories for a child
+      description: >-
+        Category eligibility rules for the child product (PR-1073).
+        `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAddLinkedEligibleCategory
+      tags: ["Admin: Products"]
+      summary: Add a linked-eligible category
+      description: >-
+        Insert-ignore a category rule. `products.write`. Body `{category_id}`.
+        Concurrent category delete maps FK 23503 to "category not found".
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLinkedEligibleCategoryRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /api/v1/admin/products/{id}/linked-eligible-categories/{categoryId}:
+    delete:
+      operationId: adminRemoveLinkedEligibleCategory
+      tags: ["Admin: Products"]
+      summary: Remove a linked-eligible category
+      description: >-
+        `categoryId` is the category id. 404 when the rule does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: categoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/admin/assignments:
     get:
       operationId: adminListAssignmentsByParent
@@ -3646,6 +3819,23 @@ components:
       properties:
         member_product_id:
           type: string
+
+    AddLinkedEligibleParentRequest:
+      type: object
+      description: Add an explicit parent allowlist row for a child product (products.write). Duplicate pairs are insert-ignore success.
+      required: [parent_product_id]
+      properties:
+        parent_product_id:
+          type: string
+          description: Parent product UUID (must not equal the child id).
+    AddLinkedEligibleCategoryRequest:
+      type: object
+      description: Add a category eligibility rule for a child product (products.write). Duplicate pairs are insert-ignore success.
+      required: [category_id]
+      properties:
+        category_id:
+          type: string
+          description: Category UUID.
 
     CreateVariantRequest:
       type: object

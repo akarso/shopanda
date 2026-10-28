@@ -44,6 +44,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Sales | Transactions | `/admin/sales/transactions` | Payment ledger ([PR-504](../phase-5-maturity/prs/PR-504.md)) |
 | Catalog | Products | `/admin/products` | Create, edit, variants, media |
 | Catalog | Categories | `/admin/catalog/categories` | Tree + product assignment ([PR-631](../phase-6-merchant-complete/prs/PR-631.md)) |
+| Sales | Assignments | `/admin/sales/assignments` | Card/ticket unit assignment lookup + assign/revoke ([PR-1073](../phase-12-product-composition/prs/PR-1073.md)) |
 | Catalog | Attributes | `/admin/catalog/attributes` | Attribute groups + product fields |
 | Catalog | Bulk Prices | `/admin/catalog/prices` | Grid price edits ([PR-630](../phase-6-merchant-complete/prs/PR-630.md)) |
 | Catalog | Reviews | `/admin/catalog/reviews` | Moderation ([PR-640](../phase-6-merchant-complete/prs/PR-640.md)) |
@@ -86,7 +87,7 @@ Use the **Store / Language / Currency** switcher in the admin header when a scre
 
 1. Open `/admin/products`.
 2. Select **New Product**.
-3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Choosing **Bundle** shows pricing mode, stock mode, and explode order lines. Explode order lines can be turned on only when both modes are dynamic. Choosing **Grouped** shows a members panel after the product is saved. Linked-child and downloadable file panels are still later tracks.
+3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Choosing **Bundle** shows pricing mode, stock mode, and explode order lines. Explode order lines can be turned on only when both modes are dynamic. Choosing **Grouped** shows a members panel after the product is saved. Linked eligibility is on the product edit form (PR-1073); downloadable file panels are still a later track.
 4. Save the product. On edit, changing **Type** asks for confirmation: it can alter shipping behavior and which type-specific panels apply. Bundle components and grouped members are edited after that type is saved: changing a product to bundle or grouped and saving opens that picker. The picker shows a page of simple, virtual, or downloadable products, Load more fetches the next page until the page is not full, and search filters products already loaded. Set quantity and required for a bundle component, and add or remove the link. A saved quantity or required flag stays when you load more products. Those links are not edited from the variant grid.
 
 The product form is schema-driven, so the exact fields can vary by deployment. Use the fields your store exposes rather than assuming every catalog uses the same product structure.
@@ -472,3 +473,11 @@ Phases 4–6 delivered merchant-complete admin coverage for catalog, sales, mark
 | Non-English admin UI | Not available |
 
 EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
+
+## Linked products & assignment (PR-1073)
+
+- On any product edit form, the **Linked eligibility** section (type-agnostic) lists which parent products and/or categories a child may later be assigned to. Use the **Requires linked parent** checkbox on create/update to gate purchasability. Rules are additive; removing a row does not delete products.
+- Bulk rules: CLI `import:linked-eligible-parents` / `export:linked-eligible-parents` (`child_slug,parent_slug`) and `import:linked-eligible-categories` / `export:linked-eligible-categories` (`child_slug,category_slug`).
+- Instance assignment (which purchased ticket sits on which purchased card) is on **Sales → Assignments**. Enter a parent unit id (`orderID/variantID`) to list assigned tickets, or a child unit id to see the current card. Assign/revoke requires `assignments.write` (Admin, Manager, Support).
+- Product CSV can set `requires_linked_parent` on create only.
+

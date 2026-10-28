@@ -1369,8 +1369,8 @@ Ticket,ticket,SKU-1,simple,true,red
 	if len(result.Errors) != 0 || len(varRepo.variants) != 1 {
 		t.Fatalf("result=%+v variants=%d", result, len(varRepo.variants))
 	}
-	if len(prodRepo.products) != 1 || prodRepo.products[0].RequiresLinkedParent {
-		t.Fatalf("product flag = %+v, want false (CSV does not set it)", prodRepo.products)
+	if len(prodRepo.products) != 1 || !prodRepo.products[0].RequiresLinkedParent {
+		t.Fatalf("product flag = %+v, want RequiresLinkedParent true", prodRepo.products)
 	}
 	attrs := varRepo.variants[0].Attributes
 	if attrs["color"] != "red" {
@@ -1405,5 +1405,60 @@ Widget,widget,SKU-1,nope,bogus,nope,maybe
 		if !strings.Contains(errText, "line 2:") {
 			t.Fatalf("error %q, want line 2", errText)
 		}
+	}
+}
+
+func TestImport_RequiresLinkedParentMismatchOnExisting(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Ticket", Slug: "ticket", Type: catalog.TypeSimple,
+		RequiresLinkedParent: false,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "ticket" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,requires_linked_parent
+Ticket,ticket,SKU-1,simple,true
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped < 1 {
+		t.Fatalf("Skipped = %d, want >=1; errors=%v", result.Skipped, result.Errors)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "requires_linked_parent updates via CSV are not supported") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+	if existing.RequiresLinkedParent {
+		t.Fatal("existing product flag must not flip")
+	}
+}
+
+func TestImport_RequiresLinkedParentConflictWithinSlug(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,requires_linked_parent
+Ticket,ticket,SKU-1,simple,true
+Ticket,ticket,SKU-2,simple,false
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 {
+		t.Fatalf("want no create on conflict, got %+v", prodRepo.products)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "conflicting requires_linked_parent") {
+		t.Fatalf("Errors = %v", result.Errors)
 	}
 }

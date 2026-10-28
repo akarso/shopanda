@@ -126,6 +126,14 @@ func run() error {
 			return runImportGroupedMembers(cfg, log)
 		case "export:grouped-members":
 			return runExportGroupedMembers(cfg, log)
+		case "import:linked-eligible-parents":
+			return runImportLinkedEligibleParents(cfg, log)
+		case "export:linked-eligible-parents":
+			return runExportLinkedEligibleParents(cfg, log)
+		case "import:linked-eligible-categories":
+			return runImportLinkedEligibleCategories(cfg, log)
+		case "export:linked-eligible-categories":
+			return runExportLinkedEligibleCategories(cfg, log)
 		case "import:stock":
 			return runImportStock(cfg, log)
 		case "export:stock":
@@ -724,6 +732,10 @@ Commands:
   export:bundle-components <f>  Export bundle component links to a CSV file
   import:grouped-members <f>  Import grouped member links from a CSV file
   export:grouped-members <f>  Export grouped member links to a CSV file
+  import:linked-eligible-parents <f>  Import linked eligibility parent allowlist CSV
+  export:linked-eligible-parents <f>  Export linked eligibility parent allowlist CSV
+  import:linked-eligible-categories <f>  Import linked eligibility category rules CSV
+  export:linked-eligible-categories <f>  Export linked eligibility category rules CSV
   import:stock <f>     Import stock from a CSV file
   export:stock <f>     Export stock to a CSV file
   import:customers <f> Import customers from a CSV file

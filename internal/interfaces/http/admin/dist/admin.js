@@ -161,6 +161,7 @@
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/sales/returns": { title: "Returns", render: renderReturnsGrid, auth: true },
         "/admin/sales/transactions": { title: "Transactions", render: renderTransactionsGrid, auth: true },
+        "/admin/sales/assignments": { title: "Assignments", render: renderAssignmentsPage, auth: true },
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
@@ -1313,6 +1314,7 @@
                 typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
                 setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
                 setupProductCompositionSections(typeSectionsHost, product, productID, form);
+                setupProductLinkedSection(typeSectionsHost, product, productID, form);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1523,6 +1525,373 @@
         }
         if (form) {
             form._shopandaCompositionBound = true;
+        }
+    }
+
+    function productLinkedSectionAPI() {
+        return (typeof ShopandaProductLinkedSection !== "undefined") ? ShopandaProductLinkedSection : null;
+    }
+
+    function setupProductLinkedSection(typeSectionsHost, product, productID, form) {
+        var sectionAPI = productLinkedSectionAPI();
+        if (!sectionAPI || !typeSectionsHost) {
+            return;
+        }
+        var linkedBody = typeSectionsHost.querySelector('[data-product-type-section-body="linked"]');
+        if (!linkedBody) {
+            return;
+        }
+        var requiresLinked = !!(product && product.requires_linked_parent);
+        linkedBody.innerHTML = sectionAPI.renderLinkedSectionHTML(!!productID, requiresLinked);
+        if (productID) {
+            bindLinkedEligibility(linkedBody, productID);
+        }
+        if (form) {
+            form._shopandaLinkedBound = true;
+        }
+    }
+
+    function bindLinkedEligibility(host, productID) {
+        var sectionAPI = productLinkedSectionAPI();
+        if (!sectionAPI || !host || !productID) {
+            return;
+        }
+        var parentsBox = host.querySelector("[data-linked-parents]");
+        var categoriesBox = host.querySelector("[data-linked-categories]");
+        var canWrite = userHasPermission("products.write");
+        var categoryOptions = [];
+
+        function setBusy(busy) {
+            host.setAttribute("aria-busy", busy ? "true" : "false");
+        }
+
+        function load() {
+            setBusy(true);
+            Promise.all([
+                api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents"),
+                api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories"),
+                api("/admin/categories")
+            ]).then(function (results) {
+                setBusy(false);
+                var parentsBody = results[0] || {};
+                var catsBody = results[1] || {};
+                var allCatsBody = results[2] || {};
+                if (parentsBody.error || catsBody.error) {
+                    var err = (parentsBody.error || catsBody.error);
+                    var msg = '<p role="alert">' + esc((err && err.message) || "Failed to load linked eligibility.") + "</p>";
+                    if (parentsBox) { parentsBox.innerHTML = msg; }
+                    if (categoriesBox) { categoriesBox.innerHTML = msg; }
+                    return;
+                }
+                var parents = (parentsBody.data && parentsBody.data.parents) || [];
+                var categories = (catsBody.data && catsBody.data.categories) || [];
+                if (allCatsBody.error) {
+                    categoryOptions = [];
+                } else {
+                    categoryOptions = flattenCategories((allCatsBody.data && allCatsBody.data.categories) || []);
+                }
+                if (parentsBox) {
+                    parentsBox.innerHTML = sectionAPI.parentsTableHTML(parents);
+                    if (!canWrite) {
+                        var pf = parentsBox.querySelector("[data-add-parent-form]");
+                        if (pf) { pf.style.display = "none"; }
+                        var picker = parentsBox.querySelector("[data-linked-parent-picker]");
+                        if (picker) { picker.style.display = "none"; }
+                        parentsBox.querySelectorAll("[data-remove-parent]").forEach(function (btn) { btn.disabled = true; });
+                    } else if (sectionAPI.bindLinkedParentPicker) {
+                        sectionAPI.bindLinkedParentPicker(parentsBox, {
+                            productID: productID,
+                            api: api
+                        });
+                    }
+                }
+                if (categoriesBox) {
+                    categoriesBox.innerHTML = sectionAPI.categoriesTableHTML(categories, categoryOptions);
+                    if (allCatsBody.error) {
+                        categoriesBox.insertAdjacentHTML("beforeend",
+                            '<p role="alert" class="settings-scope-note">Category tree failed to load; paste a category id is unavailable — retry later.</p>');
+                    }
+                    if (!canWrite) {
+                        var cf = categoriesBox.querySelector("[data-add-category-form]");
+                        if (cf) { cf.style.display = "none"; }
+                        categoriesBox.querySelectorAll("[data-remove-category]").forEach(function (btn) { btn.disabled = true; });
+                    }
+                }
+                bindActions();
+            }).catch(function () {
+                setBusy(false);
+                var fail = '<p role="alert">Failed to load linked eligibility.</p>';
+                if (parentsBox) { parentsBox.innerHTML = fail; }
+                if (categoriesBox) { categoriesBox.innerHTML = fail; }
+            });
+        }
+
+        function flattenCategories(nodes, out) {
+            out = out || [];
+            if (!Array.isArray(nodes)) {
+                return out;
+            }
+            for (var i = 0; i < nodes.length; i++) {
+                var n = nodes[i] || {};
+                out.push({ id: n.id || "", name: n.name || "", slug: n.slug || "" });
+                if (n.children) {
+                    flattenCategories(n.children, out);
+                }
+            }
+            return out;
+        }
+
+        function bindActions() {
+            if (!canWrite) {
+                return;
+            }
+            var addParent = host.querySelector("[data-add-parent-form]");
+            if (addParent && !addParent.getAttribute("data-bound")) {
+                addParent.setAttribute("data-bound", "1");
+                addParent.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var id = (addParent.elements.parent_product_id.value || "").trim();
+                    if (!id) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents", {
+                        method: "POST",
+                        body: JSON.stringify({ parent_product_id: id })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to add parent");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to add parent");
+                    });
+                });
+            }
+            var addCategory = host.querySelector("[data-add-category-form]");
+            if (addCategory && !addCategory.getAttribute("data-bound")) {
+                addCategory.setAttribute("data-bound", "1");
+                addCategory.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var id = (addCategory.elements.category_id.value || "").trim();
+                    if (!id) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories", {
+                        method: "POST",
+                        body: JSON.stringify({ category_id: id })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to add category");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to add category");
+                    });
+                });
+            }
+            host.querySelectorAll("[data-remove-parent]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var parentID = btn.getAttribute("data-remove-parent");
+                    apiDelete("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents/" + encodeURIComponent(parentID)).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove parent");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove parent");
+                    });
+                });
+            });
+            host.querySelectorAll("[data-remove-category]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var categoryID = btn.getAttribute("data-remove-category");
+                    apiDelete("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories/" + encodeURIComponent(categoryID)).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove category");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove category");
+                    });
+                });
+            });
+        }
+
+        load();
+    }
+
+    function renderAssignmentsPage(container) {
+        if (!userHasPermission("assignments.read")) {
+            container.innerHTML = '<h2>Assignments</h2><p role="alert">Your account does not have assignments access.</p>';
+            return;
+        }
+        var ui = window.ShopandaAssignmentAdminUI;
+        if (!ui) {
+            container.innerHTML = '<h2>Assignments</h2><p role="alert">Assignment admin UI failed to load.</p>';
+            return;
+        }
+        var canWrite = userHasPermission("assignments.write");
+        container.innerHTML = ui.pageHTML();
+        var msg = document.getElementById("assignment-admin-msg");
+        var parentResults = document.getElementById("assignment-parent-results");
+        var childResults = document.getElementById("assignment-child-results");
+        var parentForm = document.getElementById("assignment-parent-form");
+        var childForm = document.getElementById("assignment-child-form");
+        var assignForm = document.getElementById("assignment-assign-form");
+        var lastParentQuery = null;
+        var lastChildUnit = null;
+
+        function setMsg(text, isError) {
+            msg.innerHTML = text ? ('<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>') : '';
+        }
+
+        function refreshLookups() {
+            if (lastParentQuery) {
+                loadParentList(lastParentQuery.unit, lastParentQuery.status, 0, false);
+            }
+            if (lastChildUnit) {
+                loadChildCurrent(lastChildUnit);
+            }
+        }
+
+        function bindRevoke(root) {
+            if (!canWrite || !root) { return; }
+            root.querySelectorAll("[data-revoke-id]").forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    var id = btn.getAttribute("data-revoke-id");
+                    if (!window.confirm("Revoke this assignment?")) {
+                        return;
+                    }
+                    api("/admin/assignments/" + encodeURIComponent(id) + "/revoke", { method: "POST", body: "{}" }).then(function (body) {
+                        if (body && body.error) {
+                            setMsg(body.error.message || "Revoke failed", true);
+                            return;
+                        }
+                        setMsg("Assignment revoked.");
+                        refreshLookups();
+                    }).catch(function () {
+                        setMsg("Revoke failed", true);
+                    });
+                });
+            });
+        }
+
+        function bindLoadMore(root) {
+            if (!root) { return; }
+            var btn = root.querySelector("[data-assignment-load-more]");
+            if (!btn || !lastParentQuery) { return; }
+            btn.addEventListener("click", function () {
+                var offset = parseInt(btn.getAttribute("data-offset") || "0", 10) || 0;
+                loadParentList(lastParentQuery.unit, lastParentQuery.status, offset, true);
+            });
+        }
+
+        function loadParentList(unit, status, offset, append) {
+            lastParentQuery = { unit: unit, status: status || "assigned" };
+            if (!append) {
+                parentResults.innerHTML = "<p>Loading…</p>";
+            }
+            var q = "parent_unit_id=" + encodeURIComponent(unit) +
+                "&status=" + encodeURIComponent(lastParentQuery.status) +
+                "&offset=" + encodeURIComponent(String(offset || 0));
+            api("/admin/assignments?" + q).then(function (body) {
+                if (body && body.error) {
+                    parentResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
+                    return;
+                }
+                var rows = (body.data && body.data.assignments) || [];
+                var hasMore = !!(body.data && body.data.has_more);
+                var nextOffset = (offset || 0) + rows.length;
+                if (append) {
+                    var prev = parentResults._assignmentRows || [];
+                    rows = prev.concat(rows);
+                }
+                parentResults._assignmentRows = rows;
+                parentResults.innerHTML = ui.assignmentTableHTML(rows, {
+                    canWrite: canWrite,
+                    hasMore: hasMore,
+                    nextOffset: nextOffset
+                });
+                bindRevoke(parentResults);
+                bindLoadMore(parentResults);
+            }).catch(function () {
+                parentResults.innerHTML = '<p role="alert">Failed to load assignments.</p>';
+            });
+        }
+
+        function loadChildCurrent(unit) {
+            lastChildUnit = unit;
+            childResults.innerHTML = "<p>Loading…</p>";
+            api("/admin/assignments/current?child_unit_id=" + encodeURIComponent(unit)).then(function (body) {
+                if (body && body.error) {
+                    childResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
+                    return;
+                }
+                var assignment = body.data && body.data.assignment;
+                childResults.innerHTML = ui.currentHTML(assignment, { canWrite: canWrite });
+                bindRevoke(childResults);
+            }).catch(function () {
+                childResults.innerHTML = '<p role="alert">Failed to load current assignment.</p>';
+            });
+        }
+
+        if (parentForm) {
+            parentForm.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var unit = (parentForm.elements.parent_unit_id.value || "").trim();
+                if (!unit) { return; }
+                var status = (parentForm.elements.status && parentForm.elements.status.value) || "assigned";
+                loadParentList(unit, status, 0, false);
+            });
+        }
+
+        if (childForm) {
+            childForm.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var unit = (childForm.elements.child_unit_id.value || "").trim();
+                if (!unit) { return; }
+                loadChildCurrent(unit);
+            });
+        }
+
+        if (assignForm) {
+            if (!canWrite) {
+                assignForm.style.display = "none";
+            } else {
+                assignForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var force = !!assignForm.elements.force.checked;
+                    if (force && !window.confirm("Force assign even when order/eligibility checks would refuse?")) {
+                        return;
+                    }
+                    var payload = {
+                        child_unit_id: (assignForm.elements.child_unit_id.value || "").trim(),
+                        parent_unit_id: (assignForm.elements.parent_unit_id.value || "").trim(),
+                        force: force,
+                        reason: (assignForm.elements.reason.value || "").trim()
+                    };
+                    api("/admin/assignments", { method: "POST", body: JSON.stringify(payload) }).then(function (body) {
+                        if (body && body.error) {
+                            setMsg(body.error.message || "Assign failed", true);
+                            return;
+                        }
+                        setMsg("Assignment saved.");
+                        if (!lastParentQuery && payload.parent_unit_id) {
+                            lastParentQuery = { unit: payload.parent_unit_id, status: "assigned" };
+                        }
+                        if (!lastChildUnit && payload.child_unit_id) {
+                            lastChildUnit = payload.child_unit_id;
+                        }
+                        refreshLookups();
+                    }).catch(function () {
+                        setMsg("Assign failed", true);
+                    });
+                });
+            }
         }
     }
 
@@ -2555,6 +2924,7 @@
             pricingMode: pick(raw, "pricing_mode", "PricingMode") || "fixed",
             stockMode: pick(raw, "stock_mode", "StockMode") || "fixed",
             explodeOrderLines: !!(pick(raw, "explode_order_lines", "ExplodeOrderLines")),
+            requires_linked_parent: !!(pick(raw, "requires_linked_parent", "RequiresLinkedParent")),
             attributes: pick(raw, "attributes", "Attributes") || {},
             visibilityModes: pick(raw, "visibility_modes", "VisibilityModes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),
@@ -4086,6 +4456,7 @@
                             refreshJobsNavVisibility();
                             refreshSearchNavVisibility();
                             refreshCacheNavVisibility();
+                            refreshAssignmentsNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
@@ -4404,6 +4775,15 @@
     function refreshCacheNavVisibility() {
         var visible = userHasPermission("cache.read");
         var link = document.querySelector('.admin-sidebar a[href="/admin/operations/cache"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
+        }
+    }
+
+    // refreshAssignmentsNavVisibility hides Sales → Assignments without assignments.read.
+    function refreshAssignmentsNavVisibility() {
+        var visible = userHasPermission("assignments.read");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/sales/assignments"]');
         if (link && link.parentElement) {
             link.parentElement.style.display = visible ? "" : "none";
         }
@@ -11306,6 +11686,7 @@
             refreshJobsNavVisibility();
             refreshSearchNavVisibility();
             refreshCacheNavVisibility();
+            refreshAssignmentsNavVisibility();
             handleRoute();
         });
     }

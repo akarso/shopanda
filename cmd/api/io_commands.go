@@ -808,3 +808,167 @@ func runExportGroupedMembers(cfg *config.Config, log logger.Logger) error {
 		}, nil
 	})
 }
+
+func runImportLinkedEligibleParents(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("import:linked-eligible-parents")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioImport,
+		Path:          path,
+		StartEvent:    "import.linked_eligible_parents.start",
+		CompleteEvent: "import.linked_eligible_parents.complete",
+		RowErrorEvent: "import.linked_eligible_parents.row_error",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		ruleRepo, err := postgres.NewLinkedEligibilityRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("linked eligibility repo: %w", err)
+		}
+		categoryRepo, err := postgres.NewCategoryRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("category repo: %w", err)
+		}
+		svc := catalogApp.NewLinkedEligibilityService(productRepo, categoryRepo, ruleRepo, conn)
+		result, err := importer.NewLinkedEligibleParentImporter(productRepo, svc).Import(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("import linked eligible parents: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"added":   result.Added,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runExportLinkedEligibleParents(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("export:linked-eligible-parents")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioExport,
+		Path:          path,
+		StartEvent:    "export.linked_eligible_parents.start",
+		CompleteEvent: "export.linked_eligible_parents.complete",
+		RowErrorEvent: "export.linked_eligible_parents.row_error",
+		AtomicExport:  true,
+		TempPrefix:    "linked-eligible-parents-export-*.csv",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		ruleRepo, err := postgres.NewLinkedEligibilityRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("linked eligibility repo: %w", err)
+		}
+		categoryRepo, err := postgres.NewCategoryRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("category repo: %w", err)
+		}
+		svc := catalogApp.NewLinkedEligibilityService(productRepo, categoryRepo, ruleRepo, conn)
+		result, err := exporter.NewLinkedEligibleParentExporter(productRepo, svc).Export(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("export linked eligible parents: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"rows":    result.Rows,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runImportLinkedEligibleCategories(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("import:linked-eligible-categories")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioImport,
+		Path:          path,
+		StartEvent:    "import.linked_eligible_categories.start",
+		CompleteEvent: "import.linked_eligible_categories.complete",
+		RowErrorEvent: "import.linked_eligible_categories.row_error",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		ruleRepo, err := postgres.NewLinkedEligibilityRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("linked eligibility repo: %w", err)
+		}
+		categoryRepo, err := postgres.NewCategoryRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("category repo: %w", err)
+		}
+		svc := catalogApp.NewLinkedEligibilityService(productRepo, categoryRepo, ruleRepo, conn)
+		result, err := importer.NewLinkedEligibleCategoryImporter(productRepo, categoryRepo, svc).Import(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("import linked eligible categories: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"added":   result.Added,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runExportLinkedEligibleCategories(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("export:linked-eligible-categories")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioExport,
+		Path:          path,
+		StartEvent:    "export.linked_eligible_categories.start",
+		CompleteEvent: "export.linked_eligible_categories.complete",
+		RowErrorEvent: "export.linked_eligible_categories.row_error",
+		AtomicExport:  true,
+		TempPrefix:    "linked-eligible-categories-export-*.csv",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		ruleRepo, err := postgres.NewLinkedEligibilityRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("linked eligibility repo: %w", err)
+		}
+		categoryRepo, err := postgres.NewCategoryRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("category repo: %w", err)
+		}
+		svc := catalogApp.NewLinkedEligibilityService(productRepo, categoryRepo, ruleRepo, conn)
+		result, err := exporter.NewLinkedEligibleCategoryExporter(productRepo, categoryRepo, svc).Export(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("export linked eligible categories: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"rows":    result.Rows,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}

@@ -226,6 +226,7 @@ func lookupCompositionChildren(ctx context.Context, products catalog.ProductRepo
 func eachProduct(ctx context.Context, products catalog.ProductRepository, productType catalog.Type, fn func(catalog.Product) error) error {
 	offset := 0
 	for {
+		// Empty productType lists every type (linked eligibility export).
 		page, err := products.List(ctx, catalog.ListFilter{Type: productType, Offset: offset, Limit: pageSize})
 		if err != nil {
 			return fmt.Errorf("composition export: list products: %w", err)

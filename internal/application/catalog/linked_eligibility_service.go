@@ -96,6 +96,31 @@ func (s *LinkedEligibilityService) ListCategories(ctx context.Context, childID s
 	return rows, nil
 }
 
+
+// ListAllParentSlugRows returns every allowlist row with product slugs for CSV export.
+func (s *LinkedEligibilityService) ListAllParentSlugRows(ctx context.Context) ([]catalog.LinkedEligibleParentSlugRow, error) {
+	rows, err := s.rules.ListAllParentSlugRows(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("linked eligibility: list all parent slug rows: %w", err)
+	}
+	if rows == nil {
+		rows = []catalog.LinkedEligibleParentSlugRow{}
+	}
+	return rows, nil
+}
+
+// ListAllCategorySlugRows returns every category rule with slugs for CSV export.
+func (s *LinkedEligibilityService) ListAllCategorySlugRows(ctx context.Context) ([]catalog.LinkedEligibleCategorySlugRow, error) {
+	rows, err := s.rules.ListAllCategorySlugRows(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("linked eligibility: list all category slug rows: %w", err)
+	}
+	if rows == nil {
+		rows = []catalog.LinkedEligibleCategorySlugRow{}
+	}
+	return rows, nil
+}
+
 // AddParent validates and insert-ignores an explicit parent allowlist row.
 // After both rows are locked, a product that is not active is NotFound unless
 // the context includes non-active products (catalog.WithOperatorProductReadScope).
@@ -200,9 +225,9 @@ func (s *LinkedEligibilityService) AddCategory(ctx context.Context, c *catalog.L
 	}
 	// CategoryRepo has no WithTx; this read is on a different connection
 	// than the child lock. A concurrent category delete can still fail
-	// the insert via FK 23503 (mapped to generic NotFound) or CASCADE
-	// the new row after commit. PR-1073 should map
-	// linked_eligible_categories_category_id_fkey to "category not found".
+	// the insert via FK 23503 (mapped to "category not found" for
+	// linked_eligible_categories_category_id_fkey) or CASCADE the new
+	// row after commit.
 	cat, err := s.categories.FindByID(ctx, c.CategoryID)
 	if err != nil {
 		return fmt.Errorf("linked eligibility: find category: %w", err)

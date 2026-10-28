@@ -18,7 +18,7 @@ import (
 // import header normalization) are omitted from the CSV (PR-1052).
 var productCSVBaseHeader = []string{
 	"name", "slug", "sku", "description", "type",
-	"pricing_mode", "stock_mode", "explode_order_lines",
+	"pricing_mode", "stock_mode", "explode_order_lines", "requires_linked_parent",
 	"variant_name",
 }
 
@@ -65,7 +65,7 @@ const pageSize = 100
 // Export writes all products and their variants to w in CSV format.
 //
 // CSV columns: name, slug, sku, description, type, pricing_mode, stock_mode,
-// explode_order_lines, variant_name, plus any attribute keys found across all
+// explode_order_lines, requires_linked_parent, variant_name, plus any attribute keys found across all
 // variants. Attribute columns are sorted alphabetically. Mode columns export
 // the stored values (empty mode → fixed, empty explode → false). Attribute
 // keys that match those headers are omitted.
@@ -158,15 +158,16 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 		// Invalid Type is emitted as-is so re-import fails closed rather than
 		// silently rewriting unexpected values to simple.
 		rowMap := map[string]string{
-			"name":                r.product.Name,
-			"slug":                r.product.Slug,
-			"sku":                 r.variant.SKU,
-			"description":         r.product.Description,
-			"type":                productType,
-			"pricing_mode":        exportMode(string(r.product.PricingMode), string(catalog.PricingModeFixed)),
-			"stock_mode":          exportMode(string(r.product.StockMode), string(catalog.StockModeFixed)),
-			"explode_order_lines": strconv.FormatBool(r.product.ExplodeOrderLines),
-			"variant_name":        r.variant.Name,
+			"name":                   r.product.Name,
+			"slug":                   r.product.Slug,
+			"sku":                    r.variant.SKU,
+			"description":            r.product.Description,
+			"type":                   productType,
+			"pricing_mode":           exportMode(string(r.product.PricingMode), string(catalog.PricingModeFixed)),
+			"stock_mode":             exportMode(string(r.product.StockMode), string(catalog.StockModeFixed)),
+			"explode_order_lines":    strconv.FormatBool(r.product.ExplodeOrderLines),
+			"requires_linked_parent": strconv.FormatBool(r.product.RequiresLinkedParent),
+			"variant_name":           r.variant.Name,
 		}
 		for k := range attrKeys {
 			if isReservedProductCSVColumn(baseColumns, k) {

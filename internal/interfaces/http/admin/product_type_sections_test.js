@@ -124,6 +124,7 @@ test("assignProductField puts type on payload root not attributes", () => {
     assert.equal(payload.attributes.color, "red");
     assert.equal(payload.attributes.type, undefined);
     assert.equal(ui.isCoreProductField("type"), true);
+    assert.equal(ui.isCoreProductField("requires_linked_parent"), true);
     assert.equal(ui.isCoreProductField("color"), false);
 });
 
