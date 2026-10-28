@@ -11,8 +11,10 @@ import (
 	"time"
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	downloadapp "github.com/akarso/shopanda/internal/application/download"
 	domainAssignment "github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	domainDownload "github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -60,6 +62,21 @@ type assignmentHooks interface {
 	WithTx(tx *sql.Tx) *assignmentapp.Flow
 }
 
+// grantHooks is the DownloadGrant surface returns needs (PR-1075).
+// *downloadapp.Service satisfies it.
+type grantHooks interface {
+	RevokeForOrderItem(ctx context.Context, orderItemID, reason string) ([]*domainDownload.DownloadGrant, error)
+	ListByOrderItem(ctx context.Context, orderItemID string) ([]domainDownload.DownloadGrant, error)
+	BindsTx() bool
+	WithTx(tx *sql.Tx) *downloadapp.Service
+}
+
+// grantIssuer retries DownloadGrant issuance after a blocking return is
+// rejected or cancelled (PR-1075). *downloadapp.Issuer satisfies it.
+type grantIssuer interface {
+	IssueForOrder(ctx context.Context, orderID string) (int, error)
+}
+
 // Service orchestrates the return (RMA) workflow.
 type Service struct {
 	returns     domainReturns.Repository
@@ -72,6 +89,8 @@ type Service struct {
 	log         logger.Logger
 	txStarter   TxStarter
 	assignments assignmentHooks
+	grants      grantHooks
+	issuer      grantIssuer
 }
 
 // WithTxStarter wires the transaction used by Receive. Without it, Receive
@@ -99,6 +118,49 @@ func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
 		s.assignments = flow
 	}
 	return s
+}
+
+// WithDownloadGrants hooks DownloadGrant revoke into approve/refund
+// (PR-1075), same timing as assignment revoke. Nil skips grant revoke
+// (tests without grants). Production always wires the service.
+func (s *Service) WithDownloadGrants(grants *downloadapp.Service) *Service {
+	if s == nil {
+		return nil
+	}
+	if grants == nil {
+		s.grants = nil
+	} else {
+		s.grants = grants
+	}
+	return s
+}
+
+// WithDownloadGrantIssuer hooks grant re-issuance after Reject/Cancel so
+// lines skipped while a return was requested still get grants once the
+// blocking return is gone. Nil skips retry (tests). Production wires the
+// issuer. Failures are logged — they must not undo a closed return.
+func (s *Service) WithDownloadGrantIssuer(issuer *downloadapp.Issuer) *Service {
+	if s == nil {
+		return nil
+	}
+	if issuer == nil {
+		s.issuer = nil
+	} else {
+		s.issuer = issuer
+	}
+	return s
+}
+
+func (s *Service) retryDownloadGrantsAfterReturnClosed(ctx context.Context, orderID string) {
+	if s == nil || s.issuer == nil {
+		return
+	}
+	if _, err := s.issuer.IssueForOrder(ctx, orderID); err != nil {
+		s.log.Warn("returns: download grant retry after return closed failed", map[string]interface{}{
+			"order_id": orderID,
+			"error":    err.Error(),
+		})
+	}
 }
 
 // AssertNotOnOpenReturn fails when unitID appears on a return that still
@@ -262,6 +324,9 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 	if err := s.validateReturnQuantities(ctx, orderID, orderItems, returnItems); err != nil {
 		return nil, err
 	}
+	if err := s.assertNoPartialDownloadableReturn(ctx, orderID, orderItems, returnItems); err != nil {
+		return nil, err
+	}
 	if err := s.assertParentsReturnable(ctx, orderID, returnItems); err != nil {
 		return nil, err
 	}
@@ -314,6 +379,8 @@ func (s *Service) Reject(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRejected, *ret)
+	// Requested returns block grant issuance; retry now that the block is gone.
+	s.retryDownloadGrantsAfterReturnClosed(ctx, ret.OrderID)
 	return ret, nil
 }
 
@@ -330,6 +397,8 @@ func (s *Service) Cancel(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnCancelled, *ret)
+	// Requested returns block grant issuance; retry now that the block is gone.
+	s.retryDownloadGrantsAfterReturnClosed(ctx, ret.OrderID)
 	return ret, nil
 }
 
@@ -782,18 +851,22 @@ func returnUnitIDs(ret *domainReturns.Return) []string {
 	return out
 }
 
-// persistReturnWithAssignmentRevoke commits revoke + return Update in
-// one transaction when assignment is wired. Domain transition must
-// already have succeeded in memory. Without assignment, updates directly.
+// persistReturnWithAssignmentRevoke commits assignment + download-grant
+// revoke + return Update in one transaction when either hook is wired.
+// Domain transition must already have succeeded in memory. Without both
+// hooks, updates the return directly.
 func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *domainReturns.Return, revokeReason, op string) error {
-	if s.assignments == nil {
+	if s.assignments == nil && s.grants == nil {
 		return persistReturnUpdate(s.returns.Update(ctx, ret), op)
 	}
 	if s.txStarter == nil {
 		return apperror.Internal("returns: transaction starter is required")
 	}
-	if !s.assignments.BindsTx() {
+	if s.assignments != nil && !s.assignments.BindsTx() {
 		return apperror.Internal("returns: assignment repository does not support transactions")
+	}
+	if s.grants != nil && !s.grants.BindsTx() {
+		return apperror.Internal("returns: download grant repository does not support transactions")
 	}
 	txReturns, ok := s.returns.(txReturnRepo)
 	if !ok {
@@ -807,17 +880,30 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 
 	// Serialize against AssignOwned / AdminAssign / RecordPurchase on the
 	// same unit ids (advisory locks + their open-return recheck).
-	if err := assignmentapp.LockAssignmentUnits(ctx, tx, returnUnitIDs(ret)...); err != nil {
-		return err
-	}
-	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
-		return err
+	if s.assignments != nil {
+		if err := assignmentapp.LockAssignmentUnits(ctx, tx, returnUnitIDs(ret)...); err != nil {
+			return err
+		}
+		if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+			return err
+		}
 	}
 
-	bound := s.assignments.WithTx(tx)
-	revoked, err := revokeAssignmentsForReturn(ctx, bound, ret, revokeReason)
-	if err != nil {
-		return err
+	var revoked []*domainAssignment.ProductAssignment
+	if s.assignments != nil {
+		bound := s.assignments.WithTx(tx)
+		revoked, err = revokeAssignmentsForReturn(ctx, bound, ret, revokeReason)
+		if err != nil {
+			return err
+		}
+	}
+	var revokedGrants []*domainDownload.DownloadGrant
+	if s.grants != nil {
+		boundGrants := s.grants.WithTx(tx)
+		revokedGrants, err = revokeGrantsForReturn(ctx, boundGrants, ret, revokeReason)
+		if err != nil {
+			return err
+		}
 	}
 	boundReturns := txReturns.WithTx(tx)
 	if err := persistReturnUpdate(boundReturns.Update(ctx, ret), op); err != nil {
@@ -829,7 +915,77 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 	for _, a := range revoked {
 		s.publishAssignmentRevoked(ctx, a, revokeReason)
 	}
+	for _, g := range revokedGrants {
+		s.publishGrantRevoked(ctx, g, revokeReason)
+	}
 	return nil
+}
+
+// assertNoPartialDownloadableReturn rejects partial qty on lines that already
+// have DownloadGrant rows. Until download_limit scaling exists, a return of a
+// downloadable line must cover the full ordered quantity (approve/refund then
+// fully revokes). Lines without grants are unaffected (virtual / non-digital).
+func (s *Service) assertNoPartialDownloadableReturn(
+	ctx context.Context,
+	orderID string,
+	orderItems map[string]order.Item,
+	items []domainReturns.Item,
+) error {
+	if s == nil || s.grants == nil {
+		return nil
+	}
+	for _, item := range items {
+		ordered := orderItems[item.VariantID].Quantity
+		if item.Quantity >= ordered {
+			continue
+		}
+		orderItemID := domainDownload.OrderItemID(orderID, item.VariantID)
+		rows, err := s.grants.ListByOrderItem(ctx, orderItemID)
+		if err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			return apperror.Validation("partial return is not supported for downloadable items")
+		}
+	}
+	return nil
+}
+
+// revokeGrantsForReturn revokes DownloadGrant rows for each return line.
+func revokeGrantsForReturn(ctx context.Context, hooks grantHooks, ret *domainReturns.Return, reason string) ([]*domainDownload.DownloadGrant, error) {
+	if hooks == nil || ret == nil {
+		return nil, nil
+	}
+	out := make([]*domainDownload.DownloadGrant, 0)
+	for _, item := range ret.Items() {
+		orderItemID := domainDownload.OrderItemID(ret.OrderID, item.VariantID)
+		revoked, err := hooks.RevokeForOrderItem(ctx, orderItemID, reason)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, revoked...)
+	}
+	return out, nil
+}
+
+func (s *Service) publishGrantRevoked(ctx context.Context, g *domainDownload.DownloadGrant, reason string) {
+	if s == nil || g == nil || s.bus == nil {
+		return
+	}
+	data := domainDownload.GrantRevokedData{
+		GrantID:     g.ID,
+		OrderItemID: g.OrderItemID,
+		CustomerID:  g.CustomerID,
+		AssetID:     g.AssetID,
+		Reason:      reason,
+	}
+	if err := s.bus.Publish(ctx, event.New(domainDownload.EventDownloadGrantRevoked, "returns.service", data)); err != nil {
+		s.log.Warn("returns: publish download grant revoked failed", map[string]interface{}{
+			"event":    domainDownload.EventDownloadGrantRevoked,
+			"grant_id": g.ID,
+			"error":    err.Error(),
+		})
+	}
 }
 
 // revokeAssignmentsForReturn revokes the current ProductAssignment for

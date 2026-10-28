@@ -284,9 +284,23 @@ Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-10
 
 - Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.
 - Changing a live SKU between physical and `virtual`/`downloadable` changes whether **new** checkouts require a shipping method (derived in cart validation). Carts already mid-checkout keep the shipping requirement cached from when they last validated.
-- `bundle` / `grouped` composition is editable in admin and CSV. `configurable` and `downloadable` can be stored before their later tracks fully ship; expect incomplete storefront/admin behavior for those types until those PRs land.
+- `bundle` / `grouped` composition is editable in admin and CSV. `downloadable` file attach HTTP/GUI is PR-1078; grants issue on `order.paid` (PR-1075) but customer download delivery is PR-1077. `configurable` still has incomplete storefront/admin behavior until its track lands.
 - Bundle mode fields (`pricing_mode`, `stock_mode`, `explode_order_lines`) save with the product when type is bundle. The explode checkbox is enabled only when both modes are dynamic. Component and member links use dedicated routes, not the product PUT: `GET`/`POST /api/v1/admin/products/{id}/bundle-components`, `DELETE .../bundle-components/{componentId}`, and the grouped-members pair. A parent of the wrong type is 422. Removing a link that is not there is 404. Adding a required bundle component past `catalog.MaxBundleRequiredComponents` (50) is 422 and the link is not saved. `products.read` lists; `products.write` adds and removes.
 - CLI (operator scope, additive — a missing CSV row does not delete a link): `import:bundle-components` / `export:bundle-components` (`parent_slug,component_slug,quantity,required`; empty `required` means true) and `import:grouped-members` / `export:grouped-members` (`parent_slug,member_slug`). Row failures are `line N:` and do not abort the rest of the file. Product CSV exports stored modes and refuses a non-empty mode that does not match an existing product. It does not update modes; use the admin product PUT for that (it still locks the row and rejects dynamic pricing or stock while an own price or stock row exists).
+
+## Downloadable grants (PR-1075)
+
+**Symptom:** customer paid for a downloadable product but has no grant row.
+
+**Check:**
+
+1. Confirm the product `type` is `downloadable` (or a non-exploded bundle with a **required** downloadable leaf) and `downloadable_files` has ≥1 row for that product/leaf.
+2. Confirm `order.paid` fired. Publishers: sync payment success, `$0`/`payment_skipped` checkout, `payment.completed` webhooks (after persist), admin/integration status → `paid`. Pending Stripe initiate does **not** fire `order.paid` (wait for capture webhook). Do not expect grants from `checkout.completed` alone.
+3. Look up `download_grants` by `order_item_id = '<orderUUID>/<variantID>'` (same mint as assignment unit ids). Bundle leaf grants use the **parent** line's order_item_id.
+4. Global defaults: `catalog.downloadable.default_expiry` / `default_download_limit` (env `SHOPANDA_CATALOG_DOWNLOADABLE_*`). Explicit `default_download_limit: 0` is rejected. Product overrides: `downloadable_grant_settings`.
+5. Guest orders issue grants with empty `customer_id` — `ListByCustomer` rejects empty id; list by order item until account-link rebind (follow-up).
+6. Approve/refund of a return **revokes** grants for those lines (same TX as assignment revoke). Operator consequence: refunded downloadables lose access.
+7. If `order.paid` published but the async issuer failed, there is no durable outbox in this PR — re-deliver the payment webhook / admin paid update / `ApplyStatus(paid)` (they republish `order.paid` on already-completed/already-paid) or call `IssueForOrder`. UNIQUE + IssueIdempotent leave existing rows unchanged (including revoked — paid redelivery does **not** resurrect). Support re-issue is PR-1078. Delivery endpoint is PR-1077. Confirmation email on republish is claimed in `notification_dedupe` `(subject_key, kind=order_confirmed)` as `pending` before enqueue and marked `completed` after success (queue job-id alone is not enough on SQS/RabbitMQ); enqueue failure deletes the pending claim so a later paid signal can retry.
 
 ## Admin store credit issuance
 

@@ -856,6 +856,17 @@ Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in
 
 `catalog.visibility.enforce` (env `SHOPANDA_CATALOG_VISIBILITY_ENFORCE`) defaults to **false**. Leaving it off is the safe upgrade path after Phase 12 Track B migrations: existing products stay discoverable under mode=`auto` until you explicitly opt into AutoBasis gates. Enabling it also gates cart add/quantity-increase, guest-cart claim (blocked lines are dropped), and checkout on the `Purchasable` axis (PR-1058), so out-of-stock or unpriced products stop being sellable. See [RUNBOOK — Catalog visibility enforcement](../../RUNBOOK.md#catalog-visibility-enforcement-pr-1057) before flipping it on in production.
 
+### Downloadable grant defaults (PR-1075)
+
+When an order is paid, downloadable lines receive `DownloadGrant` rows. Global defaults:
+
+| YAML | Env | Default |
+| --- | --- | --- |
+| `catalog.downloadable.default_expiry` | `SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_EXPIRY` | `720h` (30 days) |
+| `catalog.downloadable.default_download_limit` | `SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_LIMIT` | `5` |
+
+`default_expiry` is a Go duration string. Per-product overrides are rows in `downloadable_grant_settings` (admin editor is PR-1078). Delivery HTTP is PR-1077.
+
 ## Search Index Maintenance
 
 ### Meilisearch: full reindex required after upgrading past PR-1037

@@ -26,6 +26,7 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
+	downloadApp "github.com/akarso/shopanda/internal/application/download"
 	exportctxApp "github.com/akarso/shopanda/internal/application/exportctx"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
@@ -54,6 +55,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	domaindownload "github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
@@ -120,6 +122,7 @@ type serveRuntime struct {
 	linkedEligibilityService *catalogApp.LinkedEligibilityService
 	productAssignmentService *assignmentApp.Service
 	assignmentFlow           *assignmentApp.Flow
+	downloadGrantService     *downloadApp.Service
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -265,7 +268,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
-	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
+	orderStatusService := orderApp.NewStatusService(repos.orderRepo).WithEventBus(bus)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
 	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo, conn)
 	permReg := preparePermissionRegistry(pluginApp)
@@ -398,6 +401,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
 		notification.WithInvoices(repos.invoiceRepo),
 		notification.WithPDFRenderer(invoicePDFRenderer),
+		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 	)
 
 	// Media storage.
@@ -530,6 +534,30 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// DownloadableFileService (list/attach/remove HTTP) is PR-1078. Sell path
 	// and media.Delete use the repo via WithDownloadableFiles /
 	// WithAssetAttachments until then.
+	downloadGrantService := downloadApp.NewService(repos.downloadGrantRepo, bus)
+	downloadGrantExpiry, err := time.ParseDuration(cfg.Catalog.Downloadable.DefaultExpiry)
+	if err != nil {
+		return nil, fmt.Errorf("wire services: catalog.downloadable.default_expiry: %w", err)
+	}
+	downloadGrantIssuer := downloadApp.NewIssuer(
+		repos.orderRepo,
+		repos.variantRepo,
+		repos.productRepo,
+		repos.downloadableFileRepo,
+		repos.downloadableGrantSettingsRepo,
+		downloadGrantService,
+		domaindownload.Defaults{
+			Expiry:        downloadGrantExpiry,
+			DownloadLimit: cfg.Catalog.Downloadable.DefaultDownloadLimit,
+		},
+		log,
+	).WithPayments(repos.paymentRepo).
+		WithBundleComponents(repos.bundleComponentRepo).
+		WithTxStarter(conn)
+	// Wire order.paid → DownloadGrant issuance (PR-1075). Delivery is PR-1077.
+	// order.paid is published from sync payment success, $0 payment_skipped,
+	// payment.completed webhooks, and admin/integration ApplyStatus(paid).
+	bus.OnAsync(order.EventOrderPaid, downloadGrantIssuer.HandleOrderPaid)
 	productAssignmentService := assignmentApp.NewService(repos.productAssignmentRepo)
 	assignmentFlow := assignmentApp.NewFlow(
 		productAssignmentService,
@@ -635,7 +663,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithAssignmentFlow(assignmentFlow, conn)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo).
-		WithAssignmentFlow(assignmentFlow)
+		WithAssignmentFlow(assignmentFlow).
+		WithEventBus(bus).
+		WithLogger(log)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
@@ -792,7 +822,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
 	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
-	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService)
+	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService).
+		WithEventBus(bus)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
@@ -831,8 +862,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log).
 		WithTxStarter(conn).
-		WithAssignmentFlow(assignmentFlow)
+		WithAssignmentFlow(assignmentFlow).
+		WithDownloadGrants(downloadGrantService).
+		WithDownloadGrantIssuer(downloadGrantIssuer)
 	assignmentFlow.WithTxStarter(conn).WithOpenReturnChecker(returnService)
+	// Skip grant issuance for lines on open/refunded returns (order.paid heal).
+	downloadGrantIssuer.WithBlockingReturnChecker(returnService)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)
@@ -858,7 +893,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithAdvancedSearchAttributes(attributeStore).
 		WithVisibilityFacts(visibilityFacts)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log).
-		WithAssetAttachments(repos.downloadableFileRepo)
+		WithAssetAttachments(repos.downloadableFileRepo).
+		WithAssetGrants(downloadGrantService).
+		WithTxStarter(conn)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
 		for name := range thumbCfg {
@@ -1012,6 +1049,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		linkedEligibilityService:       linkedEligibilityService,
 		productAssignmentService:       productAssignmentService,
 		assignmentFlow:                 assignmentFlow,
+		downloadGrantService:           downloadGrantService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,

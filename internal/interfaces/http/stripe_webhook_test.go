@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -271,7 +272,15 @@ func TestStripeWebhook_AlreadyCompleted(t *testing.T) {
 			return py, nil
 		},
 	}
-	mux := stripeWebhookSetup(repo)
+	bus := event.NewBus(webhookTestLogger())
+	var paid int
+	bus.On(order.EventOrderPaid, func(_ context.Context, _ event.Event) error {
+		paid++
+		return nil
+	})
+	h := shophttp.NewStripeWebhookHandler(repo, bus, testStripeWebhookSecret)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/payments/webhook/stripe", h.Handle())
 
 	body := stripeEvent("payment_intent.succeeded", "pi_test_123", "pay-stripe-1")
 	rec := httptest.NewRecorder()
@@ -286,6 +295,9 @@ func TestStripeWebhook_AlreadyCompleted(t *testing.T) {
 	data := resp["data"].(map[string]interface{})
 	if data["status"] != "already_processed" {
 		t.Errorf("status = %v, want already_processed", data["status"])
+	}
+	if paid != 1 {
+		t.Fatalf("order.paid republish count = %d, want 1", paid)
 	}
 }
 

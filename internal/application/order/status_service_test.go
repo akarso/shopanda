@@ -9,6 +9,8 @@ import (
 	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 type statusRepoStub struct {
@@ -116,5 +118,39 @@ func TestStatusService_ApplyStatus_InvalidTransition(t *testing.T) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
 		t.Fatalf("ApplyStatus() err = %v", err)
+	}
+}
+
+func TestStatusService_ApplyStatus_PaidPublishesOrderPaid(t *testing.T) {
+	o := testOrder(t)
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	repo := &statusRepoStub{order: &o}
+	bus := event.NewBus(logger.New("error"))
+	var gotOrderID string
+	var paid int
+	bus.On(domainOrder.EventOrderPaid, func(_ context.Context, evt event.Event) error {
+		data := evt.Data.(domainOrder.OrderStatusChangedData)
+		gotOrderID = data.OrderID
+		paid++
+		return nil
+	})
+	svc := NewStatusService(repo).WithEventBus(bus)
+
+	updated, previous, changed, err := svc.ApplyStatus(context.Background(), "ord-1", domainOrder.OrderStatusPaid)
+	if err != nil || !changed || previous != domainOrder.OrderStatusConfirmed || updated.Status() != domainOrder.OrderStatusPaid {
+		t.Fatalf("ApplyStatus() = (%v, %q, %v, %v)", updated, previous, changed, err)
+	}
+	if gotOrderID != "ord-1" {
+		t.Fatalf("order.paid OrderID = %q", gotOrderID)
+	}
+	// Already-paid heal: retry republishes without changing status.
+	_, _, changed, err = svc.ApplyStatus(context.Background(), "ord-1", domainOrder.OrderStatusPaid)
+	if err != nil || changed {
+		t.Fatalf("already-paid ApplyStatus changed=%v err=%v", changed, err)
+	}
+	if paid != 2 {
+		t.Fatalf("order.paid count = %d, want 2", paid)
 	}
 }
