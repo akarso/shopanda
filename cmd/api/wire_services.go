@@ -864,6 +864,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithAssignmentFlow(assignmentFlow).
 		WithDownloadGrants(downloadGrantService)
 	assignmentFlow.WithTxStarter(conn).WithOpenReturnChecker(returnService)
+	// Skip grant issuance for lines on open/refunded returns (order.paid heal).
+	downloadGrantIssuer.WithBlockingReturnChecker(returnService)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)

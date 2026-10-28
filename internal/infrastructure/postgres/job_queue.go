@@ -12,6 +12,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that JobQueue implements jobs.Queue, jobs.Reader, and
@@ -47,6 +48,8 @@ func NewJobQueue(db *sql.DB) (*JobQueue, error) {
 }
 
 // Enqueue inserts a new job into the queue.
+// Duplicate primary key is Conflict so callers (order confirmation dedupe)
+// can treat a republish as already-enqueued without failing the handler.
 func (q *JobQueue) Enqueue(ctx context.Context, job jobs.Job) error {
 	payload, err := json.Marshal(job.Payload)
 	if err != nil {
@@ -60,6 +63,10 @@ func (q *JobQueue) Enqueue(ctx context.Context, job jobs.Job) error {
 		job.ID, job.Type, payload, string(job.Status),
 		job.Attempts, job.MaxRetries, job.RunAt, job.CreatedAt, job.UpdatedAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return apperror.Conflict("job already enqueued")
+		}
 		return fmt.Errorf("job_queue: enqueue: %w", err)
 	}
 	return nil

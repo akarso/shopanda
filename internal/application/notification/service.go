@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -245,11 +247,22 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return fmt.Errorf("notification: render template: %w", err)
 	}
 
-	return s.enqueueEmail(ctx, msg, "HandleOrderPaid", map[string]interface{}{
+	// Deterministic job id so order.paid republish (grant heal) does not
+	// enqueue a second confirmation email. Duplicate PK → already sent.
+	return s.enqueueEmailOnce(ctx, msg, orderConfirmedJobID(data.OrderID), "HandleOrderPaid", map[string]interface{}{
 		"order_id":    data.OrderID,
 		"customer_id": o.CustomerID,
 		"guest":       recipient.Guest,
 	})
+}
+
+// orderConfirmedJobID returns a stable UUID v5-shaped id for one confirmation
+// per order (sha1 of a fixed namespace + order id).
+func orderConfirmedJobID(orderID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.order_confirmed:" + strings.TrimSpace(orderID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
+	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // HandlePasswordReset is an event handler for customer.password_reset.requested.
@@ -632,8 +645,15 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 	})
 }
 
-// enqueueEmail creates and enqueues an email.send job.
+// enqueueEmail creates and enqueues an email.send job with a fresh id.
 func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler string, logFields map[string]interface{}) error {
+	return s.enqueueEmailOnce(ctx, msg, id.New(), handler, logFields)
+}
+
+// enqueueEmailOnce enqueues with a caller-supplied job id. A Conflict from
+// the queue (duplicate id) is treated as success — used to dedupe
+// order_confirmed on order.paid republish without blocking grant heal.
+func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID, handler string, logFields map[string]interface{}) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
@@ -651,7 +671,7 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 		payload["attachments"] = atts
 	}
 
-	job, err := jobs.NewJob(id.New(), JobTypeEmailSend, payload)
+	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
 	if err != nil {
 		s.log.Error(handler+".job_create_failed", err, logFields)
 		return fmt.Errorf("notification: create job: %w", err)
@@ -659,6 +679,10 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		logFields["job_id"] = job.ID
+		if apperror.Is(err, apperror.CodeConflict) {
+			s.log.Info(handler+".email_already_enqueued", logFields)
+			return nil
+		}
 		s.log.Error(handler+".enqueue_failed", err, logFields)
 		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
 	}

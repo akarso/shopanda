@@ -355,6 +355,15 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 	if s.assetGrants == nil {
 		return apperror.Internal("media: asset grant counter is not configured")
 	}
+	// Purge expired/revoked grant rows before the live count + RESTRICT delete.
+	// CountByAssetID is live-only; FK RESTRICT still sees non-live rows.
+	if purger, ok := s.assetGrants.(interface {
+		DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error)
+	}); ok {
+		if _, err := purger.DeleteExpiredOrRevokedByAssetID(ctx, asset.ID); err != nil {
+			return fmt.Errorf("media: purge expired/revoked grants: %w", err)
+		}
+	}
 	gn, err := s.assetGrants.CountByAssetID(ctx, asset.ID)
 	if err != nil {
 		return fmt.Errorf("media: count asset grants: %w", err)

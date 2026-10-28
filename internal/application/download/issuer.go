@@ -63,6 +63,13 @@ type txGrantRepo interface {
 	WithTx(tx *sql.Tx) domain.Repository
 }
 
+// blockingReturnChecker reports order lines still blocked by an open or
+// refunded return (same gate as assignment Track D). Used so a late
+// order.paid heal does not issue live grants for returned lines.
+type blockingReturnChecker interface {
+	UnitsOnBlockingReturn(ctx context.Context, unitIDs []string) (map[string]struct{}, error)
+}
+
 // Issuer creates DownloadGrant rows when order.paid fires for lines whose
 // product type is downloadable (PR-1075). It is subscribed on the event
 // bus — not inlined in payment capture. Delivery that consumes the grant
@@ -75,6 +82,7 @@ type Issuer struct {
 	files      fileLister
 	settings   settingsFinder
 	components componentLister
+	returns    blockingReturnChecker
 	grants     *Service
 	defaults   domain.Defaults
 	log        logger.Logger
@@ -157,6 +165,18 @@ func (i *Issuer) WithTxStarter(starter txStarter) *Issuer {
 	return i
 }
 
+// WithBlockingReturnChecker skips issuance for lines on an open or refunded
+// return so webhook/admin order.paid republish cannot create live grants
+// after approve/refund revoke (or when revoke was a no-op because issuance
+// had not yet succeeded). Nil skips the check (tests).
+func (i *Issuer) WithBlockingReturnChecker(c blockingReturnChecker) *Issuer {
+	if i == nil {
+		return nil
+	}
+	i.returns = c
+	return i
+}
+
 // HandleOrderPaid is an event handler for order.EventOrderPaid. It issues
 // one grant per attached asset on each downloadable line (and required
 // downloadable leaves of non-exploded bundles). Re-delivery is idempotent
@@ -233,8 +253,29 @@ func (i *Issuer) publishIssuedGrants(ctx context.Context, created []*domain.Down
 }
 
 func (i *Issuer) issueAllLines(ctx context.Context, grants *Service, o *order.Order) ([]*domain.DownloadGrant, error) {
+	// Post-purchase reads must see draft/archived products so a later catalog
+	// status change does not roll back the whole order's grants as "missing".
+	ctx = catalog.WithIncludeNonActiveProducts(ctx)
+
+	blocked := map[string]struct{}{}
+	if i.returns != nil {
+		unitIDs := make([]string, 0, len(o.Items()))
+		for _, item := range o.Items() {
+			unitIDs = append(unitIDs, domain.OrderItemID(o.ID, item.VariantID))
+		}
+		var err error
+		blocked, err = i.returns.UnitsOnBlockingReturn(ctx, unitIDs)
+		if err != nil {
+			return nil, fmt.Errorf("download: blocking-return check: %w", err)
+		}
+	}
+
 	created := make([]*domain.DownloadGrant, 0)
 	for _, item := range o.Items() {
+		orderItemID := domain.OrderItemID(o.ID, item.VariantID)
+		if _, skip := blocked[orderItemID]; skip {
+			continue
+		}
 		rows, err := i.issueForLine(ctx, grants, o, item)
 		if err != nil {
 			return created, err

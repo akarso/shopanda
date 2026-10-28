@@ -81,7 +81,9 @@ func mapDownloadGrantExecError(err error) error {
 	}
 }
 
-// Insert writes a new grant.
+// Insert writes a new grant. ON CONFLICT DO NOTHING maps to Conflict so a
+// losing concurrent insert does not abort the surrounding Postgres TX
+// (unique violations otherwise leave the TX unusable for reload).
 func (r *DownloadGrantRepo) Insert(ctx context.Context, g *download.DownloadGrant) error {
 	if g == nil {
 		return fmt.Errorf("download_grant_repo: insert: grant must not be nil")
@@ -91,18 +93,27 @@ func (r *DownloadGrantRepo) Insert(ctx context.Context, g *download.DownloadGran
 	}
 	const q = `INSERT INTO download_grants
 		(id, order_item_id, customer_id, asset_id, expires_at, download_limit, download_count, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := r.queryer().ExecContext(ctx, q,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (order_item_id, asset_id) DO NOTHING`
+	res, err := r.queryer().ExecContext(ctx, q,
 		g.ID, g.OrderItemID, g.CustomerID, g.AssetID,
 		g.ExpiresAt, g.DownloadLimit, g.DownloadCount, g.CreatedAt,
 	)
 	if err != nil {
 		return mapDownloadGrantExecError(err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("download_grant_repo: insert rows: %w", err)
+	}
+	if n == 0 {
+		return apperror.Conflict("download grant already exists for order item and asset")
+	}
 	return nil
 }
 
-// Update persists expiry, limit, and count.
+// Update persists expiry, limit, and customer_id. download_count is owned by
+// UpdateCount so Extend/Revoke cannot overwrite a concurrent delivery.
 func (r *DownloadGrantRepo) Update(ctx context.Context, g *download.DownloadGrant) error {
 	if g == nil {
 		return fmt.Errorf("download_grant_repo: update: grant must not be nil")
@@ -111,10 +122,10 @@ func (r *DownloadGrantRepo) Update(ctx context.Context, g *download.DownloadGran
 		return apperror.Validation(err.Error())
 	}
 	const q = `UPDATE download_grants
-		SET expires_at = $1, download_limit = $2, download_count = $3, customer_id = $4
-		WHERE id = $5`
+		SET expires_at = $1, download_limit = $2, customer_id = $3
+		WHERE id = $4`
 	res, err := r.queryer().ExecContext(ctx, q,
-		g.ExpiresAt, g.DownloadLimit, g.DownloadCount, g.CustomerID, g.ID,
+		g.ExpiresAt, g.DownloadLimit, g.CustomerID, g.ID,
 	)
 	if err != nil {
 		return mapDownloadGrantExecError(err)
@@ -129,7 +140,7 @@ func (r *DownloadGrantRepo) Update(ctx context.Context, g *download.DownloadGran
 	return nil
 }
 
-// UpdateCount CAS-updates download_count.
+// UpdateCount CAS-updates download_count while the grant is still live.
 func (r *DownloadGrantRepo) UpdateCount(ctx context.Context, grantID string, newCount, expectedCount int) error {
 	grantID = strings.TrimSpace(grantID)
 	if grantID == "" {
@@ -137,7 +148,7 @@ func (r *DownloadGrantRepo) UpdateCount(ctx context.Context, grantID string, new
 	}
 	const q = `UPDATE download_grants
 		SET download_count = $1
-		WHERE id = $2 AND download_count = $3`
+		WHERE id = $2 AND download_count = $3 AND expires_at > NOW()`
 	res, err := r.queryer().ExecContext(ctx, q, newCount, grantID, expectedCount)
 	if err != nil {
 		return mapDownloadGrantExecError(err)
@@ -216,7 +227,8 @@ func (r *DownloadGrantRepo) ListByOrderItemID(ctx context.Context, orderItemID s
 
 // CountByAssetID returns how many live grants reference the asset
 // (expires_at > now). Expired/revoked rows do not pin blobs forever;
-// ON DELETE RESTRICT still applies to live grants.
+// ON DELETE RESTRICT still applies to live grants — call
+// DeleteExpiredOrRevokedByAssetID before media.Delete.
 func (r *DownloadGrantRepo) CountByAssetID(ctx context.Context, assetID string) (int, error) {
 	assetID = strings.TrimSpace(assetID)
 	if assetID == "" {
@@ -228,6 +240,24 @@ func (r *DownloadGrantRepo) CountByAssetID(ctx context.Context, assetID string) 
 		return 0, fmt.Errorf("download_grant_repo: count by asset: %w", err)
 	}
 	return n, nil
+}
+
+// DeleteExpiredOrRevokedByAssetID removes non-live grant rows for assetID.
+func (r *DownloadGrantRepo) DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error) {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return 0, apperror.Validation("asset id must not be empty")
+	}
+	const q = `DELETE FROM download_grants WHERE asset_id = $1 AND expires_at <= NOW()`
+	res, err := r.queryer().ExecContext(ctx, q, assetID)
+	if err != nil {
+		return 0, fmt.Errorf("download_grant_repo: delete expired/revoked: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("download_grant_repo: delete expired/revoked rows: %w", err)
+	}
+	return int(n), nil
 }
 
 func (r *DownloadGrantRepo) list(ctx context.Context, q string, arg string) ([]download.DownloadGrant, error) {

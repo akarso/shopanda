@@ -277,16 +277,18 @@ func (s *Service) RevokeForOrderItem(ctx context.Context, orderItemID, reason st
 	return out, nil
 }
 
-// ResetCount clears download_count for a support re-issue.
+// ResetCount clears download_count for a support re-issue via UpdateCount
+// (Update does not write download_count).
 func (s *Service) ResetCount(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
 	g, err := s.Get(ctx, grantID)
 	if err != nil {
 		return nil, err
 	}
+	expected := g.DownloadCount
 	if err := g.ResetCount(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.grants.Update(ctx, g); err != nil {
+	if err := s.grants.UpdateCount(ctx, g.ID, g.DownloadCount, expected); err != nil {
 		return nil, mapWriteError("reset count", err)
 	}
 	return g, nil
@@ -299,6 +301,16 @@ func (s *Service) CountByAssetID(ctx context.Context, assetID string) (int, erro
 		return 0, apperror.Validation("asset id must not be empty")
 	}
 	return s.grants.CountByAssetID(ctx, assetID)
+}
+
+// DeleteExpiredOrRevokedByAssetID removes non-live grant rows so media.Delete
+// is not blocked by ON DELETE RESTRICT after the live-only count check.
+func (s *Service) DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error) {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return 0, apperror.Validation("asset id must not be empty")
+	}
+	return s.grants.DeleteExpiredOrRevokedByAssetID(ctx, assetID)
 }
 
 func (s *Service) publishIssued(ctx context.Context, g *domain.DownloadGrant, orderID string) {

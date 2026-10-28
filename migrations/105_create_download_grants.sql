@@ -4,7 +4,9 @@
 -- order_item_id is opaque TEXT (orderID/variantID), same convention as
 -- product_assignments — order_items has a composite PK and no unique id.
 -- customer_id may be empty for guest checkouts; delivery auth / rebind is
--- PR-1077+. asset_id RESTRICT so a grant cannot lose its blob while live.
+-- PR-1077+. asset_id RESTRICT so a live grant cannot lose its blob.
+-- Expired/revoked rows are purged via DeleteExpiredOrRevokedByAssetID in
+-- media.Delete before the live CountByAssetID / RESTRICT path (not CASCADE).
 -- UNIQUE (order_item_id, asset_id) makes order.paid issuance idempotent.
 -- Product-level expiry/limit overrides live in downloadable_grant_settings
 -- (NULL column = use catalog.downloadable global config).

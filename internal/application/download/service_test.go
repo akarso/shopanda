@@ -50,10 +50,12 @@ func (m *memGrantRepo) Update(_ context.Context, g *domain.DownloadGrant) error 
 	if err := g.Validate(); err != nil {
 		return apperror.Validation(err.Error())
 	}
-	if _, ok := m.byID[g.ID]; !ok {
+	existing, ok := m.byID[g.ID]
+	if !ok {
 		return apperror.NotFound("download grant not found")
 	}
 	cp := *g
+	cp.DownloadCount = existing.DownloadCount // Update does not clobber count
 	m.byID[g.ID] = &cp
 	m.byPair[pairKey(g.OrderItemID, g.AssetID)] = &cp
 	return nil
@@ -64,7 +66,7 @@ func (m *memGrantRepo) UpdateCount(_ context.Context, id string, newCount, expec
 	if !ok {
 		return apperror.NotFound("download grant not found")
 	}
-	if g.DownloadCount != expectedCount {
+	if g.DownloadCount != expectedCount || g.Expired(time.Now().UTC()) {
 		return domain.ErrCountConflict
 	}
 	g.DownloadCount = newCount
@@ -114,6 +116,19 @@ func (m *memGrantRepo) CountByAssetID(_ context.Context, assetID string) (int, e
 	n := 0
 	for _, g := range m.byID {
 		if g.AssetID == assetID && !g.Expired(now) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memGrantRepo) DeleteExpiredOrRevokedByAssetID(_ context.Context, assetID string) (int, error) {
+	now := time.Now().UTC()
+	n := 0
+	for id, g := range m.byID {
+		if g.AssetID == assetID && g.Expired(now) {
+			delete(m.byID, id)
+			delete(m.byPair, pairKey(g.OrderItemID, g.AssetID))
 			n++
 		}
 	}
@@ -246,6 +261,37 @@ func TestService_RecordDownload_CASConflictThroughService(t *testing.T) {
 	_, err = svc.RecordDownload(context.Background(), g.ID)
 	if err == nil || !apperror.Is(err, apperror.CodeConflict) || !errors.Is(err, domain.ErrCountConflict) {
 		t.Fatalf("CAS via Service.RecordDownload = %v", err)
+	}
+}
+
+func TestService_UpdateDoesNotClobberCount_UpdateCountRejectsRevoked(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", time.Now().UTC().Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	// Stale in-memory revoke snapshot with count=0 must not wipe the recorded download.
+	stale, err := svc.Get(context.Background(), g.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	stale.DownloadCount = 0
+	if err := stale.Revoke(time.Now().UTC()); err != nil {
+		t.Fatalf("Revoke domain: %v", err)
+	}
+	if err := repo.Update(context.Background(), stale); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err := svc.Get(context.Background(), g.ID)
+	if err != nil || got.DownloadCount != 1 {
+		t.Fatalf("count after Update = %+v %v, want download_count=1", got, err)
+	}
+	if err := repo.UpdateCount(context.Background(), g.ID, 2, 1); !errors.Is(err, domain.ErrCountConflict) {
+		t.Fatalf("UpdateCount on revoked = %v, want ErrCountConflict", err)
 	}
 }
 

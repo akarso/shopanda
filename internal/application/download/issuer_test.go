@@ -535,3 +535,100 @@ func TestIssuer_SecondPaidDoesNotRestoreRevoked(t *testing.T) {
 		t.Fatalf("grant must stay revoked: %+v", rows)
 	}
 }
+
+type stubBlockingReturns map[string]struct{}
+
+func (s stubBlockingReturns) UnitsOnBlockingReturn(_ context.Context, unitIDs []string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	for _, id := range unitIDs {
+		if _, ok := s[id]; ok {
+			out[id] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+func TestIssuer_SkipsLinesOnBlockingReturn(t *testing.T) {
+	orderID := id.New()
+	productID := id.New()
+	variantID := id.New()
+	price := mustMoney(t)
+	item, err := order.NewItem(variantID, "SKU-1", "DL", 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(orderID, "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	markPaid(t, &o)
+	svc := downloadapp.NewService(newMemGrantRepo(), nil)
+	orderItemID := domain.OrderItemID(orderID, variantID)
+	issuer := downloadapp.NewIssuer(
+		stubOrders{o: &o},
+		stubVariants{variantID: {ID: variantID, ProductID: productID, SKU: "SKU-1", Name: "DL"}},
+		stubProducts{productID: {ID: productID, Type: catalog.TypeDownloadable, Status: catalog.StatusActive}},
+		stubFiles{productID: {{ProductID: productID, AssetID: "asset-a"}}},
+		nil,
+		svc,
+		domain.Defaults{Expiry: time.Hour, DownloadLimit: 3},
+		nil,
+	).WithBlockingReturnChecker(stubBlockingReturns{orderItemID: {}})
+
+	n, err := issuer.IssueForOrder(context.Background(), orderID)
+	if err != nil || n != 0 {
+		t.Fatalf("IssueForOrder n=%d err=%v, want skip", n, err)
+	}
+	rows, _ := svc.ListByOrderItem(context.Background(), orderItemID)
+	if len(rows) != 0 {
+		t.Fatalf("expected no grants for returned line, got %d", len(rows))
+	}
+}
+
+type scopeAwareProducts struct {
+	byID map[string]*catalog.Product
+}
+
+func (s scopeAwareProducts) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	p := s.byID[id]
+	if p == nil {
+		return nil, nil
+	}
+	if !catalog.IncludeNonActiveProducts(ctx) && p.Status != catalog.StatusActive {
+		return nil, nil
+	}
+	return p, nil
+}
+
+func TestIssuer_IssuesForDraftProductAfterPurchase(t *testing.T) {
+	orderID := id.New()
+	productID := id.New()
+	variantID := id.New()
+	price := mustMoney(t)
+	item, err := order.NewItem(variantID, "SKU-1", "DL", 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(orderID, "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	markPaid(t, &o)
+	svc := downloadapp.NewService(newMemGrantRepo(), nil)
+	issuer := downloadapp.NewIssuer(
+		stubOrders{o: &o},
+		stubVariants{variantID: {ID: variantID, ProductID: productID, SKU: "SKU-1", Name: "DL"}},
+		scopeAwareProducts{byID: map[string]*catalog.Product{
+			productID: {ID: productID, Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+		}},
+		stubFiles{productID: {{ProductID: productID, AssetID: "asset-a"}}},
+		nil,
+		svc,
+		domain.Defaults{Expiry: time.Hour, DownloadLimit: 2},
+		nil,
+	)
+	n, err := issuer.IssueForOrder(context.Background(), orderID)
+	if err != nil || n != 1 {
+		t.Fatalf("IssueForOrder n=%d err=%v, want 1 for draft product", n, err)
+	}
+}

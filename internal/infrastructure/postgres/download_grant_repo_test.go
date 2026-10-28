@@ -164,6 +164,113 @@ func TestDownloadGrantRepo_WithTx_RollbackInvisible(t *testing.T) {
 	}
 }
 
+func TestDownloadGrantRepo_InsertConflictDoesNotAbortTx(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	ctx := context.Background()
+	asset, err := media.NewAsset(id.New(), "files/conflict.pdf", "conflict.pdf", "application/pdf", 10)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	if err := assetRepo.Save(ctx, &asset); err != nil {
+		t.Fatalf("Save asset: %v", err)
+	}
+	orderItemID := download.OrderItemID(id.New(), "var-conflict")
+	expires := time.Now().UTC().Add(time.Hour)
+	first, err := download.NewDownloadGrant(id.New(), orderItemID, "c", asset.ID, expires, 1)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant: %v", err)
+	}
+	if err := repo.Insert(ctx, first); err != nil {
+		t.Fatalf("first Insert: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+	txRepo := repo.WithTx(tx)
+	dup, err := download.NewDownloadGrant(id.New(), orderItemID, "c", asset.ID, expires, 1)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant dup: %v", err)
+	}
+	err = txRepo.Insert(ctx, dup)
+	if !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("dup Insert = %v, want conflict", err)
+	}
+	// TX must remain usable after conflict (ON CONFLICT DO NOTHING).
+	got, err := txRepo.FindByOrderItemAndAsset(ctx, orderItemID, asset.ID)
+	if err != nil || got == nil || got.ID != first.ID {
+		t.Fatalf("reload after conflict = %+v %v", got, err)
+	}
+}
+
+func TestDownloadGrantRepo_UpdateCountRejectsExpired_DeleteExpiredOrRevoked(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	ctx := context.Background()
+	asset, err := media.NewAsset(id.New(), "files/purge.pdf", "purge.pdf", "application/pdf", 10)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	if err := assetRepo.Save(ctx, &asset); err != nil {
+		t.Fatalf("Save asset: %v", err)
+	}
+	g, err := download.NewDownloadGrant(id.New(), download.OrderItemID(id.New(), "v"), "c", asset.ID, time.Now().UTC().Add(time.Hour), 3)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant: %v", err)
+	}
+	if err := repo.Insert(ctx, g); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := repo.UpdateCount(ctx, g.ID, 1, 0); err != nil {
+		t.Fatalf("UpdateCount live: %v", err)
+	}
+	got, _ := repo.FindByID(ctx, g.ID)
+	if err := got.Revoke(time.Now().UTC()); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update revoke: %v", err)
+	}
+	if err := repo.UpdateCount(ctx, g.ID, 2, 1); !errors.Is(err, download.ErrCountConflict) {
+		t.Fatalf("UpdateCount after revoke = %v, want ErrCountConflict", err)
+	}
+	n, err := repo.CountByAssetID(ctx, asset.ID)
+	if err != nil || n != 0 {
+		t.Fatalf("live count = %d %v, want 0", n, err)
+	}
+	deleted, err := repo.DeleteExpiredOrRevokedByAssetID(ctx, asset.ID)
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteExpiredOrRevoked = %d %v, want 1", deleted, err)
+	}
+	got, err = repo.FindByID(ctx, g.ID)
+	if err != nil || got != nil {
+		t.Fatalf("grant should be purged: %+v %v", got, err)
+	}
+}
+
 func TestDownloadableGrantSettingsRepo_UpsertFindRemove(t *testing.T) {
 	db := testDB(t)
 	ensureDownloadGrantsTable(t, db)

@@ -16,6 +16,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
@@ -42,9 +43,17 @@ func (m *mockOrderRepo) FindByID(ctx context.Context, id string) (*order.Order, 
 type mockQueue struct {
 	jobs.Queue
 	enqueued []jobs.Job
+	byID     map[string]struct{}
 }
 
 func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	if m.byID == nil {
+		m.byID = map[string]struct{}{}
+	}
+	if _, ok := m.byID[job.ID]; ok {
+		return apperror.Conflict("job already enqueued")
+	}
+	m.byID[job.ID] = struct{}{}
 	m.enqueued = append(m.enqueued, job)
 	return nil
 }
@@ -145,6 +154,14 @@ func TestHandleOrderPaid(t *testing.T) {
 	}
 	if body, _ := job.Payload["body"].(string); body == "" {
 		t.Error("payload.body is empty")
+	}
+
+	// Republish order.paid (grant heal) must not enqueue a second confirmation.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("second HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected still 1 enqueued job after republish, got %d", len(q.enqueued))
 	}
 }
 

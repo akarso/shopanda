@@ -46,7 +46,12 @@ func (m *memGrantRepoTX) Insert(_ context.Context, g *domain.DownloadGrant) erro
 }
 
 func (m *memGrantRepoTX) Update(_ context.Context, g *domain.DownloadGrant) error {
+	existing, ok := m.byID[g.ID]
+	if !ok {
+		return apperror.NotFound("download grant not found")
+	}
 	cp := *g
+	cp.DownloadCount = existing.DownloadCount
 	m.byID[g.ID] = &cp
 	m.byPair[grantPairKey(g.OrderItemID, g.AssetID)] = &cp
 	return nil
@@ -57,7 +62,7 @@ func (m *memGrantRepoTX) UpdateCount(_ context.Context, id string, newCount, exp
 	if !ok {
 		return apperror.NotFound("download grant not found")
 	}
-	if g.DownloadCount != expectedCount {
+	if g.DownloadCount != expectedCount || g.Expired(time.Now().UTC()) {
 		return domain.ErrCountConflict
 	}
 	g.DownloadCount = newCount
@@ -101,6 +106,19 @@ func (m *memGrantRepoTX) CountByAssetID(_ context.Context, assetID string) (int,
 	n := 0
 	for _, g := range m.byID {
 		if g.AssetID == assetID && !g.Expired(now) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memGrantRepoTX) DeleteExpiredOrRevokedByAssetID(_ context.Context, assetID string) (int, error) {
+	now := time.Now().UTC()
+	n := 0
+	for id, g := range m.byID {
+		if g.AssetID == assetID && g.Expired(now) {
+			delete(m.byID, id)
+			delete(m.byPair, grantPairKey(g.OrderItemID, g.AssetID))
 			n++
 		}
 	}

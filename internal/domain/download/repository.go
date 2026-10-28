@@ -17,14 +17,14 @@ type Repository interface {
 	// conflict (idempotent order.paid issuance maps this to "already issued").
 	Insert(ctx context.Context, g *DownloadGrant) error
 
-	// Update persists expiry / limit / count changes (extend, revoke,
-	// reset, record download). Count updates that still expect the previous
-	// DownloadCount-1 value should use UpdateCount instead for CAS.
+	// Update persists expiry / limit / customer_id (extend, revoke).
+	// Does not write download_count — use UpdateCount / ResetCount so a
+	// concurrent RecordDownload is not clobbered.
 	Update(ctx context.Context, g *DownloadGrant) error
 
 	// UpdateCount persists DownloadCount only while the row still has
-	// expectedCount (the value before RecordDownload). Zero rows is
-	// ErrCountConflict.
+	// expectedCount (the value before RecordDownload) and is still live
+	// (expires_at > now). Zero rows is ErrCountConflict.
 	UpdateCount(ctx context.Context, id string, newCount, expectedCount int) error
 
 	// FindByID returns the grant, or (nil, nil) when missing.
@@ -46,6 +46,11 @@ type Repository interface {
 	// reference the asset (media delete guard). Expired/revoked rows are
 	// excluded so they do not pin blobs forever. Always >= 0.
 	CountByAssetID(ctx context.Context, assetID string) (int, error)
+
+	// DeleteExpiredOrRevokedByAssetID removes non-live grant rows for the
+	// asset so ON DELETE RESTRICT does not block media.Delete after the
+	// live-only count check. Returns how many rows were deleted.
+	DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error)
 }
 
 // SettingsRepository persists optional per-product grant overrides.
