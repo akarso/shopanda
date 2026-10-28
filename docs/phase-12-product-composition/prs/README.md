@@ -29,7 +29,7 @@
 | PR-1072 | D | done | [Returns integration for assigned children](PR-1072.md) |
 | PR-1073 | D | done | [CSV import/export + admin GUI](PR-1073.md) |
 | PR-1074 | E | done | [`Downloadable` type + file asset attachment](PR-1074.md) |
-| PR-1075 | E | planned | [`DownloadGrant` domain](PR-1075.md) |
+| PR-1075 | E | done | [`DownloadGrant` domain](PR-1075.md) |
 | PR-1076 | E | planned | [Digital-goods VAT/tax category](PR-1076.md) |
 | PR-1077 | E | planned | [Storefront download delivery endpoint](PR-1077.md) |
 | PR-1078 | E | planned | [Admin API + CSV + GUI for downloadable management](PR-1078.md) |

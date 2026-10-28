@@ -168,6 +168,15 @@ catalog:
     # Set true (or SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true) after forcing
     # display axes to visible for SEO-critical SKUs, or accepting AutoBasis.
     enforce: false
+  # PR-1075 DownloadGrant defaults (order.paid issuance). Per-product
+  # overrides live in downloadable_grant_settings (admin write is PR-1078).
+  downloadable:
+    # Go duration from grant creation (720h = 30 days).
+    # Env: SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_EXPIRY
+    default_expiry: "720h"
+    # Max successful downloads per grant (qty multiplies this at issue time).
+    # Env: SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_LIMIT
+    default_download_limit: 5
 
 # --- Search -------------------------------------------------------------------
 search:

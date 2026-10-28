@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -156,9 +157,13 @@ func (r *AssetRepo) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			// Safety net when a join still references the asset (downloadable_files
-			// ON DELETE RESTRICT). media.Service.Delete deletes the row before
-			// the blob; this mapping covers a concurrent attach after count.
+			// Safety net when a join still references the asset
+			// (downloadable_files or download_grants ON DELETE RESTRICT).
+			// media.Service.Delete counts both before the row delete; this
+			// mapping covers a concurrent attach/grant after the counts.
+			if strings.Contains(pgErr.ConstraintName, "download_grants") {
+				return apperror.Validation("asset is referenced by a download grant")
+			}
 			return apperror.Validation("asset is still attached to a downloadable product")
 		}
 		return fmt.Errorf("asset_repo: delete: %w", err)

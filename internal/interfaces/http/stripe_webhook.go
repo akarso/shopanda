@@ -139,12 +139,17 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 	// Idempotency: a completed or refunded payment is already processed.
 	// A failed payment still publishes payment.failed so a retry after a
 	// revoke error can finish (RevokeForOrder skips missing current rows).
+	// A completed payment still publishes order.paid so a retry after an
+	// issuer failure can finish (IssueIdempotent is a no-op on existing rows).
 	if p.Status() != payment.StatusPending {
 		if !success && p.Status() == payment.StatusFailed {
 			if err := publishPaymentFailed(h.bus, r.Context(), "payment.stripe_webhook", p, p.Status()); err != nil {
 				JSONError(w, err)
 				return
 			}
+		}
+		if success && p.Status() == payment.StatusCompleted {
+			_ = publishOrderPaidAfterPayment(h.bus, r.Context(), "payment.stripe_webhook", p)
 		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"status": "already_processed",
@@ -185,6 +190,11 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 	})); err != nil && evtName == payment.EventPaymentFailed {
 		JSONError(w, err)
 		return
+	}
+	if success {
+		// Persist already succeeded — do not HTTP 500 on publish failure.
+		// Stripe retries still republish order.paid via already_processed.
+		_ = publishOrderPaidAfterPayment(h.bus, r.Context(), "payment.stripe_webhook", p)
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{

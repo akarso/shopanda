@@ -48,9 +48,11 @@ type Config struct {
 	StoreCredit StoreCreditConfig `yaml:"store_credit"`
 }
 
-// CatalogConfig holds catalog / visibility runtime options (PR-1057).
+// CatalogConfig holds catalog / visibility runtime options (PR-1057)
+// and downloadable grant defaults (PR-1075).
 type CatalogConfig struct {
-	Visibility CatalogVisibilityConfig `yaml:"visibility"`
+	Visibility   CatalogVisibilityConfig   `yaml:"visibility"`
+	Downloadable CatalogDownloadableConfig `yaml:"downloadable"`
 }
 
 // CatalogVisibilityConfig controls storefront axis-gate enforcement.
@@ -60,6 +62,23 @@ type CatalogConfig struct {
 type CatalogVisibilityConfig struct {
 	Enforce bool `yaml:"enforce"`
 }
+
+// CatalogDownloadableConfig holds global DownloadGrant defaults (PR-1075).
+// Per-product overrides live in downloadable_grant_settings (NULL = use these).
+type CatalogDownloadableConfig struct {
+	// DefaultExpiry is a Go duration string (e.g. "720h" = 30 days) from
+	// grant creation. Env: SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_EXPIRY
+	DefaultExpiry string `yaml:"default_expiry"`
+	// DefaultDownloadLimit is max successful downloads per grant.
+	// Env: SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_LIMIT
+	DefaultDownloadLimit int `yaml:"default_download_limit"`
+}
+
+// DefaultCatalogDownloadableExpiry is 30 days from grant creation.
+const DefaultCatalogDownloadableExpiry = "720h"
+
+// DefaultCatalogDownloadableLimit is five successful downloads per grant.
+const DefaultCatalogDownloadableLimit = 5
 
 // StoreCreditConfig bounds how much store credit an admin can issue in a
 // single request. MaxIssueAmount is in the currency's minor units (e.g.
@@ -887,6 +906,13 @@ func defaults() Config {
 		StoreCredit: StoreCreditConfig{
 			MaxIssueAmount: DefaultStoreCreditMaxIssueAmount,
 		},
+		Catalog: CatalogConfig{
+			Visibility: CatalogVisibilityConfig{Enforce: false},
+			Downloadable: CatalogDownloadableConfig{
+				DefaultExpiry:        DefaultCatalogDownloadableExpiry,
+				DefaultDownloadLimit: DefaultCatalogDownloadableLimit,
+			},
+		},
 	}
 }
 
@@ -1067,6 +1093,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_CATALOG_VISIBILITY_ENFORCE"); v != "" {
 		cfg.Catalog.Visibility.Enforce = parseEnvBool(v)
+	}
+	if v := os.Getenv("SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_EXPIRY"); v != "" {
+		cfg.Catalog.Downloadable.DefaultExpiry = v
+	}
+	if v := os.Getenv("SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Catalog.Downloadable.DefaultDownloadLimit = n
+		}
 	}
 	if v := os.Getenv("SHOPANDA_SEARCH_ENGINE"); v != "" {
 		cfg.Search.Engine = v
@@ -1446,6 +1480,8 @@ func flatten(cfg *Config) map[string]string {
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
 	m["catalog.visibility.enforce"] = strconv.FormatBool(cfg.Catalog.Visibility.Enforce)
+	m["catalog.downloadable.default_expiry"] = cfg.Catalog.Downloadable.DefaultExpiry
+	m["catalog.downloadable.default_download_limit"] = strconv.Itoa(cfg.Catalog.Downloadable.DefaultDownloadLimit)
 	m["search.engine"] = cfg.Search.Engine
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index

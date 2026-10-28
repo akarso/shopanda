@@ -252,6 +252,15 @@ func (m mockAssetAttachments) CountByAssetID(context.Context, string) (int, erro
 	return m.count, m.err
 }
 
+type mockAssetGrants struct {
+	count int
+	err   error
+}
+
+func (m mockAssetGrants) CountByAssetID(context.Context, string) (int, error) {
+	return m.count, m.err
+}
+
 func TestDelete_NilAttachmentsFailsClosed(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
@@ -274,6 +283,26 @@ func TestDelete_NilAttachmentsFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDelete_NilGrantsFailsClosed(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{}).
+		WithAssetAttachments(mockAssetAttachments{count: 0})
+
+	err = svc.Delete(context.Background(), "asset-1")
+	if !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("err = %v, want internal fail-closed when grant counter nil", err)
+	}
+	if len(storage.deleted) != 0 || len(repo.deleted) != 0 {
+		t.Fatalf("deleted when grant counter nil: storage=%#v repo=%#v", storage.deleted, repo.deleted)
+	}
+}
+
 func TestDelete_AttachedDownloadableRejected(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
@@ -283,7 +312,8 @@ func TestDelete_AttachedDownloadableRejected(t *testing.T) {
 	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
 	bus := event.NewBus(mockLogger{})
 	svc := NewService(storage, repo, bus, mockLogger{}).
-		WithAssetAttachments(mockAssetAttachments{count: 1})
+		WithAssetAttachments(mockAssetAttachments{count: 1}).
+		WithAssetGrants(mockAssetGrants{count: 0})
 
 	err = svc.Delete(context.Background(), "asset-1")
 	if !apperror.Is(err, apperror.CodeValidation) {
@@ -307,7 +337,8 @@ func TestDelete_ZeroAttachmentsAllows(t *testing.T) {
 	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
 	bus := event.NewBus(mockLogger{})
 	svc := NewService(storage, repo, bus, mockLogger{}).
-		WithAssetAttachments(mockAssetAttachments{count: 0})
+		WithAssetAttachments(mockAssetAttachments{count: 0}).
+		WithAssetGrants(mockAssetGrants{count: 0})
 
 	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -338,7 +369,8 @@ func TestDelete_DeletesAssetRowBeforeBlob(t *testing.T) {
 	}
 	bus := event.NewBus(mockLogger{})
 	svc := NewService(storage, repo, bus, mockLogger{}).
-		WithAssetAttachments(mockAssetAttachments{count: 0})
+		WithAssetAttachments(mockAssetAttachments{count: 0}).
+		WithAssetGrants(mockAssetGrants{count: 0})
 
 	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -364,7 +396,8 @@ func TestDelete_BlobFailureAfterRowDelete_PublishesEventReturnsNil(t *testing.T)
 		return nil
 	})
 	svc := NewService(storage, repo, bus, log).
-		WithAssetAttachments(mockAssetAttachments{count: 0})
+		WithAssetAttachments(mockAssetAttachments{count: 0}).
+		WithAssetGrants(mockAssetGrants{count: 0})
 
 	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
 		t.Fatalf("Delete = %v, want nil after completed unlist", err)

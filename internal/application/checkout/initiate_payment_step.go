@@ -6,9 +6,13 @@ import (
 	"time"
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	orderapp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // InitiatePaymentStep creates a payment record and initiates it via the selected provider.
@@ -16,6 +20,8 @@ type InitiatePaymentStep struct {
 	providers   *payment.ProviderRegistry
 	payments    payment.PaymentRepository
 	assignments *assignmentapp.Flow
+	bus         *event.Bus
+	log         logger.Logger
 }
 
 // NewInitiatePaymentStep creates an InitiatePaymentStep.
@@ -42,26 +48,62 @@ func (s *InitiatePaymentStep) WithAssignmentFlow(flow *assignmentapp.Flow) *Init
 	return s
 }
 
+// WithEventBus publishes order.paid on sync payment success and on the
+// $0 / payment_skipped path (PR-1075). Pending Stripe does not publish —
+// the payment.completed webhook does after capture. Nil skips publish.
+func (s *InitiatePaymentStep) WithEventBus(bus *event.Bus) *InitiatePaymentStep {
+	if s == nil {
+		return nil
+	}
+	s.bus = bus
+	return s
+}
+
+// WithLogger records order.paid publish failures after money has already
+// settled (so the step can return nil without leaving grants unissued forever
+// when a later retry republishes). Nil skips logging.
+func (s *InitiatePaymentStep) WithLogger(log logger.Logger) *InitiatePaymentStep {
+	if s == nil {
+		return nil
+	}
+	s.log = log
+	return s
+}
+
 func (s *InitiatePaymentStep) Name() string { return "initiate_payment" }
 
 func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error {
 	if cctx == nil {
 		return fmt.Errorf("initiate_payment: checkout context must not be nil")
 	}
-	if v, ok := cctx.GetMeta("payment_initiated"); ok {
-		if b, isBool := v.(bool); isBool && b {
-			return nil // idempotent
-		}
-	}
-
 	if cctx.Order == nil {
 		return fmt.Errorf("initiate_payment: order not created yet")
+	}
+
+	if v, ok := cctx.GetMeta("payment_initiated"); ok {
+		if b, isBool := v.(bool); isBool && b {
+			// Already-paid / $0 heal: republish so a prior publish failure
+			// (or crashed subscriber) can still issue grants. Pending Stripe
+			// leaves payment pending and must not publish here.
+			if skipped, ok := cctx.GetMeta("payment_skipped"); ok {
+				if sb, isBool := skipped.(bool); isBool && sb {
+					return s.publishOrderPaid(ctx, cctx)
+				}
+			}
+			if raw, ok := cctx.GetMeta("payment"); ok {
+				if py, isPay := raw.(*payment.Payment); isPay && py != nil && py.Status() == payment.StatusCompleted {
+					return s.publishOrderPaid(ctx, cctx)
+				}
+			}
+			return nil
+		}
 	}
 
 	if v, ok := cctx.GetMeta("payment_skipped"); ok {
 		if b, isBool := v.(bool); isBool && b {
 			cctx.SetMeta("payment_initiated", true)
-			return nil
+			// Re-publish so a crashed first skip can still grant (idempotent).
+			return s.publishOrderPaid(ctx, cctx)
 		}
 	}
 
@@ -72,7 +114,7 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 	if payable.Amount() == 0 {
 		cctx.SetMeta("payment_initiated", true)
 		cctx.SetMeta("payment_skipped", true)
-		return nil
+		return s.publishOrderPaid(ctx, cctx)
 	}
 
 	provider, err := s.providers.Resolve(cctx.Input.PaymentMethod)
@@ -152,6 +194,25 @@ func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error 
 		return fmt.Errorf("initiate_payment: payment declined")
 	}
 
+	return s.publishOrderPaid(ctx, cctx)
+}
+
+func (s *InitiatePaymentStep) publishOrderPaid(ctx context.Context, cctx *Context) error {
+	if s == nil || s.bus == nil || cctx == nil || cctx.Order == nil {
+		return nil
+	}
+	old := string(cctx.Order.Status())
+	if err := orderapp.PublishPaid(ctx, s.bus, "checkout.initiate_payment", cctx.Order.ID, old, string(order.OrderStatusPaid)); err != nil {
+		// Money / $0 path already succeeded — returning the error would make
+		// step retry a no-op (payment_initiated set) leaving grants unissued
+		// without a heal. Log and succeed; already-paid branches republish.
+		if s.log != nil {
+			s.log.Error("initiate_payment.publish_order_paid_failed", err, map[string]interface{}{
+				"order_id": cctx.Order.ID,
+			})
+		}
+		return nil
+	}
 	return nil
 }
 

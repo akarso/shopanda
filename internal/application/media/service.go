@@ -32,11 +32,19 @@ type assetAttachmentCounter interface {
 	CountByAssetID(ctx context.Context, assetID string) (int, error)
 }
 
+// assetGrantCounter reports how many DownloadGrant rows reference an asset
+// (PR-1075). Distinct from product attachments so operators see which gate
+// blocked the delete.
+type assetGrantCounter interface {
+	CountByAssetID(ctx context.Context, assetID string) (int, error)
+}
+
 // Service orchestrates media use cases.
 type Service struct {
 	storage          domainMedia.Storage
 	assets           domainMedia.AssetRepository
 	assetAttachments assetAttachmentCounter
+	assetGrants      assetGrantCounter
 	bus              *event.Bus
 	log              logger.Logger
 	processor        domainMedia.ImageProcessor
@@ -91,6 +99,15 @@ func (s *Service) SetWebPConfig(enabled bool, quality int) {
 // 23503 when a concurrent join appears after the count check.
 func (s *Service) WithAssetAttachments(c assetAttachmentCounter) *Service {
 	s.assetAttachments = c
+	return s
+}
+
+// WithAssetGrants wires the DownloadGrant counter for Delete (PR-1075).
+// Nil fails closed — Delete will not remove the blob (same as attachments).
+// Production wiring always sets the grant repo. AssetRepo.Delete maps
+// download_grants FK 23503 distinctly from attachments.
+func (s *Service) WithAssetGrants(c assetGrantCounter) *Service {
+	s.assetGrants = c
 	return s
 }
 
@@ -334,6 +351,16 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 	}
 	if n > 0 {
 		return apperror.Validation("asset is still attached to a downloadable product")
+	}
+	if s.assetGrants == nil {
+		return apperror.Internal("media: asset grant counter is not configured")
+	}
+	gn, err := s.assetGrants.CountByAssetID(ctx, asset.ID)
+	if err != nil {
+		return fmt.Errorf("media: count asset grants: %w", err)
+	}
+	if gn > 0 {
+		return apperror.Validation("asset is referenced by a download grant")
 	}
 
 	// Row first: RESTRICT fails closed if a join appeared after the count.
