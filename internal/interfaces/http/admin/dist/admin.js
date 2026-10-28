@@ -1346,6 +1346,16 @@
                     // list route rejects the type that was actually saved.
                     var savedType = payload && payload.type ? String(payload.type) : "simple";
                     bindCompositionPicker(typeSectionsHost, productID, savedType);
+                    // Refresh purchasable badge from the saved requires_linked_parent
+                    // value (form checkbox matches the payload just persisted).
+                    var visibilityAPI = productVisibilitySectionAPI();
+                    var visState = typeSectionsHost && typeSectionsHost._shopandaVisibilityState;
+                    if (visibilityAPI && visState && form) {
+                        if (visState.kind === "live") {
+                            visState.requiresLinkedParent = !!(payload && payload.requires_linked_parent);
+                        }
+                        visibilityAPI.refreshLivePreview(document, form, visState, visState.inputFailureCodes || []);
+                    }
                     saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {
                     msg.innerHTML = '<p role="alert">Save failed.</p>';
@@ -1451,8 +1461,11 @@
         // form's *selected* status (not the persisted one) whenever it
         // changes, so a merchant previewing a status change before saving
         // sees the correct outcome immediately.
+        // requires_linked_parent (PR-1068/PR-1073): same live preview for the
+        // purchasable gate checkbox on the core product form.
         if (form) {
             api.bindStatusChange(document, form, state);
+            api.bindRequiresLinkedParentChange(document, form, state);
         }
         typeSectionsHost._shopandaVisibilityState = state;
     }

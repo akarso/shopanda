@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
@@ -83,6 +85,14 @@ func (r *linkedEligProductRepo) ListByIDs(_ context.Context, ids []string) (map[
 		}
 	}
 	return out, nil
+}
+
+type linkedEligProductRepoListByIDsErr struct {
+	linkedEligProductRepo
+}
+
+func (r *linkedEligProductRepoListByIDsErr) ListByIDs(context.Context, []string) (map[string]*catalog.Product, error) {
+	return nil, errors.New("db down")
 }
 
 type linkedEligCategoryRepo struct {
@@ -235,6 +245,53 @@ func TestLinkedEligibilityAdmin_ListAddRemove(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("remove parent status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLinkedEligibilityAdmin_ListParents_ListByIDsErrorStillReturnsRows(t *testing.T) {
+	child := &catalog.Product{ID: "11111111-1111-1111-1111-111111111111", Name: "Ticket", Slug: "ticket", Type: catalog.TypeSimple, Status: catalog.StatusActive}
+	parentID := "22222222-2222-2222-2222-222222222222"
+	products := &linkedEligProductRepoListByIDsErr{
+		linkedEligProductRepo: linkedEligProductRepo{byID: map[string]*catalog.Product{child.ID: child}},
+	}
+	categories := &linkedEligCategoryRepo{byID: map[string]*catalog.Category{}}
+	rules := &linkedEligRuleRepo{
+		parents: []catalog.LinkedEligibleParent{{
+			ChildProductID:  child.ID,
+			ParentProductID: parentID,
+			CreatedAt:       time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		}},
+	}
+	svc := catalogApp.NewLinkedEligibilityService(products, categories, rules, linkedEligAdminTxStarter())
+	h := admin.NewLinkedEligibilityAdminHandler(products, categories, svc, adminapp.NewAuditor(logger.New("error")))
+	mux := newLinkedEligAdminRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/products/"+child.ID+"/linked-eligible-parents", nil)
+	req = testhelper.AuthenticatedRequest(req, "admin-1", identity.RoleAdmin)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list parents status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Parents []struct {
+				ParentProductID string `json:"parent_product_id"`
+				Name            string `json:"name"`
+				Slug            string `json:"slug"`
+				Type            string `json:"type"`
+			} `json:"parents"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if len(resp.Data.Parents) != 1 {
+		t.Fatalf("parents = %#v, want 1 row", resp.Data.Parents)
+	}
+	got := resp.Data.Parents[0]
+	if got.ParentProductID != parentID || got.Name != "" || got.Slug != "" || got.Type != "" {
+		t.Fatalf("enriched dto = %+v, want id only with empty enrichment", got)
 	}
 }
 

@@ -412,19 +412,31 @@ function makeStatusSelect() {
     };
 }
 
-function makeAxisDoc(initialMode) {
+function makeAxisDoc(initialMode, axisKey) {
+    const axis = axisKey || "catalog";
     const badge = { textContent: "" };
-    const list = { style: { display: "" } };
+    const list = { style: { display: "" }, innerHTML: "" };
     const modeSelect = { value: initialMode || "auto" };
     const doc = {
         getElementById: (id) => {
-            if (id === ui.selectID("catalog")) return modeSelect;
-            if (id === ui.badgeID("catalog")) return badge;
-            if (id === ui.failuresID("catalog")) return list;
+            if (id === ui.selectID(axis)) return modeSelect;
+            if (id === ui.badgeID(axis)) return badge;
+            if (id === ui.failuresID(axis)) return list;
             return null;
         }
     };
     return { doc, badge, list, modeSelect };
+}
+
+function makeRequiresLinkedCheckbox(checked) {
+    return {
+        checked: !!checked,
+        attrs: {},
+        handlers: [],
+        getAttribute: function (name) { return this.attrs[name]; },
+        setAttribute: function (name, v) { this.attrs[name] = v; },
+        addEventListener: function (evt, fn) { this.handlers.push(fn); }
+    };
 }
 
 test("bindStatusChange: selecting a different form status recomputes the auto badge", () => {
@@ -536,6 +548,73 @@ test("refreshLivePreview: reads status from form when present", () => {
 
     assert.equal(state.status, "draft");
     assert.equal(badge.textContent, "Forced visible — not live (product inactive)");
+});
+
+test("refreshLivePreview: reads requires_linked_parent from form checkbox", () => {
+    const { doc, badge, list } = makeAxisDoc("visible", "purchasable");
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: { checked: true }
+        }
+    };
+    const state = makeLiveState({
+        status: "active",
+        requiresLinkedParent: false,
+        inputFailureCodes: [],
+        autoBasis: true
+    });
+
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(state.requiresLinkedParent, true);
+    assert.equal(badge.textContent, "Forced visible — not purchasable (requires linked parent)");
+    assert.equal(list.style.display, "");
+    assert.match(list.innerHTML, /requires a linked parent/);
+});
+
+test("bindRequiresLinkedParentChange: toggling checkbox recomputes purchasable badge", () => {
+    const { doc, badge } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: checkbox
+        }
+    };
+    const state = makeLiveState({ status: "active", requiresLinkedParent: false, autoBasis: true });
+
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+    assert.equal(checkbox.handlers.length, 1);
+
+    checkbox.checked = true;
+    checkbox.handlers[0]();
+
+    assert.equal(state.requiresLinkedParent, true);
+    assert.equal(badge.textContent, "Forced visible — not purchasable (requires linked parent)");
+});
+
+test("bindRequiresLinkedParentChange: binds only once even if called twice", () => {
+    const { doc } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = { elements: { requires_linked_parent: checkbox } };
+    const state = makeLiveState();
+
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+
+    assert.equal(checkbox.handlers.length, 1);
+});
+
+test("bindRequiresLinkedParentChange: no-ops for create/null and error state", () => {
+    const { doc } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = { elements: { requires_linked_parent: checkbox } };
+
+    ui.bindRequiresLinkedParentChange(doc, form, null);
+    ui.bindRequiresLinkedParentChange(doc, form, { kind: "error", error: "x" });
+
+    assert.equal(checkbox.handlers.length, 0);
 });
 
 // --- Live status preview via input_failure_codes ---

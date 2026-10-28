@@ -59,14 +59,14 @@ type linkedEligibleParentDTO struct {
 	Name            string    `json:"name"`
 	Slug            string    `json:"slug"`
 	Type            string    `json:"type"`
-	CreatedAt       time.Time `json:"created_at,omitempty"`
+	CreatedAt       time.Time `json:"created_at,omitzero"`
 }
 
 type linkedEligibleCategoryDTO struct {
 	CategoryID string    `json:"category_id"`
 	Name       string    `json:"name"`
 	Slug       string    `json:"slug"`
-	CreatedAt  time.Time `json:"created_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at,omitzero"`
 }
 
 type addLinkedEligibleParentRequest struct {
@@ -87,11 +87,11 @@ func (h *LinkedEligibilityAdminHandler) ListParents() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		// Parent enrichment is best-effort: ListByIDs / FindByID failures leave
+		// name/slug/type empty (same as AddParent and categoryDTOFrom).
 		parents, err := h.productsByID(r.Context(), parentProductIDs(rows))
-		if err != nil {
-			h.audit(r, admin.AuditLinkedEligibleParentList, childID, nil, err)
-			httpshared.JSONError(w, err)
-			return
+		if err != nil || parents == nil {
+			parents = map[string]*catalog.Product{}
 		}
 		out := make([]linkedEligibleParentDTO, 0, len(rows))
 		for _, row := range rows {
