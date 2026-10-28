@@ -69,7 +69,7 @@
                     '<td>' + (r.forced ? ("yes" + (r.reason ? " — " + esc(r.reason) : "")) : "no") + '</td>' +
                     '<td>' + esc(r.child_order_status || "") + ' / ' + esc(r.child_payment_status || "") + '</td>' +
                     '<td>' + esc(r.parent_order_status || "") + ' / ' + esc(r.parent_payment_status || "") + '</td>';
-                if (opts.canWrite && r.status === "assigned") {
+                if (opts.canWrite && (r.status === "assigned" || r.status === "unassigned")) {
                     html += '<td><button type="button" data-revoke-id="' + esc(r.id || "") + '">Revoke</button></td>';
                 } else if (opts.canWrite) {
                     html += '<td></td>';

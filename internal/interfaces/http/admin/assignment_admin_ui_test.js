@@ -21,6 +21,26 @@ test("assignmentTableHTML revoke button for assigned", () => {
     assert.match(html, /data-revoke-id="a1"/);
 });
 
+test("assignmentTableHTML revoke button for unassigned", () => {
+    const html = ui.assignmentTableHTML([{
+        id: "a2",
+        child_order_item_id: "o3/v3",
+        parent_order_item_id: "",
+        status: "unassigned"
+    }], { canWrite: true });
+    assert.match(html, /data-revoke-id="a2"/);
+});
+
+test("assignmentTableHTML no revoke for revoked", () => {
+    const html = ui.assignmentTableHTML([{
+        id: "a3",
+        child_order_item_id: "o4/v4",
+        parent_order_item_id: "o5/v5",
+        status: "revoked"
+    }], { canWrite: true });
+    assert.doesNotMatch(html, /data-revoke-id/);
+});
+
 test("assignmentTableHTML load more when hasMore", () => {
     const html = ui.assignmentTableHTML([], { hasMore: true, nextOffset: 100 });
     assert.match(html, /data-assignment-load-more/);

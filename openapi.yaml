@@ -1899,7 +1899,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
-          $ref: "#/components/responses/ValidationError"
+          $ref: "#/components/responses/Validation"
   /api/v1/admin/products/{id}/linked-eligible-parents/{parentId}:
     delete:
       operationId: adminRemoveLinkedEligibleParent
@@ -1985,7 +1985,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "422":
-          $ref: "#/components/responses/ValidationError"
+          $ref: "#/components/responses/Validation"
   /api/v1/admin/products/{id}/linked-eligible-categories/{categoryId}:
     delete:
       operationId: adminRemoveLinkedEligibleCategory

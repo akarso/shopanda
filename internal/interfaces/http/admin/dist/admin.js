@@ -1743,7 +1743,9 @@
         var childForm = document.getElementById("assignment-child-form");
         var assignForm = document.getElementById("assignment-assign-form");
         var lastParentQuery = null;
+        var parentLookupSeq = 0;
         var lastChildUnit = null;
+        var childLookupSeq = 0;
 
         function setMsg(text, isError) {
             msg.innerHTML = text ? ('<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>') : '';
@@ -1783,22 +1785,37 @@
         function bindLoadMore(root) {
             if (!root) { return; }
             var btn = root.querySelector("[data-assignment-load-more]");
-            if (!btn || !lastParentQuery) { return; }
+            var query = root._assignmentQuery;
+            if (!btn || !query) { return; }
             btn.addEventListener("click", function () {
+                if (!parentQueryMatches(query)) {
+                    return;
+                }
                 var offset = parseInt(btn.getAttribute("data-offset") || "0", 10) || 0;
-                loadParentList(lastParentQuery.unit, lastParentQuery.status, offset, true);
+                loadParentList(query.unit, query.status, offset, true);
             });
         }
 
+        function parentQueryMatches(query) {
+            return !!(lastParentQuery && query &&
+                lastParentQuery.unit === query.unit &&
+                lastParentQuery.status === query.status);
+        }
+
         function loadParentList(unit, status, offset, append) {
-            lastParentQuery = { unit: unit, status: status || "assigned" };
+            var query = { unit: unit, status: status || "assigned" };
+            lastParentQuery = query;
+            var seq = ++parentLookupSeq;
             if (!append) {
                 parentResults.innerHTML = "<p>Loading…</p>";
             }
-            var q = "parent_unit_id=" + encodeURIComponent(unit) +
-                "&status=" + encodeURIComponent(lastParentQuery.status) +
+            var q = "parent_unit_id=" + encodeURIComponent(query.unit) +
+                "&status=" + encodeURIComponent(query.status) +
                 "&offset=" + encodeURIComponent(String(offset || 0));
             api("/admin/assignments?" + q).then(function (body) {
+                if (seq !== parentLookupSeq || !parentQueryMatches(query)) {
+                    return;
+                }
                 if (body && body.error) {
                     parentResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
                     return;
@@ -1811,6 +1828,7 @@
                     rows = prev.concat(rows);
                 }
                 parentResults._assignmentRows = rows;
+                parentResults._assignmentQuery = query;
                 parentResults.innerHTML = ui.assignmentTableHTML(rows, {
                     canWrite: canWrite,
                     hasMore: hasMore,
@@ -1819,14 +1837,21 @@
                 bindRevoke(parentResults);
                 bindLoadMore(parentResults);
             }).catch(function () {
+                if (seq !== parentLookupSeq || !parentQueryMatches(query)) {
+                    return;
+                }
                 parentResults.innerHTML = '<p role="alert">Failed to load assignments.</p>';
             });
         }
 
         function loadChildCurrent(unit) {
             lastChildUnit = unit;
+            var seq = ++childLookupSeq;
             childResults.innerHTML = "<p>Loading…</p>";
             api("/admin/assignments/current?child_unit_id=" + encodeURIComponent(unit)).then(function (body) {
+                if (seq !== childLookupSeq || lastChildUnit !== unit) {
+                    return;
+                }
                 if (body && body.error) {
                     childResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
                     return;
@@ -1835,6 +1860,9 @@
                 childResults.innerHTML = ui.currentHTML(assignment, { canWrite: canWrite });
                 bindRevoke(childResults);
             }).catch(function () {
+                if (seq !== childLookupSeq || lastChildUnit !== unit) {
+                    return;
+                }
                 childResults.innerHTML = '<p role="alert">Failed to load current assignment.</p>';
             });
         }
