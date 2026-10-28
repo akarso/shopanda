@@ -474,6 +474,8 @@ Phases 4–6 delivered merchant-complete admin coverage for catalog, sales, mark
 
 EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
 
+**Digital goods tax class (PR-1076):** `downloadable` products use tax class `digital`; `virtual` stays `standard` unless you later get an ESS opt-in. Checkout taxes by the address country. If no digital rate exists for that country (or the digital rate is 0 bps), checkout **fails** (does not charge 0% VAT). Releases require `shopanda migrate` (and optionally seed) so digital rows exist for each non-zero standard rate — still confirm destination coverage for every country you sell into. There is no Tax settings screen yet — ask your advisor for correct bps per member state and apply them via SQL / ops (see RUNBOOK). Reverse charge / VAT ID is not collected yet. This is rate-table wiring, not a finished EU digital VAT product.
+
 ## Linked products & assignment (PR-1073)
 
 - On any product edit form, the **Linked eligibility** section (type-agnostic) lists which parent products and/or categories a child may later be assigned to. Use the **Requires linked parent** checkbox on create/update to gate purchasability. Rules are additive; removing a row does not delete products.

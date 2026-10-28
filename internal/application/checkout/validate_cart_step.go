@@ -7,6 +7,7 @@ import (
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	appinventory "github.com/akarso/shopanda/internal/application/inventory"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -259,6 +260,25 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	cctx.SetMeta(cartVariantsMetaKey, variants)
 	cctx.SetMeta(cartProductsMetaKey, productsByID)
+
+	// Derive per-variant tax class from product type (PR-1076). Shared with
+	// cart recalculate: preserve pre-set keys; reject empty/unknown overrides.
+	lines := make([]appPricing.LineTaxClass, 0, len(cctx.Cart.Items))
+	for _, item := range cctx.Cart.Items {
+		v := variants[item.VariantID]
+		if v == nil {
+			// Should be unreachable: the load loop above fails closed on missing variants.
+			return fmt.Errorf("validate_cart: variant %s missing from tax-class map", item.VariantID)
+		}
+		var typ catalog.Type
+		if p := productsByID[v.ProductID]; p != nil {
+			typ = p.Type
+		}
+		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: typ})
+	}
+	if err := appPricing.EnsureTaxClasses(cctx.Meta, lines); err != nil {
+		return err
+	}
 
 	needsShipping, err := CartRequiresPhysicalShipping(ctx, cctx.Cart, s.products, s.variants,
 		func(variantID string) *catalog.Variant { return variants[variantID] },
