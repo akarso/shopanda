@@ -263,6 +263,15 @@ func (r *hListAssetRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+
+type hMockAssetAttachments struct {
+	count int
+}
+
+func (m hMockAssetAttachments) CountByAssetID(context.Context, string) (int, error) {
+	return m.count, nil
+}
+
 func TestMediaHandler_List(t *testing.T) {
 	bus := event.NewBus(hMockLogger{})
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
@@ -288,7 +297,9 @@ func TestMediaHandler_Delete(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
-	handler := admin.NewMediaHandler(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}))
+	svc := mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}).
+		WithAssetAttachments(hMockAssetAttachments{count: 0})
+	handler := admin.NewMediaHandler(svc)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)
@@ -385,7 +396,9 @@ func TestMediaHandler_Delete_AuditsScope(t *testing.T) {
 	}
 	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
 	rec0 := &recordingAuditLogger{}
-	handler := admin.NewMediaHandlerWithAuditor(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}), adminapp.NewAuditor(rec0))
+	svc := mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}).
+		WithAssetAttachments(hMockAssetAttachments{count: 0})
+	handler := admin.NewMediaHandlerWithAuditor(svc, adminapp.NewAuditor(rec0))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)

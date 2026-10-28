@@ -527,6 +527,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	linkedEligibilityService := catalogApp.NewLinkedEligibilityService(
 		repos.productRepo, repos.categoryRepo, repos.linkedEligibilityRepo, conn,
 	)
+	// DownloadableFileService (list/attach/remove HTTP) is PR-1078. Sell path
+	// and media.Delete use the repo via WithDownloadableFiles /
+	// WithAssetAttachments until then.
 	productAssignmentService := assignmentApp.NewService(repos.productAssignmentRepo)
 	assignmentFlow := assignmentApp.NewFlow(
 		productAssignmentService,
@@ -613,14 +616,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// Application services.
 	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts).
-		WithAssignmentFlow(assignmentFlow)
+		WithAssignmentFlow(assignmentFlow).
+		WithDownloadableFiles(repos.downloadableFileRepo)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts).
-		WithAssignmentFlow(assignmentFlow)
+		WithAssignmentFlow(assignmentFlow).
+		WithDownloadableFiles(repos.downloadableFileRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo, repos.productRepo, repos.variantRepo, repos.bundleComponentRepo,
 		checkoutApp.WithStockEventPublishing(bus), checkoutApp.WithLogger(log))
@@ -772,6 +777,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
 		WithBundleComponents(repos.bundleComponentRepo).
 		WithGroupedMembers(repos.groupedMemberRepo).
+		WithDownloadableFiles(repos.downloadableFileRepo).
 		WithVariantPrices(repos.variantRepo, repos.priceRepo).
 		WithVariantStock(repos.stockRepo).
 		WithTxStarter(conn)
@@ -851,7 +857,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	searchHandler := storefront.NewSearchHandler(searchEngine).
 		WithAdvancedSearchAttributes(attributeStore).
 		WithVisibilityFacts(visibilityFacts)
-	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log)
+	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log).
+		WithAssetAttachments(repos.downloadableFileRepo)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
 		for name := range thumbCfg {

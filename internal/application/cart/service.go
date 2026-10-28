@@ -36,22 +36,23 @@ type AddItemOptions struct {
 
 // Service orchestrates cart use cases.
 type Service struct {
-	carts           domainCart.CartRepository
-	prices          pricing.PriceRepository
-	promotions      promotion.PromotionRepository
-	coupons         promotion.CouponRepository
-	variants        catalog.VariantRepository
-	products        catalog.ProductRepository
-	stock           inventory.StockRepository
-	unitPrices      appPricing.UnitPriceSources
-	visibilityFacts catalog.VisibilityFactsSource
-	visibilityOpts  catalog.VisibilityOptions
-	assignments     *assignmentapp.Flow
-	pipeline        pricing.Pipeline
-	extensions      extensionValueWriter
-	hooks           *hooks.Registry
-	log             logger.Logger
-	bus             *event.Bus
+	carts             domainCart.CartRepository
+	prices            pricing.PriceRepository
+	promotions        promotion.PromotionRepository
+	coupons           promotion.CouponRepository
+	variants          catalog.VariantRepository
+	products          catalog.ProductRepository
+	stock             inventory.StockRepository
+	unitPrices        appPricing.UnitPriceSources
+	visibilityFacts   catalog.VisibilityFactsSource
+	visibilityOpts    catalog.VisibilityOptions
+	downloadableFiles catalogapp.DownloadableFileCounter
+	assignments       *assignmentapp.Flow
+	pipeline          pricing.Pipeline
+	extensions        extensionValueWriter
+	hooks             *hooks.Registry
+	log               logger.Logger
+	bus               *event.Bus
 }
 
 type extensionValueWriter interface {
@@ -123,6 +124,35 @@ func (s *Service) WithAssignmentFlow(flow *assignmentapp.Flow) *Service {
 	}
 	s.assignments = flow
 	return s
+}
+
+// WithDownloadableFiles wires the attachment count used to reject purchase of
+// a downloadable product with zero files. Independent of visibility enforce,
+// bypass, and a nil facts source (mirrors LinkedParentBlocksPurchase / PR-1068).
+// Nil fails closed for TypeDownloadable lines and required downloadable bundle leaves.
+func (s *Service) WithDownloadableFiles(files catalogapp.DownloadableFileCounter) *Service {
+	if s == nil {
+		return nil
+	}
+	s.downloadableFiles = files
+	return s
+}
+
+func (s *Service) ensureDownloadableHasFile(ctx context.Context, p *catalog.Product) error {
+	if p == nil || p.Type != catalog.TypeDownloadable {
+		return nil
+	}
+	if s.downloadableFiles == nil {
+		return apperror.Internal("cart: downloadable file repository is not configured")
+	}
+	n, err := s.downloadableFiles.CountByProductID(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("cart service: count downloadable files: %w", err)
+	}
+	if catalog.DownloadableMissingFileBlocksPurchase(p, n) {
+		return apperror.Validation(catalog.DownloadableMissingFileNotPurchasableMessage)
+	}
+	return nil
 }
 
 func (s *Service) priceSources() appPricing.UnitPriceSources {
@@ -894,6 +924,9 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, customerID, vari
 	if catalog.LinkedParentBlocksPurchase(p, assignment) {
 		return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
 	}
+	if err := s.ensureDownloadableHasFile(ctx, p); err != nil {
+		return err
+	}
 	if s.assignments != nil && (strings.TrimSpace(assignment.ParentProductID) != "" || strings.TrimSpace(assignment.ParentUnitID) != "") {
 		if err := s.checkAssignmentPurchase(ctx, customerID, p, assignment); err != nil {
 			return err
@@ -901,6 +934,9 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, customerID, vari
 	}
 	if p.Type == catalog.TypeBundle {
 		if err := catalogapp.RejectRequiredLinkedParentLeaves(lineCtx, s.products, s.unitPrices.Components, p.ID, assignment); err != nil {
+			return err
+		}
+		if err := catalogapp.RejectRequiredMissingDownloadableFileLeaves(lineCtx, s.products, s.unitPrices.Components, s.downloadableFiles, p.ID); err != nil {
 			return err
 		}
 	}

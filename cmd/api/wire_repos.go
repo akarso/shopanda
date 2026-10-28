@@ -32,6 +32,7 @@ type serveRepos struct {
 	bundleComponentRepo        *postgres.BundleComponentRepo
 	groupedMemberRepo          *postgres.GroupedMemberRepo
 	linkedEligibilityRepo      *postgres.LinkedEligibilityRepo
+	downloadableFileRepo       *postgres.DownloadableFileRepo
 	productAssignmentRepo      *postgres.ProductAssignmentRepo
 	taxRateRepo                *postgres.TaxRateRepo
 	promotionRepo              *postgres.PromotionRepo
@@ -168,6 +169,14 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	}
 	// linkedEligibilityRepo: opened at serve start. wire_services constructs
 	// LinkedEligibilityService. Admin HTTP / CSV remain PR-1073.
+
+	repos.downloadableFileRepo, err = postgres.NewDownloadableFileRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("downloadableFileRepo", err)
+	}
+	// downloadableFileRepo: opened at serve start. wire_services wires
+	// ProductAdminHandler.WithDownloadableFiles / cart / checkout / media
+	// guards. DownloadableFileService HTTP / CSV / GUI remain PR-1078.
 
 	repos.productAssignmentRepo, err = postgres.NewProductAssignmentRepo(conn)
 	if err != nil {

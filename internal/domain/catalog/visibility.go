@@ -105,6 +105,13 @@ type VisibilityInputs struct {
 	// before resolve. It is not an AutoBasis input. When true and Assignment
 	// is empty, the purchasable axis is false after ResolveAxis.
 	RequiresLinkedParent bool
+	// MissingDownloadableFile, when true, forces Purchasable false after
+	// ResolveAxis (downloadable product with zero media attachments,
+	// PR-1074). Zero value is false — non-downloadable products and
+	// downloadable products with ≥1 file are unaffected. Display axes are
+	// unchanged. Admin create/update also rejects StatusActive when this
+	// would be true (hard validation; soft GUI warning is PR-1078).
+	MissingDownloadableFile bool
 	// Assignment is the purchase assignment for this resolve. Listing filters
 	// copy AssignmentContextFrom(ctx). Cart and checkout set one line's
 	// resolved assignment so lines do not share a parent. Domain callers of
@@ -276,23 +283,33 @@ func ExplainAxes(axes VisibilityAxes, status Status, in VisibilityInputs, opts V
 	return
 }
 
-// explainPurchasableAxis is ExplainAxis plus the RequiresLinkedParent gate.
-// The extra failure code is attached only to this axis. codes (the shared
-// AutoBasis list) is not modified.
+// explainPurchasableAxis is ExplainAxis plus the RequiresLinkedParent and
+// MissingDownloadableFile gates. Extra failure codes are attached only to
+// this axis. codes (the shared AutoBasis list) is not modified.
 func explainPurchasableAxis(mode VisibilityMode, status Status, auto bool, failureCodes []string, in VisibilityInputs) AxisExplanation {
 	exp := ExplainAxis(mode, status, auto, failureCodes)
-	if !linkedParentBlocksPurchase(in) {
-		return exp
+	if linkedParentBlocksPurchase(in) {
+		exp.Resolved = false
+		exp.Effective = false
+		exp.FailureCodes = append(exp.FailureCodes, RequiresLinkedParentCode)
 	}
-	exp.Resolved = false
-	exp.Effective = false
-	exp.FailureCodes = append(exp.FailureCodes, RequiresLinkedParentCode)
+	if missingDownloadableFileBlocksPurchase(in) {
+		exp.Resolved = false
+		exp.Effective = false
+		exp.FailureCodes = append(exp.FailureCodes, MissingDownloadableFileCode)
+	}
 	return exp
 }
 
 // linkedParentBlocksPurchase reports the purchasable-axis override.
 func linkedParentBlocksPurchase(in VisibilityInputs) bool {
 	return LinkedParentBlocksPurchase(&Product{RequiresLinkedParent: in.RequiresLinkedParent}, in.Assignment)
+}
+
+// missingDownloadableFileBlocksPurchase reports the purchasable-axis override
+// for a downloadable product with no attached files (PR-1074).
+func missingDownloadableFileBlocksPurchase(in VisibilityInputs) bool {
+	return in.MissingDownloadableFile
 }
 
 // ResolveAxis applies mode to the auto-computed basis.
@@ -317,6 +334,9 @@ func (a VisibilityAxes) Resolve(status Status, in VisibilityInputs, opts Visibil
 	auto := AutoBasis(status, in, opts)
 	purchasable := ResolveAxis(a.Purchasable, auto)
 	if linkedParentBlocksPurchase(in) {
+		purchasable = false
+	}
+	if missingDownloadableFileBlocksPurchase(in) {
 		purchasable = false
 	}
 	return Visibility{

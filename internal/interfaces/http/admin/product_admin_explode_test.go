@@ -109,6 +109,7 @@ func TestProductAdminHandler_Update_TypeChangeClearsExplodeOrderLines(t *testing
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))

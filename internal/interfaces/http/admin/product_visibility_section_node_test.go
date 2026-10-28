@@ -78,7 +78,7 @@ func TestFailureLabelsMatchAutoBasisCodes(t *testing.T) {
 	}
 
 	goCodes := parseAutoBasisCodesFromVisibilityGo(t)
-	goCodes = append(goCodes, "requires_linked_parent")
+	goCodes = append(goCodes, "requires_linked_parent", "no_downloadable_file")
 	sort.Strings(goCodes)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

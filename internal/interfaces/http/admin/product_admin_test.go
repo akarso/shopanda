@@ -106,6 +106,7 @@ type mockAdminProductRepo struct {
 	lockedPricingMode          catalog.PricingMode
 	lockedStockMode            catalog.StockMode
 	lockedRequiresLinkedParent *bool
+	lockedStatus               *catalog.Status
 }
 
 type mockAdminProductRepoWithoutCategoryLookup struct {
@@ -168,25 +169,27 @@ func (m *mockAdminProductRepo) LockForUpdate(ctx context.Context, id string) (ca
 	return p.Type, nil
 }
 
-func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
 	typ, err := m.LockForUpdate(ctx, id)
 	if err != nil {
-		return "", "", "", false, err
+		return "", "", "", false, "", err
 	}
 	if m.lockedType != "" {
 		typ = m.lockedType
 	}
 	product, err := m.FindByID(ctx, id)
 	if err != nil {
-		return "", "", "", false, err
+		return "", "", "", false, "", err
 	}
 	pricing := catalog.PricingMode("")
 	stock := catalog.StockMode("")
 	explode := false
+	status := catalog.Status("")
 	if product != nil {
 		pricing = product.PricingMode
 		stock = product.StockMode
 		explode = product.ExplodeOrderLines
+		status = product.Status
 	}
 	if m.lockedPricingMode != "" {
 		pricing = m.lockedPricingMode
@@ -194,7 +197,10 @@ func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) 
 	if m.lockedStockMode != "" {
 		stock = m.lockedStockMode
 	}
-	return typ, pricing, stock, explode, nil
+	if m.lockedStatus != nil {
+		status = *m.lockedStatus
+	}
+	return typ, pricing, stock, explode, status, nil
 }
 
 func (m *mockAdminProductRepo) RequiresLinkedParentForUpdate(ctx context.Context, id string) (bool, error) {
@@ -270,6 +276,36 @@ func (m *mockGroupedMemberGuard) Remove(context.Context, string, string) error {
 }
 
 func (m *mockGroupedMemberGuard) WithTx(_ *sql.Tx) catalog.GroupedMemberRepository {
+	return m
+}
+
+type mockDownloadableFileGuard struct {
+	fileCount int
+}
+
+var _ catalog.DownloadableFileRepository = (*mockDownloadableFileGuard)(nil)
+
+func (m *mockDownloadableFileGuard) ListByProductID(context.Context, string) ([]catalog.DownloadableFile, error) {
+	return []catalog.DownloadableFile{}, nil
+}
+
+func (m *mockDownloadableFileGuard) CountByProductID(context.Context, string) (int, error) {
+	return m.fileCount, nil
+}
+
+func (m *mockDownloadableFileGuard) CountByAssetID(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockDownloadableFileGuard) Upsert(context.Context, *catalog.DownloadableFile) error {
+	return nil
+}
+
+func (m *mockDownloadableFileGuard) Remove(context.Context, string, string) error {
+	return nil
+}
+
+func (m *mockDownloadableFileGuard) WithTx(_ *sql.Tx) catalog.DownloadableFileRepository {
 	return m
 }
 
@@ -930,6 +966,7 @@ func TestProductAdminHandler_Update_TypeChangeOffBundleOmitsStockMode(t *testing
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))
@@ -983,6 +1020,7 @@ func TestProductAdminHandler_Update_DynamicRejectsOwnStock(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn()).
 		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
 		WithVariantStock(stock)
@@ -1088,6 +1126,7 @@ func TestProductAdminHandler_Update_DynamicOwnStockReadsTxQuantity(t *testing.T)
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn()).
 		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
 		WithVariantStock(stock)
@@ -1226,6 +1265,7 @@ func TestProductAdminHandler_Update_TypeChangeUsesLockedPricingMode(t *testing.T
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn()).
 		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{})
 	rec := httptest.NewRecorder()
@@ -1259,6 +1299,7 @@ func TestProductAdminHandler_Update_TypeChangeOffBundleOmitsMode(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))
@@ -1348,6 +1389,7 @@ func TestProductAdminHandler_Update_DynamicRejectsOwnPrices(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn()).
 		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, prices)
 
@@ -1859,6 +1901,7 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
@@ -1890,6 +1933,7 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithComponentsRejected(t *te
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -1921,6 +1965,7 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
@@ -1955,6 +2000,7 @@ func TestProductAdminHandler_Update_TypeChangeUsesLockedGroupedType(t *testing.T
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -1989,6 +2035,7 @@ func TestProductAdminHandler_Update_TypeChangeIllicitGroupedRowsRejected(t *test
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 1}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
@@ -2023,6 +2070,7 @@ func TestProductAdminHandler_Update_TypeChangeIllicitBundleRowsRejected(t *testi
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
@@ -2057,6 +2105,7 @@ func TestProductAdminHandler_Update_TypeChangeUsesLockedType(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
@@ -2089,6 +2138,7 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithZeroComponentsAllowed(t 
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -2121,6 +2171,7 @@ func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsComponentAllo
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
@@ -2189,6 +2240,294 @@ func TestProductAdminHandler_Update_TypeChangeWithoutGroupedRepoFailsClosed(t *t
 	}
 }
 
+func TestProductAdminHandler_Update_TypeChangeWithoutDownloadableRepoFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the downloadable file repo is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_ActiveDownloadableWithoutFileRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Ebook", Slug: "ebook", Status: catalog.StatusDraft, Type: catalog.TypeDownloadable,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when downloadable has no file")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 0}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"status": "active"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), catalog.DownloadableRequiresFileMessage) {
+		t.Fatalf("body = %s, want %q", rec.Body.String(), catalog.DownloadableRequiresFileMessage)
+	}
+}
+
+func TestProductAdminHandler_Get_MissingDownloadableFileExplain(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Ebook", Slug: "ebook", Status: catalog.StatusActive,
+				Type: catalog.TypeDownloadable, VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		listCategoryIDsByProductFn: func(_ context.Context, _ string) ([]string, error) {
+			return []string{}, nil
+		},
+	}
+	modes := catalog.DefaultVisibilityAxes()
+	modes.Purchasable = catalog.VisibilityModeVisible
+	facts := &mockVisibilityFactsAdminSource{
+		loadManyAnyStatusFn: func(_ context.Context, _ []string) (map[string]catalog.VisibilitySnapshot, error) {
+			return map[string]catalog.VisibilitySnapshot{
+				"p1": {
+					Status: catalog.StatusActive,
+					Modes:  modes,
+					Inputs: catalog.VisibilityInputs{
+						QuantityPositive: true, HasPrice: true, HasStoreAssignment: true,
+						MissingDownloadableFile: true,
+					},
+				},
+			}, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithVisibilityFacts(facts, catalog.VisibilityOptions{}, true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/products/p1", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data := body["data"].(map[string]interface{})
+	vis := data["visibility"].(map[string]interface{})
+	if vis["missing_downloadable_file"] != true {
+		t.Fatalf("missing_downloadable_file = %v, want true", vis["missing_downloadable_file"])
+	}
+	axes := vis["axes"].(map[string]interface{})
+	purchasable := axes["purchasable"].(map[string]interface{})
+	codes, _ := purchasable["failure_codes"].([]interface{})
+	found := false
+	for _, c := range codes {
+		if c == catalog.MissingDownloadableFileCode {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("purchasable failure_codes = %v, want %q", codes, catalog.MissingDownloadableFileCode)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeToDownloadableOnActiveSimpleRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when active simple becomes downloadable without a file")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 0}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), catalog.DownloadableRequiresFileMessage) {
+		t.Fatalf("body = %s, want %q", rec.Body.String(), catalog.DownloadableRequiresFileMessage)
+	}
+}
+
+func TestProductAdminHandler_Update_NameOnlyLegacyActiveDownloadableWithoutFileAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Legacy Ebook", Slug: "legacy-ebook", Status: catalog.StatusActive, Type: catalog.TypeDownloadable,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 0}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"name": "Legacy Ebook Renamed"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 soft-write; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Name != "Legacy Ebook Renamed" || updated.Status != catalog.StatusActive {
+		t.Fatalf("updated = %+v, want renamed active legacy downloadable", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_NameOnlyUsesLockedStatusNotStaleActive(t *testing.T) {
+	// Concurrent Active→Draft: FindByID still sees Active, but the locked row
+	// is Draft. Name-only must keep Draft and must not soft-write-skip from
+	// the stale Active snapshot.
+	draft := catalog.StatusDraft
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Legacy Ebook", Slug: "legacy-ebook", Status: catalog.StatusActive, Type: catalog.TypeDownloadable,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockedStatus: &draft,
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 0}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"name": "Legacy Ebook Renamed"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 preserving locked draft; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Name != "Legacy Ebook Renamed" || updated.Status != catalog.StatusDraft {
+		t.Fatalf("updated = %+v, want renamed draft from locked status", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_ActiveDownloadableWithoutFileToDraftAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Legacy Ebook", Slug: "legacy-ebook", Status: catalog.StatusActive, Type: catalog.TypeDownloadable,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 0}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"status": "draft"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 demotion; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Status != catalog.StatusDraft {
+		t.Fatalf("updated = %+v, want draft", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_LeaveDownloadableWithFilesRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Ebook", Slug: "ebook", Status: catalog.StatusDraft, Type: catalog.TypeDownloadable,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when downloadable files remain")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{fileCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "downloadable files") {
+		t.Fatalf("body = %s, want downloadable files message", rec.Body.String())
+	}
+}
+
 func TestProductAdminHandler_Update_TypeChangeGroupedWithMembersRejected(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
@@ -2205,6 +2544,7 @@ func TestProductAdminHandler_Update_TypeChangeGroupedWithMembersRejected(t *test
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -2236,6 +2576,7 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsMemberRejected(t *testing.T)
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "bundle"})
@@ -2268,6 +2609,7 @@ func TestProductAdminHandler_Update_TypeChangeGroupedWithZeroMembersAllowed(t *t
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -2300,6 +2642,7 @@ func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsMemberAllowed
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
@@ -2358,7 +2701,8 @@ func TestProductAdminHandler_Update_EmptyTypeRejected(t *testing.T) {
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
-		WithGroupedMembers(&mockGroupedMemberGuard{})
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{})
 
 	body := jsonBody(t, map[string]interface{}{"type": "  "})
 	rec := httptest.NewRecorder()
@@ -2386,6 +2730,7 @@ func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
 		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithDownloadableFiles(&mockDownloadableFileGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "kit"})

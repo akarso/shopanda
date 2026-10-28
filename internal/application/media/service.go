@@ -24,16 +24,25 @@ var AllowedMimeTypes = map[string]bool{
 	"image/webp": true,
 }
 
+// assetAttachmentCounter reports how many downloadable products reference an
+// asset (PR-1074). Delete fails closed when nil (same as cart). Count is
+// defense-in-depth; the assets row is deleted before the blob so RESTRICT
+// wins if a join still exists.
+type assetAttachmentCounter interface {
+	CountByAssetID(ctx context.Context, assetID string) (int, error)
+}
+
 // Service orchestrates media use cases.
 type Service struct {
-	storage     domainMedia.Storage
-	assets      domainMedia.AssetRepository
-	bus         *event.Bus
-	log         logger.Logger
-	processor   domainMedia.ImageProcessor
-	presets     []domainMedia.ThumbnailPreset
-	webpEnabled bool
-	webpQuality int
+	storage          domainMedia.Storage
+	assets           domainMedia.AssetRepository
+	assetAttachments assetAttachmentCounter
+	bus              *event.Bus
+	log              logger.Logger
+	processor        domainMedia.ImageProcessor
+	presets          []domainMedia.ThumbnailPreset
+	webpEnabled      bool
+	webpQuality      int
 }
 
 // NewService creates a media application service.
@@ -74,6 +83,15 @@ func (s *Service) SetWebPConfig(enabled bool, quality int) {
 		quality = 100
 	}
 	s.webpQuality = quality
+}
+
+// WithAssetAttachments wires the attachment counter required by Delete
+// (PR-1074). Nil fails closed — Delete will not remove the blob. Production
+// wiring always sets the downloadable file repo. AssetRepo.Delete still maps
+// 23503 when a concurrent join appears after the count check.
+func (s *Service) WithAssetAttachments(c assetAttachmentCounter) *Service {
+	s.assetAttachments = c
+	return s
 }
 
 // UploadInput holds the parameters for an upload.
@@ -292,7 +310,12 @@ func (s *Service) List(ctx context.Context, offset, limit int) ([]AssetView, err
 	return views, nil
 }
 
-// Delete removes an asset and its stored files.
+// Delete removes an asset row first, then its stored files.
+//
+// Order is intentional (PR-1074 review): delete the assets row before the
+// blob. ON DELETE RESTRICT on downloadable_files rejects the row delete when
+// still attached; an orphan blob after a failed storage delete is recoverable.
+// A missing join after a successful blob-first delete is not.
 func (s *Service) Delete(ctx context.Context, assetID string) error {
 	asset, err := s.assets.FindByID(ctx, assetID)
 	if err != nil {
@@ -302,8 +325,32 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 		return apperror.NotFound("asset not found")
 	}
 
+	if s.assetAttachments == nil {
+		return apperror.Internal("media: asset attachment counter is not configured")
+	}
+	n, err := s.assetAttachments.CountByAssetID(ctx, asset.ID)
+	if err != nil {
+		return fmt.Errorf("media: count asset attachments: %w", err)
+	}
+	if n > 0 {
+		return apperror.Validation("asset is still attached to a downloadable product")
+	}
+
+	// Row first: RESTRICT fails closed if a join appeared after the count.
+	if err := s.assets.Delete(ctx, asset.ID); err != nil {
+		return err
+	}
+
+	// Unlisting is complete once the assets row is gone. Blob/thumbnail
+	// storage errors are logged; do not 500 a successful unlist (orphan
+	// blobs are recoverable). Always publish EventAssetDeleted after the
+	// row delete so listeners see the asset as gone.
 	if err := s.storage.Delete(asset.Path); err != nil {
-		return fmt.Errorf("media: delete file: %w", err)
+		s.log.Warn("media: blob delete failed after asset row removed", map[string]interface{}{
+			"asset_id": asset.ID,
+			"path":     asset.Path,
+			"error":    err.Error(),
+		})
 	}
 	for name, path := range asset.Thumbnails {
 		if err := s.storage.Delete(path); err != nil {
@@ -314,10 +361,6 @@ func (s *Service) Delete(ctx context.Context, assetID string) error {
 				"error":    err.Error(),
 			})
 		}
-	}
-
-	if err := s.assets.Delete(ctx, asset.ID); err != nil {
-		return err
 	}
 
 	s.log.Info("media.asset.deleted", map[string]interface{}{

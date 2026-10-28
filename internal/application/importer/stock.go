@@ -232,7 +232,7 @@ func (imp *StockImporter) setStockUnderLock(ctx context.Context, productID strin
 	if !ok {
 		return fmt.Errorf("stock import: product repository does not support row locks")
 	}
-	productType, _, stockMode, _, err := locker.LockTypeAndModes(ctx, productID)
+	productType, _, stockMode, _, _, err := locker.LockTypeAndModes(ctx, productID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err

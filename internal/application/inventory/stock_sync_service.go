@@ -44,7 +44,7 @@ type stockSyncTxProducts interface {
 
 type stockSyncLockingProducts interface {
 	catalog.ProductRepository
-	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error)
 }
 
 type stockSyncTxStock interface {
@@ -278,7 +278,7 @@ func (s *StockSyncService) writeStockChunk(ctx context.Context, chunk []stockSyn
 		if _, seen := dynamic[productID]; seen {
 			continue
 		}
-		productType, _, stockMode, _, lockErr := locker.LockTypeAndModes(ctx, productID)
+		productType, _, stockMode, _, _, lockErr := locker.LockTypeAndModes(ctx, productID)
 		if lockErr != nil {
 			if apperror.Is(lockErr, apperror.CodeNotFound) {
 				return 0, nil, nil, fmt.Errorf("stock sync: product %s for sku %q not found", productID, candidate.sku)

@@ -54,7 +54,8 @@
         no_price: "no price set",
         no_store_assignment: "no store assignment",
         no_category: "no category assignment",
-        requires_linked_parent: "requires a linked parent"
+        requires_linked_parent: "requires a linked parent",
+        no_downloadable_file: "downloadable product has no attached file"
     };
 
     function failureLabel(code) {
@@ -150,6 +151,7 @@
                 autoBasis: deriveAutoBasis(status, inputFailureCodes),
                 failureCodes: deriveFailureCodes(status, inputFailureCodes),
                 requiresLinkedParent: !!payload.requires_linked_parent,
+                missingDownloadableFile: !!payload.missing_downloadable_file,
                 axes: axes
             };
         }
@@ -189,11 +191,11 @@
     // Computed client-side on every mode change (and on status change — see
     // bindStatusChange) so the badge reflects the candidate mode/status pair,
     // not whatever happened to be persisted when the page loaded.
-    function effectiveForMode(mode, autoBasis, status, axisKey, requiresLinkedParent) {
+    function effectiveForMode(mode, autoBasis, status, axisKey, requiresLinkedParent, missingDownloadableFile) {
         if (status !== "active") {
             return false;
         }
-        if (axisKey === "purchasable" && requiresLinkedParent) {
+        if (axisKey === "purchasable" && (requiresLinkedParent || missingDownloadableFile)) {
             return false;
         }
         if (mode === "auto") {
@@ -219,7 +221,8 @@
             return ERROR_BADGE_TEXT;
         }
         var requires = !!(state.requiresLinkedParent && axisKey === "purchasable");
-        var effective = effectiveForMode(mode, state.autoBasis, state.status, axisKey, state.requiresLinkedParent);
+        var missingFile = !!(state.missingDownloadableFile && axisKey === "purchasable");
+        var effective = effectiveForMode(mode, state.autoBasis, state.status, axisKey, state.requiresLinkedParent, state.missingDownloadableFile);
         if (mode === "auto") {
             return "Auto — " + (effective ? "visible" : "hidden");
         }
@@ -230,8 +233,15 @@
             if (effective) {
                 return "Forced visible";
             }
-            if (requires) {
-                return "Forced visible — not purchasable (requires linked parent)";
+            if (requires || missingFile) {
+                var reasons = [];
+                if (requires) {
+                    reasons.push("requires linked parent");
+                }
+                if (missingFile) {
+                    reasons.push("no downloadable file");
+                }
+                return "Forced visible — not purchasable (" + reasons.join("; ") + ")";
             }
             return "Forced visible — not live (product inactive)";
         }
@@ -242,7 +252,7 @@
     // the purchasable axis when RequiresLinkedParent is set (empty admin
     // assignment context).
     function showFailures(mode, state, axisKey) {
-        if (isLive(state) && axisKey === "purchasable" && state.requiresLinkedParent) {
+        if (isLive(state) && axisKey === "purchasable" && (state.requiresLinkedParent || state.missingDownloadableFile)) {
             return true;
         }
         return isLive(state) && mode === "auto" && !state.autoBasis;
@@ -250,21 +260,24 @@
 
     function failureCodesFor(state, axisKey) {
         var codes = (isLive(state) && state.failureCodes) || [];
-        if (axisKey === "purchasable" && isLive(state) && state.requiresLinkedParent) {
-            var out = codes.slice();
-            var found = false;
+        if (axisKey !== "purchasable" || !isLive(state)) {
+            return codes;
+        }
+        var out = codes.slice();
+        function ensure(code, flag) {
+            if (!flag) {
+                return;
+            }
             for (var i = 0; i < out.length; i++) {
-                if (out[i] === "requires_linked_parent") {
-                    found = true;
-                    break;
+                if (out[i] === code) {
+                    return;
                 }
             }
-            if (!found) {
-                out.push("requires_linked_parent");
-            }
-            return out;
+            out.push(code);
         }
-        return codes;
+        ensure("requires_linked_parent", state.requiresLinkedParent);
+        ensure("no_downloadable_file", state.missingDownloadableFile);
+        return out;
     }
 
     function escapeHTML(str) {
