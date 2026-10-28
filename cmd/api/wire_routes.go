@@ -177,6 +177,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/products/{id}/grouped-members", requireProductsRead(rt.productCompositionAdmin.ListGroupedMembers()))
 	router.Handle("POST /api/v1/admin/products/{id}/grouped-members", requireProductsWrite(rt.productCompositionAdmin.AddGroupedMember()))
 	router.Handle("DELETE /api/v1/admin/products/{id}/grouped-members/{memberId}", requireProductsWrite(rt.productCompositionAdmin.RemoveGroupedMember()))
+	router.Handle("GET /api/v1/admin/products/{id}/linked-eligible-parents", requireProductsRead(rt.linkedEligibilityAdmin.ListParents()))
+	router.Handle("POST /api/v1/admin/products/{id}/linked-eligible-parents", requireProductsWrite(rt.linkedEligibilityAdmin.AddParent()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/linked-eligible-parents/{parentId}", requireProductsWrite(rt.linkedEligibilityAdmin.RemoveParent()))
+	router.Handle("GET /api/v1/admin/products/{id}/linked-eligible-categories", requireProductsRead(rt.linkedEligibilityAdmin.ListCategories()))
+	router.Handle("POST /api/v1/admin/products/{id}/linked-eligible-categories", requireProductsWrite(rt.linkedEligibilityAdmin.AddCategory()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/linked-eligible-categories/{categoryId}", requireProductsWrite(rt.linkedEligibilityAdmin.RemoveCategory()))
 	// Unit ids are orderID/variantID and contain "/", so list and current
 	// take them as query parameters (PR-1071).
 	router.Handle("GET /api/v1/admin/assignments", requireAssignmentsRead(rt.assignmentAdmin.ListByParent()))

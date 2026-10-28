@@ -10,7 +10,8 @@
         slug: true,
         description: true,
         status: true,
-        type: true
+        type: true,
+        requires_linked_parent: true
     };
 
     function sectionTypes(attr) {

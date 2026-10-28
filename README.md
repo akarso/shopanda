@@ -235,6 +235,10 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:bundle-components <file.csv>` | Export bundle component links to CSV |
 | `import:grouped-members <file.csv>` | Add grouped member links (`parent_slug,member_slug`) |
 | `export:grouped-members <file.csv>` | Export grouped member links to CSV |
+| `import:linked-eligible-parents <file.csv>` | Add linked eligibility parent allowlist (`child_slug,parent_slug`) |
+| `export:linked-eligible-parents <file.csv>` | Export linked eligibility parent allowlist to CSV |
+| `import:linked-eligible-categories <file.csv>` | Add linked eligibility category rules (`child_slug,category_slug`) |
+| `export:linked-eligible-categories <file.csv>` | Export linked eligibility category rules to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |

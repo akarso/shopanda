@@ -25,12 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1072 are done. Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D: catalog eligibility (PR-1067), the `RequiresLinkedParent` purchasability gate (PR-1068), the `ProductAssignment` instance domain (PR-1069), the cart-time + post-purchase assignment flow (PR-1070), the admin assignment API (PR-1071), and returns integration for assigned children (PR-1072). Next: PR-1073 (CSV + admin GUI). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048–1073 are done. Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D (linked products & assignment) is complete through CSV/admin GUI (PR-1073). Next: Track E PR-1074 (downloadable). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1072 done — Track D next: CSV/GUI PR-1073; ids collide with Phase 11 — use phase folder) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1073 done — Track D closed; next Track E PR-1074; ids collide with Phase 11 — use phase folder) |
 | Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |

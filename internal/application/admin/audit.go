@@ -31,6 +31,14 @@ const (
 	AuditGroupedMemberAdd      AuditAction = "product.grouped_member.add"
 	AuditGroupedMemberRemove   AuditAction = "product.grouped_member.remove"
 
+	// Linked-product eligibility (PR-1073)
+	AuditLinkedEligibleParentList     AuditAction = "product.linked_eligible_parent.list"
+	AuditLinkedEligibleParentAdd      AuditAction = "product.linked_eligible_parent.add"
+	AuditLinkedEligibleParentRemove   AuditAction = "product.linked_eligible_parent.remove"
+	AuditLinkedEligibleCategoryList   AuditAction = "product.linked_eligible_category.list"
+	AuditLinkedEligibleCategoryAdd    AuditAction = "product.linked_eligible_category.add"
+	AuditLinkedEligibleCategoryRemove AuditAction = "product.linked_eligible_category.remove"
+
 	// Scoped catalog editing (PR-E catalog slice)
 	AuditProductTranslationRead   AuditAction = "product.translation.read"
 	AuditProductTranslationUpdate AuditAction = "product.translation.update"

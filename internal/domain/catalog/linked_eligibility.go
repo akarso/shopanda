@@ -98,3 +98,17 @@ func (c *LinkedEligibleCategory) Validate() error {
 	}
 	return nil
 }
+
+// LinkedEligibleParentSlugRow is one allowlist rule with product slugs for CSV export.
+type LinkedEligibleParentSlugRow struct {
+	ChildSlug  string
+	ParentSlug string
+}
+
+// LinkedEligibleCategorySlugRow is one category rule with product and category
+// slugs for CSV export.
+type LinkedEligibleCategorySlugRow struct {
+	ChildSlug    string
+	CategorySlug string
+}
+

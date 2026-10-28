@@ -43,6 +43,16 @@ type LinkedEligibilityRepository interface {
 	// RemoveCategory deletes one category rule. NotFound when the row did not exist.
 	RemoveCategory(ctx context.Context, childProductID, categoryID string) error
 
+	// ListAllParentSlugRows returns every allowlist row joined to product
+	// slugs, ordered by child_slug then parent_slug. Used by CSV export so
+	// callers do not page the product catalog. Always returns a non-nil slice.
+	ListAllParentSlugRows(ctx context.Context) ([]LinkedEligibleParentSlugRow, error)
+
+	// ListAllCategorySlugRows returns every category rule joined to product
+	// and category slugs, ordered by child_slug then category_slug. Always
+	// returns a non-nil slice.
+	ListAllCategorySlugRows(ctx context.Context) ([]LinkedEligibleCategorySlugRow, error)
+
 	// IsEligible is true when an explicit parent row exists or the parent
 	// product is assigned to any of the child's eligible categories via
 	// product_categories. childID == parentID is false. Missing products

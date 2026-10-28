@@ -99,6 +99,12 @@ func RegisterProductSchemas(r *admin.Registry) {
 				Default: "draft",
 				Meta:    scopeMeta(scopeGlobal),
 			},
+			{
+				Name:  "requires_linked_parent",
+				Type:  "checkbox",
+				Label: "Requires linked parent",
+				Meta:  scopeMeta(scopeGlobal),
+			},
 		},
 	})
 

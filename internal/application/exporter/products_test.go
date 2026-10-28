@@ -135,8 +135,8 @@ func TestExport_BasicCSV(t *testing.T) {
 		t.Fatalf("rows = %d, want 4", len(records))
 	}
 	header := records[0]
-	if strings.Join(header, ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
-		t.Errorf("header = %v, want [name slug sku description type pricing_mode stock_mode explode_order_lines variant_name]", header)
+	if strings.Join(header, ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,variant_name" {
+		t.Errorf("header = %v, want [name slug sku description type pricing_mode stock_mode explode_order_lines requires_linked_parent variant_name]", header)
 	}
 	colIdx := make(map[string]int)
 	for i, h := range header {
@@ -180,7 +180,7 @@ func TestExport_WithAttributes(t *testing.T) {
 	records := parseCSV(t, &buf)
 	header := records[0]
 	// Attribute columns should be sorted: active, color, weight
-	expected := "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name,active,color,weight"
+	expected := "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,variant_name,active,color,weight"
 	if strings.Join(header, ",") != expected {
 		t.Errorf("header = %q, want %q", strings.Join(header, ","), expected)
 	}
@@ -218,7 +218,7 @@ func TestExport_EmptyDatabase(t *testing.T) {
 	if len(records) != 1 { // header only
 		t.Errorf("rows = %d, want 1 (header only)", len(records))
 	}
-	if strings.Join(records[0], ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
+	if strings.Join(records[0], ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,variant_name" {
 		t.Errorf("header = %v, want type column present", records[0])
 	}
 }
@@ -708,5 +708,44 @@ func TestExport_BundleModesStored(t *testing.T) {
 	}
 	if !warned {
 		t.Fatalf("Warnings = %v, want reserved pricing_mode omission", result.Warnings)
+	}
+}
+
+func TestExport_RequiresLinkedParent(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "Ticket", Slug: "ticket", RequiresLinkedParent: true},
+			{ID: "p2", Name: "Card", Slug: "card", RequiresLinkedParent: false},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "SKU-T"}},
+			"p2": {{ID: "v2", ProductID: "p2", SKU: "SKU-C"}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	if _, err := exp.Export(context.Background(), &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[h] = i
+	}
+	if _, ok := colIdx["requires_linked_parent"]; !ok {
+		t.Fatalf("requires_linked_parent missing from header %v", header)
+	}
+	bySKU := map[string][]string{}
+	for _, row := range records[1:] {
+		bySKU[row[colIdx["sku"]]] = row
+	}
+	if bySKU["SKU-T"][colIdx["requires_linked_parent"]] != "true" {
+		t.Errorf("SKU-T requires_linked_parent = %q, want true", bySKU["SKU-T"][colIdx["requires_linked_parent"]])
+	}
+	if bySKU["SKU-C"][colIdx["requires_linked_parent"]] != "false" {
+		t.Errorf("SKU-C requires_linked_parent = %q, want false", bySKU["SKU-C"][colIdx["requires_linked_parent"]])
 	}
 }

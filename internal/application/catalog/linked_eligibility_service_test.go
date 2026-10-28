@@ -106,6 +106,13 @@ func (s *stubLinkedEligibilityRepo) RemoveCategory(_ context.Context, childProdu
 	return s.removeCatErr
 }
 
+
+func (s *stubLinkedEligibilityRepo) ListAllParentSlugRows(context.Context) ([]catalog.LinkedEligibleParentSlugRow, error) {
+	return nil, nil
+}
+func (s *stubLinkedEligibilityRepo) ListAllCategorySlugRows(context.Context) ([]catalog.LinkedEligibleCategorySlugRow, error) {
+	return nil, nil
+}
 func (s *stubLinkedEligibilityRepo) IsEligible(_ context.Context, childProductID, parentProductID string) (bool, error) {
 	s.eligibleChild = childProductID
 	s.eligibleParent = parentProductID

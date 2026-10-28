@@ -392,9 +392,10 @@
     }
 
     // refreshLivePreview recomputes autoBasis/failureCodes from fresh
-    // inputFailureCodes and the form's current status (when present), then
-    // re-renders every axis badge/failure list without changing mode selects.
-    // Only meaningful for live state — pending/create and error states no-op.
+    // inputFailureCodes and the form's current status / requires_linked_parent
+    // (when present), then re-renders every axis badge/failure list without
+    // changing mode selects. Only meaningful for live state — pending/create
+    // and error states no-op.
     function refreshLivePreview(doc, form, state, inputFailureCodes) {
         if (!doc || !isLive(state)) {
             return;
@@ -402,6 +403,9 @@
         var status = state.status;
         if (form && form.elements && form.elements.status) {
             status = String(form.elements.status.value || "");
+        }
+        if (form && form.elements && form.elements.requires_linked_parent) {
+            state.requiresLinkedParent = !!form.elements.requires_linked_parent.checked;
         }
         state.inputFailureCodes = (inputFailureCodes || []).slice();
         state.status = status;
@@ -434,6 +438,23 @@
         });
     }
 
+    // bindRequiresLinkedParentChange mirrors bindStatusChange for the core
+    // "requires_linked_parent" checkbox so the purchasable badge previews the
+    // selected (possibly unsaved) gate without a page reload.
+    function bindRequiresLinkedParentChange(doc, form, state) {
+        if (!doc || !form || !form.elements || !isLive(state)) {
+            return;
+        }
+        var el = form.elements.requires_linked_parent;
+        if (!el || el.getAttribute("data-visibility-requires-linked-bound")) {
+            return;
+        }
+        el.setAttribute("data-visibility-requires-linked-bound", "1");
+        el.addEventListener("change", function () {
+            refreshLivePreview(doc, form, state, state.inputFailureCodes);
+        });
+    }
+
     var api = {
         AXES: AXES,
         MODES: MODES,
@@ -461,6 +482,7 @@
         collectModes: collectModes,
         bindAxisChange: bindAxisChange,
         bindStatusChange: bindStatusChange,
+        bindRequiresLinkedParentChange: bindRequiresLinkedParentChange,
         refreshLivePreview: refreshLivePreview,
         updateRowFromMode: updateRowFromMode,
         failureCodesFor: failureCodesFor
