@@ -609,6 +609,44 @@ test("refreshLivePreview: reads requires_linked_parent from form checkbox", () =
     assert.match(list.innerHTML, /requires a linked parent/);
 });
 
+test("applySavedVisibilityFacts: refreshes missingDownloadableFile from visibility payload", () => {
+    const { doc, badge, list } = makeAxisDoc("visible", "purchasable");
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: { checked: false }
+        }
+    };
+    // Stale post-load state: file-less downloadable gate still set after a
+    // type change to simple (mirrors admin.js post-save before facts refresh).
+    const state = makeLiveState({
+        status: "active",
+        requiresLinkedParent: false,
+        missingDownloadableFile: true,
+        inputFailureCodes: [],
+        autoBasis: true
+    });
+
+    ui.applySavedVisibilityFacts(state, {
+        requires_linked_parent: false,
+        missing_downloadable_file: false
+    });
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(state.missingDownloadableFile, false);
+    assert.equal(state.requiresLinkedParent, false);
+    assert.equal(badge.textContent, "Forced visible");
+    assert.equal(list.style.display, "none");
+    assert.doesNotMatch(list.innerHTML, /no downloadable file|downloadable product has no attached file/);
+});
+
+test("applySavedVisibilityFacts: no-ops for null/error state", () => {
+    const errorState = { kind: "error", error: "boom" };
+    ui.applySavedVisibilityFacts(null, { missing_downloadable_file: false });
+    ui.applySavedVisibilityFacts(errorState, { missing_downloadable_file: false });
+    assert.equal(errorState.missingDownloadableFile, undefined);
+});
+
 test("bindRequiresLinkedParentChange: toggling checkbox recomputes purchasable badge", () => {
     const { doc, badge } = makeAxisDoc("visible", "purchasable");
     const checkbox = makeRequiresLinkedCheckbox(false);

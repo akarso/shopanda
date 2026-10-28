@@ -119,8 +119,12 @@ func (s *stubDLAssetRepo) LockForUpdate(_ context.Context, id string) error {
 type stubDLTxStarter struct{}
 
 func (stubDLTxStarter) BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error) {
-	// sql.Tx cannot be constructed without a real DB; Attach/Remove paths that
-	// need a real transaction are covered by postgres integration tests.
+	// sql.Tx cannot be constructed without a real DB. List tests use this stub
+	// because they never BeginTx. Attach/Remove service rules (including
+	// last-file-while-active) are exercised via newDLService → testTxStarter()
+	// in this file; postgres tests cover DownloadableFileRepo directly, not
+	// DownloadableFileService. Media delete + CountByAssetID is covered in
+	// internal/application/media/service_test.go.
 	return nil, sql.ErrConnDone
 }
 

@@ -404,6 +404,18 @@
         }
     }
 
+    // applySavedVisibilityFacts copies purchasable-gate flags from a GET
+    // "visibility" payload (or equivalent facts) onto live state. Used after
+    // product save so missing_downloadable_file / requires_linked_parent match
+    // the persisted row without a full page reload. No-ops for non-live state.
+    function applySavedVisibilityFacts(state, visibilityPayload) {
+        if (!isLive(state) || !visibilityPayload) {
+            return;
+        }
+        state.requiresLinkedParent = !!visibilityPayload.requires_linked_parent;
+        state.missingDownloadableFile = !!visibilityPayload.missing_downloadable_file;
+    }
+
     // refreshLivePreview recomputes autoBasis/failureCodes from fresh
     // inputFailureCodes and the form's current status / requires_linked_parent
     // (when present), then re-renders every axis badge/failure list without
@@ -496,6 +508,7 @@
         bindAxisChange: bindAxisChange,
         bindStatusChange: bindStatusChange,
         bindRequiresLinkedParentChange: bindRequiresLinkedParentChange,
+        applySavedVisibilityFacts: applySavedVisibilityFacts,
         refreshLivePreview: refreshLivePreview,
         updateRowFromMode: updateRowFromMode,
         failureCodesFor: failureCodesFor
