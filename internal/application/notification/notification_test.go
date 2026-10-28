@@ -92,6 +92,15 @@ func (m *mockDedupe) TryInsert(_ context.Context, subjectKey, kind string) (bool
 	return true, nil
 }
 
+func (m *mockDedupe) MarkCompleted(_ context.Context, subjectKey, kind string) error {
+	// Successful claim stays in the map (permanent for this mock).
+	if m.keys == nil {
+		m.keys = map[string]struct{}{}
+	}
+	m.keys[m.key(subjectKey, kind)] = struct{}{}
+	return nil
+}
+
 func (m *mockDedupe) Delete(ctx context.Context, subjectKey, kind string) error {
 	m.lastDeleteCtxDone = ctx.Err() != nil
 	if m.failDeleteIfDone && ctx.Err() != nil {

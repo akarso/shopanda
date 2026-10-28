@@ -30,8 +30,10 @@ const KindOrderConfirmed = "order_confirmed"
 // EmailDedupeStore claims one send per (subject_key, kind) so confirmation
 // dedupe does not depend on queue-driver job-id primary-key behavior.
 type EmailDedupeStore interface {
-	// TryInsert records (subjectKey, kind). inserted is true when newly claimed.
+	// TryInsert records a pending (subjectKey, kind). inserted is true when newly claimed.
 	TryInsert(ctx context.Context, subjectKey, kind string) (inserted bool, err error)
+	// MarkCompleted makes a successful claim permanent (not reclaimable).
+	MarkCompleted(ctx context.Context, subjectKey, kind string) error
 	// Delete removes a claim so a later attempt can retry after enqueue failure.
 	Delete(ctx context.Context, subjectKey, kind string) error
 }
@@ -671,14 +673,16 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 }
 
 // enqueueEmailOnce enqueues with a caller-supplied job id. When subjectKey and
-// kind are set and a dedupe store is wired, the store is claimed first; enqueue
-// runs only on a new claim. Enqueue failure deletes the claim so a later
-// HandleOrderPaid can retry. Queue Conflict (duplicate job id) remains a
-// secondary success path for Postgres-backed queues.
+// kind are set and a dedupe store is wired, the store is claimed first (pending);
+// enqueue runs only on a new claim. After a successful enqueue (or queue Conflict),
+// the claim is marked completed so it is never reclaimed. Enqueue failure deletes
+// the claim so a later HandleOrderPaid can retry. Queue Conflict (duplicate job id)
+// remains a secondary success path for Postgres-backed queues.
 //
 // Claim release uses a detached timeout context so shutdown cancellation of the
-// request ctx cannot leave a permanent claim without a job. Stuck claims are
-// also reclaimable when older than the store stale threshold via TryInsert.
+// request ctx cannot leave a pending claim without a job. Stuck pending claims
+// are reclaimable when older than the store stale threshold via TryInsert;
+// completed claims are permanent.
 func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID, handler string, logFields map[string]interface{}, subjectKey, kind string) error {
 	claimed := false
 	if s.dedupe != nil && strings.TrimSpace(subjectKey) != "" && strings.TrimSpace(kind) != "" {
@@ -723,7 +727,10 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		logFields["job_id"] = job.ID
 		if apperror.Is(err, apperror.CodeConflict) {
-			// Job-id secondary dedupe: keep the claim (already queued).
+			// Job-id secondary dedupe: mark claim completed (already queued).
+			if claimed {
+				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+			}
 			s.log.Info(handler+".email_already_enqueued", logFields)
 			return nil
 		}
@@ -734,6 +741,9 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
 	}
 
+	if claimed {
+		s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+	}
 	logFields["job_id"] = job.ID
 	logFields["job_type"] = JobTypeEmailSend
 	s.log.Info(handler+".email_enqueued", logFields)
@@ -747,5 +757,15 @@ func (s *Service) releaseDedupeClaim(subjectKey, kind, handler string, logFields
 	defer cancel()
 	if delErr := s.dedupe.Delete(delCtx, subjectKey, kind); delErr != nil {
 		s.log.Error(handler+".dedupe_release_failed", delErr, logFields)
+	}
+}
+
+// completeDedupeClaim marks a claim completed using a bounded background
+// context so shutdown cancellation cannot leave a successful send reclaimable.
+func (s *Service) completeDedupeClaim(subjectKey, kind, handler string, logFields map[string]interface{}) {
+	markCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if markErr := s.dedupe.MarkCompleted(markCtx, subjectKey, kind); markErr != nil {
+		s.log.Error(handler+".dedupe_complete_failed", markErr, logFields)
 	}
 }
