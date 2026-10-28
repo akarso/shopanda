@@ -76,3 +76,62 @@ func TestNotificationDedupeRepo_DeleteAllowsRetry(t *testing.T) {
 		t.Fatal("expected insert after delete to succeed")
 	}
 }
+
+func TestNotificationDedupeRepo_TryInsert_ReclaimsStale(t *testing.T) {
+	db := testDB(t)
+	ensureNotificationDedupeTable(t, db)
+
+	repo, err := postgres.NewNotificationDedupeRepo(db)
+	if err != nil {
+		t.Fatalf("NewNotificationDedupeRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := repo.TryInsert(ctx, "ord-stale", "order_confirmed"); err != nil {
+		t.Fatalf("TryInsert: %v", err)
+	}
+	mustExec(t, db, `UPDATE notification_dedupe SET created_at = now() - interval '15 minutes'
+		WHERE subject_key = 'ord-stale' AND kind = 'order_confirmed'`)
+
+	inserted, err := repo.TryInsert(ctx, "ord-stale", "order_confirmed")
+	if err != nil {
+		t.Fatalf("TryInsert reclaim: %v", err)
+	}
+	if !inserted {
+		t.Fatal("expected stale claim to be reclaimed")
+	}
+
+	// Fresh claim must still block.
+	inserted, err = repo.TryInsert(ctx, "ord-stale", "order_confirmed")
+	if err != nil {
+		t.Fatalf("TryInsert fresh: %v", err)
+	}
+	if inserted {
+		t.Fatal("expected fresh claim to report existed")
+	}
+}
+
+func TestNotificationDedupeRepo_TryInsert_DoesNotReclaimFresh(t *testing.T) {
+	db := testDB(t)
+	ensureNotificationDedupeTable(t, db)
+
+	repo, err := postgres.NewNotificationDedupeRepo(db)
+	if err != nil {
+		t.Fatalf("NewNotificationDedupeRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := repo.TryInsert(ctx, "ord-fresh", "order_confirmed"); err != nil {
+		t.Fatalf("TryInsert: %v", err)
+	}
+	mustExec(t, db, `UPDATE notification_dedupe SET created_at = now() - interval '1 minute'
+		WHERE subject_key = 'ord-fresh' AND kind = 'order_confirmed'`)
+
+	inserted, err := repo.TryInsert(ctx, "ord-fresh", "order_confirmed")
+	if err != nil {
+		t.Fatalf("TryInsert: %v", err)
+	}
+	if inserted {
+		t.Fatal("expected claim younger than stale threshold to block")
+	}
+}

@@ -43,13 +43,17 @@ func (m *mockOrderRepo) FindByID(ctx context.Context, id string) (*order.Order, 
 
 type mockQueue struct {
 	jobs.Queue
-	enqueued []jobs.Job
-	byID     map[string]struct{}
-	errOnce  error
-	ignoreID bool // when true, do not conflict on duplicate job ids
+	enqueued  []jobs.Job
+	byID      map[string]struct{}
+	errOnce   error
+	ignoreID  bool // when true, do not conflict on duplicate job ids
+	enqueueFn func(ctx context.Context, job jobs.Job) error
 }
 
-func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
+func (m *mockQueue) Enqueue(ctx context.Context, job jobs.Job) error {
+	if m.enqueueFn != nil {
+		return m.enqueueFn(ctx, job)
+	}
 	if m.errOnce != nil {
 		err := m.errOnce
 		m.errOnce = nil
@@ -69,7 +73,9 @@ func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
 }
 
 type mockDedupe struct {
-	keys map[string]struct{}
+	keys              map[string]struct{}
+	failDeleteIfDone  bool
+	lastDeleteCtxDone bool
 }
 
 func (m *mockDedupe) key(subject, kind string) string { return subject + "|" + kind }
@@ -86,7 +92,11 @@ func (m *mockDedupe) TryInsert(_ context.Context, subjectKey, kind string) (bool
 	return true, nil
 }
 
-func (m *mockDedupe) Delete(_ context.Context, subjectKey, kind string) error {
+func (m *mockDedupe) Delete(ctx context.Context, subjectKey, kind string) error {
+	m.lastDeleteCtxDone = ctx.Err() != nil
+	if m.failDeleteIfDone && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if m.keys != nil {
 		delete(m.keys, m.key(subjectKey, kind))
 	}
@@ -243,6 +253,65 @@ func TestHandleOrderPaid_EnqueueFailureAllowsRetry(t *testing.T) {
 	}
 
 	// Claim released → retry can send.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("retry HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job after retry, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleOrderPaid_EnqueueFailureCancelledCtxStillReleasesClaim(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	q := &mockQueue{ignoreID: true}
+	q.enqueueFn = func(c context.Context, job jobs.Job) error {
+		cancel() // simulate shutdown cancelling the request ctx while Enqueue waits
+		q.enqueueFn = nil // subsequent retries use normal enqueue
+		return context.Canceled
+	}
+	dedupe := &mockDedupe{failDeleteIfDone: true}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithEmailDedupe(dedupe))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+
+	if err := svc.HandleOrderPaid(ctx, evt); err == nil {
+		t.Fatal("expected enqueue failure")
+	}
+	if dedupe.lastDeleteCtxDone {
+		t.Fatal("dedupe Delete must use a live background ctx, not the cancelled request ctx")
+	}
+	if _, stuck := dedupe.keys["ord-1|"+notification.KindOrderConfirmed]; stuck {
+		t.Fatal("claim must be released so a later order.paid can retry")
+	}
+
+	// Fresh request ctx can claim and enqueue.
 	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
 		t.Fatalf("retry HandleOrderPaid: %v", err)
 	}

@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+// notificationDedupeStaleInterval is how long an unfinished claim may block
+// retries before TryInsert reclaims it (covers rare cleanup failures).
+const notificationDedupeStaleInterval = "10 minutes"
+
 // NotificationDedupeRepo claims one notification send per (subject_key, kind).
 type NotificationDedupeRepo struct {
 	db *sql.DB
@@ -20,17 +24,27 @@ func NewNotificationDedupeRepo(db *sql.DB) (*NotificationDedupeRepo, error) {
 	return &NotificationDedupeRepo{db: db}, nil
 }
 
-// TryInsert records (subjectKey, kind). inserted is true when the row is new.
+// TryInsert records (subjectKey, kind). inserted is true when the row is new
+// or when an existing claim older than notificationDedupeStaleInterval was reclaimed.
 func (r *NotificationDedupeRepo) TryInsert(ctx context.Context, subjectKey, kind string) (inserted bool, err error) {
 	subjectKey = strings.TrimSpace(subjectKey)
 	kind = strings.TrimSpace(kind)
 	if subjectKey == "" || kind == "" {
 		return false, fmt.Errorf("notification_dedupe: subject_key and kind required")
 	}
-	const q = `INSERT INTO notification_dedupe (subject_key, kind)
-		VALUES ($1, $2)
-		ON CONFLICT (subject_key, kind) DO NOTHING`
-	res, err := r.db.ExecContext(ctx, q, subjectKey, kind)
+	// Reclaim unfinished claims left behind when enqueue failed and cleanup did
+	// not run (e.g. process crash), then claim. Fresh claims still conflict.
+	const q = `
+WITH reclaimed AS (
+	DELETE FROM notification_dedupe
+	WHERE subject_key = $1 AND kind = $2
+	  AND created_at < now() - $3::interval
+	RETURNING 1
+)
+INSERT INTO notification_dedupe (subject_key, kind)
+VALUES ($1, $2)
+ON CONFLICT (subject_key, kind) DO NOTHING`
+	res, err := r.db.ExecContext(ctx, q, subjectKey, kind, notificationDedupeStaleInterval)
 	if err != nil {
 		return false, fmt.Errorf("notification_dedupe insert: %w", err)
 	}

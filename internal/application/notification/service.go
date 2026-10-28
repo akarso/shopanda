@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -674,6 +675,10 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 // runs only on a new claim. Enqueue failure deletes the claim so a later
 // HandleOrderPaid can retry. Queue Conflict (duplicate job id) remains a
 // secondary success path for Postgres-backed queues.
+//
+// Claim release uses a detached timeout context so shutdown cancellation of the
+// request ctx cannot leave a permanent claim without a job. Stuck claims are
+// also reclaimable when older than the store stale threshold via TryInsert.
 func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID, handler string, logFields map[string]interface{}, subjectKey, kind string) error {
 	claimed := false
 	if s.dedupe != nil && strings.TrimSpace(subjectKey) != "" && strings.TrimSpace(kind) != "" {
@@ -709,7 +714,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
 	if err != nil {
 		if claimed {
-			_ = s.dedupe.Delete(ctx, subjectKey, kind)
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
 		}
 		s.log.Error(handler+".job_create_failed", err, logFields)
 		return fmt.Errorf("notification: create job: %w", err)
@@ -723,9 +728,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return nil
 		}
 		if claimed {
-			if delErr := s.dedupe.Delete(ctx, subjectKey, kind); delErr != nil {
-				s.log.Error(handler+".dedupe_release_failed", delErr, logFields)
-			}
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
 		}
 		s.log.Error(handler+".enqueue_failed", err, logFields)
 		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
@@ -735,4 +738,14 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	logFields["job_type"] = JobTypeEmailSend
 	s.log.Info(handler+".email_enqueued", logFields)
 	return nil
+}
+
+// releaseDedupeClaim deletes a claim using a bounded background context so a
+// cancelled request/shutdown ctx cannot skip cleanup and strand the claim.
+func (s *Service) releaseDedupeClaim(subjectKey, kind, handler string, logFields map[string]interface{}) {
+	delCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if delErr := s.dedupe.Delete(delCtx, subjectKey, kind); delErr != nil {
+		s.log.Error(handler+".dedupe_release_failed", delErr, logFields)
+	}
 }
