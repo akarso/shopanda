@@ -24,9 +24,10 @@ type txAssetRepo interface {
 	WithTx(tx *sql.Tx) media.AssetRepository
 }
 
-// lockingAssetRepo locks an asset row inside a transaction (SELECT FOR UPDATE).
+// lockingAssetRepo locks an asset row inside a transaction (SELECT FOR UPDATE)
+// and returns the locked row so Attach need not FindByID again.
 type lockingAssetRepo interface {
-	LockForUpdate(ctx context.Context, id string) error
+	LockForUpdate(ctx context.Context, id string) (*media.Asset, error)
 }
 
 // DownloadableFileService manages product → media asset attachments for
@@ -132,11 +133,20 @@ func (s *DownloadableFileService) Attach(ctx context.Context, f *catalog.Downloa
 		}
 		return fmt.Errorf("downloadable file: lock product: %w", err)
 	}
-	if err := assetLocker.LockForUpdate(ctx, f.AssetID); err != nil {
+	asset, err := assetLocker.LockForUpdate(ctx, f.AssetID)
+	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
 		}
 		return fmt.Errorf("downloadable file: lock asset: %w", err)
+	}
+	if asset == nil {
+		return apperror.NotFound("asset not found")
+	}
+	// Grant targets must live under private/downloads/ so public uploads/
+	// objects cannot be attached and hotlinked past delivery limits (PR-1077).
+	if !media.IsPrivateDownloadsPath(asset.Path) {
+		return apperror.Validation("downloadable file asset must be stored under private/downloads/")
 	}
 	if _, err := requireActiveCompositionProducts(ctx, productRepo, f.ProductID); err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {

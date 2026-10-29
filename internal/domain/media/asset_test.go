@@ -59,3 +59,24 @@ func TestNewAsset_Validation(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPrivateDownloadsPath(t *testing.T) {
+	if !media.IsPrivateDownloadsPath("private/downloads/x/y.pdf") {
+		t.Fatal("expected private path")
+	}
+	if !media.IsPrivateDownloadsPath("/private/downloads/x/y.pdf") {
+		t.Fatal("expected leading-slash private path")
+	}
+	if media.IsPrivateDownloadsPath("uploads/x/y.pdf") {
+		t.Fatal("uploads must not be private")
+	}
+}
+
+func TestSanitizeContentDispositionFilename(t *testing.T) {
+	if got := media.SanitizeContentDispositionFilename("bad\"\r\nfile.bin"); got != "badfile.bin" {
+		t.Fatalf("got %q", got)
+	}
+	if got := media.SanitizeContentDispositionFilename("   "); got != "download" {
+		t.Fatalf("empty = %q", got)
+	}
+}

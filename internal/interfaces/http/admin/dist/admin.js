@@ -100,7 +100,9 @@
         });
     }
 
-    function uploadAsset(file, onProgress) {
+    // uploadAsset posts multipart media. opts.privateDownload appends
+    // private_download=1 so objects land under private/downloads/ (grant targets).
+    function uploadAsset(file, onProgress, opts) {
         return new Promise(function (resolve, reject) {
             var xhr = new XMLHttpRequest();
             xhr.open("POST", API_BASE + "/admin/media", true);
@@ -148,6 +150,9 @@
             };
             var formData = new FormData();
             formData.append("file", file);
+            if (opts && opts.privateDownload) {
+                formData.append("private_download", "1");
+            }
             xhr.send(formData);
         });
     }
@@ -8535,6 +8540,7 @@
             '<h2>Media Library</h2>' +
             '<input type="file" id="media-upload-input" accept="image/*" multiple>' +
             '</div>' +
+            '<label class="media-private-download"><input type="checkbox" id="media-private-download"> Private download (store under private/downloads/ for downloadable products)</label>' +
             '<div id="media-msg"></div>' +
             '<div id="media-dropzone" class="media-dropzone">Drop images here or use the file picker.</div>' +
             '<progress id="media-upload-progress" value="0" max="100" style="display:none"></progress>' +
@@ -8545,7 +8551,8 @@
             gridID: "media-grid",
             fileInputID: "media-upload-input",
             dropzoneID: "media-dropzone",
-            progressID: "media-upload-progress"
+            progressID: "media-upload-progress",
+            privateDownloadCheckboxID: "media-private-download"
         });
     }
 
@@ -10136,9 +10143,16 @@
                     showMessage(queue.length + ' file(s) uploaded.', false);
                     return;
                 }
+                var privateDownload = false;
+                if (options.privateDownload) {
+                    privateDownload = true;
+                } else if (options.privateDownloadCheckboxID) {
+                    var box = document.getElementById(options.privateDownloadCheckboxID);
+                    privateDownload = !!(box && box.checked);
+                }
                 uploadAsset(queue[index], function (percent) {
                     progress.value = percent;
-                }).then(function () {
+                }, { privateDownload: privateDownload }).then(function () {
                     next(index + 1);
                 }).catch(function (err) {
                     progress.style.display = "none";

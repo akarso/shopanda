@@ -109,11 +109,11 @@ func (s *stubDLAssetRepo) FindByID(_ context.Context, id string) (*media.Asset, 
 func (s *stubDLAssetRepo) List(context.Context, int, int) ([]media.Asset, error) { return nil, nil }
 func (s *stubDLAssetRepo) Delete(context.Context, string) error                  { return nil }
 func (s *stubDLAssetRepo) WithTx(*sql.Tx) media.AssetRepository                 { return s }
-func (s *stubDLAssetRepo) LockForUpdate(_ context.Context, id string) error {
+func (s *stubDLAssetRepo) LockForUpdate(_ context.Context, id string) (*media.Asset, error) {
 	if s.byID == nil || s.byID[id] == nil {
-		return apperror.NotFound("asset not found")
+		return nil, apperror.NotFound("asset not found")
 	}
-	return nil
+	return s.byID[id], nil
 }
 
 type stubDLTxStarter struct{}
@@ -201,7 +201,7 @@ func TestDownloadableFileService_Attach_TypeMismatch(t *testing.T) {
 		"p1": {ID: "p1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 	}, typ: map[string]catalog.Type{"p1": catalog.TypeSimple}}
 	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
-		"a1": {ID: "a1"},
+		"a1": {ID: "a1", Path: media.PrivateDownloadsPrefix + "a1/file.pdf"},
 	}}
 	svc := newDLService(products, &stubDLFileRepo{}, assets)
 	f, err := catalog.NewDownloadableFile("p1", "a1")
@@ -236,7 +236,9 @@ func TestDownloadableFileService_Attach_OK(t *testing.T) {
 		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
 	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
 	files := &stubDLFileRepo{}
-	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{"a1": {ID: "a1"}}}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: media.PrivateDownloadsPrefix + "a1/guide.pdf"},
+	}}
 	svc := newDLService(products, files, assets)
 	f, err := catalog.NewDownloadableFile("p1", "a1")
 	if err != nil {
@@ -247,6 +249,25 @@ func TestDownloadableFileService_Attach_OK(t *testing.T) {
 	}
 	if files.counts["p1"] != 1 {
 		t.Fatalf("counts = %#v", files.counts)
+	}
+}
+
+func TestDownloadableFileService_Attach_RejectsPublicUploadPath(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: "uploads/a1/public.pdf"},
+	}}
+	svc := newDLService(products, &stubDLFileRepo{}, assets)
+	f, err := catalog.NewDownloadableFile("p1", "a1")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	err = svc.Attach(ctx, f)
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), "private/downloads/") {
+		t.Fatalf("Attach = %v, want private/downloads/ validation", err)
 	}
 }
 
@@ -350,7 +371,9 @@ func TestDownloadableFileService_Attach_DraftWithoutOperatorScope(t *testing.T) 
 	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
 		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
 	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
-	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{"a1": {ID: "a1"}}}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: media.PrivateDownloadsPrefix + "a1/file.pdf"},
+	}}
 	svc := newDLService(products, &stubDLFileRepo{}, assets)
 	f, err := catalog.NewDownloadableFile("p1", "a1")
 	if err != nil {

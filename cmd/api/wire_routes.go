@@ -365,6 +365,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/account/assignment-parents", requireAuth(rt.assignmentAccount.ListParents()))
 	router.Handle("GET /api/v1/account/assignments", requireAuth(rt.assignmentAccount.GetCurrent()))
 	router.Handle("POST /api/v1/account/assignments", requireAuth(rt.assignmentAccount.Assign()))
+	router.Handle("POST /api/v1/account/downloads/{grantID}", requireAuth(rt.downloadAccount.Deliver()))
 	router.Handle("GET /api/v1/account/consent", requireAuth(rt.accountHandler.GetConsent()))
 	router.Handle("GET /api/v1/account/store-credit", requireAuth(rt.storeCreditAccount.GetBalance()))
 	router.Handle("PUT /api/v1/account/consent", requireAuth(rt.accountHandler.UpdateConsent()))

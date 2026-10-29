@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,9 +23,12 @@ import (
 // memGrantRepoTX is an in-memory DownloadGrant repository with WithTx for
 // returns revoke tests (PR-1075).
 type memGrantRepoTX struct {
+	mu     sync.Mutex
 	byID   map[string]*domain.DownloadGrant
 	byPair map[string]*domain.DownloadGrant
 }
+
+var _ domain.Repository = (*memGrantRepoTX)(nil)
 
 func newMemGrantRepoTX() *memGrantRepoTX {
 	return &memGrantRepoTX{
@@ -40,6 +44,8 @@ func grantPairKey(orderItemID, assetID string) string {
 func (m *memGrantRepoTX) WithTx(*sql.Tx) domain.Repository { return m }
 
 func (m *memGrantRepoTX) Insert(_ context.Context, g *domain.DownloadGrant) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	cp := *g
 	m.byID[g.ID] = &cp
 	m.byPair[grantPairKey(g.OrderItemID, g.AssetID)] = &cp
@@ -47,6 +53,8 @@ func (m *memGrantRepoTX) Insert(_ context.Context, g *domain.DownloadGrant) erro
 }
 
 func (m *memGrantRepoTX) Update(_ context.Context, g *domain.DownloadGrant) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	existing, ok := m.byID[g.ID]
 	if !ok {
 		return apperror.NotFound("download grant not found")
@@ -59,6 +67,8 @@ func (m *memGrantRepoTX) Update(_ context.Context, g *domain.DownloadGrant) erro
 }
 
 func (m *memGrantRepoTX) UpdateCount(_ context.Context, id string, newCount, expectedCount int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byID[id]
 	if !ok {
 		return apperror.NotFound("download grant not found")
@@ -70,7 +80,24 @@ func (m *memGrantRepoTX) UpdateCount(_ context.Context, id string, newCount, exp
 	return nil
 }
 
+func (m *memGrantRepoTX) ClaimDownload(_ context.Context, id, customerID string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.byID[id]
+	if !ok {
+		return nil, domain.ErrCountConflict
+	}
+	if g.CustomerID != customerID || g.Expired(time.Now().UTC()) || g.Exhausted() {
+		return nil, domain.ErrCountConflict
+	}
+	g.DownloadCount++
+	cp := *g
+	return &cp, nil
+}
+
 func (m *memGrantRepoTX) FindByID(_ context.Context, id string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byID[id]
 	if !ok {
 		return nil, nil
@@ -80,6 +107,8 @@ func (m *memGrantRepoTX) FindByID(_ context.Context, id string) (*domain.Downloa
 }
 
 func (m *memGrantRepoTX) FindByOrderItemAndAsset(_ context.Context, orderItemID, assetID string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byPair[grantPairKey(orderItemID, assetID)]
 	if !ok {
 		return nil, nil
@@ -93,6 +122,8 @@ func (m *memGrantRepoTX) ListByCustomerID(context.Context, string) ([]domain.Dow
 }
 
 func (m *memGrantRepoTX) ListByOrderItemID(_ context.Context, orderItemID string) ([]domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := []domain.DownloadGrant{}
 	for _, g := range m.byID {
 		if g.OrderItemID == orderItemID {
@@ -103,6 +134,8 @@ func (m *memGrantRepoTX) ListByOrderItemID(_ context.Context, orderItemID string
 }
 
 func (m *memGrantRepoTX) CountByAssetID(_ context.Context, assetID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	n := 0
 	for _, g := range m.byID {
@@ -114,6 +147,8 @@ func (m *memGrantRepoTX) CountByAssetID(_ context.Context, assetID string) (int,
 }
 
 func (m *memGrantRepoTX) DeleteExpiredOrRevokedByAssetID(_ context.Context, assetID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	n := 0
 	for id, g := range m.byID {

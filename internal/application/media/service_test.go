@@ -145,6 +145,35 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+func TestUpload_PrivateDownload(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename:        "guide.pdf",
+		File:            bytes.NewReader(jpegHeader),
+		PrivateDownload: true,
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if !domainMedia.IsPrivateDownloadsPath(result.Asset.Path) {
+		t.Fatalf("path = %q, want under %s", result.Asset.Path, domainMedia.PrivateDownloadsPrefix)
+	}
+	found := false
+	for path := range storage.saved {
+		if domainMedia.IsPrivateDownloadsPath(path) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("storage.saved = %#v, want private/downloads/ key", storage.saved)
+	}
+}
+
 func TestUpload_UnsupportedMimeType(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	repo := &mockAssetRepo{}
@@ -322,6 +351,8 @@ func (g *txGrantGate) WithTxRepository(tx *sql.Tx) domainDownload.Repository {
 	return g
 }
 
+var _ domainDownload.Repository = (*txGrantGate)(nil)
+
 func (g *txGrantGate) Insert(context.Context, *domainDownload.DownloadGrant) error {
 	return nil
 }
@@ -329,6 +360,9 @@ func (g *txGrantGate) Update(context.Context, *domainDownload.DownloadGrant) err
 	return nil
 }
 func (g *txGrantGate) UpdateCount(context.Context, string, int, int) error { return nil }
+func (g *txGrantGate) ClaimDownload(context.Context, string, string) (*domainDownload.DownloadGrant, error) {
+	return nil, domainDownload.ErrCountConflict
+}
 func (g *txGrantGate) FindByID(context.Context, string) (*domainDownload.DownloadGrant, error) {
 	return nil, nil
 }

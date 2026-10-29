@@ -506,9 +506,25 @@ classDiagram
         +Delete(path) error
         +URL(path) string
     }
+    class ReadableStorage {
+        <<interface>>
+        +Read(path) []byte
+    }
+    class SignedURLStorage {
+        <<interface>>
+        +Head(ctx, path) error
+        +SignedURL(ctx, path, opts) string
+    }
     class LocalStorage {
         -basePath string
         -baseURL string
+        +Read(path) []byte
+    }
+    class S3Storage {
+        -bucket string
+        -presigner PresignClient
+        +Head(ctx, path) error
+        +SignedURL(ctx, path, opts) string
     }
     class AssetRepository {
         <<interface>>
@@ -723,7 +739,11 @@ classDiagram
     Scheduler <|.. CronScheduler : implements
     Mailer <|.. SMTPMailer : implements
     Storage <|.. LocalStorage : implements
+    ReadableStorage <|.. LocalStorage : implements
+    SignedURLStorage <|.. S3Storage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
+    note for SignedURLStorage "PR-1077: Head before claim; presign with private no-store +\nattachment disposition; never permanent Storage.URL for grants"
+
     Cache <|.. PostgresCacheStore : implements
     StoreRepository <|.. PostgresStoreRepo : implements
     StoreAdminHandler --> StoreRepository : uses

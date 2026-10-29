@@ -27,6 +27,13 @@ type Repository interface {
 	// (expires_at > now). Zero rows is ErrCountConflict.
 	UpdateCount(ctx context.Context, id string, newCount, expectedCount int) error
 
+	// ClaimDownload atomically increments download_count by 1 when the row
+	// is owned by customerID, still live (expires_at > now), and under
+	// limit (download_count < download_limit). Returns the updated grant.
+	// Zero matching rows is ErrCountConflict (caller maps expired/exhausted/
+	// ownership via FindByID). Used by storefront delivery (PR-1077).
+	ClaimDownload(ctx context.Context, id, customerID string) (*DownloadGrant, error)
+
 	// FindByID returns the grant, or (nil, nil) when missing.
 	FindByID(ctx context.Context, id string) (*DownloadGrant, error)
 

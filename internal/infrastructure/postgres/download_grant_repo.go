@@ -163,6 +163,39 @@ func (r *DownloadGrantRepo) UpdateCount(ctx context.Context, grantID string, new
 	return nil
 }
 
+// ClaimDownload atomically increments download_count for an owned live grant.
+func (r *DownloadGrantRepo) ClaimDownload(ctx context.Context, grantID, customerID string) (*download.DownloadGrant, error) {
+	grantID = strings.TrimSpace(grantID)
+	customerID = strings.TrimSpace(customerID)
+	if grantID == "" {
+		return nil, apperror.Validation("download grant id must not be empty")
+	}
+	if customerID == "" {
+		return nil, apperror.Validation("customer id must not be empty")
+	}
+	if !id.IsUUID(grantID) {
+		return nil, apperror.Validation("invalid download grant id")
+	}
+	q := `UPDATE download_grants
+		SET download_count = download_count + 1
+		WHERE id = $1
+		  AND customer_id = $2
+		  AND download_count < download_limit
+		  AND expires_at > NOW()
+		RETURNING ` + downloadGrantSelectColumns
+	g, err := scanDownloadGrant(r.queryer().QueryRowContext(ctx, q, grantID, customerID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, download.ErrCountConflict
+	}
+	if err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("download_grant_repo: claim download: %w", err)
+	}
+	return g, nil
+}
+
 // FindByID returns the grant or (nil, nil).
 func (r *DownloadGrantRepo) FindByID(ctx context.Context, grantID string) (*download.DownloadGrant, error) {
 	grantID = strings.TrimSpace(grantID)

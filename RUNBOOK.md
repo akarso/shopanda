@@ -542,6 +542,34 @@ The grace/cancel split is **hardcoded**, not configurable: remainder is `min(Dra
 
 **Limitation:** there is no outbox/retry. Work that is still in the handler when grace ends is cancelled and not retried (same as a crash). Keep `OnAsync` bodies short (enqueue a job, don’t call the PSP inline). Ignoring `ctx` after cancel can still delay or drop the last second of shutdown.
 
+### Customer cannot download a digital product
+
+**Symptom:** `POST /api/v1/account/downloads/{grantID}` returns 401 / 403 / 404 / 422 / 409 / 500, or the customer says the link “does nothing.” (Delivery is **POST**, not GET — prefetch must not burn slots.)
+
+**Check:**
+```bash
+# Grant row (must exist; customer_id must match the logged-in customer)
+psql "$DATABASE_URL" -c "select id, customer_id, expires_at, download_limit, download_count, asset_id from download_grants where id = '<grant-id>';"
+
+# Live vs expired: expires_at <= now() means revoked or timed out (PR-1075 revoke sets expires_at = now)
+# Exhausted: download_count >= download_limit → 422 validation ("download limit reached")
+# Wrong / empty customer_id → 403 (guest grants until account-link rebind)
+# Asset path: prefer private/downloads/… for grant targets (upload with private_download=1)
+psql "$DATABASE_URL" -c "select id, path, filename from assets where id = '<asset-id>';"
+```
+
+**Fix:**
+| HTTP | Cause | Operator action |
+| --- | --- | --- |
+| 401 | Not signed in | Customer must authenticate |
+| 403 | Grant owned by another customer, or guest `customer_id` empty | Confirm account; guest rebind is a follow-up (PR-1075) — do not invent a re-issue without paid/link context |
+| 404 | Unknown grant id, missing asset row, or missing blob (Head/Read miss) | Confirm grant + `assets` + object in storage; missing blob does **not** increment `download_count` |
+| 422 | Expired or download limit reached | Until PR-1078 admin Reset/Extend: support may extend/reset via SQL **only** if you understand the grant is still entitled — example Extend: `update download_grants set expires_at = now() + interval '30 days' where id = '<id>';` Reset count: `update download_grants set download_count = 0 where id = '<id>' and expires_at > now();` Prefer running through `download.Service.Extend` / `ResetCount` in a one-off when possible |
+| 409 | Concurrent atomic claim race | Customer retries once |
+| 500 | Presign / storage failure | Check API logs for `download delivery … failed`; do not hand out permanent `/media/...` URLs |
+
+Delivery never returns a permanent public media URL (local streams; S3 uses a short-lived signed redirect with `private, no-store`, Location host-restricted to AWS path/virtual-hosted or MinIO endpoint — not CDN BaseURL alone). New Attach rejects non-`private/downloads/` assets; legacy `uploads/` joins remain deliverable until re-uploaded privately. **Residual risk:** keep `private/downloads/` off public `/media` aliases. See [DEVELOPER.md — Storefront download delivery](docs/guides/DEVELOPER.md#storefront-download-delivery-pr-1077).
+
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR

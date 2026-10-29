@@ -145,6 +145,10 @@ func (s *Service) WithTxStarter(starter TxStarter) *Service {
 type UploadInput struct {
 	Filename string
 	File     io.Reader
+	// PrivateDownload stores the object under media.PrivateDownloadsPrefix
+	// (private/downloads/…) so S3 Save applies private, no-store Cache-Control
+	// and skips public ACL. Prefer this for downloadable grant targets (PR-1077).
+	PrivateDownload bool
 }
 
 // UploadResult holds the result of an upload.
@@ -207,6 +211,9 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 
 	assetID := id.New()
 	dir := "uploads/" + assetID
+	if input.PrivateDownload {
+		dir = domainMedia.PrivateDownloadsPrefix + assetID
+	}
 	path := dir + "/" + safeFilename
 
 	if err := s.storage.Save(path, bytes.NewReader(fileBytes)); err != nil {

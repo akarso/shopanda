@@ -24,8 +24,8 @@ var (
 
 // DownloadGrant is a post-purchase entitlement to download one media asset
 // from a paid downloadable order line (PR-1075). It is deliberately not a
-// ProductAssignment — there is no parent-binding step. Delivery that
-// consumes CanDownload / RecordDownload is PR-1077; admin revoke/re-issue
+// ProductAssignment — there is no parent-binding step. Storefront delivery
+// (PrepareDelivery + RecordDownload) is PR-1077; admin revoke/re-issue
 // HTTP is PR-1078.
 type DownloadGrant struct {
 	ID            string

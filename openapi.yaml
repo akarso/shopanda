@@ -1079,6 +1079,65 @@ paths:
         "422":
           $ref: "#/components/responses/Validation"
 
+  /api/v1/account/downloads/{grantID}:
+    post:
+      operationId: deliverAccountDownload
+      tags: [Account]
+      summary: Deliver a downloadable file for an owned DownloadGrant
+      description: |
+        Auth-gated, state-changing delivery for a post-purchase DownloadGrant
+        (PR-1077). POST (not GET) so probes/metadata clients do not burn a
+        download slot. Checks ownership, expiry, and download limit; proves
+        the blob exists (S3 HeadObject / local Read) and prepares a short-lived
+        signed URL or stream **before** atomically incrementing download_count.
+        Permanent public media URLs are never returned. Signed redirects set
+        response Cache-Control: private, no-store and Content-Disposition
+        attachment. Expired or exhausted grants return validation (422).
+
+        Auth: same as other `/api/v1/account/*` routes — Bearer token and/or
+        session cookie accepted by RequireAuth (cookie-only browser clients
+        use the storefront session; CSRF is not required on `/api/v1/*`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: grantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: File bytes streamed (local / ReadableStorage backends)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: Redirect to a short-lived signed object URL (S3)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+            Cache-Control:
+              schema:
+                type: string
+                example: private, no-store
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/account/consent:
     get:
       operationId: getConsent
@@ -4038,6 +4097,17 @@ components:
             error:
               code: conflict
               message: the resource's current status does not allow this action
+    InternalError:
+      description: Unexpected server error (stable client message; details logged server-side)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: internal
+              message: internal server error
     RateLimited:
       description: Rate limit exceeded
       headers:
