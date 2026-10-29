@@ -59,3 +59,49 @@ func TestNewAsset_Validation(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPrivateDownloadsPath(t *testing.T) {
+	if !media.IsPrivateDownloadsPath("private/downloads/x/y.pdf") {
+		t.Fatal("expected private path")
+	}
+	if !media.IsPrivateDownloadsPath("/private/downloads/x/y.pdf") {
+		t.Fatal("expected leading-slash private path")
+	}
+	if media.IsPrivateDownloadsPath("uploads/x/y.pdf") {
+		t.Fatal("uploads must not be private")
+	}
+}
+
+func TestSanitizeContentDispositionFilename(t *testing.T) {
+	if got := media.SanitizeContentDispositionFilename("bad\"\r\nfile.bin"); got != "badfile.bin" {
+		t.Fatalf("got %q", got)
+	}
+	if got := media.SanitizeContentDispositionFilename("   "); got != "download" {
+		t.Fatalf("empty = %q", got)
+	}
+	if got := media.SanitizeContentDispositionFilename("café.pdf"); got != "caf.pdf" {
+		t.Fatalf("non-ASCII ascii fallback = %q", got)
+	}
+}
+
+func TestContentDispositionAttachment(t *testing.T) {
+	if got := media.ContentDispositionAttachment("guide.pdf"); got != `attachment; filename="guide.pdf"` {
+		t.Fatalf("ASCII-only = %q", got)
+	}
+	if got := media.ContentDispositionAttachment("bad\"\r\nfile.bin"); got != `attachment; filename="badfile.bin"` {
+		t.Fatalf("unsafe ASCII = %q", got)
+	}
+	got := media.ContentDispositionAttachment("café.pdf")
+	want := `attachment; filename="caf.pdf"; filename*=UTF-8''caf%C3%A9.pdf`
+	if got != want {
+		t.Fatalf("non-ASCII = %q, want %q", got, want)
+	}
+	got = media.ContentDispositionAttachment("文件")
+	want = `attachment; filename="download"; filename*=UTF-8''%E6%96%87%E4%BB%B6`
+	if got != want {
+		t.Fatalf("all non-ASCII = %q, want %q", got, want)
+	}
+	if got := media.ContentDispositionAttachment("   "); got != `attachment; filename="download"` {
+		t.Fatalf("empty = %q", got)
+	}
+}

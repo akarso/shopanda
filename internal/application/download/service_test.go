@@ -3,6 +3,7 @@ package download_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,10 +14,13 @@ import (
 )
 
 type memGrantRepo struct {
+	mu      sync.Mutex
 	byID    map[string]*domain.DownloadGrant
 	byPair  map[string]*domain.DownloadGrant
 	failIns error
 }
+
+var _ domain.Repository = (*memGrantRepo)(nil)
 
 func newMemGrantRepo() *memGrantRepo {
 	return &memGrantRepo{
@@ -30,6 +34,8 @@ func pairKey(orderItemID, assetID string) string {
 }
 
 func (m *memGrantRepo) Insert(_ context.Context, g *domain.DownloadGrant) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.failIns != nil {
 		return m.failIns
 	}
@@ -47,6 +53,8 @@ func (m *memGrantRepo) Insert(_ context.Context, g *domain.DownloadGrant) error 
 }
 
 func (m *memGrantRepo) Update(_ context.Context, g *domain.DownloadGrant) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if err := g.Validate(); err != nil {
 		return apperror.Validation(err.Error())
 	}
@@ -62,6 +70,8 @@ func (m *memGrantRepo) Update(_ context.Context, g *domain.DownloadGrant) error 
 }
 
 func (m *memGrantRepo) UpdateCount(_ context.Context, id string, newCount, expectedCount int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byID[id]
 	if !ok {
 		return apperror.NotFound("download grant not found")
@@ -73,7 +83,24 @@ func (m *memGrantRepo) UpdateCount(_ context.Context, id string, newCount, expec
 	return nil
 }
 
+func (m *memGrantRepo) ClaimDownload(_ context.Context, id, customerID string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.byID[id]
+	if !ok {
+		return nil, domain.ErrCountConflict
+	}
+	if g.CustomerID != customerID || g.Expired(time.Now().UTC()) || g.Exhausted() {
+		return nil, domain.ErrCountConflict
+	}
+	g.DownloadCount++
+	cp := *g
+	return &cp, nil
+}
+
 func (m *memGrantRepo) FindByID(_ context.Context, id string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byID[id]
 	if !ok {
 		return nil, nil
@@ -83,6 +110,8 @@ func (m *memGrantRepo) FindByID(_ context.Context, id string) (*domain.DownloadG
 }
 
 func (m *memGrantRepo) FindByOrderItemAndAsset(_ context.Context, orderItemID, assetID string) (*domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	g, ok := m.byPair[pairKey(orderItemID, assetID)]
 	if !ok {
 		return nil, nil
@@ -92,6 +121,8 @@ func (m *memGrantRepo) FindByOrderItemAndAsset(_ context.Context, orderItemID, a
 }
 
 func (m *memGrantRepo) ListByCustomerID(_ context.Context, customerID string) ([]domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := []domain.DownloadGrant{}
 	for _, g := range m.byID {
 		if g.CustomerID == customerID {
@@ -102,6 +133,8 @@ func (m *memGrantRepo) ListByCustomerID(_ context.Context, customerID string) ([
 }
 
 func (m *memGrantRepo) ListByOrderItemID(_ context.Context, orderItemID string) ([]domain.DownloadGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := []domain.DownloadGrant{}
 	for _, g := range m.byID {
 		if g.OrderItemID == orderItemID {
@@ -112,6 +145,8 @@ func (m *memGrantRepo) ListByOrderItemID(_ context.Context, orderItemID string) 
 }
 
 func (m *memGrantRepo) CountByAssetID(_ context.Context, assetID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	n := 0
 	for _, g := range m.byID {
@@ -123,6 +158,8 @@ func (m *memGrantRepo) CountByAssetID(_ context.Context, assetID string) (int, e
 }
 
 func (m *memGrantRepo) DeleteExpiredOrRevokedByAssetID(_ context.Context, assetID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	n := 0
 	for id, g := range m.byID {
@@ -247,6 +284,13 @@ func (c *casConflictRepo) UpdateCount(ctx context.Context, id string, newCount, 
 		return domain.ErrCountConflict
 	}
 	return c.memGrantRepo.UpdateCount(ctx, id, newCount, expectedCount)
+}
+
+func (c *casConflictRepo) ClaimDownload(ctx context.Context, id, customerID string) (*domain.DownloadGrant, error) {
+	if c.forceConflict {
+		return nil, domain.ErrCountConflict
+	}
+	return c.memGrantRepo.ClaimDownload(ctx, id, customerID)
 }
 
 func TestService_RecordDownload_CASConflictThroughService(t *testing.T) {

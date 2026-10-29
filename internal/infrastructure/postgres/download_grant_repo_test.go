@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,6 +270,112 @@ func TestDownloadGrantRepo_UpdateCountRejectsExpired_DeleteExpiredOrRevoked(t *t
 	got, err = repo.FindByID(ctx, g.ID)
 	if err != nil || got != nil {
 		t.Fatalf("grant should be purged: %+v %v", got, err)
+	}
+}
+
+func TestDownloadGrantRepo_ClaimDownload(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	ctx := context.Background()
+	asset, err := media.NewAsset(id.New(), "private/downloads/claim/ebook.pdf", "ebook.pdf", "application/pdf", 1024)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	if err := assetRepo.Save(ctx, &asset); err != nil {
+		t.Fatalf("Save asset: %v", err)
+	}
+
+	expires := time.Now().UTC().Add(48 * time.Hour)
+	g, err := download.NewDownloadGrant(id.New(), download.OrderItemID(id.New(), "var-1"), "owner-1", asset.ID, expires, 3)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant: %v", err)
+	}
+	if err := repo.Insert(ctx, g); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	claimed, err := repo.ClaimDownload(ctx, g.ID, "owner-1")
+	if err != nil {
+		t.Fatalf("ClaimDownload owner: %v", err)
+	}
+	if claimed == nil || claimed.DownloadCount != 1 {
+		t.Fatalf("claimed = %+v, want count 1", claimed)
+	}
+
+	_, err = repo.ClaimDownload(ctx, g.ID, "other-customer")
+	if !errors.Is(err, download.ErrCountConflict) {
+		t.Fatalf("wrong customer = %v, want ErrCountConflict", err)
+	}
+	got, _ := repo.FindByID(ctx, g.ID)
+	if got == nil || got.DownloadCount != 1 {
+		t.Fatalf("count after wrong customer = %+v", got)
+	}
+
+	// Exhaust remaining slots then claim must conflict.
+	if _, err := repo.ClaimDownload(ctx, g.ID, "owner-1"); err != nil {
+		t.Fatalf("claim 2: %v", err)
+	}
+	if _, err := repo.ClaimDownload(ctx, g.ID, "owner-1"); err != nil {
+		t.Fatalf("claim 3: %v", err)
+	}
+	_, err = repo.ClaimDownload(ctx, g.ID, "owner-1")
+	if !errors.Is(err, download.ErrCountConflict) {
+		t.Fatalf("exhausted = %v, want ErrCountConflict", err)
+	}
+
+	// Expired grant: insert fresh with past expiry.
+	expired, err := download.NewDownloadGrant(id.New(), download.OrderItemID(id.New(), "var-2"), "owner-1", asset.ID, time.Now().UTC().Add(-time.Minute), 5)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant expired: %v", err)
+	}
+	if err := repo.Insert(ctx, expired); err != nil {
+		t.Fatalf("Insert expired: %v", err)
+	}
+	_, err = repo.ClaimDownload(ctx, expired.ID, "owner-1")
+	if !errors.Is(err, download.ErrCountConflict) {
+		t.Fatalf("expired claim = %v, want ErrCountConflict", err)
+	}
+
+	// Concurrent claims stop at download_limit.
+	limit := 5
+	conc, err := download.NewDownloadGrant(id.New(), download.OrderItemID(id.New(), "var-3"), "owner-1", asset.ID, expires, limit)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant concurrent: %v", err)
+	}
+	if err := repo.Insert(ctx, conc); err != nil {
+		t.Fatalf("Insert concurrent: %v", err)
+	}
+	var (
+		wg      sync.WaitGroup
+		okCount atomic.Int64
+	)
+	workers := 20
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := repo.ClaimDownload(ctx, conc.ID, "owner-1"); err == nil {
+				okCount.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := okCount.Load(); got != int64(limit) {
+		t.Fatalf("concurrent successes = %d, want %d", got, limit)
+	}
+	final, err := repo.FindByID(ctx, conc.ID)
+	if err != nil || final == nil || final.DownloadCount != limit {
+		t.Fatalf("final count = %+v %v, want %d", final, err, limit)
 	}
 }
 

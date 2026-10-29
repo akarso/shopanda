@@ -228,7 +228,7 @@ func TestAssetRepo_LockForUpdate_RequiresTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAssetRepo: %v", err)
 	}
-	err = repo.LockForUpdate(context.Background(), id.New())
+	_, err = repo.LockForUpdate(context.Background(), id.New())
 	if err == nil || !strings.Contains(err.Error(), "transaction required") {
 		t.Fatalf("LockForUpdate = %v, want transaction required", err)
 	}
@@ -260,10 +260,14 @@ func TestAssetRepo_LockForUpdate(t *testing.T) {
 	if !ok {
 		t.Fatalf("WithTx returned %T", repo.WithTx(tx))
 	}
-	if err := bound.LockForUpdate(ctx, a.ID); err != nil {
+	locked, err := bound.LockForUpdate(ctx, a.ID)
+	if err != nil {
 		t.Fatalf("LockForUpdate: %v", err)
 	}
-	if err := bound.LockForUpdate(ctx, id.New()); !apperror.Is(err, apperror.CodeNotFound) {
+	if locked == nil || locked.ID != a.ID || locked.Path != a.Path {
+		t.Fatalf("locked = %+v, want id/path from saved asset", locked)
+	}
+	if _, err := bound.LockForUpdate(ctx, id.New()); !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("missing lock = %v, want not found", err)
 	}
 
@@ -276,7 +280,7 @@ func TestAssetRepo_LockForUpdate(t *testing.T) {
 		t.Fatalf("set lock_timeout: %v", err)
 	}
 	start := time.Now()
-	err = repo.WithTx(tx2).(*postgres.AssetRepo).LockForUpdate(ctx, a.ID)
+	_, err = repo.WithTx(tx2).(*postgres.AssetRepo).LockForUpdate(ctx, a.ID)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("second lock acquired while first transaction holds FOR UPDATE")

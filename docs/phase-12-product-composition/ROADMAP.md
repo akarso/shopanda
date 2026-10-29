@@ -139,7 +139,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1074 | `Downloadable` type + file asset attachment | **done.** `downloadable_files` joins a product to `assets` (`ON DELETE RESTRICT` on asset). `DownloadableFileService` List/Remove are type-agnostic; Attach is type-gated and locks product+asset. Soft-write re-reads status under lock. Hard validation: becoming Active requires ≥1 file; last-file remove on active downloadable rejected. `media.Service.Delete` is row-then-blob (blob failure after row delete → log + event + nil). `MissingDownloadableFile` forces Purchasable false. Shipping already false via PR-1050. Admin HTTP / CSV / GUI are PR-1078. See [`prs/PR-1074.md`](prs/PR-1074.md). |
 | PR-1075 | `DownloadGrant` domain | **done.** `download_grants` + `downloadable_grant_settings`; `download.DownloadGrant` issued on `order.paid` (event bus, not payment-capture inline). Global `catalog.downloadable` defaults with per-product override rows. Not tied to `ProductAssignment`. Delivery is PR-1077; admin grant HTTP is PR-1078. See [`prs/PR-1075.md`](prs/PR-1075.md). |
 | PR-1076 | Tax class seam + digital rate-table wiring | **done (engineering seam — not EU digital VAT complete).** `downloadable` → `digital`, `virtual` → `standard` via `catalog.TaxClassCode`; shared `EnsureTaxClasses`; missing / zero-bps digital rate **fails closed** (no 0% VAT); migration `108` + optional seed backfill non-zero standard → digital. Place-of-supply at checkout stays address country. Track E VAT/compliance requirement still needs **tax-domain sign-off**. See [`prs/PR-1076.md`](prs/PR-1076.md). |
-| PR-1077 | Storefront download delivery endpoint | Auth-gated, signed/token URL (not a permanent public link) that checks the requesting customer's `DownloadGrant` state (not expired, under the count limit) before streaming/redirecting to the underlying asset. |
+| PR-1077 | Storefront download delivery endpoint | **done.** Auth-gated `POST /api/v1/account/downloads/{grantID}`: ownership + `CanDownload`, then local stream (`ReadableStorage`) or short-lived S3 signed redirect (`SignedURLStorage`). Permanent `storage.URL()` never used for grants. Expired/exhausted → clear 422. See [`prs/PR-1077.md`](prs/PR-1077.md). |
 | PR-1078 | Admin API + CSV + GUI for downloadable management | File attach/replace, grant list/revoke per customer, admin GUI section (wired via PR-1053's section-visibility switch). |
 
 ---
@@ -227,7 +227,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1074 | E | done |
 | 1075 | E | done |
 | 1076 | E | done |
-| 1077–1078 | E | planned |
+| 1077 | E | done |
+| 1078 | E | planned |
 | 1079–1083 | F | planned |
 
 PR specs: [`prs/`](prs/).
@@ -240,4 +241,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1076 engineering done — Track E tax class seam; VAT sign-off open; next PR-1077; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1077 engineering done — Track E delivery done; VAT sign-off open; next PR-1078; numbering collides with Phase 11 — disambiguate by phase folder) |

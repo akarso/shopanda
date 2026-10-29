@@ -19,9 +19,10 @@ type eventBus interface {
 	Publish(ctx context.Context, evt event.Event) error
 }
 
-// Service manages DownloadGrant rows: issue (manual), read, record
-// download, extend, revoke, and reset. Order-paid issuance lives on
-// Issuer (HandleOrderPaid). Delivery HTTP is PR-1077; admin HTTP is PR-1078.
+// Service manages DownloadGrant rows: issue (manual), read, prepare
+// delivery, record download, extend, revoke, and reset. Order-paid
+// issuance lives on Issuer (HandleOrderPaid). Storefront delivery HTTP
+// is PR-1077; admin HTTP is PR-1078.
 type Service struct {
 	grants domain.Repository
 	bus    eventBus
@@ -201,23 +202,84 @@ func (s *Service) ListByOrderItem(ctx context.Context, orderItemID string) ([]do
 	return rows, nil
 }
 
-// RecordDownload increments download_count after CanDownload succeeds.
-// Uses CAS on the previous count so concurrent deliveries conflict cleanly.
+// PrepareDelivery loads a grant for storefront delivery (PR-1077).
+// It verifies the authenticated customer owns the grant and that
+// CanDownload succeeds, but does not increment download_count — the
+// HTTP handler claims only after storage Head/Read (and presign) succeed.
+//
+// Guest grants (empty CustomerID) are refused until guest rebind lands.
+// ErrExpired / ErrExhausted remain detectable via errors.Is.
+func (s *Service) PrepareDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	return s.authorizeDelivery(ctx, customerID, grantID)
+}
+
+func (s *Service) authorizeDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return nil, apperror.Unauthorized("authentication required")
+	}
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(g.CustomerID) == "" {
+		return nil, apperror.Forbidden("download grant is not linked to a customer account")
+	}
+	if g.CustomerID != customerID {
+		return nil, apperror.Forbidden("download grant does not belong to this account")
+	}
+	if err := g.CanDownload(s.now()); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, err.Error(), err)
+	}
+	return g, nil
+}
+
+// ClaimDelivery is the single ownership-checked mutation for storefront
+// delivery (PR-1077). It re-checks ownership gates then atomically increments
+// download_count (ClaimDownload). Call only after the storage backend has
+// proven the object exists and a signed URL / stream bytes are ready — a
+// missing blob must not burn a slot.
+//
 // ErrExpired / ErrExhausted / ErrCountConflict remain detectable via errors.Is.
+func (s *Service) ClaimDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	g, err := s.authorizeDelivery(ctx, customerID, grantID)
+	if err != nil {
+		return nil, err
+	}
+	claimed, err := s.grants.ClaimDownload(ctx, g.ID, customerID)
+	if err == nil {
+		return claimed, nil
+	}
+	if !errors.Is(err, domain.ErrCountConflict) {
+		return nil, mapWriteError("claim download", err)
+	}
+	// Race: another delivery claimed the last slot, or expiry flipped.
+	latest, getErr := s.Get(ctx, grantID)
+	if getErr != nil {
+		return nil, getErr
+	}
+	if latest.CustomerID != customerID {
+		return nil, apperror.Forbidden("download grant does not belong to this account")
+	}
+	if err := latest.CanDownload(s.now()); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, err.Error(), err)
+	}
+	return nil, apperror.Wrap(apperror.CodeConflict, "download grant count conflict", domain.ErrCountConflict)
+}
+
+// RecordDownload is retained for support/admin paths that already verified
+// entitlement out-of-band. Storefront delivery must use ClaimDelivery so
+// ownership is always enforced with the atomic increment.
 func (s *Service) RecordDownload(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
 	g, err := s.Get(ctx, grantID)
 	if err != nil {
 		return nil, err
 	}
-	now := s.now()
-	expected := g.DownloadCount
-	if err := g.RecordDownload(now); err != nil {
-		return nil, apperror.Wrap(apperror.CodeValidation, err.Error(), err)
+	customerID := strings.TrimSpace(g.CustomerID)
+	if customerID == "" {
+		return nil, apperror.Forbidden("download grant is not linked to a customer account")
 	}
-	if err := s.grants.UpdateCount(ctx, g.ID, g.DownloadCount, expected); err != nil {
-		return nil, mapWriteError("record download", err)
-	}
-	return g, nil
+	return s.ClaimDelivery(ctx, customerID, grantID)
 }
 
 // Extend updates expires_at (support re-issue path for PR-1078).

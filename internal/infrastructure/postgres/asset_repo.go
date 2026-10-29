@@ -51,27 +51,27 @@ func (r *AssetRepo) queryer() assetQueryer {
 	return r.db
 }
 
-// LockForUpdate locks the asset row (SELECT FOR UPDATE) and returns NotFound
-// when missing. The repo must be bound to a transaction via WithTx (same as
-// ProductRepo.LockForUpdate). Used by DownloadableFileService.Attach in the
-// same transaction as the downloadable_files upsert (PR-1074).
-func (r *AssetRepo) LockForUpdate(ctx context.Context, id string) error {
+// LockForUpdate locks the asset row (SELECT FOR UPDATE) and returns the locked
+// row, or NotFound when missing. The repo must be bound to a transaction via
+// WithTx (same as ProductRepo.LockForUpdate). Used by DownloadableFileService.Attach
+// in the same transaction as the downloadable_files upsert (PR-1074/PR-1077).
+func (r *AssetRepo) LockForUpdate(ctx context.Context, id string) (*media.Asset, error) {
 	if r.tx == nil {
-		return fmt.Errorf("asset_repo: lock for update: transaction required")
+		return nil, fmt.Errorf("asset_repo: lock for update: transaction required")
 	}
 	if id == "" {
-		return apperror.Validation("asset id must not be empty")
+		return nil, apperror.Validation("asset id must not be empty")
 	}
-	const q = `SELECT id FROM assets WHERE id = $1 FOR UPDATE`
-	var got string
-	err := r.tx.QueryRowContext(ctx, q, id).Scan(&got)
+	const q = `SELECT id, path, filename, mime_type, size, meta, thumbnails, created_at
+		FROM assets WHERE id = $1 FOR UPDATE`
+	a, err := r.scanAsset(r.tx.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return apperror.NotFound("asset not found")
+		return nil, apperror.NotFound("asset not found")
 	}
 	if err != nil {
-		return fmt.Errorf("asset_repo: lock for update: %w", err)
+		return nil, fmt.Errorf("asset_repo: lock for update: %w", err)
 	}
-	return nil
+	return a, nil
 }
 
 // Save persists a new asset.

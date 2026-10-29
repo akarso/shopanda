@@ -112,6 +112,12 @@ func (c *capturingLogger) Error(evt string, _ error, _ map[string]interface{}) {
 // jpegHeader is a minimal JPEG file header (SOI + APP0 marker).
 var jpegHeader = []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
 
+// pdfHeader is enough for http.DetectContentType → application/pdf.
+var pdfHeader = []byte("%PDF-1.4\n")
+
+// zipHeader is a minimal local-file ZIP header (PK\x03\x04…).
+var zipHeader = append([]byte{0x50, 0x4B, 0x03, 0x04}, make([]byte, 26)...)
+
 func TestUpload(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	repo := &mockAssetRepo{}
@@ -142,6 +148,106 @@ func TestUpload(t *testing.T) {
 	}
 	if len(repo.saved) != 1 {
 		t.Errorf("saved assets = %d, want 1", len(repo.saved))
+	}
+}
+
+func TestUpload_PrivateDownload(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename:        "guide.pdf",
+		File:            bytes.NewReader(jpegHeader),
+		PrivateDownload: true,
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if !domainMedia.IsPrivateDownloadsPath(result.Asset.Path) {
+		t.Fatalf("path = %q, want under %s", result.Asset.Path, domainMedia.PrivateDownloadsPrefix)
+	}
+	found := false
+	for path := range storage.saved {
+		if domainMedia.IsPrivateDownloadsPath(path) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("storage.saved = %#v, want private/downloads/ key", storage.saved)
+	}
+}
+
+func TestUpload_PrivateDownload_PDF(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+	svc.SetImageProcessor(&mockProcessor{}, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+	})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename:        "guide.pdf",
+		File:            bytes.NewReader(pdfHeader),
+		PrivateDownload: true,
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if result.Asset.MimeType != "application/pdf" {
+		t.Fatalf("MimeType = %q, want application/pdf", result.Asset.MimeType)
+	}
+	if !domainMedia.IsPrivateDownloadsPath(result.Asset.Path) {
+		t.Fatalf("path = %q, want under %s", result.Asset.Path, domainMedia.PrivateDownloadsPrefix)
+	}
+	if len(result.Thumbnails) != 0 {
+		t.Fatalf("Thumbnails = %v, want none for non-image private download", result.Thumbnails)
+	}
+	if len(storage.saved) != 1 {
+		t.Fatalf("saved = %d, want 1 (no resize outputs)", len(storage.saved))
+	}
+}
+
+func TestUpload_PrivateDownload_ZIP(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename:        "pack.zip",
+		File:            bytes.NewReader(zipHeader),
+		PrivateDownload: true,
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if result.Asset.MimeType != "application/zip" {
+		t.Fatalf("MimeType = %q, want application/zip", result.Asset.MimeType)
+	}
+	if !domainMedia.IsPrivateDownloadsPath(result.Asset.Path) {
+		t.Fatalf("path = %q, want under %s", result.Asset.Path, domainMedia.PrivateDownloadsPrefix)
+	}
+}
+
+func TestUpload_PublicRejectsPDF(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	_, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "guide.pdf",
+		File:     bytes.NewReader(pdfHeader),
+	})
+	if err == nil {
+		t.Fatal("expected error for public PDF upload")
+	}
+	if len(storage.saved) != 0 {
+		t.Error("file should not be saved for unsupported public type")
 	}
 }
 
@@ -322,6 +428,8 @@ func (g *txGrantGate) WithTxRepository(tx *sql.Tx) domainDownload.Repository {
 	return g
 }
 
+var _ domainDownload.Repository = (*txGrantGate)(nil)
+
 func (g *txGrantGate) Insert(context.Context, *domainDownload.DownloadGrant) error {
 	return nil
 }
@@ -329,6 +437,9 @@ func (g *txGrantGate) Update(context.Context, *domainDownload.DownloadGrant) err
 	return nil
 }
 func (g *txGrantGate) UpdateCount(context.Context, string, int, int) error { return nil }
+func (g *txGrantGate) ClaimDownload(context.Context, string, string) (*domainDownload.DownloadGrant, error) {
+	return nil, domainDownload.ErrCountConflict
+}
 func (g *txGrantGate) FindByID(context.Context, string) (*domainDownload.DownloadGrant, error) {
 	return nil, nil
 }

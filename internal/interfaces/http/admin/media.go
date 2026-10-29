@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
@@ -145,9 +146,16 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 			return
 		}
 
+		privateDownload := false
+		switch strings.ToLower(strings.TrimSpace(r.FormValue("private_download"))) {
+		case "1", "true", "yes", "on":
+			privateDownload = true
+		}
+
 		result, err := h.svc.Upload(r.Context(), mediaApp.UploadInput{
-			Filename: filename,
-			File:     file,
+			Filename:        filename,
+			File:            file,
+			PrivateDownload: privateDownload,
 		})
 		if err != nil {
 			h.audit(r, admin.AuditMediaUpload, "", map[string]interface{}{"filename": filename}, err)

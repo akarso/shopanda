@@ -155,6 +155,7 @@ type serveRuntime struct {
 	returnAdmin                    *admin.ReturnAdminHandler
 	returnAccount                  *storefront.ReturnAccountHandler
 	assignmentAccount              *storefront.AssignmentAccountHandler
+	downloadAccount                *storefront.DownloadAccountHandler
 	assignmentAdmin                *admin.AssignmentAdminHandler
 	reviewHandler                  *storefront.ReviewHandler
 	reviewAccount                  *storefront.ReviewAccountHandler
@@ -871,6 +872,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)
+	downloadAccount := storefront.NewDownloadAccountHandler(downloadGrantService, repos.assetRepo, mediaStorage, log)
 	assignmentAdmin := admin.NewAssignmentAdminHandler(assignmentFlow, productAssignmentService, sharedAuditor)
 	reviewHandler := storefront.NewReviewHandler(reviewService).
 		WithVisibilityGate(repos.productRepo, visibilityFacts)
@@ -1079,6 +1081,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		returnAdmin:                    returnAdmin,
 		returnAccount:                  returnAccount,
 		assignmentAccount:              assignmentAccount,
+		downloadAccount:                downloadAccount,
 		assignmentAdmin:                assignmentAdmin,
 		reviewHandler:                  reviewHandler,
 		reviewAccount:                  reviewAccount,
