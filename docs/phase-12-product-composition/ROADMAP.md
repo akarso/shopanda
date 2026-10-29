@@ -152,7 +152,7 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1079 | Search index schema extension | Add `Type` and the visibility axes to what Phase 11's indexer writes; filter search/catalog results on `Purchasable`/`VisibleInSearch`/`VisibleInCatalog` so an unassigned linked-child (Track D) or a hidden product (Track B) never appears in results. |
+| PR-1079 | Search index schema extension | **done.** Add `Type`/`Status` and storefront-effective visibility axes to what Phase 11's indexer writes; filter search/catalog results on indexed `VisibleInSearch`/`VisibleInCatalog` when enforce is on (Purchasable denormalized but not forced on search — unassigned Track D tickets are not removed from search by display axes). See [`prs/PR-1079.md`](prs/PR-1079.md). |
 | PR-1080 | On-save reindex trigger generalization | Extend Phase 11 PR-1036's on-save reindex subscriber list to also fire on visibility-affecting changes introduced by this phase: a linked child getting assigned/revoked, a bundle's rollup stock crossing zero, a downloadable grant issued (if grant state ever affects catalog visibility — confirm during implementation; likely not, since `DownloadGrant` is post-purchase, not catalog-facing). |
 | PR-1081 | CSV import/export final consistency pass | One pass across every existing import/export pipeline (products/variants/prices/stock/attributes/categories) confirming every field this phase added (type, visibility axes + override mode, bundle/grouped components, linked eligibility, assignments) round-trips correctly and consistently, not just within its own track's PR. |
 | PR-1082 | GraphQL read parity | Extend `plugins/core/graphql`'s existing product schema (`schema.go`'s `productType`/`products`/`productBySlug` resolvers) with `Type`, the visibility axes, and bundle/grouped/linked-child relationships — matches Phase 7 Track E's established "same operation via admin REST, GraphQL, and plugin registration" parity precedent. Read-only, matching what the GraphQL surface already is today. |
@@ -229,7 +229,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1076 | E | done |
 | 1077 | E | done |
 | 1078 | E | done |
-| 1079–1083 | F | planned |
+| 1079 | F | done |
+| 1080–1083 | F | planned |
 
 PR specs: [`prs/`](prs/).
 
@@ -241,4 +242,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1078 engineering done — Track E closed; VAT sign-off open; next PR-1079 Track F; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1079 engineering done — Track F started; next PR-1080; VAT sign-off open; numbering collides with Phase 11 — disambiguate by phase folder) |

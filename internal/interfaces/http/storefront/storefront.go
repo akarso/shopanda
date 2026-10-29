@@ -343,8 +343,10 @@ func (h *StorefrontHandler) ClearCategoryNavCache() {
 }
 
 // WithVisibilityFacts enables four-axis visibility gating on HTML/SSR reads (PR-1057).
-func (h *StorefrontHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *StorefrontHandler {
+// opts is the shared VisibilityOptions used by AllowWithFacts / post-filters.
+func (h *StorefrontHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *StorefrontHandler {
 	h.visibilityFacts = facts
+	h.visibilityOpts = opts
 	return h
 }
 
@@ -671,8 +673,13 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 		if !searchMode || params.Query != "" {
 			query := storefrontBuildSearchQuery(params, filterAttrs)
 			storefrontApplyStoreScope(&query, r)
-			// No overfetch: enlarging Limit while keeping page-number Offset
-			// duplicates hits across pages. Accept short pages until PR-1079.
+			if h.visibilityFacts != nil {
+				axis := search.VisibilityFilterCatalog
+				if searchMode {
+					axis = search.VisibilityFilterSearch
+				}
+				search.ApplyVisibilityAxisFilter(&query, axis)
+			}
 			result, err = h.search.Search(r.Context(), query)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -680,14 +687,18 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			}
 		}
 
-		surface := catalog.VisibilitySurfaceCatalog
-		if searchMode {
-			surface = catalog.VisibilitySurfaceSearch
-		}
-		result, err = h.filterSearchResultVisibility(r, result, surface)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
+		// Fail-closed post-filter when enforce is on (facts!=nil is not proof
+		// the engine honored visibility filter keys).
+		if h.visibilityFacts != nil {
+			surface := catalog.VisibilitySurfaceCatalog
+			if searchMode {
+				surface = catalog.VisibilitySurfaceSearch
+			}
+			result, err = h.filterSearchResultVisibility(r, result, surface)
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
@@ -755,16 +766,21 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 		if category != nil {
 			query.Filters["category"] = category.ID
 		}
+		if h.visibilityFacts != nil {
+			search.ApplyVisibilityAxisFilter(&query, search.VisibilityFilterCatalog)
+		}
 
 		result, err := h.search.Search(r.Context(), query)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		result, err = h.filterSearchResultVisibility(r, result, catalog.VisibilitySurfaceCatalog)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
+		if h.visibilityFacts != nil {
+			result, err = h.filterSearchResultVisibility(r, result, catalog.VisibilitySurfaceCatalog)
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
@@ -1218,12 +1234,17 @@ func searchProductsToCatalog(products []search.Product) []*catalog.Product {
 		if attrs == nil {
 			attrs = map[string]interface{}{}
 		}
+		status := catalog.StatusActive
+		if s := strings.TrimSpace(products[i].Status); s != "" {
+			status = catalog.Status(s)
+		}
 		out = append(out, &catalog.Product{
 			ID:          products[i].ID,
 			Name:        products[i].Name,
 			Slug:        products[i].Slug,
 			Description: products[i].Description,
-			Status:      catalog.StatusActive,
+			Type:        catalog.Type(products[i].Type),
+			Status:      status,
 			Attributes:  attrs,
 			CreatedAt:   products[i].CreatedAt,
 			UpdatedAt:   products[i].CreatedAt,

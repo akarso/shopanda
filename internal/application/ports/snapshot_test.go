@@ -26,7 +26,7 @@ func (stubSearch) RemoveCategory(context.Context, string) error { return nil }
 func (stubSearch) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }
-func (stubSearch) Suggest(context.Context, string, int) ([]search.Suggestion, error) {
+func (stubSearch) Suggest(context.Context, search.SuggestQuery) ([]search.Suggestion, error) {
 	return nil, nil
 }
 

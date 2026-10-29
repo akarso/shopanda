@@ -424,7 +424,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}
 		sfHandler = storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
-			WithVisibilityFacts(rt.visibilityFacts).
+			WithVisibilityFacts(rt.visibilityFacts, rt.visibilityOpts).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).

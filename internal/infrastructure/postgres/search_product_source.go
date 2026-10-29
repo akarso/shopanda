@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
 )
 
@@ -16,15 +17,16 @@ var _ domainsearch.ProductSource = (*SearchProductSource)(nil)
 // SearchProductSource implements domainsearch.ProductSource by reading
 // directly from the products table — deliberately not routed through
 // catalog.ProductRepository (search.Product avoids importing the catalog
-// package; see its own doc comment), and deliberately not scanning
-// status/price/stock: this PR's full reindex indexes exactly the fields
-// the CLI's inline loop indexed before it (id, name, slug, description,
-// created_at, attributes) — a mechanism change, not a behavior change.
-// CategoryIDs is the one exception (PR-1037): it's populated via a
-// separate batched query against product_categories rather than added to
-// the row scan, since it's a one-to-many relationship.
+// package for its own type; this adapter may still import catalog for
+// visibility fact resolution at index time, PR-1079).
+//
+// CategoryIDs is populated via a separate batched query against
+// product_categories. Type is selected with the row. Visibility axes are
+// resolved after each page load via VisibilityFactsAdminSource when wired.
 type SearchProductSource struct {
-	db *sql.DB
+	db         *sql.DB
+	factsAdmin catalog.VisibilityFactsAdminSource
+	visOpts    catalog.VisibilityOptions
 }
 
 // NewSearchProductSource returns a SearchProductSource backed by db.
@@ -33,6 +35,17 @@ func NewSearchProductSource(db *sql.DB) (*SearchProductSource, error) {
 		return nil, fmt.Errorf("NewSearchProductSource: nil *sql.DB")
 	}
 	return &SearchProductSource{db: db}, nil
+}
+
+// WithVisibility configures index-time visibility resolution (PR-1079).
+// Production wiring always passes a VisibilityFactsRepo when available so
+// denormalized search fields stay accurate even when enforce is off.
+// When factsAdmin is nil, populateVisibilityAxes sets all four bools to
+// true so engines without visibility wiring do not empty the index.
+func (s *SearchProductSource) WithVisibility(factsAdmin catalog.VisibilityFactsAdminSource, opts catalog.VisibilityOptions) *SearchProductSource {
+	s.factsAdmin = factsAdmin
+	s.visOpts = opts
+	return s
 }
 
 // CountAll implements domainsearch.ProductSource.
@@ -71,7 +84,7 @@ func (s *SearchProductSource) ListAll(ctx context.Context, offset, limit int) ([
 		return nil, fmt.Errorf("search_product_source: limit must be > 0")
 	}
 
-	const q = `SELECT id, name, slug, description, attributes, created_at
+	const q = `SELECT id, name, slug, description, type, status, attributes, created_at
 		FROM products ORDER BY created_at, id LIMIT $1 OFFSET $2`
 
 	rows, err := s.db.QueryContext(ctx, q, limit, offset)
@@ -84,6 +97,9 @@ func (s *SearchProductSource) ListAll(ctx context.Context, offset, limit int) ([
 		return nil, err
 	}
 	if err := s.populateCategoryIDs(ctx, products); err != nil {
+		return nil, err
+	}
+	if err := s.populateVisibilityAxes(ctx, products); err != nil {
 		return nil, err
 	}
 	return products, nil
@@ -101,7 +117,7 @@ func (s *SearchProductSource) ListByIDs(ctx context.Context, ids []string) ([]do
 		return nil, nil
 	}
 
-	const q = `SELECT id, name, slug, description, attributes, created_at
+	const q = `SELECT id, name, slug, description, type, status, attributes, created_at
 		FROM products WHERE id = ANY($1)`
 
 	rows, err := s.db.QueryContext(ctx, q, ids)
@@ -114,6 +130,9 @@ func (s *SearchProductSource) ListByIDs(ctx context.Context, ids []string) ([]do
 		return nil, err
 	}
 	if err := s.populateCategoryIDs(ctx, products); err != nil {
+		return nil, err
+	}
+	if err := s.populateVisibilityAxes(ctx, products); err != nil {
 		return nil, err
 	}
 	return products, nil
@@ -153,6 +172,70 @@ func (s *SearchProductSource) populateCategoryIDs(ctx context.Context, products 
 		return fmt.Errorf("search_product_source: category ids rows: %w", err)
 	}
 	return nil
+}
+
+// populateVisibilityAxes resolves the four denormalized visibility fields
+// at index time (PR-1079). Uses LoadManyAnyStatus + Resolve (not
+// resolveForRequest): indexing must not depend on request assignment
+// context. Empty Assignment leaves RequiresLinkedParent children with
+// Purchasable=false (correct for the index). Display axes are intentionally
+// unaffected by linked parent — storefront search does not force
+// FilterPurchasable, so unassigned tickets can still appear in search.
+//
+// Storefront-effective axes: if Status != active (row or snapshot), all four
+// bools are false so forced-visible drafts never enter public search as
+// visible. Missing snapshots fail closed. Nil factsAdmin: active → all true
+// (do not empty the index); non-active → all false.
+func (s *SearchProductSource) populateVisibilityAxes(ctx context.Context, products []domainsearch.Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	if s.factsAdmin == nil {
+		for i := range products {
+			if products[i].Status != domainsearch.StatusActive {
+				setSearchVisibilityFalse(&products[i])
+				continue
+			}
+			products[i].VisibleInCatalog = true
+			products[i].VisibleInSearch = true
+			products[i].VisibleIndividually = true
+			products[i].Purchasable = true
+		}
+		return nil
+	}
+	ids := make([]string, len(products))
+	for i, p := range products {
+		ids[i] = p.ID
+	}
+	snaps, err := s.factsAdmin.LoadManyAnyStatus(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("search_product_source: visibility facts: %w", err)
+	}
+	for i := range products {
+		snap, ok := snaps[products[i].ID]
+		if !ok {
+			// Fail closed for index: missing snapshot → not visible.
+			setSearchVisibilityFalse(&products[i])
+			continue
+		}
+		if snap.Status != catalog.StatusActive {
+			setSearchVisibilityFalse(&products[i])
+			continue
+		}
+		vis := snap.Resolve(s.visOpts)
+		products[i].VisibleInCatalog = vis.VisibleInCatalog
+		products[i].VisibleInSearch = vis.VisibleInSearch
+		products[i].VisibleIndividually = vis.VisibleIndividually
+		products[i].Purchasable = vis.Purchasable
+	}
+	return nil
+}
+
+func setSearchVisibilityFalse(p *domainsearch.Product) {
+	p.VisibleInCatalog = false
+	p.VisibleInSearch = false
+	p.VisibleIndividually = false
+	p.Purchasable = false
 }
 
 // ProductIDsByCategory implements domainsearch.ProductSource.
@@ -207,16 +290,16 @@ func (s *SearchProductSource) ProductIDsUpdatedSince(ctx context.Context, since 
 	return ids, nil
 }
 
-// scanSearchProducts scans the shared (id, name, slug, description,
-// attributes, created_at) row shape ListAll and ListByIDs both select —
-// op names the caller in a wrapped error, so a scan failure is still
-// traceable to which query produced it.
+// scanSearchProducts scans the shared (id, name, slug, description, type,
+// status, attributes, created_at) row shape ListAll and ListByIDs both
+// select — op names the caller in a wrapped error, so a scan failure is
+// still traceable to which query produced it.
 func scanSearchProducts(rows *sql.Rows, op string) ([]domainsearch.Product, error) {
 	var products []domainsearch.Product
 	for rows.Next() {
 		var p domainsearch.Product
 		var attrsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &attrsJSON, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.Type, &p.Status, &attrsJSON, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("search_product_source: %s scan: %w", op, err)
 		}
 		if len(attrsJSON) > 0 {

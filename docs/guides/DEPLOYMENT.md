@@ -903,6 +903,28 @@ Deployments using `search.engine: meilisearch` must, after upgrading:
    categories searchable immediately, rather than waiting for the next
    edit.
 
+### Meilisearch / search visibility schema (PR-1079)
+
+PR-1079 adds denormalized visibility axes (`visible_in_catalog`,
+`visible_in_search`, `visible_individually`, `purchasable`), `type`, and
+`status` to the search index, and storefront Search/Suggest apply
+`visible_in_*` filters **only when** `catalog.visibility.enforce` is on.
+
+**Postgres vs Meili fail-open mismatch (read carefully):**
+
+| Backend | Pre-reindex behavior |
+| --- | --- |
+| **Postgres** | Migration `110` adds `search_visible_*` / `search_purchasable` with `DEFAULT true` — unreindexed rows still match `= true` filters (fail-open). |
+| **Meilisearch** | Existing documents lack the new attributes (visibility bools **and** often `status`). A strict `visible_in_search = true` or `status = "active"` would hide **every** unreindexed hit. Engines therefore filter with `(attr = true OR attr NOT EXISTS)` and `(status = "active" OR status NOT EXISTS)` so missing attrs fail open until reindex writes real values. `status` stays filterable. |
+
+**Ordered deploy (required for Meili + enforce):**
+
+1. **Migrate** — apply `110_add_products_search_visibility.sql` (and restart so Meili index settings pick up new filterables via `meili.New`).
+2. **Full reindex** — `search:reindex` (or admin reindex-all) so every product document has `type`, `status`, and the four visibility bools. Prefer a low-write window.
+3. **Enable filters** — only then set `catalog.visibility.enforce: true` / `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`. Enforce is what attaches `visible_in_search` / `visible_in_catalog` to storefront Search/Suggest/HTML listings.
+
+Do **not** flip enforce on before the Meili reindex completes: post-filter still fail-closes against live facts, but Total/Facets stay wrong until the index is current. Postgres-only deployments still need the reindex so denormalized columns leave the `DEFAULT true` placeholder for hidden products.
+
 ## Monitor The Deployment
 
 ### Health checks

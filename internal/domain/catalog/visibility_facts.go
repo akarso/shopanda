@@ -136,9 +136,10 @@ func FilterWithFacts(
 }
 
 // FilterIDsWithFacts returns the subset of productIDs allowed on surface,
-// preserving order. Used for search hits and carousel ID lists (PR-1057).
-// Temporary query-time filter until the search index carries visibility
-// (PR-1079). Nil facts passes all IDs through. Empty input returns a
+// preserving order. Used for CMS carousel ID lists and as the fail-closed
+// post-filter safety net on storefront search/suggest when enforce is on
+// (PR-1079 — index filters are primary; this catches engines that ignore
+// new keys). Nil facts passes all IDs through. Empty input returns a
 // non-nil empty slice.
 func FilterIDsWithFacts(
 	ctx context.Context,

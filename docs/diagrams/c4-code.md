@@ -185,6 +185,11 @@ classDiagram
         +string Name
         +string Slug
         +string Description
+        +string Type
+        +bool VisibleInCatalog
+        +bool VisibleInSearch
+        +bool VisibleIndividually
+        +bool Purchasable
         +map Attributes
     }
 

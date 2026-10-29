@@ -25,12 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1078 are done (engineering). Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D (linked products & assignment) is complete through CSV/admin GUI (PR-1073). Track E is complete through admin downloadable management (PR-1078); tax-domain sign-off for digital VAT (PR-1076) remains open. Next: PR-1079 (Track F — search index schema extension). Track F has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048–1079 are done (engineering). Track B–E are complete; Track F started with search index schema (PR-1079). Tax-domain sign-off for digital VAT (PR-1076) remains open. Next: PR-1080 (on-save reindex trigger generalization).
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1078 engineering done — Track E closed; VAT sign-off open; next PR-1079; ids collide with Phase 11 — use phase folder) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1079 engineering done — Track F started; next PR-1080; VAT sign-off open; ids collide with Phase 11 — use phase folder) |
 | Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |

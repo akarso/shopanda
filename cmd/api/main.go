@@ -914,6 +914,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	// PR-1079: resolve visibility axes at index time (same as serve wiring).
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	searchProductSource.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	fpcObs := cacheApp.NewFPCObserver(metricsRecorder)
 	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
 		WithObserver(fpcObs).
@@ -1145,6 +1151,12 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("search product source: %w", err)
 	}
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("visibility facts: %w", err)
+	}
+	products.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	svc, err = searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		conn.Close()
@@ -1189,6 +1201,11 @@ func newWorkerReindexService(conn *sql.DB, cfg *config.Config, log logger.Logger
 	if err != nil {
 		return nil, fmt.Errorf("search product source: %w", err)
 	}
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("visibility facts: %w", err)
+	}
+	products.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	svc, err := searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("reindex service: %w", err)

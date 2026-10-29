@@ -29,14 +29,23 @@ func NewSearchEngine(db *sql.DB) (*SearchEngine, error) {
 // Name returns "postgres".
 func (e *SearchEngine) Name() string { return "postgres" }
 
-// IndexProduct updates the search vector for a product.
-// The search_vector trigger on the products table handles normal INSERT/UPDATE,
-// so this method is primarily useful for explicit reindexing.
+// IndexProduct updates the search vector and denormalized visibility axes
+// for a product (PR-1079). The search_vector trigger on the products table
+// handles normal INSERT/UPDATE of name/description, so this method is
+// primarily useful for explicit reindexing (and for writing the visibility
+// columns the trigger does not touch).
 func (e *SearchEngine) IndexProduct(ctx context.Context, p search.Product) error {
 	const q = `UPDATE products
-		SET search_vector = to_tsvector('english', coalesce($2, '') || ' ' || coalesce($3, ''))
+		SET search_vector = to_tsvector('english', coalesce($2, '') || ' ' || coalesce($3, '')),
+		    search_visible_in_catalog = $4,
+		    search_visible_in_search = $5,
+		    search_visible_individually = $6,
+		    search_purchasable = $7
 		WHERE id = $1`
-	result, err := e.db.ExecContext(ctx, q, p.ID, p.Name, p.Description)
+	result, err := e.db.ExecContext(ctx, q,
+		p.ID, p.Name, p.Description,
+		p.VisibleInCatalog, p.VisibleInSearch, p.VisibleIndividually, p.Purchasable,
+	)
 	if err != nil {
 		return fmt.Errorf("search_engine: index product: %w", err)
 	}
@@ -94,20 +103,42 @@ func (e *SearchEngine) RemoveCategory(ctx context.Context, categoryID string) er
 }
 
 // Suggest returns autocomplete suggestions using prefix matching on product names.
-func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
-	if prefix == "" {
+// Visibility filters are applied only when present on query.Filters — same
+// contract as Search (PR-1079 review: do not bake visible_in_search into every
+// Suggest call).
+func (e *SearchEngine) Suggest(ctx context.Context, query search.SuggestQuery) ([]search.Suggestion, error) {
+	if query.Prefix == "" {
 		return nil, nil
 	}
-	if limit <= 0 {
-		limit = search.DefaultSuggestLimit
-	}
-	if limit > search.MaxSuggestLimit {
-		limit = search.MaxSuggestLimit
-	}
+	limit := query.EffectiveLimit()
 
-	const q = `SELECT id, name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
-	escaped := escapeLike(prefix)
-	rows, err := e.db.QueryContext(ctx, q, escaped+"%", limit)
+	wheres := []string{"status = 'active'", "name ILIKE $1 ESCAPE '\\'"}
+	args := []interface{}{escapeLike(query.Prefix) + "%"}
+	argN := 1
+	nextArg := func(v interface{}) string {
+		argN++
+		args = append(args, v)
+		return fmt.Sprintf("$%d", argN)
+	}
+	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInSearch]) {
+		wheres = append(wheres, "search_visible_in_search = true")
+	}
+	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInCatalog]) {
+		wheres = append(wheres, "search_visible_in_catalog = true")
+	}
+	if search.FilterBoolTrue(query.Filters[search.FilterPurchasable]) {
+		wheres = append(wheres, "search_purchasable = true")
+	}
+	if typeStr, ok := search.SanitizeFilterType(query.Filters[search.FilterType]); ok {
+		wheres = append(wheres, fmt.Sprintf("type = %s", nextArg(typeStr)))
+	}
+	args = append(args, limit)
+	limitArg := fmt.Sprintf("$%d", argN+1)
+
+	q := fmt.Sprintf(`SELECT id, name, slug FROM products
+		WHERE %s
+		ORDER BY name LIMIT %s`, strings.Join(wheres, " AND "), limitArg)
+	rows, err := e.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search_engine: suggest: %w", err)
 	}
@@ -186,6 +217,22 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		codeArg := nextArg(code)
 		valArg := nextArg(value)
 		wheres = append(wheres, fmt.Sprintf("p.attributes->>%s = %s", codeArg, valArg))
+	}
+
+	// Denormalized visibility filters (PR-1079). Only truthy values are
+	// applied — callers AND these when present so Total/Facets match hits.
+	// Columns DEFAULT true (fail-open until reindex); see DEPLOYMENT.md.
+	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInSearch]) {
+		wheres = append(wheres, "p.search_visible_in_search = true")
+	}
+	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInCatalog]) {
+		wheres = append(wheres, "p.search_visible_in_catalog = true")
+	}
+	if search.FilterBoolTrue(query.Filters[search.FilterPurchasable]) {
+		wheres = append(wheres, "p.search_purchasable = true")
+	}
+	if typeStr, ok := search.SanitizeFilterType(query.Filters[search.FilterType]); ok {
+		wheres = append(wheres, fmt.Sprintf("p.type = %s", nextArg(typeStr)))
 	}
 
 	// Price filter.
@@ -278,8 +325,13 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 			sub.name,
 			sub.slug,
 			sub.description,
+			sub.type,
 			sub.created_at,
 			sub.attributes,
+			sub.search_visible_in_catalog,
+			sub.search_visible_in_search,
+			sub.search_visible_individually,
+			sub.search_purchasable,
 			COALESCE(
 				(
 					SELECT pr.amount
@@ -320,6 +372,10 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 				p.attributes,
 				p.type,
 				p.stock_mode,
+				p.search_visible_in_catalog,
+				p.search_visible_in_search,
+				p.search_visible_individually,
+				p.search_purchasable,
 				%s AS sort_key
 			FROM products p %s
 			WHERE %s
@@ -341,7 +397,11 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 	for rows.Next() {
 		var p search.Product
 		var attrsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedAt, &attrsJSON, &p.Price, &p.InStock); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Slug, &p.Description, &p.Type, &p.CreatedAt, &attrsJSON,
+			&p.VisibleInCatalog, &p.VisibleInSearch, &p.VisibleIndividually, &p.Purchasable,
+			&p.Price, &p.InStock,
+		); err != nil {
 			return search.SearchResult{}, fmt.Errorf("search_engine: scan: %w", err)
 		}
 		if len(attrsJSON) > 0 {
@@ -495,3 +555,4 @@ func toInt64(v interface{}) (int64, bool) {
 		return 0, false
 	}
 }
+

@@ -230,16 +230,18 @@ func (e *Engine) Search(ctx context.Context, query search.SearchQuery) (search.S
 }
 
 // Suggest returns autocomplete suggestions via Meilisearch prefix search.
-// If Meilisearch is unreachable, an empty list is returned (graceful degradation).
-func (e *Engine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
-	if prefix == "" {
+// Visibility filters come from query.Filters only (same as Search). Always
+// ANDs fail-open status=active (or missing) as defense in depth. If
+// Meilisearch is unreachable, an empty list is returned (graceful degradation).
+func (e *Engine) Suggest(ctx context.Context, query search.SuggestQuery) ([]search.Suggestion, error) {
+	if query.Prefix == "" {
 		return nil, nil
 	}
-	limit = clampSuggestLimit(limit)
 
 	req := searchRequest{
-		Q:     prefix,
-		Limit: limit,
+		Q:      query.Prefix,
+		Limit:  query.EffectiveLimit(),
+		Filter: buildFilterExpression(query.Filters, true),
 	}
 	resp, err := e.api.search(ctx, req)
 	if err != nil {
@@ -261,28 +263,24 @@ func (e *Engine) Suggest(ctx context.Context, prefix string, limit int) ([]searc
 	return suggestions, nil
 }
 
-func clampSuggestLimit(n int) int {
-	if n <= 0 {
-		return search.DefaultSuggestLimit
-	}
-	if n > search.MaxSuggestLimit {
-		return search.MaxSuggestLimit
-	}
-	return n
-}
-
 // --- document mapping ---
 
 type document struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Slug        string                 `json:"slug"`
-	CategoryIDs []string               `json:"category_ids,omitempty"`
-	Price       int64                  `json:"price"`
-	InStock     bool                   `json:"in_stock"`
-	CreatedAt   int64                  `json:"created_at"`
-	Attributes  map[string]interface{} `json:"attributes,omitempty"`
+	ID                  string                 `json:"id"`
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description"`
+	Slug                string                 `json:"slug"`
+	Type                string                 `json:"type,omitempty"`
+	Status              string                 `json:"status,omitempty"`
+	CategoryIDs         []string               `json:"category_ids,omitempty"`
+	Price               int64                  `json:"price"`
+	InStock             bool                   `json:"in_stock"`
+	CreatedAt           int64                  `json:"created_at"`
+	Attributes          map[string]interface{} `json:"attributes,omitempty"`
+	VisibleInCatalog    bool                   `json:"visible_in_catalog"`
+	VisibleInSearch     bool                   `json:"visible_in_search"`
+	VisibleIndividually bool                   `json:"visible_individually"`
+	Purchasable         bool                   `json:"purchasable"`
 }
 
 // categoryDocument is the document shape for the categories index.
@@ -310,14 +308,26 @@ func categoryToDocMap(c search.Category) map[string]interface{} {
 }
 
 func productToDocMap(p search.Product) map[string]interface{} {
+	// Do not default empty Status to "active": that would resurrect drafts under
+	// a status=active filter when the source left status blank. Write the scanned
+	// value, or omit the field so fail-open (status NOT EXISTS) applies until a
+	// correct reindex.
 	doc := map[string]interface{}{
-		"id":          p.ID,
-		"name":        p.Name,
-		"description": p.Description,
-		"slug":        p.Slug,
-		"price":       p.Price,
-		"in_stock":    p.InStock,
-		"created_at":  p.CreatedAt.Unix(),
+		"id":                   p.ID,
+		"name":                 p.Name,
+		"description":          p.Description,
+		"slug":                 p.Slug,
+		"type":                 p.Type,
+		"price":                p.Price,
+		"in_stock":             p.InStock,
+		"created_at":           p.CreatedAt.Unix(),
+		"visible_in_catalog":   p.VisibleInCatalog,
+		"visible_in_search":    p.VisibleInSearch,
+		"visible_individually": p.VisibleIndividually,
+		"purchasable":          p.Purchasable,
+	}
+	if status := strings.TrimSpace(p.Status); status != "" {
+		doc["status"] = status
 	}
 	if len(p.CategoryIDs) > 0 {
 		doc["category_ids"] = p.CategoryIDs
@@ -378,25 +388,9 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 		Limit:  q.EffectiveLimit(),
 		Offset: q.Offset,
 		Facets: []string{"category_ids"},
+		Filter: buildFilterExpression(q.Filters, true),
 	}
 
-	var filters []string
-	for k, v := range q.Filters {
-		switch k {
-		case "category":
-			filters = append(filters, fmt.Sprintf("category_ids = %q", v))
-		case "price_min":
-			filters = append(filters, fmt.Sprintf("price >= %v", v))
-		case "price_max":
-			filters = append(filters, fmt.Sprintf("price <= %v", v))
-		case "in_stock":
-			filters = append(filters, fmt.Sprintf("in_stock = %v", v))
-		default:
-			if code, ok := search.AttributeCodeFromFilterKey(k); ok && !search.ReservedFacetKey(code) {
-				filters = append(filters, fmt.Sprintf("%s = %q", search.AttributeFilterKey(code), fmt.Sprint(v)))
-			}
-		}
-	}
 	for _, code := range q.FacetAttributes {
 		if !search.AttributeCodeValid(code) || search.ReservedFacetKey(code) {
 			continue
@@ -405,9 +399,6 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 		if !facetFieldIncluded(req.Facets, field) {
 			req.Facets = append(req.Facets, field)
 		}
-	}
-	if len(filters) > 0 {
-		req.Filter = strings.Join(filters, " AND ")
 	}
 
 	if q.Sort != "" {
@@ -419,6 +410,51 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 	}
 
 	return req
+}
+
+// buildFilterExpression turns Search/Suggest Filters into a Meilisearch filter
+// string. When requireActive is true, fail-open status=active (or missing) is
+// always ANDed (defense in depth alongside index-time EffectiveAxis). Visibility
+// bools use MeiliVisibilityEqualsTrue so documents missing the new attrs fail
+// open until reindex (aligned with Postgres DEFAULT true).
+func buildFilterExpression(filters map[string]interface{}, requireActive bool) string {
+	var parts []string
+	if requireActive {
+		parts = append(parts, search.MeiliStatusActiveOrMissing())
+	}
+	for k, v := range filters {
+		switch k {
+		case "category":
+			parts = append(parts, fmt.Sprintf("category_ids = %q", v))
+		case "price_min":
+			parts = append(parts, fmt.Sprintf("price >= %v", v))
+		case "price_max":
+			parts = append(parts, fmt.Sprintf("price <= %v", v))
+		case "in_stock":
+			parts = append(parts, fmt.Sprintf("in_stock = %v", v))
+		case search.FilterVisibleInSearch, search.FilterVisibleInCatalog, search.FilterPurchasable:
+			if search.FilterBoolTrue(v) {
+				parts = append(parts, search.MeiliVisibilityEqualsTrue(k))
+			}
+		case search.FilterType:
+			if typeStr, ok := search.SanitizeFilterType(v); ok {
+				parts = append(parts, fmt.Sprintf("type = %q", typeStr))
+			}
+		case search.FilterStatus:
+			// Caller-supplied status is ignored when requireActive already
+			// pinned the fail-open active gate; avoid duplicating / weakening it.
+			if !requireActive {
+				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+					parts = append(parts, fmt.Sprintf("%s = %q", search.FilterStatus, strings.TrimSpace(s)))
+				}
+			}
+		default:
+			if code, ok := search.AttributeCodeFromFilterKey(k); ok && !search.ReservedFacetKey(code) {
+				parts = append(parts, fmt.Sprintf("%s = %q", search.AttributeFilterKey(code), fmt.Sprint(v)))
+			}
+		}
+	}
+	return strings.Join(parts, " AND ")
 }
 
 func facetFieldIncluded(facets []string, field string) bool {
@@ -435,15 +471,21 @@ func mapSearchResponse(resp searchResponse) search.SearchResult {
 	for _, raw := range resp.Hits {
 		if doc, ok := docFromHit(raw); ok {
 			products = append(products, search.Product{
-				ID:          doc.ID,
-				Name:        doc.Name,
-				Slug:        doc.Slug,
-				Description: doc.Description,
-				CategoryIDs: doc.CategoryIDs,
-				Price:       doc.Price,
-				InStock:     doc.InStock,
-				CreatedAt:   time.Unix(doc.CreatedAt, 0).UTC(),
-				Attributes:  doc.Attributes,
+				ID:                  doc.ID,
+				Name:                doc.Name,
+				Slug:                doc.Slug,
+				Description:         doc.Description,
+				Type:                doc.Type,
+				Status:              doc.Status,
+				CategoryIDs:         doc.CategoryIDs,
+				Price:               doc.Price,
+				InStock:             doc.InStock,
+				CreatedAt:           time.Unix(doc.CreatedAt, 0).UTC(),
+				Attributes:          doc.Attributes,
+				VisibleInCatalog:    doc.VisibleInCatalog,
+				VisibleInSearch:     doc.VisibleInSearch,
+				VisibleIndividually: doc.VisibleIndividually,
+				Purchasable:         doc.Purchasable,
 			})
 		}
 	}
@@ -480,9 +522,13 @@ type indexSettings struct {
 func defaultSettings() indexSettings {
 	return indexSettings{
 		SearchableAttributes: []string{"name", "description", "slug"},
-		FilterableAttributes: []string{"category_ids", "price", "in_stock"},
-		SortableAttributes:   []string{"price", "name", "created_at"},
-		DisplayedAttributes:  []string{"*"},
+		FilterableAttributes: []string{
+			"category_ids", "price", "in_stock",
+			"type", "status",
+			"visible_in_catalog", "visible_in_search", "visible_individually", "purchasable",
+		},
+		SortableAttributes:  []string{"price", "name", "created_at"},
+		DisplayedAttributes: []string{"*"},
 	}
 }
 

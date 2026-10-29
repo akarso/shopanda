@@ -115,7 +115,7 @@ Available today through `plugin.App`:
 
 | Port | Register | Interface |
 | --- | --- | --- |
-| Search | `RegisterSearchProvider(search.SearchEngine)` | `internal/domain/search` |
+| Search | `RegisterSearchProvider(search.SearchEngine)` | `internal/domain/search` — `SuggestQuery.Filters` (PR-1079) uses the same well-known keys as `SearchQuery`; engines apply only caller-supplied filters (no baked-in storefront visibility on Suggest) |
 | Cache | `RegisterCache(cache.Cache)` | `internal/domain/cache` |
 | Queue | `RegisterQueue(jobs.Queue)` | `internal/domain/jobs` |
 | Payment | `RegisterPaymentProvider(payment.Provider)` | `internal/domain/payment` (multi by method) |

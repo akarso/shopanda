@@ -7,9 +7,11 @@ import (
 	"github.com/akarso/shopanda/internal/domain/search"
 )
 
-// filterSearchHitsByVisibility drops products not allowed on surface (PR-1057).
-// Shared by REST search and HTML/SSR listings so the interim query-time filter
-// stays in one place until PR-1079.
+// filterSearchHitsByVisibility drops products not allowed on surface.
+// Used as a fail-closed safety net when enforce is on (facts non-nil): index
+// filters keep Total/Facets honest on a current schema, but facts!=nil alone
+// is not proof the engine honored new keys (PR-1079 review). Nil facts is a
+// no-op (enforce off).
 func filterSearchHitsByVisibility(
 	r *http.Request,
 	result search.SearchResult,
@@ -39,11 +41,13 @@ func filterSearchHitsByVisibility(
 		}
 	}
 	result.Products = filtered
-	// Total / Facets stay index-level until PR-1079 (may disagree with hits).
+	// Total / Facets stay index-level; if this safety net removes hits the
+	// engine ignored a filter key — prefer fixing index/schema (DEPLOYMENT).
 	return result, nil
 }
 
 // filterSuggestionsByVisibility drops product suggestions not VisibleInSearch.
+// Fail-closed safety net when facts are non-nil (enforce on).
 func filterSuggestionsByVisibility(
 	r *http.Request,
 	suggestions []search.Suggestion,
