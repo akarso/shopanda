@@ -2,6 +2,9 @@ package download_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"sync"
 	"testing"
 	"time"
 
@@ -630,5 +633,235 @@ func TestIssuer_IssuesForDraftProductAfterPurchase(t *testing.T) {
 	n, err := issuer.IssueForOrder(context.Background(), orderID)
 	if err != nil || n != 1 {
 		t.Fatalf("IssueForOrder n=%d err=%v, want 1 for draft product", n, err)
+	}
+}
+
+// Fake TX driver so IssueForOrder takes the lock path without a real DB.
+func init() {
+	sql.Register("shopanda-download-issuer-tx", issuerFakeTxDriver{})
+}
+
+type issuerFakeTxDriver struct{}
+
+func (issuerFakeTxDriver) Open(string) (driver.Conn, error) { return issuerFakeTxConn{}, nil }
+
+type issuerFakeTxConn struct{}
+
+func (issuerFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (issuerFakeTxConn) Close() error                        { return nil }
+func (issuerFakeTxConn) Begin() (driver.Tx, error)           { return issuerFakeTx{}, nil }
+
+type issuerFakeTx struct{}
+
+func (issuerFakeTx) Commit() error   { return nil }
+func (issuerFakeTx) Rollback() error { return nil }
+
+var (
+	issuerFakeTxOnce sync.Once
+	issuerFakeTxDB   *sql.DB
+)
+
+func issuerTxStarter() *sql.DB {
+	issuerFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-download-issuer-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		issuerFakeTxDB = db
+	})
+	return issuerFakeTxDB
+}
+
+type lockingStubProducts struct {
+	catalog.ProductRepository // embed for unused ProductRepository methods
+	byID                      map[string]*catalog.Product
+	mu                        sync.Mutex
+	locked                    []string
+}
+
+func (s *lockingStubProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return s.byID[id], nil
+}
+
+func (s *lockingStubProducts) WithTx(*sql.Tx) catalog.ProductRepository { return s }
+
+func (s *lockingStubProducts) LockForUpdate(_ context.Context, id string) (catalog.Type, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.locked = append(s.locked, id)
+	p := s.byID[id]
+	if p == nil {
+		return "", apperror.NotFound("product not found")
+	}
+	return p.Type, nil
+}
+
+func (s *lockingStubProducts) lockedIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.locked))
+	copy(out, s.locked)
+	return out
+}
+
+// mutatingComponents returns before on the first ListByBundleID call, then
+// after — simulating an admin optional→required flip between collect and
+// the post-lock recollect.
+type mutatingComponents struct {
+	mu     sync.Mutex
+	calls  int
+	before []catalog.BundleComponent
+	after  []catalog.BundleComponent
+}
+
+func (m *mutatingComponents) ListByBundleID(_ context.Context, _ string) ([]catalog.BundleComponent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	if m.calls == 1 {
+		out := make([]catalog.BundleComponent, len(m.before))
+		copy(out, m.before)
+		return out, nil
+	}
+	out := make([]catalog.BundleComponent, len(m.after))
+	copy(out, m.after)
+	return out, nil
+}
+
+func (m *mutatingComponents) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+func TestIssuer_BundleLeafSetChangeRetriesAndLocksNewLeaf(t *testing.T) {
+	orderID := id.New()
+	bundleID := id.New()
+	leaf1 := id.New()
+	leaf2 := id.New()
+	variantID := id.New()
+	price := mustMoney(t)
+	item, err := order.NewItem(variantID, "BUNDLE", "Kit", 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(orderID, "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	markPaid(t, &o)
+
+	products := &lockingStubProducts{byID: map[string]*catalog.Product{
+		bundleID: {ID: bundleID, Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		leaf1:    {ID: leaf1, Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+		leaf2:    {ID: leaf2, Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+	}}
+	comps := &mutatingComponents{
+		before: []catalog.BundleComponent{{
+			BundleProductID: bundleID, ComponentProductID: leaf1, Quantity: 1, Required: true,
+		}},
+		after: []catalog.BundleComponent{
+			{BundleProductID: bundleID, ComponentProductID: leaf1, Quantity: 1, Required: true},
+			{BundleProductID: bundleID, ComponentProductID: leaf2, Quantity: 1, Required: true},
+		},
+	}
+	repo := &withTxMemRepo{memGrantRepo: newMemGrantRepo()}
+	svc := downloadapp.NewService(repo, nil)
+	issuer := downloadapp.NewIssuer(
+		stubOrders{o: &o},
+		stubVariants{variantID: {ID: variantID, ProductID: bundleID, SKU: "BUNDLE", Name: "Kit"}},
+		products,
+		stubFiles{
+			leaf1: {{ProductID: leaf1, AssetID: "asset-1"}},
+			leaf2: {{ProductID: leaf2, AssetID: "asset-2"}},
+		},
+		nil,
+		svc,
+		domain.Defaults{Expiry: time.Hour, DownloadLimit: 2},
+		nil,
+	).WithBundleComponents(comps).WithTxStarter(issuerTxStarter())
+
+	n, err := issuer.IssueForOrder(context.Background(), orderID)
+	if err != nil || n != 2 {
+		t.Fatalf("IssueForOrder n=%d err=%v, want 2 grants after retry", n, err)
+	}
+	if comps.callCount() < 3 {
+		t.Fatalf("component list calls=%d, want >=3 (collect, post-lock miss, retry collect)", comps.callCount())
+	}
+	locked := products.lockedIDs()
+	saw1, saw2 := false, false
+	for _, id := range locked {
+		if id == leaf1 {
+			saw1 = true
+		}
+		if id == leaf2 {
+			saw2 = true
+		}
+	}
+	if !saw1 || !saw2 {
+		t.Fatalf("locked=%v, want both leaf1 and leaf2 after retry", locked)
+	}
+	rows, _ := svc.ListByOrderItem(context.Background(), domain.OrderItemID(orderID, variantID))
+	if len(rows) != 2 {
+		t.Fatalf("grants=%d, want 2", len(rows))
+	}
+}
+
+func TestIssuer_BundleLeafNoLongerRequiredSkipped(t *testing.T) {
+	orderID := id.New()
+	bundleID := id.New()
+	leaf1 := id.New()
+	leaf2 := id.New()
+	variantID := id.New()
+	price := mustMoney(t)
+	item, err := order.NewItem(variantID, "BUNDLE", "Kit", 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(orderID, "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	markPaid(t, &o)
+
+	products := &lockingStubProducts{byID: map[string]*catalog.Product{
+		bundleID: {ID: bundleID, Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		leaf1:    {ID: leaf1, Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+		leaf2:    {ID: leaf2, Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+	}}
+	// First collect sees both required; after lock only leaf1 remains required.
+	comps := &mutatingComponents{
+		before: []catalog.BundleComponent{
+			{BundleProductID: bundleID, ComponentProductID: leaf1, Quantity: 1, Required: true},
+			{BundleProductID: bundleID, ComponentProductID: leaf2, Quantity: 1, Required: true},
+		},
+		after: []catalog.BundleComponent{
+			{BundleProductID: bundleID, ComponentProductID: leaf1, Quantity: 1, Required: true},
+			{BundleProductID: bundleID, ComponentProductID: leaf2, Quantity: 1, Required: false},
+		},
+	}
+	repo := &withTxMemRepo{memGrantRepo: newMemGrantRepo()}
+	svc := downloadapp.NewService(repo, nil)
+	issuer := downloadapp.NewIssuer(
+		stubOrders{o: &o},
+		stubVariants{variantID: {ID: variantID, ProductID: bundleID, SKU: "BUNDLE", Name: "Kit"}},
+		products,
+		stubFiles{
+			leaf1: {{ProductID: leaf1, AssetID: "asset-1"}},
+			leaf2: {{ProductID: leaf2, AssetID: "asset-2"}},
+		},
+		nil,
+		svc,
+		domain.Defaults{Expiry: time.Hour, DownloadLimit: 2},
+		nil,
+	).WithBundleComponents(comps).WithTxStarter(issuerTxStarter())
+
+	n, err := issuer.IssueForOrder(context.Background(), orderID)
+	if err != nil || n != 1 {
+		t.Fatalf("IssueForOrder n=%d err=%v, want 1 (optional leaf skipped)", n, err)
+	}
+	rows, _ := svc.ListByOrderItem(context.Background(), domain.OrderItemID(orderID, variantID))
+	if len(rows) != 1 || rows[0].AssetID != "asset-1" {
+		t.Fatalf("rows=%+v, want only asset-1", rows)
 	}
 }
