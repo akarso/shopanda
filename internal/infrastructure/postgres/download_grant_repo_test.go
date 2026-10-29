@@ -417,3 +417,272 @@ func TestDownloadableGrantSettingsRepo_UpsertFindRemove(t *testing.T) {
 		t.Fatalf("after remove = %+v %v", got, err)
 	}
 }
+
+func mustSaveAsset(t *testing.T, ctx context.Context, repo *postgres.AssetRepo, name string) *media.Asset {
+	t.Helper()
+	a, err := media.NewAsset(id.New(), "files/"+name, name, "application/pdf", 10)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	if err := repo.Save(ctx, &a); err != nil {
+		t.Fatalf("Save asset: %v", err)
+	}
+	return &a
+}
+
+func mustInsertGrant(t *testing.T, ctx context.Context, repo *postgres.DownloadGrantRepo, orderItemID, customerID, assetID string, expires time.Time) *download.DownloadGrant {
+	t.Helper()
+	g, err := download.NewDownloadGrant(id.New(), orderItemID, customerID, assetID, expires, 3)
+	if err != nil {
+		t.Fatalf("NewDownloadGrant: %v", err)
+	}
+	if err := repo.Insert(ctx, g); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	return g
+}
+
+func TestDownloadGrantRepo_RetargetAsset_SimpleLive(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "retarget-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "retarget-new.pdf")
+	orderItemID := download.OrderItemID(id.New(), "var-simple")
+	g := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved = %d, want 1", moved)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("revoked = %+v, want none", revoked)
+	}
+	got, err := repo.FindByID(ctx, g.ID)
+	if err != nil || got == nil || got.AssetID != newA.ID {
+		t.Fatalf("after retarget = %+v %v", got, err)
+	}
+	if !got.ExpiresAt.After(time.Now().UTC()) {
+		t.Fatal("live grant must stay live")
+	}
+}
+
+func TestDownloadGrantRepo_RetargetAsset_BundleParentUnit(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "bundle-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "bundle-new.pdf")
+	// Issuer writes leaf grants under parent bundle order_item_id
+	// (orderID/bundleVariantID) — no leaf product join.
+	orderItemID := download.OrderItemID(id.New(), "bundle-variant")
+	g := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved = %d, want 1", moved)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("revoked = %+v", revoked)
+	}
+	got, err := repo.FindByID(ctx, g.ID)
+	if err != nil || got == nil || got.AssetID != newA.ID {
+		t.Fatalf("bundle-parent grant = %+v %v", got, err)
+	}
+}
+
+func TestDownloadGrantRepo_RetargetAsset_LiveConflictRevokesOld(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "live-conflict-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "live-conflict-new.pdf")
+	orderItemID := download.OrderItemID(id.New(), "var-live-conflict")
+	oldG := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+	newG := mustInsertGrant(t, ctx, repo, orderItemID, "cust", newA.ID, time.Now().UTC().Add(2*time.Hour))
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 0 {
+		t.Fatalf("moved = %d, want 0 (live conflict)", moved)
+	}
+	if len(revoked) != 1 || revoked[0].ID != oldG.ID {
+		t.Fatalf("revoked = %+v, want old grant", revoked)
+	}
+	gotOld, err := repo.FindByID(ctx, oldG.ID)
+	if err != nil || gotOld == nil || gotOld.ExpiresAt.After(time.Now().UTC()) {
+		t.Fatalf("old must be revoked: %+v %v", gotOld, err)
+	}
+	if gotOld.AssetID != oldA.ID {
+		t.Fatalf("revoked old keeps old asset_id, got %s", gotOld.AssetID)
+	}
+	gotNew, err := repo.FindByID(ctx, newG.ID)
+	if err != nil || gotNew == nil || gotNew.AssetID != newA.ID || !gotNew.ExpiresAt.After(time.Now().UTC()) {
+		t.Fatalf("live new must remain: %+v %v", gotNew, err)
+	}
+}
+
+func TestDownloadGrantRepo_RetargetAsset_ExpiredNewDoesNotKillLiveOld(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "expired-new-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "expired-new-new.pdf")
+	orderItemID := download.OrderItemID(id.New(), "var-expired-new")
+	liveOld := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+	expiredNew := mustInsertGrant(t, ctx, repo, orderItemID, "cust", newA.ID, time.Now().UTC().Add(time.Hour))
+	expiredNew.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	if err := repo.Update(ctx, expiredNew); err != nil {
+		t.Fatalf("expire new: %v", err)
+	}
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved = %d, want 1", moved)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("revoked = %+v, want none (expired new cleared)", revoked)
+	}
+	got, err := repo.FindByID(ctx, liveOld.ID)
+	if err != nil || got == nil {
+		t.Fatalf("live old missing: %v", err)
+	}
+	if got.AssetID != newA.ID {
+		t.Fatalf("AssetID = %s, want new", got.AssetID)
+	}
+	if !got.ExpiresAt.After(time.Now().UTC()) {
+		t.Fatal("live old must not be killed")
+	}
+	gone, err := repo.FindByID(ctx, expiredNew.ID)
+	if err != nil || gone != nil {
+		t.Fatalf("expired new should be deleted: %+v %v", gone, err)
+	}
+}
+
+func TestDownloadGrantRepo_RetargetAsset_ExpiredOldUpdatedForReissue(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "expired-old-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "expired-old-new.pdf")
+	orderItemID := download.OrderItemID(id.New(), "var-expired-old")
+	expiredOld := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+	expiredOld.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	if err := repo.Update(ctx, expiredOld); err != nil {
+		t.Fatalf("expire old: %v", err)
+	}
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("moved = %d, want 1 (expired kept when UNIQUE free)", moved)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("revoked = %+v", revoked)
+	}
+	got, err := repo.FindByID(ctx, expiredOld.ID)
+	if err != nil || got == nil || got.AssetID != newA.ID {
+		t.Fatalf("expired old asset_id = %+v %v, want new", got, err)
+	}
+}
+
+func TestDownloadGrantRepo_RetargetAsset_ExpiredOldDeletedWhenLiveNewBlocks(t *testing.T) {
+	db := testDB(t)
+	ensureDownloadGrantsTable(t, db)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+	assetRepo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	repo, err := postgres.NewDownloadGrantRepo(db)
+	if err != nil {
+		t.Fatalf("NewDownloadGrantRepo: %v", err)
+	}
+	oldA := mustSaveAsset(t, ctx, assetRepo, "expired-old-live-new-old.pdf")
+	newA := mustSaveAsset(t, ctx, assetRepo, "expired-old-live-new-new.pdf")
+	orderItemID := download.OrderItemID(id.New(), "var-expired-old-live-new")
+	expiredOld := mustInsertGrant(t, ctx, repo, orderItemID, "cust", oldA.ID, time.Now().UTC().Add(time.Hour))
+	expiredOld.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	if err := repo.Update(ctx, expiredOld); err != nil {
+		t.Fatalf("expire old: %v", err)
+	}
+	liveNew := mustInsertGrant(t, ctx, repo, orderItemID, "cust", newA.ID, time.Now().UTC().Add(2*time.Hour))
+
+	moved, revoked, err := repo.RetargetAsset(ctx, oldA.ID, newA.ID)
+	if err != nil {
+		t.Fatalf("RetargetAsset: %v", err)
+	}
+	if moved != 0 {
+		t.Fatalf("moved = %d, want 0 (UNIQUE blocked)", moved)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("revoked = %+v, want none (expired old deleted, not revoked; live new untouched)", revoked)
+	}
+	gone, err := repo.FindByID(ctx, expiredOld.ID)
+	if err != nil || gone != nil {
+		t.Fatalf("expired old must be deleted (grant id vanishes): %+v %v", gone, err)
+	}
+	gotNew, err := repo.FindByID(ctx, liveNew.ID)
+	if err != nil || gotNew == nil || gotNew.AssetID != newA.ID || !gotNew.ExpiresAt.After(time.Now().UTC()) {
+		t.Fatalf("live new must remain untouched: %+v %v", gotNew, err)
+	}
+}

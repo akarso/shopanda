@@ -139,6 +139,9 @@ type serveRuntime struct {
 	productAdmin                   *admin.ProductAdminHandler
 	productCompositionAdmin        *admin.ProductCompositionAdminHandler
 	linkedEligibilityAdmin         *admin.LinkedEligibilityAdminHandler
+	downloadableFileAdmin          *admin.DownloadableFileAdminHandler
+	downloadGrantAdmin             *admin.DownloadGrantAdminHandler
+	downloadableFileService        *catalogApp.DownloadableFileService
 	productTranslationAdmin        *admin.ProductTranslationAdminHandler
 	productPriceAdmin              *admin.ProductPriceAdminHandler
 	variantHandler                 *storefront.VariantHandler
@@ -532,10 +535,48 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	linkedEligibilityService := catalogApp.NewLinkedEligibilityService(
 		repos.productRepo, repos.categoryRepo, repos.linkedEligibilityRepo, conn,
 	)
-	// DownloadableFileService (list/attach/remove HTTP) is PR-1078. Sell path
-	// and media.Delete use the repo via WithDownloadableFiles /
-	// WithAssetAttachments until then.
-	downloadGrantService := downloadApp.NewService(repos.downloadGrantRepo, bus)
+	// DownloadableFileService + admin grant HTTP (PR-1078). Sell path and
+	// media.Delete also use the repo via WithDownloadableFiles /
+	// WithAssetAttachments.
+	downloadableFileService := catalogApp.NewDownloadableFileService(
+		repos.productRepo, repos.downloadableFileRepo, repos.assetRepo, conn,
+	).WithGrantRetarget(func(ctx context.Context, tx *sql.Tx, oldAssetID, newAssetID string) (catalogApp.GrantRetargetOutcome, error) {
+		bound := repos.downloadGrantRepo.WithTx(tx)
+		rt, ok := bound.(interface {
+			RetargetAsset(context.Context, string, string) (int, []domaindownload.DownloadGrant, error)
+		})
+		if !ok {
+			return catalogApp.GrantRetargetOutcome{}, fmt.Errorf("download grant repo does not support asset retarget")
+		}
+		moved, revoked, err := rt.RetargetAsset(ctx, oldAssetID, newAssetID)
+		if err != nil {
+			return catalogApp.GrantRetargetOutcome{}, err
+		}
+		out := make([]catalogApp.GrantConflictRevoked, 0, len(revoked))
+		for _, g := range revoked {
+			out = append(out, catalogApp.GrantConflictRevoked{
+				ID: g.ID, OrderItemID: g.OrderItemID, CustomerID: g.CustomerID, AssetID: g.AssetID,
+			})
+		}
+		return catalogApp.GrantRetargetOutcome{Moved: moved, Revoked: out}, nil
+	}).WithGrantConflictRevokeNotifier(func(ctx context.Context, revoked []catalogApp.GrantConflictRevoked) {
+		for _, g := range revoked {
+			_ = bus.Publish(ctx, event.New(domaindownload.EventDownloadGrantRevoked, "catalog.downloadable_file", domaindownload.GrantRevokedData{
+				GrantID: g.ID, OrderItemID: g.OrderItemID, CustomerID: g.CustomerID, AssetID: g.AssetID,
+				Reason: "replace_asset_conflict",
+			}))
+		}
+	})
+	downloadGrantService := downloadApp.NewService(repos.downloadGrantRepo, bus).
+		WithSettings(repos.downloadableGrantSettingsRepo).
+		WithTxStarter(conn).
+		WithProductExists(downloadApp.ProductExistsFunc(func(ctx context.Context, productID string) (bool, error) {
+			p, err := repos.productRepo.FindByID(ctx, productID)
+			if err != nil {
+				return false, err
+			}
+			return p != nil, nil
+		}))
 	downloadGrantExpiry, err := time.ParseDuration(cfg.Catalog.Downloadable.DefaultExpiry)
 	if err != nil {
 		return nil, fmt.Errorf("wire services: catalog.downloadable.default_expiry: %w", err)
@@ -772,6 +813,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}); err != nil {
 		return nil, fmt.Errorf("register linked form section: %w", err)
 	}
+	// Downloadable files + grant settings (PR-1078).
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "downloadable", Title: "Downloadable files", Types: []string{"downloadable"},
+	}); err != nil {
+		return nil, fmt.Errorf("register downloadable form section: %w", err)
+	}
 
 	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
@@ -814,6 +861,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithTxStarter(conn)
 	productCompositionAdmin := admin.NewProductCompositionAdminHandler(repos.productRepo, bundleService, groupedService, sharedAuditor)
 	linkedEligibilityAdmin := admin.NewLinkedEligibilityAdminHandler(repos.productRepo, repos.categoryRepo, linkedEligibilityService, sharedAuditor)
+	downloadableFileAdmin := admin.NewDownloadableFileAdminHandler(downloadableFileService, downloadGrantService, repos.assetRepo, sharedAuditor)
+	downloadGrantAdmin := admin.NewDownloadGrantAdminHandler(downloadGrantService, repos.orderRepo, sharedAuditor)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
@@ -1065,6 +1114,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		productAdmin:                   productAdmin,
 		productCompositionAdmin:        productCompositionAdmin,
 		linkedEligibilityAdmin:         linkedEligibilityAdmin,
+		downloadableFileAdmin:          downloadableFileAdmin,
+		downloadGrantAdmin:             downloadGrantAdmin,
+		downloadableFileService:        downloadableFileService,
 		productTranslationAdmin:        productTranslationAdmin,
 		productPriceAdmin:              productPriceAdmin,
 		variantHandler:                 variantHandler,

@@ -1320,6 +1320,7 @@
                 setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
                 setupProductCompositionSections(typeSectionsHost, product, productID, form);
                 setupProductLinkedSection(typeSectionsHost, product, productID, form);
+                setupProductDownloadableSection(typeSectionsHost, product, productID, form);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1556,6 +1557,253 @@
 
     function productLinkedSectionAPI() {
         return (typeof ShopandaProductLinkedSection !== "undefined") ? ShopandaProductLinkedSection : null;
+    }
+
+    function productDownloadableSectionAPI() {
+        return (typeof ShopandaProductDownloadableSection !== "undefined") ? ShopandaProductDownloadableSection : null;
+    }
+
+    function setupProductDownloadableSection(typeSectionsHost, product, productID, form) {
+        var sectionAPI = productDownloadableSectionAPI();
+        if (!sectionAPI || !typeSectionsHost) {
+            return;
+        }
+        var body = typeSectionsHost.querySelector('[data-product-type-section-body="downloadable"]');
+        if (!body) {
+            return;
+        }
+        body.innerHTML = sectionAPI.renderDownloadableSectionHTML(!!productID);
+        if (productID) {
+            bindDownloadableSection(body, productID);
+        }
+        if (form) {
+            form._shopandaDownloadableBound = true;
+        }
+    }
+
+    function bindDownloadableSection(host, productID) {
+        var sectionAPI = productDownloadableSectionAPI();
+        if (!sectionAPI || !host || !productID) {
+            return;
+        }
+        var filesBox = host.querySelector("[data-downloadable-files]");
+        var settingsBox = host.querySelector("[data-downloadable-settings]");
+        var canWrite = userHasPermission("products.write");
+
+        function setBusy(busy) {
+            host.setAttribute("aria-busy", busy ? "true" : "false");
+        }
+
+        function load() {
+            setBusy(true);
+            Promise.all([
+                api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files"),
+                api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings")
+            ]).then(function (results) {
+                setBusy(false);
+                var filesBody = results[0] || {};
+                var settingsBody = results[1] || {};
+                if (filesBody.error) {
+                    if (filesBox) {
+                        filesBox.innerHTML = '<p role="alert">' + esc((filesBody.error && filesBody.error.message) || "Failed to load files.") + "</p>";
+                    }
+                } else if (filesBox) {
+                    var files = (filesBody.data && filesBody.data.files) || [];
+                    filesBox.innerHTML = sectionAPI.filesTableHTML(files);
+                    if (!canWrite) {
+                        var af = filesBox.querySelector("[data-attach-file-form]");
+                        if (af) { af.style.display = "none"; }
+                        var uf = filesBox.querySelector("[data-private-upload-form]");
+                        if (uf) { uf.style.display = "none"; }
+                        filesBox.querySelectorAll("[data-remove-file],[data-replace-file]").forEach(function (btn) { btn.disabled = true; });
+                    }
+                }
+                if (settingsBody.error) {
+                    if (settingsBox) {
+                        settingsBox.innerHTML = '<p role="alert">' + esc((settingsBody.error && settingsBody.error.message) || "Failed to load settings.") + "</p>";
+                    }
+                } else if (settingsBox) {
+                    var settings = (settingsBody.data && settingsBody.data.settings) || {};
+                    settingsBox.innerHTML = sectionAPI.settingsFormHTML(settings);
+                    if (!canWrite) {
+                        settingsBox.querySelectorAll("input,button").forEach(function (el) { el.disabled = true; });
+                    }
+                }
+                bindActions();
+            }).catch(function () {
+                setBusy(false);
+                if (filesBox) { filesBox.innerHTML = '<p role="alert">Failed to load files.</p>'; }
+                if (settingsBox) { settingsBox.innerHTML = '<p role="alert">Failed to load settings.</p>'; }
+            });
+        }
+
+        function bindActions() {
+            if (!canWrite) {
+                return;
+            }
+            var attachForm = host.querySelector("[data-attach-file-form]");
+            if (attachForm && !attachForm.getAttribute("data-bound")) {
+                attachForm.setAttribute("data-bound", "1");
+                attachForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var assetID = (attachForm.elements.asset_id.value || "").trim();
+                    var position = parseInt(attachForm.elements.position.value || "0", 10);
+                    var label = (attachForm.elements.label.value || "").trim();
+                    if (!assetID) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                        method: "POST",
+                        body: JSON.stringify({ asset_id: assetID, position: position, label: label })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to attach file");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to attach file");
+                    });
+                });
+            }
+            var uploadForm = host.querySelector("[data-private-upload-form]");
+            if (uploadForm && !uploadForm.getAttribute("data-bound")) {
+                uploadForm.setAttribute("data-bound", "1");
+                uploadForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var fileInput = uploadForm.elements.file;
+                    if (!fileInput || !fileInput.files || !fileInput.files[0]) { return; }
+                    var file = fileInput.files[0];
+                    var doUpload = (typeof uploadAsset === "function")
+                        ? uploadAsset(file, null, { privateDownload: true })
+                        : Promise.reject(new Error("uploadAsset unavailable"));
+                    doUpload.then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Upload failed");
+                            return;
+                        }
+                        var asset = (body && body.data && (body.data.asset || body.data)) || body.asset || body || {};
+                        var assetID = asset.id || asset.asset_id || "";
+                        if (!assetID) {
+                            window.alert("Upload succeeded but asset id was missing");
+                            return;
+                        }
+                        return api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                            method: "POST",
+                            body: JSON.stringify({ asset_id: assetID, position: 0, label: asset.filename || file.name || "" })
+                        }).then(function (attachBody) {
+                            if (attachBody && attachBody.error) {
+                                window.alert(attachBody.error.message || "Uploaded but attach failed");
+                                return;
+                            }
+                            load();
+                        });
+                    }).catch(function () {
+                        window.alert("Upload failed");
+                    });
+                });
+            }
+            host.querySelectorAll("[data-remove-file]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var assetID = btn.getAttribute("data-remove-file") || "";
+                    if (!assetID || !window.confirm("Remove this file attachment?")) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files/" + encodeURIComponent(assetID), {
+                        method: "DELETE"
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove");
+                    });
+                });
+            });
+            host.querySelectorAll("[data-replace-file]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var oldID = btn.getAttribute("data-replace-file") || "";
+                    var row = btn.closest("tr");
+                    var position = row ? parseInt(row.getAttribute("data-position") || "0", 10) : 0;
+                    var label = row ? (row.getAttribute("data-label") || "") : "";
+                    var newID = window.prompt(
+                        "New private asset id to replace " + oldID +
+                        ". Grants retarget by asset id (not this product only). Shared assets refuse unless you allow global retarget next:",
+                        ""
+                    );
+                    if (!newID) { return; }
+                    var globalRetarget = window.confirm(
+                        "Allow global_retarget? Required when other products still attach this asset. " +
+                        "OK moves every download grant on this blob to the new asset. " +
+                        "Cancel sends without the flag (422 if the asset is shared)."
+                    );
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                        method: "PUT",
+                        body: JSON.stringify({
+                            old_asset_id: oldID,
+                            asset_id: newID.trim(),
+                            position: position,
+                            label: label,
+                            global_retarget: globalRetarget
+                        })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to replace");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to replace");
+                    });
+                });
+            });
+            var settingsForm = host.querySelector("[data-grant-settings-form]");
+            if (settingsForm && !settingsForm.getAttribute("data-bound")) {
+                settingsForm.setAttribute("data-bound", "1");
+                settingsForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var payload = {};
+                    var expiryRaw = (settingsForm.elements.expiry_days.value || "").trim();
+                    var limitRaw = (settingsForm.elements.download_limit.value || "").trim();
+                    if (expiryRaw !== "") { payload.expiry_days = parseInt(expiryRaw, 10); }
+                    if (limitRaw !== "") { payload.download_limit = parseInt(limitRaw, 10); }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings", {
+                        method: "PUT",
+                        body: JSON.stringify(payload)
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to save settings");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to save settings");
+                    });
+                });
+            }
+            var clearBtn = host.querySelector("[data-clear-grant-settings]");
+            if (clearBtn && !clearBtn.getAttribute("data-bound")) {
+                clearBtn.setAttribute("data-bound", "1");
+                clearBtn.addEventListener("click", function () {
+                    if (!window.confirm("Clear product grant overrides (use global defaults)?")) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings", {
+                        method: "DELETE"
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to clear settings");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to clear settings");
+                    });
+                });
+            }
+        }
+
+        load();
     }
 
     function setupProductLinkedSection(typeSectionsHost, product, productID, form) {
@@ -8526,9 +8774,11 @@
                 '<p><strong>Customer ID:</strong> ' + esc(customer.id || '') + '</p>' +
                 '</div>' +
                 '<section style="margin-top:2rem"><h3>Customer Group</h3><div id="customer-group-panel"></div></section>' +
-                '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>';
+                '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>' +
+                '<div id="customer-download-grants-panel"></div>';
             mountCustomerGroupPanel(document.getElementById("customer-group-panel"), customerID);
             mountCustomerStoreCreditPanel(document.getElementById("customer-store-credit"), customerID);
+            mountCustomerDownloadGrantsPanel(document.getElementById("customer-download-grants-panel"), customerID);
         }).catch(function (err) {
             bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customer.')) + '</p>';
         });
@@ -10428,6 +10678,130 @@
             });
     }
 
+    function downloadGrantAdminUI() {
+        return (typeof ShopandaDownloadGrantAdminUI !== "undefined") ? ShopandaDownloadGrantAdminUI : null;
+    }
+
+    function bindDownloadGrantActions(host, reload) {
+        var canWrite = userHasPermission("downloads.write");
+        if (!canWrite || !host) {
+            return;
+        }
+        host.querySelectorAll("[data-revoke-grant]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-revoke-grant") || "";
+                var reason = window.prompt("Reason for revoke:", "");
+                if (!id || reason == null || !String(reason).trim()) { return; }
+                api("/admin/download-grants/" + encodeURIComponent(id) + "/revoke", {
+                    method: "POST",
+                    body: JSON.stringify({ reason: String(reason).trim() })
+                }).then(function (body) {
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to revoke");
+                        return;
+                    }
+                    reload();
+                }).catch(function () {
+                    window.alert("Failed to revoke");
+                });
+            });
+        });
+        host.querySelectorAll("[data-reissue-grant]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-reissue-grant") || "";
+                var daysRaw = window.prompt("Extend by how many days?", "30");
+                if (!id || daysRaw == null) { return; }
+                var days = parseInt(String(daysRaw).trim(), 10);
+                if (!(days >= 1)) {
+                    window.alert("expiry_days must be at least 1");
+                    return;
+                }
+                var reason = window.prompt("Reason for re-issue:", "");
+                if (reason == null || !String(reason).trim()) { return; }
+                api("/admin/download-grants/" + encodeURIComponent(id) + "/reissue", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        expiry_days: days,
+                        reset_count: true,
+                        reason: String(reason).trim()
+                    })
+                }).then(function (body) {
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to re-issue");
+                        return;
+                    }
+                    reload();
+                }).catch(function () {
+                    window.alert("Failed to re-issue");
+                });
+            });
+        });
+    }
+
+    function mountOrderDownloadGrantsPanel(mountEl, orderID) {
+        if (!mountEl) { return; }
+        var ui = downloadGrantAdminUI();
+        if (!userHasPermission("downloads.read")) {
+            mountEl.innerHTML = "";
+            return;
+        }
+        if (!ui) {
+            mountEl.innerHTML = '<section style="margin-top:2rem"><h3>Download grants</h3><p role="alert">Download grant UI failed to load.</p></section>';
+            return;
+        }
+        mountEl.innerHTML = ui.panelHTML("Download grants");
+        var body = mountEl.querySelector("[data-download-grants-body]");
+        var msg = mountEl.querySelector("[data-download-grants-msg]");
+        function load() {
+            api("/admin/orders/" + encodeURIComponent(orderID) + "/download-grants").then(function (res) {
+                if (res && res.error) {
+                    body.innerHTML = '<p role="alert">' + esc((res.error && res.error.message) || "Failed to load grants.") + "</p>";
+                    return;
+                }
+                var grants = (res && res.data && res.data.grants) || [];
+                body.innerHTML = ui.grantsTableHTML(grants, userHasPermission("downloads.write"));
+                bindDownloadGrantActions(body, load);
+                if (msg) { msg.innerHTML = ""; }
+            }).catch(function () {
+                body.innerHTML = '<p role="alert">Failed to load grants.</p>';
+            });
+        }
+        load();
+    }
+
+    function mountCustomerDownloadGrantsPanel(mountEl, customerID) {
+        if (!mountEl) { return; }
+        var ui = downloadGrantAdminUI();
+        if (!userHasPermission("downloads.read")) {
+            mountEl.innerHTML = "";
+            return;
+        }
+        if (!ui) {
+            mountEl.innerHTML = '<section style="margin-top:2rem"><h3>Download grants</h3><p role="alert">Download grant UI failed to load.</p></section>';
+            return;
+        }
+        mountEl.innerHTML = ui.panelHTML("Download grants");
+        var body = mountEl.querySelector("[data-download-grants-body]");
+        function load() {
+            api("/admin/download-grants?customer_id=" + encodeURIComponent(customerID)).then(function (res) {
+                if (res && res.error) {
+                    body.innerHTML = '<p role="alert">' + esc((res.error && res.error.message) || "Failed to load grants.") + "</p>";
+                    return;
+                }
+                var grants = (res && res.data && res.data.grants) || [];
+                body.innerHTML = ui.grantsTableHTML(grants, userHasPermission("downloads.write"));
+                bindDownloadGrantActions(body, load);
+            }).catch(function () {
+                body.innerHTML = '<p role="alert">Failed to load grants.</p>';
+            });
+        }
+        load();
+    }
+
     function mountOrderInvoicesPanel(mountEl, orderID) {
         if (!mountEl) {
             return;
@@ -10728,10 +11102,12 @@
                     '<div id="order-refund-panel"></div>' +
                     '<h3>Invoices</h3>' +
                     '<div id="order-invoices-panel"></div>' +
+                    '<div id="order-download-grants-panel"></div>' +
                     '</article>';
 
                 mountOrderRefundPanel(document.getElementById("order-refund-panel"), order);
                 mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
+                mountOrderDownloadGrantsPanel(document.getElementById("order-download-grants-panel"), order.id);
 
                 var form = document.getElementById("order-status-form");
                 if (form) {

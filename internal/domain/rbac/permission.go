@@ -15,6 +15,13 @@ const (
 	AssignmentsRead  Permission = "assignments.read"
 	AssignmentsWrite Permission = "assignments.write"
 
+	// DownloadsRead/DownloadsWrite gate admin DownloadGrant list/revoke/
+	// re-issue (PR-1078). Separate from products.* so Support can restore
+	// a customer's download without catalog write, and Editor cannot.
+	// File attach/settings stay on products.write.
+	DownloadsRead  Permission = "downloads.read"
+	DownloadsWrite Permission = "downloads.write"
+
 	OrdersRead  Permission = "orders.read"
 	OrdersWrite Permission = "orders.write"
 

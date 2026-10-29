@@ -4,12 +4,47 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
+
+// GrantConflictRevoked is a grant expired during Replace retarget because a
+// live UNIQUE (order_item_id, new_asset_id) row already existed.
+type GrantConflictRevoked struct {
+	ID          string
+	OrderItemID string
+	CustomerID  string
+	AssetID     string
+}
+
+// GrantRetargetOutcome is the result of moving grants old→new during Replace.
+// Moved counts rows rewritten in the free UNIQUE UPDATE. Revoked are live
+// grants expired for a live UNIQUE conflict (step 4). Expired old rows
+// deleted to free UNIQUE are not counted here — those grant IDs vanish.
+type GrantRetargetOutcome struct {
+	Moved   int
+	Revoked []GrantConflictRevoked
+}
+
+// GrantRetargetInTx moves DownloadGrant rows from old->new asset inside the
+// Replace transaction (PR-1078). Asset-scoped (no product/order_item join).
+// Callers publish download.grant.revoked after the outer TX commits for
+// outcome.Revoked.
+type GrantRetargetInTx func(ctx context.Context, tx *sql.Tx, oldAssetID, newAssetID string) (GrantRetargetOutcome, error)
+
+// GrantConflictRevokeNotifier publishes observability for grants expired
+// during retarget conflict handling (after Replace commits).
+type GrantConflictRevokeNotifier func(ctx context.Context, revoked []GrantConflictRevoked)
+
+// ReplaceResult surfaces grant retarget counts from a successful Replace.
+type ReplaceResult struct {
+	GrantsMoved   int
+	GrantsRevoked int
+}
 
 // txDownloadableFileRepo is a DownloadableFileRepository that can bind to a
 // transaction. WithTx lives on the postgres adapter only; the domain port
@@ -33,13 +68,14 @@ type lockingAssetRepo interface {
 // DownloadableFileService manages product → media asset attachments for
 // TypeDownloadable products (PR-1074). Storage stays on media.Storage /
 // media.AssetRepository; this service only owns the join rows.
-//
-// Admin HTTP / CSV / GUI remain PR-1078.
+// Admin HTTP / CSV / GUI are PR-1078.
 type DownloadableFileService struct {
-	products  catalog.ProductRepository
-	files     catalog.DownloadableFileRepository
-	assets    media.AssetRepository
-	txStarter TxStarter
+	products             catalog.ProductRepository
+	files                catalog.DownloadableFileRepository
+	assets               media.AssetRepository
+	txStarter            TxStarter
+	grantRetarget        GrantRetargetInTx           // required for real Replace (different asset ids)
+	grantConflictRevokes GrantConflictRevokeNotifier // optional; events after commit
 }
 
 // NewDownloadableFileService creates a downloadable-file attachment service.
@@ -69,6 +105,38 @@ func NewDownloadableFileService(
 		assets:    assets,
 		txStarter: txStarter,
 	}
+}
+
+// WithGrantRetarget wires DownloadGrant asset retargeting into Replace.
+// Required for a real replace (different asset ids); nil fails closed.
+func (s *DownloadableFileService) WithGrantRetarget(fn GrantRetargetInTx) *DownloadableFileService {
+	if s == nil {
+		return nil
+	}
+	s.grantRetarget = fn
+	return s
+}
+
+// WithGrantConflictRevokeNotifier wires post-commit revoke event publishing
+// for grants expired when retarget hits a live UNIQUE conflict.
+func (s *DownloadableFileService) WithGrantConflictRevokeNotifier(fn GrantConflictRevokeNotifier) *DownloadableFileService {
+	if s == nil {
+		return nil
+	}
+	s.grantConflictRevokes = fn
+	return s
+}
+
+// ReplaceMeta controls whether omitted position/label keep the old join values
+// and whether a shared asset may retarget every grant on the blob.
+type ReplaceMeta struct {
+	Position *int
+	Label    *string
+	// GlobalRetarget allows Replace when other products still attach
+	// old_asset_id. Without it, a shared attachment returns 422 — Replace
+	// never rewrites "this product only". When true, every grant on the
+	// blob moves (asset-scoped RetargetAsset).
+	GlobalRetarget bool
 }
 
 // List returns all downloadable_files join rows for a product regardless of
@@ -164,6 +232,211 @@ func (s *DownloadableFileService) Attach(ctx context.Context, f *catalog.Downloa
 		return fmt.Errorf("downloadable file: commit: %w", err)
 	}
 	return nil
+}
+
+// Replace swaps oldAssetID for a new attachment in one transaction and
+// retargets DownloadGrant rows (live and expired) from old->new asset by
+// asset id (covers bundle-parent units). Expired conflicting new-asset
+// rows are cleared first; live UNIQUE conflict revokes the old grant.
+// When meta Position/Label are nil, the old join's values are preserved.
+// Same asset id is a plain Attach (position/label update).
+//
+// Shared assets (other products still attach oldAssetID) refuse with 422
+// unless meta.GlobalRetarget is true. Without the flag, Replace does not
+// rewrite "this product only" — it fails closed. With the flag, every
+// grant on the blob moves.
+func (s *DownloadableFileService) Replace(ctx context.Context, productID, oldAssetID string, f *catalog.DownloadableFile, meta ReplaceMeta) (ReplaceResult, error) {
+	productID = strings.TrimSpace(productID)
+	oldAssetID = strings.TrimSpace(oldAssetID)
+	if productID == "" {
+		return ReplaceResult{}, apperror.Validation("product id must not be empty")
+	}
+	if oldAssetID == "" {
+		return ReplaceResult{}, apperror.Validation("old asset id must not be empty")
+	}
+	if f == nil {
+		return ReplaceResult{}, apperror.Validation("downloadable file must not be nil")
+	}
+	f.ProductID = productID
+	f.AssetID = strings.TrimSpace(f.AssetID)
+
+	if f.AssetID == oldAssetID {
+		// Same asset is a plain Attach (position/label update). Load the
+		// saved join first so omitted meta keeps existing values — NewDownloadableFile
+		// defaults (Position=0, Label="") must not wipe the row.
+		rows, err := s.files.ListByProductID(ctx, productID)
+		if err != nil {
+			return ReplaceResult{}, fmt.Errorf("downloadable file: list: %w", err)
+		}
+		var oldRow *catalog.DownloadableFile
+		for i := range rows {
+			if rows[i].AssetID == oldAssetID {
+				oldRow = &rows[i]
+				break
+			}
+		}
+		if oldRow == nil {
+			return ReplaceResult{}, apperror.NotFound("downloadable file not found")
+		}
+		if meta.Position != nil {
+			f.Position = *meta.Position
+		} else {
+			f.Position = oldRow.Position
+		}
+		if meta.Label != nil {
+			f.Label = *meta.Label
+		} else {
+			f.Label = oldRow.Label
+		}
+		if err := f.Validate(); err != nil {
+			return ReplaceResult{}, apperror.Validation(err.Error())
+		}
+		return ReplaceResult{}, s.Attach(ctx, f)
+	}
+
+	tx, err := s.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	txProducts, okProducts := s.products.(txProductRepo)
+	txFiles, okFiles := s.files.(txDownloadableFileRepo)
+	txAssets, okAssets := s.assets.(txAssetRepo)
+	if !okProducts || !okFiles || !okAssets {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: repositories do not support transactions")
+	}
+	productRepo := txProducts.WithTx(tx)
+	fileRepo := txFiles.WithTx(tx)
+	assetRepo := txAssets.WithTx(tx)
+	locker, ok := productRepo.(lockingProductRepo)
+	if !ok {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: product repository does not support row locks")
+	}
+	assetLocker, ok := assetRepo.(lockingAssetRepo)
+	if !ok {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: asset repository does not support row locks")
+	}
+
+	typ, err := locker.LockForUpdate(ctx, productID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return ReplaceResult{}, err
+		}
+		return ReplaceResult{}, fmt.Errorf("downloadable file: lock product: %w", err)
+	}
+	// Lock old and new asset rows in one stable order before reading either.
+	// Locking new-then-old deadlocks with a concurrent Replace that swaps the
+	// opposite direction (A→B vs B→A).
+	assetIDs := []string{oldAssetID, f.AssetID}
+	sort.Strings(assetIDs)
+	var asset *media.Asset
+	for _, aid := range assetIDs {
+		a, lockErr := assetLocker.LockForUpdate(ctx, aid)
+		if lockErr != nil {
+			if apperror.Is(lockErr, apperror.CodeNotFound) {
+				return ReplaceResult{}, lockErr
+			}
+			return ReplaceResult{}, fmt.Errorf("downloadable file: lock asset: %w", lockErr)
+		}
+		if aid == f.AssetID {
+			asset = a
+		}
+	}
+	if asset == nil {
+		return ReplaceResult{}, apperror.NotFound("asset not found")
+	}
+	if !media.IsPrivateDownloadsPath(asset.Path) {
+		return ReplaceResult{}, apperror.Validation("downloadable file asset must be stored under private/downloads/")
+	}
+	if _, err := requireActiveCompositionProducts(ctx, productRepo, productID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return ReplaceResult{}, err
+		}
+		return ReplaceResult{}, fmt.Errorf("downloadable file: find product: %w", err)
+	}
+	if err := f.ValidateAttachment(typ); err != nil {
+		return ReplaceResult{}, apperror.Validation(err.Error())
+	}
+
+	rows, err := fileRepo.ListByProductID(ctx, productID)
+	if err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: list: %w", err)
+	}
+	var oldRow *catalog.DownloadableFile
+	for i := range rows {
+		if rows[i].AssetID == oldAssetID {
+			oldRow = &rows[i]
+			break
+		}
+	}
+	if oldRow == nil {
+		return ReplaceResult{}, apperror.NotFound("downloadable file not found")
+	}
+	if meta.Position != nil {
+		f.Position = *meta.Position
+	} else {
+		f.Position = oldRow.Position
+	}
+	if meta.Label != nil {
+		f.Label = *meta.Label
+	} else {
+		f.Label = oldRow.Label
+	}
+	if err := f.Validate(); err != nil {
+		return ReplaceResult{}, apperror.Validation(err.Error())
+	}
+
+	// Fail closed before join swap: asset-scoped retarget would move every
+	// grant on the blob, including other products' order lines. Both assets
+	// are already locked above so a concurrent Attach cannot commit after
+	// count=1 and leave grants moving under global_retarget=false.
+	attachCount, err := fileRepo.CountByAssetID(ctx, oldAssetID)
+	if err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: count asset attachments: %w", err)
+	}
+	if attachCount > 1 && !meta.GlobalRetarget {
+		return ReplaceResult{}, apperror.Validation(
+			"downloadable file asset is attached to other products; pass global_retarget=true to retarget every grant on this asset",
+		)
+	}
+
+	if err := fileRepo.Upsert(ctx, f); err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: upsert: %w", err)
+	}
+	if err := fileRepo.Remove(ctx, productID, oldAssetID); err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: remove old: %w", err)
+	}
+	outcome, err := s.retargetGrantsInTx(ctx, tx, oldAssetID, f.AssetID)
+	if err != nil {
+		return ReplaceResult{}, err
+	}
+	if len(outcome.Revoked) > 0 && s.grantConflictRevokes == nil {
+		return ReplaceResult{}, apperror.Internal(
+			"downloadable file: grant conflict revoke notifier is required when replace revokes grants",
+		)
+	}
+	if err := tx.Commit(); err != nil {
+		return ReplaceResult{}, fmt.Errorf("downloadable file: commit: %w", err)
+	}
+	if len(outcome.Revoked) > 0 {
+		s.grantConflictRevokes(ctx, outcome.Revoked)
+	}
+	return ReplaceResult{
+		GrantsMoved:   outcome.Moved,
+		GrantsRevoked: len(outcome.Revoked),
+	}, nil
+}
+
+func (s *DownloadableFileService) retargetGrantsInTx(ctx context.Context, tx *sql.Tx, oldAssetID, newAssetID string) (GrantRetargetOutcome, error) {
+	if s.grantRetarget == nil {
+		return GrantRetargetOutcome{}, apperror.Internal("downloadable file: grant retarget is required for replace")
+	}
+	outcome, err := s.grantRetarget(ctx, tx, oldAssetID, newAssetID)
+	if err != nil {
+		return GrantRetargetOutcome{}, fmt.Errorf("downloadable file: retarget grants: %w", err)
+	}
+	return outcome, nil
 }
 
 // Remove deletes one attachment regardless of product type (404 if the pair

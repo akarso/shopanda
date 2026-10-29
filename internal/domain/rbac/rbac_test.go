@@ -12,6 +12,7 @@ func TestHasPermission_Admin(t *testing.T) {
 	for _, perm := range []rbac.Permission{
 		rbac.ProductsRead, rbac.ProductsWrite,
 		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
@@ -35,6 +36,7 @@ func TestHasPermission_Manager(t *testing.T) {
 	allowed := []rbac.Permission{
 		rbac.ProductsRead, rbac.ProductsWrite,
 		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.CustomersRead,
@@ -71,6 +73,7 @@ func TestHasPermission_Editor(t *testing.T) {
 	}
 	denied := []rbac.Permission{
 		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.InvoicesRead,
@@ -94,6 +97,7 @@ func TestHasPermission_Support(t *testing.T) {
 	allowed := []rbac.Permission{
 		rbac.ProductsRead,
 		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead,
 		rbac.CustomersRead,
 		rbac.InvoicesRead,
@@ -147,7 +151,7 @@ func TestPermissionsForRole_Admin(t *testing.T) {
 	// Core admin grants in role_permissions.go (products/assignments/orders/categories/
 	// customers/store_credit/invoices/media/content/settings/shipping/audit/extensions*/
 	// jobs/search.reindex/cache*).
-	const wantCoreAdmin = 31
+	const wantCoreAdmin = 33
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}
