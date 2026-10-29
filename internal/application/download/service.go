@@ -19,14 +19,30 @@ type eventBus interface {
 	Publish(ctx context.Context, evt event.Event) error
 }
 
+// productExistsChecker verifies a product id exists (settings GET 404).
+type productExistsChecker interface {
+	ProductExists(ctx context.Context, productID string) (bool, error)
+}
+
+// ProductExistsFunc adapts a function to productExistsChecker.
+type ProductExistsFunc func(ctx context.Context, productID string) (bool, error)
+
+// ProductExists implements productExistsChecker.
+func (f ProductExistsFunc) ProductExists(ctx context.Context, productID string) (bool, error) {
+	return f(ctx, productID)
+}
+
 // Service manages DownloadGrant rows: issue (manual), read, prepare
-// delivery, record download, extend, revoke, and reset. Order-paid
-// issuance lives on Issuer (HandleOrderPaid). Storefront delivery HTTP
-// is PR-1077; admin HTTP is PR-1078.
+// delivery, record download, extend, revoke, reset, and admin re-issue
+// (PR-1078). Order-paid issuance lives on Issuer (HandleOrderPaid).
+// Storefront delivery HTTP is PR-1077.
 type Service struct {
-	grants domain.Repository
-	bus    eventBus
-	now    func() time.Time
+	grants    domain.Repository
+	settings  domain.SettingsRepository // optional; product override editor (PR-1078)
+	products  productExistsChecker      // optional; settings GET product 404
+	txStarter txStarter                 // optional; required for Reissue TX in production
+	bus       eventBus
+	now       func() time.Time
 }
 
 // NewService creates a DownloadGrant service. bus may be nil (no events).
@@ -41,12 +57,49 @@ func NewService(grants domain.Repository, bus eventBus) *Service {
 	}
 }
 
+// WithSettings wires the optional per-product grant override repository
+// used by admin GET/PUT/DELETE settings (PR-1078).
+func (s *Service) WithSettings(settings domain.SettingsRepository) *Service {
+	if s == nil {
+		return nil
+	}
+	s.settings = settings
+	return s
+}
+
+// WithProductExists wires product existence checks for settings GET.
+func (s *Service) WithProductExists(check productExistsChecker) *Service {
+	if s == nil {
+		return nil
+	}
+	s.products = check
+	return s
+}
+
+// WithTxStarter wraps Reissue in a single DB transaction (lock → update →
+// CAS reset). Required when the grant repo supports WithTx (fail closed).
+// Production wiring passes *sql.DB.
+func (s *Service) WithTxStarter(starter txStarter) *Service {
+	if s == nil {
+		return nil
+	}
+	s.txStarter = starter
+	return s
+}
+
 // withRepo returns a shallow copy bound to a different repository (tx).
 func (s *Service) withRepo(grants domain.Repository) *Service {
 	if s == nil {
 		return nil
 	}
-	return &Service{grants: grants, bus: s.bus, now: s.now}
+	return &Service{
+		grants:    grants,
+		settings:  s.settings,
+		products:  s.products,
+		txStarter: s.txStarter,
+		bus:       s.bus,
+		now:       s.now,
+	}
 }
 
 // WithTx returns a service bound to the grant repo's transaction when the
@@ -351,7 +404,8 @@ func (s *Service) RevokeForOrderItem(ctx context.Context, orderItemID, reason st
 }
 
 // ResetCount clears download_count for a support re-issue via UpdateCount
-// (Update does not write download_count).
+// (Update does not write download_count). The grant must still be live
+// (expires_at > now) — call Extend first when re-issuing an expired row.
 func (s *Service) ResetCount(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
 	g, err := s.Get(ctx, grantID)
 	if err != nil {
@@ -365,6 +419,197 @@ func (s *Service) ResetCount(ctx context.Context, grantID string) (*domain.Downl
 		return nil, mapWriteError("reset count", err)
 	}
 	return g, nil
+}
+
+// Reissue extends expiry (required), optionally updates download_limit, and
+// by default resets download_count — all in one transaction when a TxStarter
+// and WithTx-capable repo are wired. expiresAt must be strictly after now.
+// When reset_count=true and the new limit is below the current count, count
+// is reset before (or with) the lower limit so Validate never sees
+// download_count > download_limit. Support path for PR-1078.
+func (s *Service) Reissue(ctx context.Context, grantID string, expiresAt time.Time, downloadLimit *int, resetCount bool, reason string) (*domain.DownloadGrant, error) {
+	expiresAt = expiresAt.UTC()
+	now := s.now()
+	if expiresAt.IsZero() || !expiresAt.After(now) {
+		return nil, apperror.Validation("expires_at must be strictly after now")
+	}
+
+	run := func(svc *Service) (*domain.DownloadGrant, error) {
+		return svc.reissueLocked(ctx, grantID, expiresAt, downloadLimit, resetCount)
+	}
+
+	var g *domain.DownloadGrant
+	var err error
+	if binder, ok := s.grants.(interface {
+		WithTx(tx *sql.Tx) domain.Repository
+	}); ok {
+		if s.txStarter == nil {
+			return nil, apperror.Internal("download: transaction starter is required for grant reissue")
+		}
+		tx, beginErr := s.txStarter.BeginTx(ctx, nil)
+		if beginErr != nil {
+			return nil, fmt.Errorf("download: reissue begin tx: %w", beginErr)
+		}
+		defer tx.Rollback()
+		g, err = run(s.withRepo(binder.WithTx(tx)))
+		if err != nil {
+			return nil, err
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return nil, fmt.Errorf("download: reissue commit: %w", commitErr)
+		}
+		s.publishReissued(ctx, g, resetCount, reason)
+		return g, nil
+	}
+
+	g, err = run(s)
+	if err != nil {
+		return nil, err
+	}
+	s.publishReissued(ctx, g, resetCount, reason)
+	return g, nil
+}
+
+func (s *Service) reissueLocked(ctx context.Context, grantID string, expiresAt time.Time, downloadLimit *int, resetCount bool) (*domain.DownloadGrant, error) {
+	g, err := s.lockGrant(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	expectedCount := g.DownloadCount
+	newLimit := g.DownloadLimit
+	if downloadLimit != nil {
+		newLimit = *downloadLimit
+	}
+	if newLimit < 1 {
+		return nil, apperror.Validation("download grant: download_limit must be at least 1")
+	}
+	if newLimit > domain.MaxDownloadLimit {
+		return nil, apperror.Validation(fmt.Sprintf("download grant: download_limit must not exceed %d", domain.MaxDownloadLimit))
+	}
+	if !resetCount && expectedCount > newLimit {
+		return nil, apperror.Validation("download grant: download_count must not exceed download_limit (set reset_count=true to clear count first)")
+	}
+
+	// Bring the row live first. When resetting and the new limit is below the
+	// current count, keep the old limit for this Update so Validate passes;
+	// apply the lower limit after count is 0.
+	limitForUpdate := newLimit
+	if resetCount && expectedCount > newLimit {
+		limitForUpdate = g.DownloadLimit
+	}
+	g.DownloadLimit = limitForUpdate
+	if err := g.Extend(expiresAt); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Update(ctx, g); err != nil {
+		return nil, mapWriteError("reissue extend", err)
+	}
+
+	if resetCount {
+		if err := g.ResetCount(); err != nil {
+			return nil, apperror.Validation(err.Error())
+		}
+		if err := s.grants.UpdateCount(ctx, g.ID, g.DownloadCount, expectedCount); err != nil {
+			return nil, mapWriteError("reissue reset count", err)
+		}
+		if g.DownloadLimit != newLimit {
+			g.DownloadLimit = newLimit
+			if err := s.grants.Update(ctx, g); err != nil {
+				return nil, mapWriteError("reissue apply limit", err)
+			}
+		}
+	}
+
+	latest, err := s.grants.FindByID(ctx, g.ID)
+	if err != nil {
+		return nil, fmt.Errorf("download: reissue reload: %w", err)
+	}
+	if latest == nil {
+		return nil, apperror.NotFound("download grant not found")
+	}
+	return latest, nil
+}
+
+func (s *Service) lockGrant(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
+	if locker, ok := s.grants.(interface {
+		LockForUpdate(ctx context.Context, id string) (*domain.DownloadGrant, error)
+	}); ok {
+		g, err := locker.LockForUpdate(ctx, grantID)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("download: lock grant: %w", err)
+		}
+		if g == nil {
+			return nil, apperror.NotFound("download grant not found")
+		}
+		return g, nil
+	}
+	return s.Get(ctx, grantID)
+}
+
+// GetSettings returns the per-product override row, or (nil, nil) when none.
+// 404 when the product id does not exist (when a product checker is wired).
+func (s *Service) GetSettings(ctx context.Context, productID string) (*domain.GrantSettings, error) {
+	if s.settings == nil {
+		return nil, apperror.Internal("download: grant settings repository is not configured")
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return nil, apperror.Validation("product id must not be empty")
+	}
+	if s.products != nil {
+		ok, err := s.products.ProductExists(ctx, productID)
+		if err != nil {
+			return nil, fmt.Errorf("download: get settings product: %w", err)
+		}
+		if !ok {
+			return nil, apperror.NotFound("product not found")
+		}
+	}
+	row, err := s.settings.FindByProductID(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("download: get settings: %w", err)
+	}
+	return row, nil
+}
+
+// UpsertSettings writes a per-product override. Empty overrides (both nil)
+// still persist a row so operators can clear columns intentionally later.
+func (s *Service) UpsertSettings(ctx context.Context, settings *domain.GrantSettings) error {
+	if s.settings == nil {
+		return apperror.Internal("download: grant settings repository is not configured")
+	}
+	if settings == nil {
+		return apperror.Validation("download grant settings must not be nil")
+	}
+	if err := settings.Validate(); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	if err := s.settings.Upsert(ctx, settings); err != nil {
+		return mapWriteError("upsert settings", err)
+	}
+	return nil
+}
+
+// ClearSettings removes the per-product override row. Missing override is
+// idempotent success so GUI "Clear" works when fields are already empty.
+func (s *Service) ClearSettings(ctx context.Context, productID string) error {
+	if s.settings == nil {
+		return apperror.Internal("download: grant settings repository is not configured")
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return apperror.Validation("product id must not be empty")
+	}
+	if err := s.settings.Remove(ctx, productID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return mapWriteError("clear settings", err)
+	}
+	return nil
 }
 
 // CountByAssetID reports how many live grants reference the asset (media delete).
@@ -409,6 +654,22 @@ func (s *Service) publishRevoked(ctx context.Context, g *domain.DownloadGrant, r
 		CustomerID:  g.CustomerID,
 		AssetID:     g.AssetID,
 		Reason:      strings.TrimSpace(reason),
+	}))
+}
+
+func (s *Service) publishReissued(ctx context.Context, g *domain.DownloadGrant, resetCount bool, reason string) {
+	if s == nil || s.bus == nil || g == nil {
+		return
+	}
+	_ = s.bus.Publish(ctx, event.New(domain.EventDownloadGrantReissued, "download.service", domain.GrantReissuedData{
+		GrantID:       g.ID,
+		OrderItemID:   g.OrderItemID,
+		CustomerID:    g.CustomerID,
+		AssetID:       g.AssetID,
+		ExpiresAt:     g.ExpiresAt.UTC().Format(time.RFC3339),
+		DownloadLimit: g.DownloadLimit,
+		ResetCount:    resetCount,
+		Reason:        strings.TrimSpace(reason),
 	}))
 }
 

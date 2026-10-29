@@ -2,6 +2,7 @@ package download_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -74,9 +75,10 @@ func (m *memGrantRepo) UpdateCount(_ context.Context, id string, newCount, expec
 	defer m.mu.Unlock()
 	g, ok := m.byID[id]
 	if !ok {
-		return apperror.NotFound("download grant not found")
+		return domain.ErrCountConflict
 	}
-	if g.DownloadCount != expectedCount || g.Expired(time.Now().UTC()) {
+	// Match postgres: CAS only while download_count matches and expires_at > now.
+	if g.DownloadCount != expectedCount || !g.ExpiresAt.After(time.Now().UTC()) {
 		return domain.ErrCountConflict
 	}
 	g.DownloadCount = newCount
@@ -363,5 +365,161 @@ func TestService_IssueIdempotent_LeavesRevokedUntouched(t *testing.T) {
 	}
 	if !got.Expired(time.Now().UTC()) {
 		t.Fatal("grant must remain expired/revoked")
+	}
+}
+
+func TestService_Reissue_ExtendThenReset(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 3)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	if _, _, err := svc.Revoke(context.Background(), g.ID, "lost"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	later := now.Add(72 * time.Hour)
+	limit := 10
+	got, err := svc.Reissue(context.Background(), g.ID, later, &limit, true, "support")
+	if err != nil {
+		t.Fatalf("Reissue: %v", err)
+	}
+	if got.DownloadCount != 0 {
+		t.Fatalf("DownloadCount = %d, want 0", got.DownloadCount)
+	}
+	if got.DownloadLimit != 10 {
+		t.Fatalf("DownloadLimit = %d, want 10", got.DownloadLimit)
+	}
+	if !got.ExpiresAt.Equal(later) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, later)
+	}
+	if err := got.CanDownload(now.Add(time.Minute)); err != nil {
+		t.Fatalf("CanDownload after reissue: %v", err)
+	}
+}
+
+func TestService_Reissue_LowerLimitWithReset(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload 2: %v", err)
+	}
+	later := now.Add(48 * time.Hour)
+	limit := 1
+	got, err := svc.Reissue(context.Background(), g.ID, later, &limit, true, "lower")
+	if err != nil {
+		t.Fatalf("Reissue lower+reset: %v", err)
+	}
+	if got.DownloadCount != 0 || got.DownloadLimit != 1 {
+		t.Fatalf("got count=%d limit=%d, want 0/1", got.DownloadCount, got.DownloadLimit)
+	}
+}
+
+func TestService_Reissue_PastExpiryRejected(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	_, err = svc.Reissue(context.Background(), g.ID, now.Add(-time.Minute), nil, true, "past")
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("past expiry = %v, want validation", err)
+	}
+}
+
+func TestService_Reissue_ResetCountFalseKeepsCount(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	later := now.Add(48 * time.Hour)
+	got, err := svc.Reissue(context.Background(), g.ID, later, nil, false, "extend only")
+	if err != nil {
+		t.Fatalf("Reissue reset_count=false: %v", err)
+	}
+	if got.DownloadCount != 1 {
+		t.Fatalf("DownloadCount = %d, want 1", got.DownloadCount)
+	}
+}
+
+func TestService_Reissue_ResetCountFalseLowerLimitRejected(t *testing.T) {
+	repo := newMemGrantRepo()
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload 2: %v", err)
+	}
+	limit := 1
+	_, err = svc.Reissue(context.Background(), g.ID, now.Add(48*time.Hour), &limit, false, "bad")
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("lower limit without reset = %v, want validation", err)
+	}
+}
+
+func TestService_Reissue_CASConflict(t *testing.T) {
+	base := newMemGrantRepo()
+	repo := &casConflictRepo{memGrantRepo: base}
+	svc := downloadapp.NewService(repo, nil)
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 5)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if _, err := svc.RecordDownload(context.Background(), g.ID); err != nil {
+		t.Fatalf("RecordDownload: %v", err)
+	}
+	repo.forceConflict = true
+	_, err = svc.Reissue(context.Background(), g.ID, now.Add(48*time.Hour), nil, true, "cas")
+	if err == nil || !apperror.Is(err, apperror.CodeConflict) || !errors.Is(err, domain.ErrCountConflict) {
+		t.Fatalf("CAS conflict = %v", err)
+	}
+}
+
+type withTxMemRepo struct {
+	*memGrantRepo
+}
+
+func (w *withTxMemRepo) WithTx(*sql.Tx) domain.Repository {
+	return w
+}
+
+func TestService_Reissue_RequiresTxStarterWhenRepoBindsTx(t *testing.T) {
+	repo := &withTxMemRepo{memGrantRepo: newMemGrantRepo()}
+	svc := downloadapp.NewService(repo, nil) // no WithTxStarter
+	now := time.Now().UTC()
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "c", "a", now.Add(time.Hour), 3)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	_, err = svc.Reissue(context.Background(), g.ID, now.Add(48*time.Hour), nil, true, "need tx")
+	if err == nil || !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("Reissue without txStarter = %v, want internal", err)
 	}
 }

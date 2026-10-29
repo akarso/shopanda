@@ -134,6 +134,10 @@ func run() error {
 			return runImportLinkedEligibleCategories(cfg, log)
 		case "export:linked-eligible-categories":
 			return runExportLinkedEligibleCategories(cfg, log)
+		case "import:downloadable-files":
+			return runImportDownloadableFiles(cfg, log)
+		case "export:downloadable-files":
+			return runExportDownloadableFiles(cfg, log)
 		case "import:stock":
 			return runImportStock(cfg, log)
 		case "export:stock":
@@ -736,6 +740,8 @@ Commands:
   export:linked-eligible-parents <f>  Export linked eligibility parent allowlist CSV
   import:linked-eligible-categories <f>  Import linked eligibility category rules CSV
   export:linked-eligible-categories <f>  Export linked eligibility category rules CSV
+  import:downloadable-files <f>  Import downloadable file attachment metadata CSV
+  export:downloadable-files <f>  Export downloadable file attachment metadata CSV
   import:stock <f>     Import stock from a CSV file
   export:stock <f>     Export stock to a CSV file
   import:customers <f> Import customers from a CSV file

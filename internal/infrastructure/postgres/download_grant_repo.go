@@ -219,6 +219,148 @@ func (r *DownloadGrantRepo) FindByID(ctx context.Context, grantID string) (*down
 	return g, nil
 }
 
+// LockForUpdate locks the grant row FOR UPDATE inside the current transaction.
+func (r *DownloadGrantRepo) LockForUpdate(ctx context.Context, grantID string) (*download.DownloadGrant, error) {
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return nil, apperror.Validation("download grant id must not be empty")
+	}
+	if !id.IsUUID(grantID) {
+		return nil, apperror.Validation("invalid download grant id")
+	}
+	if r.tx == nil {
+		return nil, fmt.Errorf("download_grant_repo: LockForUpdate requires a transaction")
+	}
+	q := `SELECT ` + downloadGrantSelectColumns + ` FROM download_grants WHERE id = $1 FOR UPDATE`
+	g, err := scanDownloadGrant(r.queryer().QueryRowContext(ctx, q, grantID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, apperror.NotFound("download grant not found")
+	}
+	if err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("download_grant_repo: lock: %w", err)
+	}
+	return g, nil
+}
+
+// RetargetAsset moves download_grants from oldAssetID to newAssetID by asset
+// id only (no order_items/product join). That covers direct SKUs and bundle
+// leaf grants minted under the parent bundle order_item_id (PR-1078).
+//
+// Conflict rules for UNIQUE (order_item_id, asset_id):
+//  1. Delete expired/revoked rows already on newAssetID for the same unit so
+//     a live (or expired) old grant can move.
+//  2. UPDATE every remaining old→new row that has no conflicting new row
+//     (prefer keeping expired rows when UNIQUE allows).
+//  3. Delete expired old rows that still cannot move (live new already owns
+//     the pair) so Support reissue is not left pointing at the old blob.
+//     Those grant IDs vanish (not returned as revoked).
+//  4. Revoke only live old grants that still conflict with a live new grant.
+//
+// Returns moved (rows rewritten in step 2) and the live grants expired in
+// step 4 so callers can publish download.grant.revoked after commit.
+func (r *DownloadGrantRepo) RetargetAsset(ctx context.Context, oldAssetID, newAssetID string) (moved int, revoked []download.DownloadGrant, err error) {
+	oldAssetID = strings.TrimSpace(oldAssetID)
+	newAssetID = strings.TrimSpace(newAssetID)
+	if oldAssetID == "" || newAssetID == "" {
+		return 0, nil, apperror.Validation("old asset id and new asset id are required")
+	}
+	if oldAssetID == newAssetID {
+		return 0, nil, nil
+	}
+
+	// Clear expired new-asset rows that would block the rewrite.
+	const deleteExpiredNewQ = `
+		DELETE FROM download_grants AS x
+		WHERE x.asset_id = $2
+		  AND x.expires_at <= NOW()
+		  AND EXISTS (
+			SELECT 1 FROM download_grants AS dg
+			WHERE dg.order_item_id = x.order_item_id AND dg.asset_id = $1
+		  )`
+	if _, err := r.queryer().ExecContext(ctx, deleteExpiredNewQ, oldAssetID, newAssetID); err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return 0, nil, mapped
+		}
+		return 0, nil, fmt.Errorf("download_grant_repo: delete expired new-asset conflict: %w", err)
+	}
+
+	// Move live and expired old→new when the UNIQUE pair is free.
+	const retargetQ = `
+		UPDATE download_grants AS dg
+		SET asset_id = $2
+		WHERE dg.asset_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM download_grants AS x
+			WHERE x.order_item_id = dg.order_item_id AND x.asset_id = $2
+		  )`
+	res, err := r.queryer().ExecContext(ctx, retargetQ, oldAssetID, newAssetID)
+	if err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return 0, nil, mapped
+		}
+		return 0, nil, fmt.Errorf("download_grant_repo: retarget asset: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil, fmt.Errorf("download_grant_repo: retarget asset rows: %w", err)
+	}
+	moved = int(affected)
+
+	// Drop expired old rows still blocked by a (live) new-asset grant.
+	// Grant IDs deleted here vanish (not counted as moved or revoked).
+	const deleteBlockedExpiredOldQ = `
+		DELETE FROM download_grants AS dg
+		WHERE dg.asset_id = $1
+		  AND dg.expires_at <= NOW()
+		  AND EXISTS (
+			SELECT 1 FROM download_grants AS x
+			WHERE x.order_item_id = dg.order_item_id AND x.asset_id = $2
+		  )`
+	if _, err := r.queryer().ExecContext(ctx, deleteBlockedExpiredOldQ, oldAssetID, newAssetID); err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return 0, nil, mapped
+		}
+		return 0, nil, fmt.Errorf("download_grant_repo: delete blocked expired old: %w", err)
+	}
+
+	// Revoke live old only when a live new-asset grant already exists.
+	revokeQ := `
+		UPDATE download_grants AS dg
+		SET expires_at = NOW()
+		WHERE dg.asset_id = $1
+		  AND dg.expires_at > NOW()
+		  AND EXISTS (
+			SELECT 1 FROM download_grants AS x
+			WHERE x.order_item_id = dg.order_item_id
+			  AND x.asset_id = $2
+			  AND x.expires_at > NOW()
+		  )
+		RETURNING ` + downloadGrantSelectColumns
+	rows, err := r.queryer().QueryContext(ctx, revokeQ, oldAssetID, newAssetID)
+	if err != nil {
+		if mapped := mapDownloadGrantExecError(err); mapped != err {
+			return 0, nil, mapped
+		}
+		return 0, nil, fmt.Errorf("download_grant_repo: revoke live conflict: %w", err)
+	}
+	defer rows.Close()
+	revoked = []download.DownloadGrant{}
+	for rows.Next() {
+		g, scanErr := scanDownloadGrant(rows)
+		if scanErr != nil {
+			return 0, nil, fmt.Errorf("download_grant_repo: revoke conflict scan: %w", scanErr)
+		}
+		revoked = append(revoked, *g)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, fmt.Errorf("download_grant_repo: revoke conflict rows: %w", err)
+	}
+	return moved, revoked, nil
+}
+
 // FindByOrderItemAndAsset returns the grant or (nil, nil).
 func (r *DownloadGrantRepo) FindByOrderItemAndAsset(ctx context.Context, orderItemID, assetID string) (*download.DownloadGrant, error) {
 	orderItemID = strings.TrimSpace(orderItemID)

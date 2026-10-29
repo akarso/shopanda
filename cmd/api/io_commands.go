@@ -972,3 +972,85 @@ func runExportLinkedEligibleCategories(cfg *config.Config, log logger.Logger) er
 		}, nil
 	})
 }
+
+func runImportDownloadableFiles(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("import:downloadable-files")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioImport,
+		Path:          path,
+		StartEvent:    "import.downloadable_files.start",
+		CompleteEvent: "import.downloadable_files.complete",
+		RowErrorEvent: "import.downloadable_files.row_error",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		fileRepo, err := postgres.NewDownloadableFileRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("downloadable file repo: %w", err)
+		}
+		assetRepo, err := postgres.NewAssetRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("asset repo: %w", err)
+		}
+		svc := catalogApp.NewDownloadableFileService(productRepo, fileRepo, assetRepo, conn)
+		result, err := importer.NewDownloadableFileImporter(productRepo, svc).Import(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("import downloadable files: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"added":   result.Added,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}
+
+func runExportDownloadableFiles(cfg *config.Config, log logger.Logger) error {
+	path, err := requireIOPath("export:downloadable-files")
+	if err != nil {
+		return err
+	}
+	return runIOCommand(cfg, log, ioCommandOpts{
+		Kind:          ioExport,
+		Path:          path,
+		StartEvent:    "export.downloadable_files.start",
+		CompleteEvent: "export.downloadable_files.complete",
+		RowErrorEvent: "export.downloadable_files.row_error",
+		AtomicExport:  true,
+		TempPrefix:    "downloadable-files-export-*.csv",
+	}, func(ctx context.Context, conn *sql.DB, f *os.File, _ ioRegs) (*ioOutcome, error) {
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		fileRepo, err := postgres.NewDownloadableFileRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("downloadable file repo: %w", err)
+		}
+		assetRepo, err := postgres.NewAssetRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("asset repo: %w", err)
+		}
+		svc := catalogApp.NewDownloadableFileService(productRepo, fileRepo, assetRepo, conn)
+		result, err := exporter.NewDownloadableFileExporter(productRepo, svc).Export(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("export downloadable files: %w", err)
+		}
+		return &ioOutcome{
+			Fields: map[string]interface{}{
+				"rows":    result.Rows,
+				"skipped": result.Skipped,
+				"errors":  len(result.Errors),
+			},
+			Errors: result.Errors,
+		}, nil
+	})
+}

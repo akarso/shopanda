@@ -239,6 +239,8 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:linked-eligible-parents <file.csv>` | Export linked eligibility parent allowlist to CSV |
 | `import:linked-eligible-categories <file.csv>` | Add linked eligibility category rules (`child_slug,category_slug`) |
 | `export:linked-eligible-categories <file.csv>` | Export linked eligibility category rules to CSV |
+| `import:downloadable-files <file.csv>` | Add downloadable file attachment metadata (`product_slug,asset_id,position,label`) |
+| `export:downloadable-files <file.csv>` | Export downloadable file attachment metadata to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |

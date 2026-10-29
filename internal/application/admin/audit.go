@@ -157,6 +157,20 @@ const (
 	AuditAssignmentCreate AuditAction = "assignment.create"
 	AuditAssignmentRevoke AuditAction = "assignment.revoke"
 
+	// Downloadable file attachments (PR-1078)
+	AuditDownloadableFileList    AuditAction = "product.downloadable_file.list"
+	AuditDownloadableFileAttach  AuditAction = "product.downloadable_file.attach"
+	AuditDownloadableFileReplace AuditAction = "product.downloadable_file.replace"
+	AuditDownloadableFileRemove  AuditAction = "product.downloadable_file.remove"
+	AuditDownloadableSettingsGet AuditAction = "product.downloadable_grant_settings.get"
+	AuditDownloadableSettingsPut AuditAction = "product.downloadable_grant_settings.put"
+	AuditDownloadableSettingsDel AuditAction = "product.downloadable_grant_settings.delete"
+
+	// Download grant admin operations (PR-1078)
+	AuditDownloadGrantList    AuditAction = "download_grant.list"
+	AuditDownloadGrantRevoke  AuditAction = "download_grant.revoke"
+	AuditDownloadGrantReissue AuditAction = "download_grant.reissue"
+
 	// Job admin operations (PR-1029)
 	AuditJobList   AuditAction = "job.list"
 	AuditJobRead   AuditAction = "job.read"

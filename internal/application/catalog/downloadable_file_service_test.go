@@ -64,16 +64,34 @@ func (s *stubDLFileRepo) CountByProductID(_ context.Context, productID string) (
 	}
 	return len(s.rows[productID]), nil
 }
-func (s *stubDLFileRepo) CountByAssetID(context.Context, string) (int, error) { return 0, nil }
+func (s *stubDLFileRepo) CountByAssetID(_ context.Context, assetID string) (int, error) {
+	n := 0
+	for _, rows := range s.rows {
+		for _, r := range rows {
+			if r.AssetID == assetID {
+				n++
+			}
+		}
+	}
+	return n, nil
+}
 func (s *stubDLFileRepo) Upsert(_ context.Context, f *catalog.DownloadableFile) error {
 	if s.rows == nil {
 		s.rows = map[string][]catalog.DownloadableFile{}
 	}
-	s.rows[f.ProductID] = append(s.rows[f.ProductID], *f)
+	rows := s.rows[f.ProductID]
+	for i := range rows {
+		if rows[i].AssetID == f.AssetID {
+			rows[i] = *f
+			s.rows[f.ProductID] = rows
+			return nil
+		}
+	}
+	s.rows[f.ProductID] = append(rows, *f)
 	if s.counts == nil {
 		s.counts = map[string]int{}
 	}
-	s.counts[f.ProductID]++
+	s.counts[f.ProductID] = len(s.rows[f.ProductID])
 	return nil
 }
 func (s *stubDLFileRepo) Remove(_ context.Context, productID, assetID string) error {
@@ -108,7 +126,7 @@ func (s *stubDLAssetRepo) FindByID(_ context.Context, id string) (*media.Asset, 
 }
 func (s *stubDLAssetRepo) List(context.Context, int, int) ([]media.Asset, error) { return nil, nil }
 func (s *stubDLAssetRepo) Delete(context.Context, string) error                  { return nil }
-func (s *stubDLAssetRepo) WithTx(*sql.Tx) media.AssetRepository                 { return s }
+func (s *stubDLAssetRepo) WithTx(*sql.Tx) media.AssetRepository                  { return s }
 func (s *stubDLAssetRepo) LockForUpdate(_ context.Context, id string) (*media.Asset, error) {
 	if s.byID == nil || s.byID[id] == nil {
 		return nil, apperror.NotFound("asset not found")
@@ -382,5 +400,247 @@ func TestDownloadableFileService_Attach_DraftWithoutOperatorScope(t *testing.T) 
 	err = svc.Attach(context.Background(), f)
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("Attach without operator scope = %v, want not found for draft", err)
+	}
+}
+
+func TestDownloadableFileService_Replace_PreservesMetaAndRetargets(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 3, Label: "Guide"}},
+		},
+		counts: map[string]int{"p1": 1},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	var retargeted bool
+	svc := newDLService(products, files, assets).WithGrantRetarget(
+		func(_ context.Context, _ *sql.Tx, oldAssetID, newAssetID string) (catalogapp.GrantRetargetOutcome, error) {
+			if oldAssetID != "old" || newAssetID != "new" {
+				t.Fatalf("retarget args = %s %s", oldAssetID, newAssetID)
+			}
+			retargeted = true
+			return catalogapp.GrantRetargetOutcome{Moved: 2}, nil
+		},
+	)
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	result, err := svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{})
+	if err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if !retargeted {
+		t.Fatal("expected grant retarget in Replace TX")
+	}
+	if result.GrantsMoved != 2 || result.GrantsRevoked != 0 {
+		t.Fatalf("result = %+v, want moved=2 revoked=0", result)
+	}
+	rows, err := files.ListByProductID(ctx, "p1")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	if rows[0].AssetID != "new" || rows[0].Position != 3 || rows[0].Label != "Guide" {
+		t.Fatalf("preserved meta = %+v", rows[0])
+	}
+}
+
+func TestDownloadableFileService_Replace_FailsClosedWithoutRetarget(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 1, Label: "A"}},
+		},
+		counts: map[string]int{"p1": 1},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	svc := newDLService(products, files, assets) // no WithGrantRetarget
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	_, err = svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{})
+	if err == nil || !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("Replace without retarget = %v, want internal", err)
+	}
+}
+
+func TestDownloadableFileService_Replace_SharedAssetRequiresGlobalRetarget(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+		"p2": {ID: "p2", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{
+		"p1": catalog.TypeDownloadable,
+		"p2": catalog.TypeDownloadable,
+	}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 1, Label: "A"}},
+			"p2": {{ProductID: "p2", AssetID: "old", Position: 0, Label: "Shared"}},
+		},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	var retargeted bool
+	svc := newDLService(products, files, assets).WithGrantRetarget(
+		func(context.Context, *sql.Tx, string, string) (catalogapp.GrantRetargetOutcome, error) {
+			retargeted = true
+			return catalogapp.GrantRetargetOutcome{Moved: 1}, nil
+		},
+	)
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	_, err = svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{})
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("shared without global_retarget = %v, want validation", err)
+	}
+	if retargeted {
+		t.Fatal("must not retarget when shared asset refused")
+	}
+	if len(files.rows["p1"]) != 1 || files.rows["p1"][0].AssetID != "old" {
+		t.Fatalf("join must be unchanged after refuse: %+v", files.rows["p1"])
+	}
+
+	result, err := svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{GlobalRetarget: true})
+	if err != nil {
+		t.Fatalf("Replace with global_retarget: %v", err)
+	}
+	if !retargeted {
+		t.Fatal("expected retarget when global_retarget=true")
+	}
+	if result.GrantsMoved != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(files.rows["p2"]) != 1 || files.rows["p2"][0].AssetID != "old" {
+		t.Fatalf("other product join unchanged: %+v", files.rows["p2"])
+	}
+}
+
+func TestDownloadableFileService_Replace_FailsClosedWhenRevokeWithoutNotifier(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 1, Label: "A"}},
+		},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	svc := newDLService(products, files, assets).WithGrantRetarget(
+		func(context.Context, *sql.Tx, string, string) (catalogapp.GrantRetargetOutcome, error) {
+			return catalogapp.GrantRetargetOutcome{
+				Revoked: []catalogapp.GrantConflictRevoked{{ID: "g1", OrderItemID: "oi", AssetID: "old"}},
+			}, nil
+		},
+	)
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	_, err = svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{})
+	if err == nil || !apperror.Is(err, apperror.CodeInternal) {
+		t.Fatalf("Replace revoke without notifier = %v, want internal", err)
+	}
+}
+
+func TestDownloadableFileService_Replace_ConflictRevokeNotifierAndCounts(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 1, Label: "A"}},
+		},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	var notified []catalogapp.GrantConflictRevoked
+	svc := newDLService(products, files, assets).
+		WithGrantRetarget(func(_ context.Context, _ *sql.Tx, oldAssetID, newAssetID string) (catalogapp.GrantRetargetOutcome, error) {
+			if oldAssetID != "old" || newAssetID != "new" {
+				t.Fatalf("retarget ids = %s %s", oldAssetID, newAssetID)
+			}
+			return catalogapp.GrantRetargetOutcome{
+				Moved: 3,
+				Revoked: []catalogapp.GrantConflictRevoked{
+					{ID: "g1", OrderItemID: "oi1", CustomerID: "c1", AssetID: "old"},
+				},
+			}, nil
+		}).
+		WithGrantConflictRevokeNotifier(func(_ context.Context, revoked []catalogapp.GrantConflictRevoked) {
+			notified = append([]catalogapp.GrantConflictRevoked{}, revoked...)
+		})
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	result, err := svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{})
+	if err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if result.GrantsMoved != 3 || result.GrantsRevoked != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(notified) != 1 || notified[0].ID != "g1" {
+		t.Fatalf("notified = %+v", notified)
+	}
+}
+
+func TestDownloadableFileService_Replace_ExplicitMeta(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "old", Position: 3, Label: "Guide"}},
+		},
+		counts: map[string]int{"p1": 1},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"old": {ID: "old", Path: media.PrivateDownloadsPrefix + "old/a.pdf"},
+		"new": {ID: "new", Path: media.PrivateDownloadsPrefix + "new/b.pdf"},
+	}}
+	svc := newDLService(products, files, assets).WithGrantRetarget(
+		func(context.Context, *sql.Tx, string, string) (catalogapp.GrantRetargetOutcome, error) {
+			return catalogapp.GrantRetargetOutcome{}, nil
+		},
+	)
+	f, err := catalog.NewDownloadableFile("p1", "new")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	pos := 7
+	label := "Updated"
+	if _, err := svc.Replace(ctx, "p1", "old", f, catalogapp.ReplaceMeta{Position: &pos, Label: &label}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	rows, _ := files.ListByProductID(ctx, "p1")
+	if len(rows) != 1 || rows[0].Position != 7 || rows[0].Label != "Updated" {
+		t.Fatalf("explicit meta = %+v", rows)
 	}
 }

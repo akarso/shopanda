@@ -2075,6 +2075,357 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/admin/products/{id}/downloadable-files:
+    get:
+      operationId: adminListDownloadableFiles
+      tags: ["Admin: Products"]
+      summary: List downloadable file attachments
+      description: >-
+        Returns join rows for the product (any type). Asset filename/path are
+        enriched when readable. Requires `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAttachDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Attach or update a downloadable file
+      description: >-
+        Upserts `(product_id, asset_id)`. Asset path must be under
+        `private/downloads/`. Product type must be downloadable.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachDownloadableFileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    put:
+      operationId: adminReplaceDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Replace a downloadable file attachment
+      description: >-
+        Swaps `old_asset_id` for `asset_id` in one transaction and retargets
+        DownloadGrant rows by asset id (live and expired; not product-scoped).
+        Without `global_retarget`, a shared asset (other products still attach
+        `old_asset_id`) returns 422 — this is not a this-product-only rewrite.
+        With `global_retarget=true`, every grant on the blob moves. UNIQUE
+        conflict revokes the live old grant; expired old rows deleted to free
+        UNIQUE vanish (grant ids are not reissued). Response includes
+        `grants_moved` / `grants_revoked`. Omitted `position`/`label` preserve
+        the old join values. New asset must be under `private/downloads/`.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceDownloadableFileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/downloadable-files/{assetId}:
+    delete:
+      operationId: adminRemoveDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Remove a downloadable file attachment
+      description: >-
+        422 when removing the last file from an Active downloadable product.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/downloadable-grant-settings:
+    get:
+      operationId: adminGetDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Get per-product download grant overrides
+      description: >-
+        Missing override returns null expiry/limit (global defaults apply).
+        404 when the product does not exist. Requires `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: adminPutDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Upsert per-product download grant overrides
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutDownloadableGrantSettingsRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    delete:
+      operationId: adminDeleteDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Clear per-product download grant overrides
+      description: >-
+        Idempotent when no override row exists. Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/download-grants:
+    get:
+      operationId: adminListDownloadGrants
+      tags: ["Admin: Orders"]
+      summary: List download grants by customer or order item
+      description: >-
+        Require `customer_id` or `order_item_id` (`orderID/variantID`).
+        Requires `downloads.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+        - name: order_item_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/download-grants/{id}/revoke:
+    post:
+      operationId: adminRevokeDownloadGrant
+      tags: ["Admin: Orders"]
+      summary: Revoke a download grant
+      description: >-
+        Sets `expires_at` to now. Idempotent when already expired. `reason`
+        is required for audit. Requires `downloads.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeDownloadGrantRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/download-grants/{id}/reissue:
+    post:
+      operationId: adminReissueDownloadGrant
+      tags: ["Admin: Orders"]
+      summary: Re-issue a download grant
+      description: >-
+        Extends expiry (`expires_at` or `expiry_days` from now), optionally
+        updates `download_limit`, and by default resets `download_count`.
+        `reason` is required. Requires `downloads.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReissueDownloadGrantRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/orders/{orderId}/download-grants:
+    get:
+      operationId: adminListOrderDownloadGrants
+      tags: ["Admin: Orders"]
+      summary: List download grants for an order
+      description: >-
+        Walks order lines and returns grants keyed by `orderID/variantID`.
+        Requires `downloads.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/admin/assignments:
     get:
       operationId: adminListAssignmentsByParent
@@ -3895,6 +4246,98 @@ components:
         category_id:
           type: string
           description: Category UUID.
+
+    AttachDownloadableFileRequest:
+      type: object
+      required: [asset_id]
+      properties:
+        asset_id:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        label:
+          type: string
+          maxLength: 200
+
+    ReplaceDownloadableFileRequest:
+      type: object
+      required: [old_asset_id, asset_id]
+      description: >-
+        Omitting position/label preserves the previous join values. Grant
+        retarget is asset-scoped (not this product only). Without
+        global_retarget, shared attachments return 422. With
+        global_retarget=true, every grant on the blob moves to asset_id.
+      properties:
+        old_asset_id:
+          type: string
+        asset_id:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        label:
+          type: string
+          maxLength: 200
+        global_retarget:
+          type: boolean
+          description: >-
+            Required when other products still attach old_asset_id. When true,
+            every download_grants row for the old blob is retargeted (or conflict-
+            revoked / deleted per UNIQUE rules).
+
+    PutDownloadableGrantSettingsRequest:
+      type: object
+      properties:
+        expiry_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          nullable: true
+        download_limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          nullable: true
+
+    RevokeDownloadGrantRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    ReissueDownloadGrantRequest:
+      type: object
+      required: [reason]
+      description: >-
+        Exactly one of expires_at or expiry_days is required; expiry must be
+        strictly in the future. Reissue runs in one DB transaction (row lock,
+        extend, optional CAS reset).
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC3339 absolute expiry; must be strictly after now.
+        expiry_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: Days from now when expires_at is omitted.
+        download_limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        reset_count:
+          type: boolean
+          description: Defaults to true. When true, count resets before a lower limit is applied.
+        reason:
+          type: string
+      anyOf:
+        - required: [expires_at]
+        - required: [expiry_days]
 
     CreateVariantRequest:
       type: object
