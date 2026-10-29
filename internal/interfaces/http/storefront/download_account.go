@@ -149,13 +149,12 @@ func (h *DownloadAccountHandler) Deliver() http.HandlerFunc {
 			return
 		}
 
-		filename := media.SanitizeContentDispositionFilename(asset.Filename)
 		mimeType := strings.TrimSpace(asset.MimeType)
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", mimeType)
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Disposition", media.ContentDispositionAttachment(asset.Filename))
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.Header().Set("Cache-Control", "private, no-store")
 		_, _ = w.Write(data)

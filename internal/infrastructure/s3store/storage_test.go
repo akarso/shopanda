@@ -167,6 +167,29 @@ func TestSignedURL_SetsPrivateCacheControlAndDisposition(t *testing.T) {
 	}
 }
 
+func TestSignedURL_NonASCIIFilenameUsesRFC5987(t *testing.T) {
+	mock := &mockS3{}
+	presign := &mockPresigner{url: "https://my-bucket.s3.eu-west-1.amazonaws.com/a.pdf?X-Amz-Signature=1"}
+	st := newWithClient(mock, "my-bucket", "https://s3.eu-west-1.amazonaws.com/my-bucket")
+	st.region = "eu-west-1"
+	st.presigner = presign
+
+	_, err := st.SignedURL(context.Background(), "private/downloads/id/guide.pdf", media.SignURLOptions{
+		TTL:      time.Minute,
+		Filename: "café.pdf",
+	})
+	if err != nil {
+		t.Fatalf("SignedURL: %v", err)
+	}
+	want := media.ContentDispositionAttachment("café.pdf")
+	if !strings.Contains(want, "filename*=UTF-8''") {
+		t.Fatalf("helper missing filename*: %q", want)
+	}
+	if presign.lastDisp != want {
+		t.Fatalf("ResponseContentDisposition = %q, want %q", presign.lastDisp, want)
+	}
+}
+
 func TestSignedURL_RejectsForeignHost(t *testing.T) {
 	st := newWithClient(&mockS3{}, "my-bucket", "https://s3.eu-west-1.amazonaws.com/my-bucket")
 	st.region = "eu-west-1"

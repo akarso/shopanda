@@ -305,12 +305,11 @@ func (s *Storage) SignedURL(ctx context.Context, path string, opts domainMedia.S
 	if ttl <= 0 {
 		ttl = DefaultSignedURLTTL
 	}
-	filename := sanitizeContentDispositionFilename(opts.Filename)
 	input := &s3.GetObjectInput{
 		Bucket:                     aws.String(s.bucket),
 		Key:                        aws.String(key),
 		ResponseCacheControl:       aws.String(privateCacheControl),
-		ResponseContentDisposition: aws.String(fmt.Sprintf(`attachment; filename="%s"`, filename)),
+		ResponseContentDisposition: aws.String(domainMedia.ContentDispositionAttachment(opts.Filename)),
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -345,10 +344,6 @@ func ensureSignedURLHostAllowed(raw string, allowed []string) error {
 		}
 	}
 	return fmt.Errorf("signed URL host %q not allowed", host)
-}
-
-func sanitizeContentDispositionFilename(filename string) string {
-	return domainMedia.SanitizeContentDispositionFilename(filename)
 }
 
 func isS3NotFound(err error) bool {

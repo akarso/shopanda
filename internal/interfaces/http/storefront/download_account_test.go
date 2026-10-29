@@ -470,6 +470,32 @@ func TestDownloadAccount_Deliver_ContentDispositionSanitized(t *testing.T) {
 	}
 }
 
+func TestDownloadAccount_Deliver_ContentDispositionNonASCII(t *testing.T) {
+	repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
+	svc := downloadapp.NewService(repo, nil)
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "cust-1", "asset-1", time.Now().UTC().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	asset := &media.Asset{
+		ID: "asset-1", Path: "f.pdf", Filename: "café.pdf",
+		MimeType: "application/pdf", CreatedAt: time.Now().UTC(),
+	}
+	storage := &memReadableStorage{files: map[string][]byte{"f.pdf": []byte("%PDF")}}
+	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, storage, nil)
+	rr := postDownload(h.Deliver(), g.ID, "cust-1")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	want := media.ContentDispositionAttachment("café.pdf")
+	if !strings.Contains(want, "filename*=UTF-8''") {
+		t.Fatalf("helper missing filename*: %q", want)
+	}
+	if got := rr.Header().Get("Content-Disposition"); got != want {
+		t.Fatalf("disposition = %q, want %q", got, want)
+	}
+}
+
 func TestDownloadAccount_Deliver_NeverUsesStorageURL(t *testing.T) {
 	repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
 	svc := downloadapp.NewService(repo, nil)

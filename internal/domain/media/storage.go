@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -21,11 +22,50 @@ func IsPrivateDownloadsPath(path string) bool {
 	return strings.HasPrefix(p, PrivateDownloadsPrefix)
 }
 
-// SanitizeContentDispositionFilename strips CR/LF/quotes/backslashes from a
-// Content-Disposition filename so crafted names cannot break headers or
-// signed-URL response overrides.
+// SanitizeContentDispositionFilename returns an ASCII-safe filename for the
+// Content-Disposition filename= parameter. Non-ASCII and header-unsafe runes
+// are stripped; empty results become "download".
 func SanitizeContentDispositionFilename(filename string) string {
-	safe := strings.Map(func(r rune) rune {
+	ascii := asciiContentDispositionFilename(filename)
+	if ascii == "" {
+		return "download"
+	}
+	return ascii
+}
+
+// ContentDispositionAttachment builds a Content-Disposition attachment value
+// with an ASCII filename= fallback and, when the name contains non-ASCII,
+// an RFC 5987 filename* parameter (UTF-8 percent-encoded).
+func ContentDispositionAttachment(filename string) string {
+	trimmed := strings.TrimSpace(filename)
+	encoded := stripContentDispositionUnsafe(trimmed)
+	ascii := asciiContentDispositionFilename(trimmed)
+	if ascii == "" {
+		ascii = "download"
+	}
+	disp := fmt.Sprintf(`attachment; filename="%s"`, ascii)
+	if encoded == "" || !containsNonASCII(encoded) {
+		return disp
+	}
+	return disp + "; filename*=UTF-8''" + percentEncodeRFC5987(encoded)
+}
+
+func stripContentDispositionUnsafe(filename string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '"', '\r', '\n', '\\':
+			return -1
+		default:
+			return r
+		}
+	}, filename)
+}
+
+func asciiContentDispositionFilename(filename string) string {
+	return strings.Map(func(r rune) rune {
+		if r > 0x7f {
+			return -1
+		}
 		switch r {
 		case '"', '\r', '\n', '\\':
 			return -1
@@ -33,10 +73,43 @@ func SanitizeContentDispositionFilename(filename string) string {
 			return r
 		}
 	}, strings.TrimSpace(filename))
-	if safe == "" {
-		return "download"
+}
+
+func containsNonASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 0x7f {
+			return true
+		}
 	}
-	return safe
+	return false
+}
+
+// percentEncodeRFC5987 percent-encodes a UTF-8 string for RFC 5987 filename*
+// (attr-char left unescaped; all other octets as %XX).
+func percentEncodeRFC5987(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if isRFC5987AttrChar(c) {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
+}
+
+func isRFC5987AttrChar(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	switch c {
+	case '!', '#', '$', '&', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	}
+	return false
 }
 
 // Storage abstracts file storage operations.
