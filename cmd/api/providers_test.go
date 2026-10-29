@@ -48,7 +48,7 @@ func (noopSearchEngine) RemoveCategory(context.Context, string) error         { 
 func (noopSearchEngine) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }
-func (noopSearchEngine) Suggest(context.Context, string, int) ([]search.Suggestion, error) {
+func (noopSearchEngine) Suggest(context.Context, search.SuggestQuery) ([]search.Suggestion, error) {
 	return nil, nil
 }
 

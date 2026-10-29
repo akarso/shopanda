@@ -11,6 +11,7 @@ import (
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
@@ -38,6 +39,14 @@ func newDiscoveryFacetSyncer(store *adminApp.AttributeStore, engine search.Searc
 		configurer = c
 	}
 	return adminApp.NewDiscoveryFacetSyncer(store, configurer)
+}
+
+// catalogVisibilityOptions returns the shared VisibilityOptions for serve,
+// worker, and CLI index paths (PR-1079). RequireCategory has no config key
+// yet (PR-1059) — keep a single construction site so a future config field
+// threads through every caller at once.
+func catalogVisibilityOptions(_ *config.Config) catalog.VisibilityOptions {
+	return catalog.VisibilityOptions{}
 }
 
 func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.DB) error {

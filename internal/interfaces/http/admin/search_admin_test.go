@@ -161,7 +161,7 @@ func (f *fakeSearchEngine) Search(context.Context, domainsearch.SearchQuery) (do
 	return domainsearch.SearchResult{}, nil
 }
 
-func (f *fakeSearchEngine) Suggest(context.Context, string, int) ([]domainsearch.Suggestion, error) {
+func (f *fakeSearchEngine) Suggest(context.Context, domainsearch.SuggestQuery) ([]domainsearch.Suggestion, error) {
 	return nil, nil
 }
 

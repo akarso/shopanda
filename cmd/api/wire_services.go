@@ -127,6 +127,7 @@ type serveRuntime struct {
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
 	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 	shippingReg     *shipping.ProviderRegistry
 	payRegistry     *payment.ProviderRegistry
 	slotRegistry    *slotsApp.Registry
@@ -416,10 +417,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	menuResolver := cmsApp.NewMenuResolver(repos.categoryRepo, repos.pageRepo)
 
-	// visibilityOpts is the shared, zero-value VisibilityOptions for every
-	// AutoBasis caller (public gate below, admin GUI, cart/checkout). No
-	// config key feeds RequireCategory today — see PR-1059.md.
-	visibilityOpts := catalog.VisibilityOptions{}
+	// visibilityOpts is the shared VisibilityOptions for every AutoBasis
+	// caller (public gate, admin GUI, cart/checkout, search index).
+	visibilityOpts := catalogVisibilityOptions(cfg)
 
 	// Axis gates stay off until catalog.visibility.enforce (default false).
 	var visibilityFacts catalog.VisibilityFactsSource
@@ -447,6 +447,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		}
 		adminVisibilityFacts = factsRepo
 	}
+	// Index-time visibility for search reindex (PR-1079): always resolve
+	// axes when a facts repo exists, even if enforce is off, so denormalized
+	// search fields stay accurate. Zero VisibilityOptions matches storefront.
+	searchProductSource.WithVisibility(adminVisibilityFacts, visibilityOpts)
 	blockResolver := cmsApp.NewBlockResolver(repos.productRepo)
 	if visibilityFacts != nil {
 		blockResolver = blockResolver.WithVisibilityFacts(visibilityFacts)
@@ -942,7 +946,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	categoryProductAssignmentAdmin.SetBus(bus) // PR-1036: category assignment change → search index update
 	searchHandler := storefront.NewSearchHandler(searchEngine).
 		WithAdvancedSearchAttributes(attributeStore).
-		WithVisibilityFacts(visibilityFacts)
+		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log).
 		WithAssetAttachments(repos.downloadableFileRepo).
 		WithAssetGrants(downloadGrantService).
@@ -1104,6 +1108,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,
+		visibilityOpts:                 visibilityOpts,
 		shippingReg:                    shippingReg,
 		payRegistry:                    payRegistry,
 		slotRegistry:                   slotRegistry,

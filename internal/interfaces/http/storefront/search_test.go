@@ -20,7 +20,7 @@ import (
 
 type mockSearchEngine struct {
 	searchFn  func(ctx context.Context, query search.SearchQuery) (search.SearchResult, error)
-	suggestFn func(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error)
+	suggestFn func(ctx context.Context, query search.SuggestQuery) ([]search.Suggestion, error)
 }
 
 type mockAdvancedSearchAttributeLister struct {
@@ -46,9 +46,9 @@ func (m *mockSearchEngine) Search(ctx context.Context, query search.SearchQuery)
 	return m.searchFn(ctx, query)
 }
 
-func (m *mockSearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+func (m *mockSearchEngine) Suggest(ctx context.Context, query search.SuggestQuery) ([]search.Suggestion, error) {
 	if m.suggestFn != nil {
-		return m.suggestFn(ctx, prefix, limit)
+		return m.suggestFn(ctx, query)
 	}
 	return nil, nil
 }
@@ -388,7 +388,8 @@ func TestSearchHandler_ValidationError(t *testing.T) {
 
 func TestSuggestHandler_OK(t *testing.T) {
 	engine := &mockSearchEngine{
-		suggestFn: func(_ context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+		suggestFn: func(_ context.Context, q search.SuggestQuery) ([]search.Suggestion, error) {
+			prefix, limit := q.Prefix, q.Limit
 			if prefix != "sne" {
 				t.Errorf("prefix = %q, want sne", prefix)
 			}
@@ -474,7 +475,7 @@ func TestSuggestHandler_ZeroLimit(t *testing.T) {
 
 func TestSuggestHandler_EngineError(t *testing.T) {
 	engine := &mockSearchEngine{
-		suggestFn: func(_ context.Context, _ string, _ int) ([]search.Suggestion, error) {
+		suggestFn: func(_ context.Context, _ search.SuggestQuery) ([]search.Suggestion, error) {
 			return nil, errors.New("db down")
 		},
 	}
