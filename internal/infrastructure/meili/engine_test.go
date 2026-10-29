@@ -590,6 +590,25 @@ func TestSuggest_GracefulDegradation(t *testing.T) {
 	}
 }
 
+func TestSuggest_WithCategoryFilter(t *testing.T) {
+	mock := &mockAPI{searchResp: searchResponse{}}
+	e := newWithAPI(mock, "products")
+	_, err := e.Suggest(context.Background(), search.SuggestQuery{
+		Prefix:  "sne",
+		Limit:   5,
+		Filters: map[string]interface{}{"category": "cat-1"},
+	})
+	if err != nil {
+		t.Fatalf("Suggest: %v", err)
+	}
+	if !strings.Contains(mock.searchReq.Filter, `category_ids = "cat-1"`) {
+		t.Errorf("Filter = %q, want category_ids = \"cat-1\"", mock.searchReq.Filter)
+	}
+	if !strings.Contains(mock.searchReq.Filter, `status = "active" OR status NOT EXISTS`) {
+		t.Errorf("Filter = %q, want fail-open status=active", mock.searchReq.Filter)
+	}
+}
+
 func TestSuggest_WithVisibilityFilter(t *testing.T) {
 	mock := &mockAPI{searchResp: searchResponse{}}
 	e := newWithAPI(mock, "products")

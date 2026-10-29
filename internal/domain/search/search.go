@@ -134,8 +134,9 @@ const MaxSuggestLimit = 10
 const DefaultSuggestLimit = 5
 
 // SuggestQuery describes an autocomplete request.
-// Filters use the same well-known keys as SearchQuery (e.g.
-// FilterVisibleInSearch). Engines must not bake storefront visibility into
+// Filters use the same well-known keys as SearchQuery (category, attr_*,
+// FilterVisibleInSearch, FilterType, …). Engines apply shared filter keys
+// consistently with Search. Engines must not bake storefront visibility into
 // Suggest semantics — callers pass filters only when enforce is on.
 type SuggestQuery struct {
 	Prefix  string
@@ -178,7 +179,8 @@ type SearchEngine interface {
 	Search(ctx context.Context, query SearchQuery) (SearchResult, error)
 
 	// Suggest returns autocomplete suggestions for query.Prefix.
-	// Limit is clamped via SuggestQuery.EffectiveLimit. Visibility filters
-	// are applied only when present on query.Filters — same contract as Search.
+	// Limit is clamped via SuggestQuery.EffectiveLimit. Shared Filters keys
+	// (category, attr_*, visibility, type, …) are applied only when present —
+	// same contract as Search.
 	Suggest(ctx context.Context, query SuggestQuery) ([]Suggestion, error)
 }

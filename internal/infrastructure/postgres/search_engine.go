@@ -103,16 +103,17 @@ func (e *SearchEngine) RemoveCategory(ctx context.Context, categoryID string) er
 }
 
 // Suggest returns autocomplete suggestions using prefix matching on product names.
-// Visibility filters are applied only when present on query.Filters — same
-// contract as Search (PR-1079 review: do not bake visible_in_search into every
-// Suggest call).
+// Filters use the same shared keys as Search (category, attr_*, visibility,
+// purchasable, type) via appendSharedProductFilters — callers pass only what
+// they need (PR-1079: do not bake visible_in_search into every Suggest call).
 func (e *SearchEngine) Suggest(ctx context.Context, query search.SuggestQuery) ([]search.Suggestion, error) {
 	if query.Prefix == "" {
 		return nil, nil
 	}
 	limit := query.EffectiveLimit()
 
-	wheres := []string{"status = 'active'", "name ILIKE $1 ESCAPE '\\'"}
+	wheres := []string{"p.status = 'active'", "p.name ILIKE $1 ESCAPE '\\'"}
+	joins := []string{}
 	args := []interface{}{escapeLike(query.Prefix) + "%"}
 	argN := 1
 	nextArg := func(v interface{}) string {
@@ -120,24 +121,14 @@ func (e *SearchEngine) Suggest(ctx context.Context, query search.SuggestQuery) (
 		args = append(args, v)
 		return fmt.Sprintf("$%d", argN)
 	}
-	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInSearch]) {
-		wheres = append(wheres, "search_visible_in_search = true")
-	}
-	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInCatalog]) {
-		wheres = append(wheres, "search_visible_in_catalog = true")
-	}
-	if search.FilterBoolTrue(query.Filters[search.FilterPurchasable]) {
-		wheres = append(wheres, "search_purchasable = true")
-	}
-	if typeStr, ok := search.SanitizeFilterType(query.Filters[search.FilterType]); ok {
-		wheres = append(wheres, fmt.Sprintf("type = %s", nextArg(typeStr)))
-	}
+	appendSharedProductFilters(query.Filters, nextArg, &joins, &wheres)
 	args = append(args, limit)
 	limitArg := fmt.Sprintf("$%d", argN+1)
 
-	q := fmt.Sprintf(`SELECT id, name, slug FROM products
+	joinClause := strings.Join(joins, " ")
+	q := fmt.Sprintf(`SELECT p.id, p.name, p.slug FROM products p %s
 		WHERE %s
-		ORDER BY name LIMIT %s`, strings.Join(wheres, " AND "), limitArg)
+		ORDER BY p.name LIMIT %s`, joinClause, strings.Join(wheres, " AND "), limitArg)
 	rows, err := e.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search_engine: suggest: %w", err)
@@ -161,6 +152,54 @@ func (e *SearchEngine) Suggest(ctx context.Context, query search.SuggestQuery) (
 		return nil, fmt.Errorf("search_engine: suggest rows: %w", err)
 	}
 	return suggestions, nil
+}
+
+// appendSharedProductFilters applies Filters keys shared by Search and Suggest:
+// category, attr_<code>, visibility axes, purchasable, and type. Price /
+// in_stock remain Search-only (Postgres price shape differs from Meili).
+func appendSharedProductFilters(
+	filters map[string]interface{},
+	nextArg func(interface{}) string,
+	joins, wheres *[]string,
+) {
+	if filters == nil {
+		return
+	}
+	if cat, ok := filters["category"]; ok {
+		if catStr, ok := cat.(string); ok && catStr != "" {
+			catArg := nextArg(catStr)
+			*joins = append(*joins, fmt.Sprintf(
+				"INNER JOIN product_categories pc ON pc.product_id = p.id AND pc.category_id = %s", catArg))
+		}
+	}
+	for key, raw := range filters {
+		code, ok := search.AttributeCodeFromFilterKey(key)
+		if !ok {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		codeArg := nextArg(code)
+		valArg := nextArg(value)
+		*wheres = append(*wheres, fmt.Sprintf("p.attributes->>%s = %s", codeArg, valArg))
+	}
+	// Denormalized visibility filters (PR-1079). Only truthy values are
+	// applied — callers AND these when present so Total/Facets match hits.
+	// Columns DEFAULT true (fail-open until reindex); see DEPLOYMENT.md.
+	if search.FilterBoolTrue(filters[search.FilterVisibleInSearch]) {
+		*wheres = append(*wheres, "p.search_visible_in_search = true")
+	}
+	if search.FilterBoolTrue(filters[search.FilterVisibleInCatalog]) {
+		*wheres = append(*wheres, "p.search_visible_in_catalog = true")
+	}
+	if search.FilterBoolTrue(filters[search.FilterPurchasable]) {
+		*wheres = append(*wheres, "p.search_purchasable = true")
+	}
+	if typeStr, ok := search.SanitizeFilterType(filters[search.FilterType]); ok {
+		*wheres = append(*wheres, fmt.Sprintf("p.type = %s", nextArg(typeStr)))
+	}
 }
 
 // Search executes a full-text search query with optional filters, sorting, and facets.
@@ -192,48 +231,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		wheres = append(wheres, fmt.Sprintf("p.search_vector @@ %s", tsQueryRef))
 	}
 
-	// Category filter.
-	if cat, ok := query.Filters["category"]; ok {
-		if catStr, ok := cat.(string); ok && catStr != "" {
-			catArg := nextArg(catStr)
-			joins = append(joins, fmt.Sprintf(
-				"INNER JOIN product_categories pc ON pc.product_id = p.id AND pc.category_id = %s", catArg))
-		}
-	}
-
-	// Product attribute filters (keys attr_<code>).
-	for key, raw := range query.Filters {
-		if !strings.HasPrefix(key, "attr_") {
-			continue
-		}
-		code := strings.TrimPrefix(key, "attr_")
-		if !searchAttributeCodeValid(code) {
-			continue
-		}
-		value, ok := raw.(string)
-		if !ok || strings.TrimSpace(value) == "" {
-			continue
-		}
-		codeArg := nextArg(code)
-		valArg := nextArg(value)
-		wheres = append(wheres, fmt.Sprintf("p.attributes->>%s = %s", codeArg, valArg))
-	}
-
-	// Denormalized visibility filters (PR-1079). Only truthy values are
-	// applied — callers AND these when present so Total/Facets match hits.
-	// Columns DEFAULT true (fail-open until reindex); see DEPLOYMENT.md.
-	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInSearch]) {
-		wheres = append(wheres, "p.search_visible_in_search = true")
-	}
-	if search.FilterBoolTrue(query.Filters[search.FilterVisibleInCatalog]) {
-		wheres = append(wheres, "p.search_visible_in_catalog = true")
-	}
-	if search.FilterBoolTrue(query.Filters[search.FilterPurchasable]) {
-		wheres = append(wheres, "p.search_purchasable = true")
-	}
-	if typeStr, ok := search.SanitizeFilterType(query.Filters[search.FilterType]); ok {
-		wheres = append(wheres, fmt.Sprintf("p.type = %s", nextArg(typeStr)))
-	}
+	appendSharedProductFilters(query.Filters, nextArg, &joins, &wheres)
 
 	// Price filter.
 	if priceFilter, ok := query.Filters["price"]; ok {

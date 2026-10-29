@@ -856,3 +856,57 @@ func TestSearchEngine_IndexProduct_VisibilityColumnsAndFilter(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchEngine_Suggest_CategoryFilter pins Search/Suggest filter parity:
+// category on SuggestQuery.Filters must exclude products outside that category.
+func TestSearchEngine_Suggest_CategoryFilter(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+
+	catIn := mustNewCategory(t, "Suggest Cat In", "suggest-cat-in-"+id.New()[:8])
+	catOut := mustNewCategory(t, "Suggest Cat Out", "suggest-cat-out-"+id.New()[:8])
+	for _, c := range []catalog.Category{catIn, catOut} {
+		mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, now(), now())", c.ID, c.Name, c.Slug)
+	}
+
+	inCat := mustNewProduct(t, "SuggestParity Alpha", "suggest-parity-alpha-"+id.New()[:8])
+	outCat := mustNewProduct(t, "SuggestParity Beta", "suggest-parity-beta-"+id.New()[:8])
+	for _, p := range []*catalog.Product{&inCat, &outCat} {
+		p.Status = catalog.StatusActive
+		if err := productRepo.Create(ctx, p); err != nil {
+			t.Fatalf("Create product: %v", err)
+		}
+	}
+	if err := productRepo.AssignCategory(ctx, inCat.ID, catIn.ID); err != nil {
+		t.Fatalf("AssignCategory in: %v", err)
+	}
+	if err := productRepo.AssignCategory(ctx, outCat.ID, catOut.ID); err != nil {
+		t.Fatalf("AssignCategory out: %v", err)
+	}
+
+	suggestions, err := engine.Suggest(ctx, search.SuggestQuery{
+		Prefix:  "SuggestParity",
+		Limit:   10,
+		Filters: map[string]interface{}{"category": catIn.ID},
+	})
+	if err != nil {
+		t.Fatalf("Suggest: %v", err)
+	}
+	if len(suggestions) != 1 || suggestions[0].ProductID != inCat.ID {
+		t.Fatalf("Suggest with category = %+v, want only %s", suggestions, inCat.ID)
+	}
+	for _, s := range suggestions {
+		if s.ProductID == outCat.ID {
+			t.Fatal("Suggest must exclude out-of-category products")
+		}
+	}
+}
