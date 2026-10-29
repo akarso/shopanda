@@ -925,6 +925,8 @@ PR-1079 adds denormalized visibility axes (`visible_in_catalog`,
 
 Do **not** flip enforce on before the Meili reindex completes: post-filter still fail-closes against live facts, but Total/Facets stay wrong until the index is current. Postgres-only deployments still need the reindex so denormalized columns leave the `DEFAULT true` placeholder for hidden products.
 
+**Ongoing reindex (until PR-1080):** An initial deploy reindex is **not** enough. Until PR-1080 adds on-save reindex triggers for visibility-affecting changes, run a **full** `search:reindex` (or admin reindex-all) after any bulk or admin change that alters visibility axes, type, or status. Stale indexed visibility leaves Search/Suggest hits, `total`, and facets incorrect even when storefront post-filters drop bad product rows.
+
 ## Monitor The Deployment
 
 ### Health checks

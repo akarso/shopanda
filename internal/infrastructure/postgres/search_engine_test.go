@@ -850,10 +850,17 @@ func TestSearchEngine_IndexProduct_VisibilityColumnsAndFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Suggest: %v", err)
 	}
+	sawVisible := false
 	for _, s := range suggestions {
 		if s.ProductID == hidden.ID {
 			t.Fatal("Suggest must exclude search_visible_in_search=false products")
 		}
+		if s.ProductID == visible.ID {
+			sawVisible = true
+		}
+	}
+	if !sawVisible {
+		t.Fatal("Suggest must include the visible product")
 	}
 }
 

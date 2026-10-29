@@ -41,8 +41,9 @@ func filterSearchHitsByVisibility(
 		}
 	}
 	result.Products = filtered
-	// Total / Facets stay index-level; if this safety net removes hits the
-	// engine ignored a filter key — prefer fixing index/schema (DEPLOYMENT).
+	// Total / Facets stay index-level. Removed hits may mean the engine ignored
+	// a filter key or the index still has stale visibility — fix schema/reindex
+	// (DEPLOYMENT); do not trust Total/Facets after a post-filter shrink.
 	return result, nil
 }
 
