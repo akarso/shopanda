@@ -13,7 +13,9 @@ import (
 
 // DownloadableFileImporter adds downloadable product → asset links from CSV.
 // Columns: product_slug, asset_id, position, label.
-// position empty means 0. label may be empty. Omitted rows are not deletes.
+// position/label are optional headers: when absent on re-import, the matching
+// join's Position/Label are retained; when present, CSV values win (empty
+// position means 0). Omitted rows are not deletes.
 // Assets must already exist under private/downloads/ (Attach enforces this).
 type DownloadableFileImporter struct {
 	products catalog.ProductRepository
@@ -51,6 +53,8 @@ func (imp *DownloadableFileImporter) Import(ctx context.Context, r io.Reader) (*
 			return nil, fmt.Errorf("downloadable file import: missing required column %q", col)
 		}
 	}
+	_, hasPosition := colIdx["position"]
+	_, hasLabel := colIdx["label"]
 
 	result := &CompositionResult{}
 	cache := map[string]*catalog.Product{}
@@ -74,17 +78,6 @@ func (imp *DownloadableFileImporter) Import(ctx context.Context, r io.Reader) (*
 			result.Skipped++
 			continue
 		}
-		position := 0
-		if raw := colValRow(row, "position"); raw != "" {
-			n, err := strconv.Atoi(raw)
-			if err != nil || n < 0 {
-				result.Errors = append(result.Errors, fmt.Sprintf("line %d: position must be an integer >= 0", lineNum))
-				result.Skipped++
-				continue
-			}
-			position = n
-		}
-		label := colValRow(row, "label")
 		product, err := cachedProductBySlug(ctx, imp.products, cache, productSlug)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find product slug %q: %v", lineNum, productSlug, err))
@@ -102,10 +95,10 @@ func (imp *DownloadableFileImporter) Import(ctx context.Context, r io.Reader) (*
 			result.Skipped++
 			continue
 		}
-		already := false
-		for _, row := range existing {
-			if row.AssetID == assetID {
-				already = true
+		var match *catalog.DownloadableFile
+		for i := range existing {
+			if existing[i].AssetID == assetID {
+				match = &existing[i]
 				break
 			}
 		}
@@ -115,14 +108,33 @@ func (imp *DownloadableFileImporter) Import(ctx context.Context, r io.Reader) (*
 			result.Skipped++
 			continue
 		}
-		f.Position = position
-		f.Label = label
+		// Retain matching join metadata when optional CSV columns are absent.
+		if match != nil {
+			f.Position = match.Position
+			f.Label = match.Label
+		}
+		if hasPosition {
+			position := 0
+			if raw := colValRow(row, "position"); raw != "" {
+				n, err := strconv.Atoi(raw)
+				if err != nil || n < 0 {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: position must be an integer >= 0", lineNum))
+					result.Skipped++
+					continue
+				}
+				position = n
+			}
+			f.Position = position
+		}
+		if hasLabel {
+			f.Label = colValRow(row, "label")
+		}
 		if err := imp.files.Attach(ctx, f); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, compositionErrText(err)))
 			result.Skipped++
 			continue
 		}
-		if already {
+		if match != nil {
 			result.Updated++
 		} else {
 			result.Added++

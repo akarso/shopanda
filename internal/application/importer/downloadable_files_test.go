@@ -94,6 +94,12 @@ func (r *dlImportFileRepo) CountByProductID(context.Context, string) (int, error
 func (r *dlImportFileRepo) CountByAssetID(context.Context, string) (int, error)  { return 0, nil }
 func (r *dlImportFileRepo) Upsert(_ context.Context, f *catalog.DownloadableFile) error {
 	cp := *f
+	for i, row := range r.rows {
+		if row.ProductID == f.ProductID && row.AssetID == f.AssetID {
+			r.rows[i] = &cp
+			return nil
+		}
+	}
 	r.rows = append(r.rows, &cp)
 	return nil
 }
@@ -137,5 +143,80 @@ func TestDownloadableFileImport_Attach(t *testing.T) {
 	}
 	if len(files.rows) != 1 || files.rows[0].AssetID != "a1" || files.rows[0].Position != 1 {
 		t.Fatalf("rows = %+v", files.rows)
+	}
+}
+
+func TestDownloadableFileImport_ReimportUpdatedRetainsMeta(t *testing.T) {
+	products := &dlImportProductRepo{bySlug: map[string]*catalog.Product{
+		"ebook": {ID: "p1", Slug: "ebook", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}}
+	files := &dlImportFileRepo{}
+	assets := &dlImportAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: "private/downloads/a1/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
+	}}
+	svc := catalogApp.NewDownloadableFileService(products, files, assets, dlFilesImportTxStarter())
+	imp := importer.NewDownloadableFileImporter(products, svc)
+
+	first, err := imp.Import(context.Background(), strings.NewReader(
+		"product_slug,asset_id,position,label\nebook,a1,3,Manual\n",
+	))
+	if err != nil {
+		t.Fatalf("first Import: %v", err)
+	}
+	if first.Added != 1 || first.Updated != 0 {
+		t.Fatalf("first = %+v", first)
+	}
+
+	second, err := imp.Import(context.Background(), strings.NewReader(
+		"product_slug,asset_id\nebook,a1\n",
+	))
+	if err != nil {
+		t.Fatalf("second Import: %v", err)
+	}
+	if second.Updated != 1 || second.Added != 0 || len(second.Errors) != 0 {
+		t.Fatalf("second = %+v", second)
+	}
+	if len(files.rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(files.rows))
+	}
+	if files.rows[0].Position != 3 || files.rows[0].Label != "Manual" {
+		t.Fatalf("retained meta = %+v, want position=3 label=Manual", files.rows[0])
+	}
+}
+
+func TestDownloadableFileImport_SkippedErrors(t *testing.T) {
+	products := &dlImportProductRepo{bySlug: map[string]*catalog.Product{
+		"ebook": {ID: "p1", Slug: "ebook", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}}
+	files := &dlImportFileRepo{}
+	assets := &dlImportAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: "private/downloads/a1/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
+		"pub": {ID: "pub", Path: "public/pub/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
+	}}
+	svc := catalogApp.NewDownloadableFileService(products, files, assets, dlFilesImportTxStarter())
+	imp := importer.NewDownloadableFileImporter(products, svc)
+
+	cases := []struct {
+		name string
+		csv  string
+		want string
+	}{
+		{"unknown slug", "product_slug,asset_id\nmissing,a1\n", "unknown product slug"},
+		{"negative position", "product_slug,asset_id,position\nebook,a1,-1\n", "position must be an integer >= 0"},
+		{"asset outside private/downloads", "product_slug,asset_id\nebook,pub\n", "private/downloads"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := imp.Import(context.Background(), strings.NewReader(tc.csv))
+			if err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+			if result.Skipped != 1 || result.Added != 0 || result.Updated != 0 {
+				t.Fatalf("result = %+v", result)
+			}
+			if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], tc.want) {
+				t.Fatalf("errors = %v, want containing %q", result.Errors, tc.want)
+			}
+		})
 	}
 }

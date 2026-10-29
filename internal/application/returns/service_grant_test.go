@@ -267,10 +267,26 @@ func (m grantIssueVariants) FindByID(_ context.Context, id string) (*catalog.Var
 	return m[id], nil
 }
 
-type grantIssueProducts map[string]*catalog.Product
+// grantIssueProducts satisfies FindByID plus WithTx/LockForUpdate so
+// IssueForOrder's grant TX can take the products FOR UPDATE lock that
+// production ProductRepo provides (required when the grant repo binds TX).
+type grantIssueProducts struct {
+	catalog.ProductRepository
+	byID map[string]*catalog.Product
+}
 
-func (m grantIssueProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
-	return m[id], nil
+func (m *grantIssueProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return m.byID[id], nil
+}
+
+func (m *grantIssueProducts) WithTx(*sql.Tx) catalog.ProductRepository { return m }
+
+func (m *grantIssueProducts) LockForUpdate(_ context.Context, id string) (catalog.Type, error) {
+	p := m.byID[id]
+	if p == nil {
+		return "", apperror.NotFound("product not found")
+	}
+	return p.Type, nil
 }
 
 type grantIssueFiles map[string][]catalog.DownloadableFile
@@ -288,7 +304,9 @@ func newDownloadIssuerForReturn(t *testing.T, ord *order.Order, grantSvc *downlo
 	return downloadapp.NewIssuer(
 		&memOrderRepo{order: ord},
 		grantIssueVariants{"dl-var": {ID: "dl-var", ProductID: productID, SKU: "SKU-DL", Name: "Download"}},
-		grantIssueProducts{productID: {ID: productID, Type: catalog.TypeDownloadable, Status: catalog.StatusActive}},
+		&grantIssueProducts{byID: map[string]*catalog.Product{
+			productID: {ID: productID, Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+		}},
 		grantIssueFiles{productID: {{ProductID: productID, AssetID: "asset-dl"}}},
 		nil,
 		grantSvc,

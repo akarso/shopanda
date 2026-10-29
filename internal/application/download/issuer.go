@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -281,13 +282,26 @@ func (i *Issuer) issueAllLines(ctx context.Context, grants *Service, o *order.Or
 		}
 	}
 
+	// Take every downloadable product lock (including bundle leaves) in one
+	// sorted pass before any grant insert. Locking in line order can deadlock
+	// with a concurrent order that holds the same products in reverse.
+	if tx != nil {
+		ids, err := i.collectLockProductIDs(ctx, o, blocked)
+		if err != nil {
+			return nil, err
+		}
+		if err := i.lockProductsForIssue(ctx, tx, ids); err != nil {
+			return nil, err
+		}
+	}
+
 	created := make([]*domain.DownloadGrant, 0)
 	for _, item := range o.Items() {
 		orderItemID := domain.OrderItemID(o.ID, item.VariantID)
 		if _, skip := blocked[orderItemID]; skip {
 			continue
 		}
-		rows, err := i.issueForLine(ctx, grants, o, item, tx)
+		rows, err := i.issueForLine(ctx, grants, o, item)
 		if err != nil {
 			return created, err
 		}
@@ -330,7 +344,7 @@ func (i *Issuer) assertOrderPaid(ctx context.Context, o *order.Order) error {
 	return apperror.Validation("download: order is not paid")
 }
 
-func (i *Issuer) issueForLine(ctx context.Context, grants *Service, o *order.Order, item order.Item, tx *sql.Tx) ([]*domain.DownloadGrant, error) {
+func (i *Issuer) issueForLine(ctx context.Context, grants *Service, o *order.Order, item order.Item) ([]*domain.DownloadGrant, error) {
 	variant, err := i.variants.FindByID(ctx, item.VariantID)
 	if err != nil {
 		return nil, fmt.Errorf("download: find variant %s: %w", item.VariantID, err)
@@ -352,9 +366,9 @@ func (i *Issuer) issueForLine(ctx context.Context, grants *Service, o *order.Ord
 
 	switch product.Type {
 	case catalog.TypeDownloadable:
-		return i.issueForProduct(ctx, grants, o.ID, orderItemID, customerID, product.ID, qty, tx)
+		return i.issueForProduct(ctx, grants, o.ID, orderItemID, customerID, product.ID, qty)
 	case catalog.TypeBundle:
-		return i.issueForBundleLeaves(ctx, grants, o.ID, orderItemID, customerID, product.ID, qty, tx)
+		return i.issueForBundleLeaves(ctx, grants, o.ID, orderItemID, customerID, product.ID, qty)
 	default:
 		return nil, nil
 	}
@@ -365,7 +379,6 @@ func (i *Issuer) issueForBundleLeaves(
 	grants *Service,
 	orderID, orderItemID, customerID, bundleProductID string,
 	qty int,
-	tx *sql.Tx,
 ) ([]*domain.DownloadGrant, error) {
 	if i.components == nil {
 		return nil, apperror.Internal("download: bundle components repository is required for bundle grant issuance")
@@ -386,7 +399,7 @@ func (i *Issuer) issueForBundleLeaves(
 		if leaf == nil || leaf.Type != catalog.TypeDownloadable {
 			continue
 		}
-		leafGrants, err := i.issueForProduct(ctx, grants, orderID, orderItemID, customerID, leaf.ID, qty*component.Quantity, tx)
+		leafGrants, err := i.issueForProduct(ctx, grants, orderID, orderItemID, customerID, leaf.ID, qty*component.Quantity)
 		if err != nil {
 			return created, err
 		}
@@ -400,16 +413,9 @@ func (i *Issuer) issueForProduct(
 	grants *Service,
 	orderID, orderItemID, customerID, productID string,
 	qty int,
-	tx *sql.Tx,
 ) ([]*domain.DownloadGrant, error) {
-	// Serialize with Replace/Attach: hold products FOR UPDATE from attachment
-	// list through grant insert so issuance cannot mint grants for a
-	// superseded asset after a concurrent Replace commits.
-	if tx != nil {
-		if err := i.lockProductForIssue(ctx, tx, productID); err != nil {
-			return nil, err
-		}
-	}
+	// Product row locks are taken once in issueAllLines (sorted) before any
+	// grant insert so concurrent orders cannot deadlock on opposite lock order.
 	files, err := i.files.ListByProductID(ctx, productID)
 	if err != nil {
 		return nil, fmt.Errorf("download: list files for product %s: %w", productID, err)
@@ -451,9 +457,84 @@ func (i *Issuer) issueForProduct(
 	return created, nil
 }
 
-// lockProductForIssue takes products FOR UPDATE on the grant TX — the same
-// row lock Replace/Attach use — so attachment list + IssueIdempotent cannot
-// interleave with a join swap on that product.
+// collectLockProductIDs gathers downloadable product IDs (including required
+// bundle leaves) for non-blocked lines. Missing variants/products fail closed
+// the same way issueForLine does so locking and issuance see the same set.
+func (i *Issuer) collectLockProductIDs(ctx context.Context, o *order.Order, blocked map[string]struct{}) ([]string, error) {
+	seen := make(map[string]struct{})
+	var ids []string
+	add := func(productID string) {
+		productID = strings.TrimSpace(productID)
+		if productID == "" {
+			return
+		}
+		if _, ok := seen[productID]; ok {
+			return
+		}
+		seen[productID] = struct{}{}
+		ids = append(ids, productID)
+	}
+	for _, item := range o.Items() {
+		orderItemID := domain.OrderItemID(o.ID, item.VariantID)
+		if _, skip := blocked[orderItemID]; skip {
+			continue
+		}
+		variant, err := i.variants.FindByID(ctx, item.VariantID)
+		if err != nil {
+			return nil, fmt.Errorf("download: find variant %s: %w", item.VariantID, err)
+		}
+		if variant == nil {
+			return nil, apperror.Validation(fmt.Sprintf("download: variant %s missing for paid order %s", item.VariantID, o.ID))
+		}
+		product, err := i.products.FindByID(ctx, variant.ProductID)
+		if err != nil {
+			return nil, fmt.Errorf("download: find product %s: %w", variant.ProductID, err)
+		}
+		if product == nil {
+			return nil, apperror.Validation(fmt.Sprintf("download: product %s missing for paid order %s", variant.ProductID, o.ID))
+		}
+		switch product.Type {
+		case catalog.TypeDownloadable:
+			add(product.ID)
+		case catalog.TypeBundle:
+			if i.components == nil {
+				return nil, apperror.Internal("download: bundle components repository is required for bundle grant issuance")
+			}
+			rows, err := i.components.ListByBundleID(ctx, product.ID)
+			if err != nil {
+				return nil, fmt.Errorf("download: list bundle %s components: %w", product.ID, err)
+			}
+			for _, component := range rows {
+				if !component.Required {
+					continue
+				}
+				leaf, err := i.products.FindByID(ctx, component.ComponentProductID)
+				if err != nil {
+					return nil, fmt.Errorf("download: find bundle leaf %s: %w", component.ComponentProductID, err)
+				}
+				if leaf == nil || leaf.Type != catalog.TypeDownloadable {
+					continue
+				}
+				add(leaf.ID)
+			}
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// lockProductsForIssue takes products FOR UPDATE in the given (sorted) order
+// on the grant TX — the same row lock Replace/Attach use — so attachment list
+// + IssueIdempotent cannot interleave with a join swap on those products.
+func (i *Issuer) lockProductsForIssue(ctx context.Context, tx *sql.Tx, productIDs []string) error {
+	for _, productID := range productIDs {
+		if err := i.lockProductForIssue(ctx, tx, productID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (i *Issuer) lockProductForIssue(ctx context.Context, tx *sql.Tx, productID string) error {
 	binder, ok := i.products.(productTxBinder)
 	if !ok {

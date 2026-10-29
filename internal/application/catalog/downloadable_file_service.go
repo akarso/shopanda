@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -324,12 +325,23 @@ func (s *DownloadableFileService) Replace(ctx context.Context, productID, oldAss
 		}
 		return ReplaceResult{}, fmt.Errorf("downloadable file: lock product: %w", err)
 	}
-	asset, err := assetLocker.LockForUpdate(ctx, f.AssetID)
-	if err != nil {
-		if apperror.Is(err, apperror.CodeNotFound) {
-			return ReplaceResult{}, err
+	// Lock old and new asset rows in one stable order before reading either.
+	// Locking new-then-old deadlocks with a concurrent Replace that swaps the
+	// opposite direction (A→B vs B→A).
+	assetIDs := []string{oldAssetID, f.AssetID}
+	sort.Strings(assetIDs)
+	var asset *media.Asset
+	for _, aid := range assetIDs {
+		a, lockErr := assetLocker.LockForUpdate(ctx, aid)
+		if lockErr != nil {
+			if apperror.Is(lockErr, apperror.CodeNotFound) {
+				return ReplaceResult{}, lockErr
+			}
+			return ReplaceResult{}, fmt.Errorf("downloadable file: lock asset: %w", lockErr)
 		}
-		return ReplaceResult{}, fmt.Errorf("downloadable file: lock asset: %w", err)
+		if aid == f.AssetID {
+			asset = a
+		}
 	}
 	if asset == nil {
 		return ReplaceResult{}, apperror.NotFound("asset not found")
@@ -376,16 +388,9 @@ func (s *DownloadableFileService) Replace(ctx context.Context, productID, oldAss
 	}
 
 	// Fail closed before join swap: asset-scoped retarget would move every
-	// grant on the blob, including other products' order lines. Lock the old
-	// asset (same FOR UPDATE as Attach) before counting so a concurrent
-	// Attach on another product cannot commit after count=1 and leave
-	// grants moving under global_retarget=false.
-	if _, err := assetLocker.LockForUpdate(ctx, oldAssetID); err != nil {
-		if apperror.Is(err, apperror.CodeNotFound) {
-			return ReplaceResult{}, err
-		}
-		return ReplaceResult{}, fmt.Errorf("downloadable file: lock old asset: %w", err)
-	}
+	// grant on the blob, including other products' order lines. Both assets
+	// are already locked above so a concurrent Attach cannot commit after
+	// count=1 and leave grants moving under global_retarget=false.
 	attachCount, err := fileRepo.CountByAssetID(ctx, oldAssetID)
 	if err != nil {
 		return ReplaceResult{}, fmt.Errorf("downloadable file: count asset attachments: %w", err)
