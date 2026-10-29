@@ -260,11 +260,32 @@ func (s *DownloadableFileService) Replace(ctx context.Context, productID, oldAss
 	f.AssetID = strings.TrimSpace(f.AssetID)
 
 	if f.AssetID == oldAssetID {
+		// Same asset is a plain Attach (position/label update). Load the
+		// saved join first so omitted meta keeps existing values — NewDownloadableFile
+		// defaults (Position=0, Label="") must not wipe the row.
+		rows, err := s.files.ListByProductID(ctx, productID)
+		if err != nil {
+			return ReplaceResult{}, fmt.Errorf("downloadable file: list: %w", err)
+		}
+		var oldRow *catalog.DownloadableFile
+		for i := range rows {
+			if rows[i].AssetID == oldAssetID {
+				oldRow = &rows[i]
+				break
+			}
+		}
+		if oldRow == nil {
+			return ReplaceResult{}, apperror.NotFound("downloadable file not found")
+		}
 		if meta.Position != nil {
 			f.Position = *meta.Position
+		} else {
+			f.Position = oldRow.Position
 		}
 		if meta.Label != nil {
 			f.Label = *meta.Label
+		} else {
+			f.Label = oldRow.Label
 		}
 		if err := f.Validate(); err != nil {
 			return ReplaceResult{}, apperror.Validation(err.Error())
@@ -355,7 +376,16 @@ func (s *DownloadableFileService) Replace(ctx context.Context, productID, oldAss
 	}
 
 	// Fail closed before join swap: asset-scoped retarget would move every
-	// grant on the blob, including other products' order lines.
+	// grant on the blob, including other products' order lines. Lock the old
+	// asset (same FOR UPDATE as Attach) before counting so a concurrent
+	// Attach on another product cannot commit after count=1 and leave
+	// grants moving under global_retarget=false.
+	if _, err := assetLocker.LockForUpdate(ctx, oldAssetID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return ReplaceResult{}, err
+		}
+		return ReplaceResult{}, fmt.Errorf("downloadable file: lock old asset: %w", err)
+	}
 	attachCount, err := fileRepo.CountByAssetID(ctx, oldAssetID)
 	if err != nil {
 		return ReplaceResult{}, fmt.Errorf("downloadable file: count asset attachments: %w", err)

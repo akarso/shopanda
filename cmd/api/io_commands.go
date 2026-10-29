@@ -1005,6 +1005,7 @@ func runImportDownloadableFiles(cfg *config.Config, log logger.Logger) error {
 		return &ioOutcome{
 			Fields: map[string]interface{}{
 				"added":   result.Added,
+				"updated": result.Updated,
 				"skipped": result.Skipped,
 				"errors":  len(result.Errors),
 			},

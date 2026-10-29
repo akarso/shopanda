@@ -403,6 +403,37 @@ func TestDownloadableFileService_Attach_DraftWithoutOperatorScope(t *testing.T) 
 	}
 }
 
+func TestDownloadableFileService_Replace_SameAssetPreservesOmittedMeta(t *testing.T) {
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}, typ: map[string]catalog.Type{"p1": catalog.TypeDownloadable}}
+	files := &stubDLFileRepo{
+		rows: map[string][]catalog.DownloadableFile{
+			"p1": {{ProductID: "p1", AssetID: "a1", Position: 3, Label: "Guide"}},
+		},
+		counts: map[string]int{"p1": 1},
+	}
+	assets := &stubDLAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Path: media.PrivateDownloadsPrefix + "a1/guide.pdf"},
+	}}
+	svc := newDLService(products, files, assets)
+	f, err := catalog.NewDownloadableFile("p1", "a1")
+	if err != nil {
+		t.Fatalf("NewDownloadableFile: %v", err)
+	}
+	if _, err := svc.Replace(ctx, "p1", "a1", f, catalogapp.ReplaceMeta{}); err != nil {
+		t.Fatalf("Replace same asset: %v", err)
+	}
+	rows, err := files.ListByProductID(ctx, "p1")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	if rows[0].AssetID != "a1" || rows[0].Position != 3 || rows[0].Label != "Guide" {
+		t.Fatalf("preserved meta = %+v, want position=3 label=Guide", rows[0])
+	}
+}
+
 func TestDownloadableFileService_Replace_PreservesMetaAndRetargets(t *testing.T) {
 	ctx := catalog.WithOperatorProductReadScope(context.Background())
 	products := &stubDLProductRepo{byID: map[string]*catalog.Product{
