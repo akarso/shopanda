@@ -229,6 +229,36 @@ func TestNew_SignedURLHosts_AWSVirtualHosted(t *testing.T) {
 	}
 }
 
+func TestNew_SignedURLHosts_ChinaRegion(t *testing.T) {
+	st, err := New(Config{
+		Bucket: "my-bucket",
+		Region: "cn-north-1",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	hosts := st.SignedURLHosts()
+	want := map[string]bool{
+		"s3.cn-north-1.amazonaws.com.cn":            true,
+		"my-bucket.s3.cn-north-1.amazonaws.com.cn": true,
+	}
+	if len(hosts) != 2 {
+		t.Fatalf("SignedURLHosts = %v, want 2 hosts", hosts)
+	}
+	for _, h := range hosts {
+		if !want[h] {
+			t.Fatalf("unexpected host %q in %v", h, hosts)
+		}
+		delete(want, h)
+	}
+	for h := range want {
+		t.Fatalf("missing host %q in %v", h, hosts)
+	}
+	if !strings.HasSuffix(st.baseURL, "amazonaws.com.cn/my-bucket") {
+		t.Fatalf("baseURL = %q, want china DNS suffix", st.baseURL)
+	}
+}
+
 func TestNew_SignedURLHosts_CustomEndpoint(t *testing.T) {
 	st, err := New(Config{
 		Endpoint: "https://minio.local:9000",

@@ -18,12 +18,23 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
-// AllowedMimeTypes lists the file types accepted for upload.
+// AllowedMimeTypes lists the file types accepted for public product-image uploads.
 var AllowedMimeTypes = map[string]bool{
 	"image/jpeg": true,
 	"image/png":  true,
 	"image/gif":  true,
 	"image/webp": true,
+}
+
+// AllowedPrivateDownloadMimeTypes lists types accepted when UploadInput.PrivateDownload
+// is set (grant targets under private/downloads/). Includes images plus PDF/ZIP.
+var AllowedPrivateDownloadMimeTypes = map[string]bool{
+	"image/jpeg":      true,
+	"image/png":       true,
+	"image/gif":       true,
+	"image/webp":      true,
+	"application/pdf": true,
+	"application/zip": true,
 }
 
 // assetAttachmentCounter reports how many downloadable products reference an
@@ -190,7 +201,11 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		return nil, apperror.Validation("unable to read file content")
 	}
 	detected := http.DetectContentType(buf[:n])
-	if !AllowedMimeTypes[detected] {
+	allowed := AllowedMimeTypes
+	if input.PrivateDownload {
+		allowed = AllowedPrivateDownloadMimeTypes
+	}
+	if !allowed[detected] {
 		return nil, apperror.Validation(fmt.Sprintf("unsupported file type: %s", detected))
 	}
 
@@ -220,9 +235,10 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		return nil, fmt.Errorf("media: save file: %w", err)
 	}
 
-	// Generate thumbnails when a processor is configured.
+	// Generate thumbnails when a processor is configured (images only —
+	// private downloads may be PDF/ZIP and must not go through Resize).
 	thumbPaths := make(map[string]string)
-	if s.processor != nil && len(s.presets) > 0 {
+	if s.processor != nil && len(s.presets) > 0 && AllowedMimeTypes[detected] {
 		webpConvert := s.webpEnabled && (detected == "image/jpeg" || detected == "image/png")
 		for _, preset := range s.presets {
 			thumbPath := dir + "/" + preset.Name + "/" + safeFilename

@@ -104,7 +104,7 @@ func New(cfg Config) (*Storage, error) {
 		// Fall back to path-style S3 URL.
 		ep := strings.TrimRight(cfg.Endpoint, "/")
 		if ep == "" {
-			ep = fmt.Sprintf("https://s3.%s.amazonaws.com", cfg.Region)
+			ep = fmt.Sprintf("https://s3.%s.%s", cfg.Region, awsDNSSuffix(cfg.Region))
 		}
 		baseURL = ep + "/" + cfg.Bucket
 	}
@@ -154,8 +154,9 @@ func parseURLHost(raw string) (string, error) {
 }
 
 // SignedURLHosts returns hosts that SignedURL / PresignGetObject may produce.
-// Production AWS (empty Endpoint): path-style s3.{region}.amazonaws.com and
-// virtual-hosted {bucket}.s3.{region}.amazonaws.com (SDK v2 default).
+// Production AWS (empty Endpoint): path-style s3.{region}.{dnsSuffix} and
+// virtual-hosted {bucket}.s3.{region}.{dnsSuffix} (SDK v2 default). dnsSuffix
+// is amazonaws.com, or amazonaws.com.cn for China regions (cn-*).
 // Custom Endpoint (MinIO): that endpoint hostname only (path-style).
 // CDN / BaseURL is not included unless it is also the custom endpoint — we
 // do not presign against CDN hosts.
@@ -179,12 +180,24 @@ func (s *Storage) SignedURLHosts() []string {
 	}
 	region := strings.TrimSpace(s.region)
 	if region != "" {
-		add(fmt.Sprintf("s3.%s.amazonaws.com", region))
+		suffix := awsDNSSuffix(region)
+		add(fmt.Sprintf("s3.%s.%s", region, suffix))
 		if bucket := strings.TrimSpace(s.bucket); bucket != "" {
-			add(fmt.Sprintf("%s.s3.%s.amazonaws.com", bucket, region))
+			add(fmt.Sprintf("%s.s3.%s.%s", bucket, region, suffix))
 		}
 	}
 	return out
+}
+
+// awsDNSSuffix returns the AWS DNS suffix for regional S3 hosts.
+// China partition regions (cn-*) use amazonaws.com.cn; commercial AWS uses
+// amazonaws.com. Keeps SignedURLHosts aligned with the SDK's resolved endpoint.
+func awsDNSSuffix(region string) string {
+	r := strings.ToLower(strings.TrimSpace(region))
+	if strings.HasPrefix(r, "cn-") {
+		return "amazonaws.com.cn"
+	}
+	return "amazonaws.com"
 }
 
 // Name returns "s3".
