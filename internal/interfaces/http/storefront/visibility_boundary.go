@@ -6,9 +6,10 @@ import "github.com/akarso/shopanda/internal/domain/catalog"
 // route must enforce (PR-1056). Admin routes under /api/v1/admin/… are exempt
 // via catalog.WithBypassProductVisibility from AdminContextMiddleware.
 //
-// EnforceIn names the PR that wires the gate (1057 for reads, 1058 for
-// purchasability), or "out-of-scope" when product data may appear without an
-// axis gate (e.g. already-in-cart display — PR-1058 decides any re-check).
+// EnforceIn names the PR that wires the gate (1057 for REST/HTML reads, 1058
+// for purchasability, 1082 for GraphQL catalog reads), or "out-of-scope" when
+// product data may appear without an axis gate (e.g. already-in-cart display —
+// PR-1058 decides any re-check).
 type ProductVisibilityRoute struct {
 	Method    string
 	Path      string
@@ -18,16 +19,22 @@ type ProductVisibilityRoute struct {
 }
 
 // PublicProductVisibilityRoutes is the audited storefront/public surface map
-// (REST + HTML/SSR + fragments). Shared handlers are listed on the public
-// path; admin registration of the same handler inherits bypass.
+// (REST + HTML/SSR + fragments + GraphQL operations). Shared handlers are
+// listed on the public path; admin registration of the same handler inherits
+// bypass.
 //
 // Keep in sync with cmd/api/wire_routes.go — the contract test parses that
 // file and fails if a product-exposing public route is missing here or from
 // the explicit exclusion list in visibility_boundary_test.go.
+// GraphQL operations use Method "GQL" and are registered by the
+// core/graphql-api plugin (not wire_routes.go). Product-returning GraphQL root
+// fields must stay listed here; plugins/core/graphql tests sync them against
+// NewSchema query field names.
 func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 	const (
 		pr1057     = "PR-1057"
 		pr1058     = "PR-1058"
+		pr1082     = "PR-1082"
 		outOfScope = "out-of-scope"
 	)
 	return []ProductVisibilityRoute{
@@ -79,5 +86,12 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "GET", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "checkout step shows cart lines"},
 		{Method: "POST", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "payment form post; purchasability gated at confirm"},
 		{Method: "GET", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "confirm page GET (POST is the StartCheckout gate)"},
+
+		// GraphQL catalog reads (plugins/core/graphql — PR-1082). Method "GQL"
+		// marks plugin-registered operations; Path is the root field name.
+		{Method: "GQL", Path: "product", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1082, Note: "GraphQL product(id) — Individually"},
+		{Method: "GQL", Path: "productBySlug", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1082, Note: "GraphQL productBySlug — Individually"},
+		{Method: "GQL", Path: "products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1082, Note: "GraphQL products — Catalog via ListVisiblePage"},
+		{Method: "GQL", Path: "categoryProducts", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1082, Note: "GraphQL categoryProducts — Catalog via ListVisiblePage"},
 	}
 }
