@@ -4,7 +4,7 @@
 
 Shopanda is a single binary with multiple commands. Some capabilities depend on background processing. This document defines how those processes should run in **development** (minimal friction) versus **production** (reliable, observable).
 
-It is the operational contract for Phase 4 Track D (PR-430, PR-431).
+This is the operator contract for `serve` / `worker` / `scheduler` / `app dev`.
 
 ---
 

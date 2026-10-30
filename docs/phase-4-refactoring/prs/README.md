@@ -26,6 +26,6 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | PR-433 | D | done | [Auth email normalization](PR-433.md) |
 | PR-434 | D | done | [Persistent audit log](PR-434.md) |
 
-Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Runtime modes: [`../specs/RUNTIME_MODES.md`](../specs/RUNTIME_MODES.md)
+Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Runtime modes: [`../../guides/RUNTIME_MODES.md`](../../guides/RUNTIME_MODES.md)
 
 **Suggested first PRs:** [PR-430](PR-430.md) (dev ergonomics) and [PR-400](PR-400.md) (coupons admin) in parallel.

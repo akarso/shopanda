@@ -239,10 +239,7 @@ See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 ## Planning
 
-| Phase | Status | Doc |
-| --- | --- | --- |
-| Phase 5 — Mature commerce | **Complete** | [Roadmap](docs/phase-5-maturity/ROADMAP.md) |
-| Phase 6 — Merchant-complete admin | Active | [Roadmap](docs/phase-6-merchant-complete/ROADMAP.md) |
+Product docs: [docs/README.md](docs/README.md). Phase roadmaps and PR specs stay on the `dev` branch under `docs/phase-*`.
 
 ## Plugin extension (operators & integrators)
 
@@ -252,7 +249,7 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - Enable **external plugins** via config flags after they are registered in `cmd/api/register_plugins.go`.
 - Failed plugin init is logged as `plugin.init.failed`; the process continues with other plugins.
 
-**Why no `.so` loading?** See [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) (PR-544). Adding a custom external plugin requires rebuilding the binary with your plugin import.
+**Why no `.so` loading?** The Go plugin ABI is fragile across compiler versions, and plugins need domain ports at process start (PR-544). Adding a custom external plugin requires rebuilding the binary with your plugin import. See [PLUGINS.md](PLUGINS.md#deferred-capabilities).
 
 **Check plugin status:** startup logs emit `plugin.status` per registered plugin (`active` / `failed`). Use `app help` to list plugin CLI commands when enabled.
 
@@ -562,7 +559,7 @@ The `sha-<commit>` tag is never overwritten: the Release workflow refuses to re-
 ## Supply chain
 
 - Dependabot: weekly PRs for Go modules, Actions, and Docker digests (`.github/dependabot.yml`).
-- `CI / govuln`: pinned fail-closed `govulncheck`; exceptions only via [`GOVULN_BASELINE.md`](docs/phase-10-platform-excellence/GOVULN_BASELINE.md). Details in [DEVELOPER.md](docs/guides/DEVELOPER.md#supply-chain-dependabot--govulncheck).
+- `CI / govuln`: pinned fail-closed `govulncheck`; exceptions only via [`GOVULN_BASELINE.md`](docs/GOVULN_BASELINE.md). Details in [DEVELOPER.md](docs/guides/DEVELOPER.md#supply-chain-dependabot--govulncheck).
 
 ## Outbound webhooks (SSRF)
 
@@ -637,7 +634,7 @@ Delivery never returns a permanent public media URL (local streams; S3 uses a sh
 
 ## Common references
 
-- [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
+- [EU compliance fields](docs/guides/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
 - Omnibus reads catalog `price_history` for the SKU on the page. Exploding a kit onto order lines does not change that, and checkout does not `Record`. History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
 
 | Surface | History used |
@@ -646,5 +643,5 @@ Delivery never returns a permanent public media URL (local streams; S3 uses a sh
 | Dynamic kit PDP/PLP | No block (the headline sum is not one SKU's prior-30-day price) |
 | Leaf / component PDP/PLP | That variant's `price_history` |
 | Admin price PUT and CSV price import | Append a snapshot for the variant just written. PUT fails closed if the history repo is unwired. |
-- [Runtime modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
+- [Runtime modes](docs/guides/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
 - [Commercial B2B module](docs/COMMERCIAL.md) — license-gated `plugins/b2b`

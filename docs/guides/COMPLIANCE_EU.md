@@ -158,7 +158,6 @@ EU electronically supplied services / digital goods generally use the **customer
 
 ## Related Docs
 
-- [Phase 5 Roadmap](../ROADMAP.md)
-- [Phase 1 — GDPR / consent PR](../phase-1-core/prs/PR-098.md)
-- [Pricing pipeline — price history](../phase-1-core/specs/PRICING_PIPELINE.md)
-- [Merchant Guide — current limitations](../../guides/MERCHANT.md#roadmap-and-known-gaps)
+- [Merchant Guide — current limitations](MERCHANT.md#roadmap-and-known-gaps)
+
+Phase 5 roadmap, GDPR PR notes, and the original pricing-pipeline dump live on the `dev` branch under `docs/phase-5-maturity/` and `docs/phase-1-core/`. Those paths are not on `main`.

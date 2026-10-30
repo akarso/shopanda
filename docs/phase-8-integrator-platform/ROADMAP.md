@@ -51,7 +51,7 @@ Phase 7 closed customization platform work (PR-700–720). Developers extend via
 | **Port catalog incomplete** | Tax, mail, shipping rating not replaceable |
 | **Precedence undocumented** | Multi-plugin projects guess ordering |
 
-See [INTEGRATOR_PLATFORM.md](specs/INTEGRATOR_PLATFORM.md) for the full design position.
+See [INTEGRATOR_PLATFORM.md](../guides/INTEGRATOR_PLATFORM.md) for the full design position.
 
 ---
 
@@ -94,7 +94,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
-| PR-800 | [oss] | Integrator platform spec publish | Finalize [INTEGRATOR_PLATFORM.md](specs/INTEGRATOR_PLATFORM.md); link from DEVELOPER.md / PLUGINS.md |
+| PR-800 | [oss] | Integrator platform spec publish | Finalize [INTEGRATOR_PLATFORM.md](../guides/INTEGRATOR_PLATFORM.md); link from DEVELOPER.md / PLUGINS.md |
 | PR-801 | [oss] | Port catalog + introspection endpoint | `GET /api/v1/admin/extensions/ports` (or CLI) listing active port implementations |
 | PR-802 | [oss] | Precedence policy + composition guide | Update PLUGIN_COMPOSITION.md with cart/import/integration patterns; multi-team table |
 

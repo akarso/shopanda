@@ -65,7 +65,7 @@ Phase 4 Track B moves today's `internal/infrastructure/*` adapters toward **core
 
 ## Runtime Modes
 
-Background jobs and email delivery require a **worker**; recurring tasks require a **scheduler**. See [`specs/RUNTIME_MODES.md`](specs/RUNTIME_MODES.md) for the full dev vs production contract.
+Background jobs and email delivery require a **worker**; recurring tasks require a **scheduler**. See [`docs/guides/RUNTIME_MODES.md`](../guides/RUNTIME_MODES.md) for the full dev vs production contract.
 
 | Mode | Processes | When |
 | --- | --- | --- |
@@ -140,7 +140,7 @@ Recommended execution order: **D (430–431) early** so local dev and deploy doc
 
 ## Track D — Runtime & Platform Polish
 
-**Goal:** Frictionless local dev, explicit production layout, and selected parity fixes. See [`specs/RUNTIME_MODES.md`](specs/RUNTIME_MODES.md).
+**Goal:** Frictionless local dev, explicit production layout, and selected parity fixes. See [`docs/guides/RUNTIME_MODES.md`](../guides/RUNTIME_MODES.md).
 
 | PR | Title | Short description |
 | --- | --- | --- |

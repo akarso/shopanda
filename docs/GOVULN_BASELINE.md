@@ -34,4 +34,4 @@ Machine-readable allowlist used by CI (one OSV ID per line; `#` comments OK):
 2. To baseline: add the OSV ID to the fenced list above **and** the table (owner + expiry ≤ 90 days).
 3. Open a follow-up issue/PR before expiry to remove the exception.
 
-Pinned scanner version is recorded in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) (`GOVULNCHECK_VERSION`).
+Pinned scanner version is recorded in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (`GOVULNCHECK_VERSION`).

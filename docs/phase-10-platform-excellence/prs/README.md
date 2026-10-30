@@ -29,6 +29,7 @@
 | PR-1024 | E | done | [OpenTelemetry traces](PR-1024.md) |
 | PR-1025 | E | done | [pgx driver migration](PR-1025.md) |
 | PR-1026 | E | done | [Extension guide + runbook](PR-1026.md) |
+| PR-DOCS-SPLIT | process | done | [Product docs vs working history](PR-DOCS-SPLIT.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
