@@ -146,7 +146,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
 
-Phases 1–11 are shipped. Active development: [Phase 12 — Product Types & Composition](docs/phase-12-product-composition/ROADMAP.md). Site-ready plugin work (owned schema + on-demand jobs) is planned as [Phase 13](docs/phase-13-plugin-runtime/ROADMAP.md) and should finish before a real merchant site. See [Development history](#development-history) below for the full phase-by-phase breakdown.
+Phases 1–11 are shipped. Phase 12 — [Product Types & Composition](docs/phase-12-product-composition/ROADMAP.md) — is **Engineering complete (with caveats)** — PR list closed; VAT sign-off open; configurable storefront/admin incomplete; assignment/grant settings have no CSV; default storefront cannot sell `requires_linked_parent`. Phase 14 (storefront authoring) is also shipped. [Phase 13 — Plugin Runtime](docs/phase-13-plugin-runtime/ROADMAP.md) remains the **site-ready gate** (owned schema + on-demand jobs) before a real merchant site — not the current shipped frontier. See [Development history](#development-history) below.
 
 ## Default stack
 
@@ -170,7 +170,7 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Project status
 
-Shopanda has shipped **11 completed development phases** and is working through Phase 12 (catalog types and composition). Phase 13 (plugin-owned schema + on-demand jobs) is the planned site-ready gate before a real merchant site. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), merchant discovery (navigation, advanced search), and operator surfaces for jobs, search, and cache are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
+Shopanda has shipped **11 completed development phases**. Phase 12 (catalog types and composition) is **Engineering complete (with caveats)** — PR list closed through PR-1083; VAT sign-off for PR-1076 still open; configurable storefront/admin incomplete; assignment/grant settings have no CSV; default storefront cannot sell `requires_linked_parent`. Phase 14 (storefront authoring) is shipped. Phase 13 (plugin-owned schema + on-demand jobs) remains the planned **site-ready gate** before a real merchant site. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), merchant discovery (navigation, advanced search), and operator surfaces for jobs, search, and cache are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
 
 | Phase | Focus | Status |
 | --- | --- | --- |
@@ -185,8 +185,8 @@ Shopanda has shipped **11 completed development phases** and is working through 
 | 9 | Integrator backlog cleanup + merchant discovery (navigation, advanced search) | Shipped |
 | 10 | Platform excellence (CI, security hardening, ops, architecture refactor) | Shipped — one integration-test item open, gated on CI running against real Postgres |
 | 11 | Jobs, search & cache admin reachability + full-page cache | Shipped |
-| 12 | Product types & composition | **In progress** — types and visibility shipped; bundle/grouped through pricing, stock, order lines, and Omnibus |
-| 13 | Plugin runtime (owned schema + on-demand sync jobs) | Planned — do before a real site |
+| 12 | Product types & composition | **Engineering complete (with caveats)** — PR list closed (PR-1048–1083); VAT sign-off open; configurable/CSV/default-theme assignment gaps remain |
+| 13 | Plugin runtime (owned schema + on-demand sync jobs) | Planned — **site-ready gate** before a real site |
 
 Full breakdown with PR-level detail: [Development history](#development-history).
 
@@ -311,8 +311,8 @@ Shopanda has been built in numbered phases, each with its own roadmap and per-PR
 | 9 — Integrator backlog + merchant discovery | [phase-9-merchant-discovery/README.md](docs/phase-9-merchant-discovery/README.md) | Shipped |
 | 10 — Platform excellence | [phase-10-platform-excellence/README.md](docs/phase-10-platform-excellence/README.md) | Shipped (one open integration-test item) |
 | 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | Shipped |
-| 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **In progress** |
-| 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned (do before a real site) |
+| 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **Engineering complete (with caveats)** — PR list closed; VAT / configurable / assignment CSV / default-theme linked-parent gaps |
+| 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned — **site-ready gate** (not current shipped frontier; Phase 14 already shipped) |
 | 14 — Storefront authoring | [phase-14-storefront-authoring/README.md](docs/phase-14-storefront-authoring/README.md) | Shipped (theme packaging + headless gaps; Track C storefront JS cart add/update/remove) |
 
 Additional historical specs:

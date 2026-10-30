@@ -156,7 +156,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1080 | On-save reindex trigger generalization | **done.** `IndexUpdateSubscriber` fans leaf stock/price events out to parent bundles; bundle component add/remove and downloadable file attach/replace/remove publish `EventProductUpdated`. Assignment and DownloadGrant confirmed non-triggers (empty index-time Assignment; grants not catalog-facing). See [`prs/PR-1080.md`](prs/PR-1080.md). |
 | PR-1081 | CSV visibility columns + Phase 12 consistency tests | **done** for visibility/`status` create-only columns + targeted in-memory consistency tests on named Phase 12 CSV surfaces; full empty-catalog DB diff deferred. Assignment + grant settings remain non-CSV. See [`prs/PR-1081.md`](prs/PR-1081.md). |
 | PR-1082 | GraphQL read parity | **done.** Extended `plugins/core/graphql` with `type` / `visibilityModes` / `requiresLinkedParent`, public bundle/grouped children (gated), and `ProductConnection` listing meta; linked allowlists stay admin-only; wired `AllowWithFacts` / `ListVisiblePage` when enforce is on; audited `GQL` roots in `PublicProductVisibilityRoutes`. See [`prs/PR-1082.md`](prs/PR-1082.md). |
-| PR-1083 | RUNBOOK.md + admin GUI consolidation pass | Symptom → check → fix RUNBOOK.md entries ("why can't I add this to cart," "why is this product not visible," "why isn't my ticket sellable"), same style as Phase 10's incident-response section. Final admin GUI pass folding all of this phase's sections into the existing product edit screen tabs, confirming nothing was left as an API-only feature with no GUI path. |
+| PR-1083 | RUNBOOK.md + admin GUI consolidation pass | **done (docs).** Symptom → check → fix RUNBOOK incidents; code-backed 6×5 type×section matrix test; phase status engineering-complete **with caveats** (VAT / configurable / assignment CSV / default-theme linked-parent). See [`prs/PR-1083.md`](prs/PR-1083.md). |
 
 ---
 
@@ -233,7 +233,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1080 | F | done |
 | 1081 | F | done |
 | 1082 | F | done |
-| 1083 | F | planned |
+| 1083 | F | done |
 
 PR specs: [`prs/`](prs/).
 
@@ -245,4 +245,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1082 engineering done — Track F; next PR-1083; VAT sign-off open; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **Engineering complete (with caveats)** — PR-1083 docs done; PR list closed; Track F original goal not fully met without gaps (VAT sign-off, configurable storefront/admin, assignment/grant settings CSV, default theme cannot sell `requires_linked_parent`); numbering collides with Phase 11 — disambiguate by phase folder |
