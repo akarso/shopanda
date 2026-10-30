@@ -21,6 +21,36 @@ test("sectionVisible: match and non-match", () => {
     assert.equal(ui.sectionVisible("bundle", "simple"), false);
 });
 
+// Mirrors cmd/api/wire_services.go RegisterProductFormSection Types:
+// visibility/linked = empty (always shown); bundle/grouped/downloadable = typed.
+test("sectionVisible: Phase 12 type×section matrix (6×5)", () => {
+    const types = ["simple", "virtual", "bundle", "grouped", "configurable", "downloadable"];
+    const sections = {
+        visibility: "",
+        bundle: "bundle",
+        grouped: "grouped",
+        linked: "",
+        downloadable: "downloadable"
+    };
+    const expected = {
+        simple: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: false },
+        virtual: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: false },
+        bundle: { visibility: true, bundle: true, grouped: false, linked: true, downloadable: false },
+        grouped: { visibility: true, bundle: false, grouped: true, linked: true, downloadable: false },
+        configurable: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: false },
+        downloadable: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: true }
+    };
+    for (const type of types) {
+        for (const [section, attr] of Object.entries(sections)) {
+            assert.equal(
+                ui.sectionVisible(attr, type),
+                expected[type][section],
+                `${type} × ${section}`
+            );
+        }
+    }
+});
+
 test("syncSections toggles display only", () => {
     const nodes = [
         { getAttribute: () => "bundle", style: { display: "none", marginTop: "2rem" } },

@@ -177,6 +177,66 @@ See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 **Fix:** fix tag attachment on the render path; wait for / trigger reindex; use tag clear or purge-url for the exact vary.
 
+### Why can't I add this product to cart
+
+**Symptom:** storefront or API add-to-cart / qty increase returns **422**. Greppable messages operators see (qty **decrease** / **remove** still work on blocked lines):
+
+| Message | Usual cause |
+| --- | --- |
+| `product is not available for purchase` | Status not `active` (always-on) |
+| `grouped products are not purchasable` | Grouped **parent** (always-on; sell member SKUs) |
+| `product requires a linked parent and is not purchasable` | Empty assignment context, or required **bundle leaf** with the flag (always-on) |
+| `downloadable product has no attached file and is not purchasable` | No attached file, or required bundle leaf missing a file (always-on) |
+| `product is not currently purchasable` | Purchasable axis false under enforce: AutoBasis (`no_stock` / `no_price` / `status_inactive`), forced-`hidden` Purchasable, or missing visibility snapshot — **only when enforce is on** (facts unwired when enforce is off) |
+| `cart item already has a different linked parent assignment` | Second add, qty increase, or guest-claim merge (`mergeIntoCustomerCart`) onto a line that already has a different stamp |
+| `only ` / ` available` (N varies; e.g. only 3 available) | Qty above available stock |
+| `price is not available` / `bundle cannot be reserved` | Missing unit price / dynamic-bundle reserve fail |
+| `linked parent is not eligible for this product` / `linked parent instance is not owned by this customer` / `sign in to assign this product to an owned instance` / `linked parent product does not match the selected instance` / `cannot assign a unit that is on an open or refunded return` | Named-parent `CheckPurchase` (assignment) |
+| `tax calculator: no "digital" rate` / `is 0 bps` / `refusing 0% VAT` | Digital-tax fail-closed (PR-1076) during cart recalculate |
+
+**Check:**
+1. Open the product in admin (`/admin/products/{id}`). Confirm **Status** is `active` — draft/archived fail even when visibility enforce is off (PR-1054). Always-on (enforce irrelevant): Status, grouped parent, linked-parent empty context, missing downloadable file — match the 422 strings above.
+2. **Purchasable AutoBasis** (`no_stock` / `no_price` / `status_inactive`) is live **only with** `catalog.visibility.enforce: true` (or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`). Do **not** list `requires_linked_parent` / `no_downloadable_file` as AutoBasis inputs — those are separate always-on gates (admin badge may still show them). Modes are always editable; see ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+3. Linked-parent 422 → ["Why isn't my ticket sellable"](#why-isnt-my-ticket-sellable) (assignment stamp / deferred vs named parent). Conflicting stamp on a second add, qty increase, or guest-claim merge → `cart item already has a different linked parent assignment` (table above).
+4. Downloadable with no file: **Downloadable files** tab must show ≥1 attachment (PR-1074 language) — not the grants section (grants are for “paid, no grant”).
+5. Grouped parents are never purchasable by design; sell the member SKUs (**Grouped** tab).
+6. Bundle: required leaves inherit the linked-parent / missing-file always-on rejects. Digital SKUs: a missing/zero digital VAT rate fails closed at add (PR-1076) even when stock/price look fine.
+
+**Fix:** restore stock + price + active when enforce is on and AutoBasis is the miss; for SEO OOS keep Catalog/Search/Individually force-`visible` and leave Purchasable `auto`/`hidden` — do **not** force Purchasable `visible` as the cart fix. Clear `requires_linked_parent` or stamp a valid assignment context; attach a downloadable file before expecting purchasability. Detail: ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+
+### Why is this product not visible
+
+**Symptom:** product missing from PLP/category/search/suggest/carousel/sitemap, or PDP / variants / reviews return **404**, while admin still shows the product.
+
+**Check (four-axis default-rule checklist — PR-1055):**
+1. **Admin vs storefront:** admin always sees every product. Storefront **axis** gates (Catalog / Search / Individually / Purchasable) apply only when `catalog.visibility.enforce` is on. With enforce **off**, search applies **no** visibility-axis filter; sitemap still **status**-filters to active; Individually (PDP 404 for hidden modes) only after enforce. A "hidden" mode is preview-only (admin caption **"Enforcement off — preview"**). Status = active (PR-1054) still applies to public reads either way.
+2. On the **Visibility** tab, walk each axis that should apply to the missing surface:
+   - PLP / category / carousels → **Catalog**
+   - Search / suggest → **Search**
+   - Direct PDP → **Individually**
+   - Cart/checkout → **Purchasable** (separate incident above)
+3. For each axis in mode `auto`, AutoBasis needs **active** + stock qty > 0 + a price (category assignment is off by default). **Grouped parents** never resolve `HasPrice` / `QuantityPositive` under AutoBasis — force Catalog/Search/Individually `visible` or they vanish from PLP under AutoBasis. Virtual/downloadable use their **own** stock row; force-visible on a display axis ≠ sellable at zero stock. Failure codes under the axis name the miss. Mode `hidden` hides that axis **once enforce is on**; with enforce **off** it is badge/preview-only (same as Check 1). Mode `visible` on a draft/archived product still shows **"Forced visible — not live (product inactive)"** — public reads stay active-only.
+4. **Canonical cutover:** migrate → full `search:reindex` → **then** enable enforce. Never enable first. See ["Search reindex"](#search-reindex-searchreindex) (PR-1079). After enforce is correctly on, on-save reindex (PR-1080) keeps stock/price/file edits fresh — a full reindex is not required for every later edit.
+5. Stale PLP after restock/price: FPC may still be serving a HIT — see ["Cache appears stale after a product/price/content change"](#cache-appears-stale-after-a-productpricecontent-change).
+
+**Fix:** flip Status to `active`; fix stock/price (or force Catalog/Search/Individually `visible` for SEO-critical OOS / grouped parents while leaving Purchasable `auto`/`hidden`); follow migrate → full reindex → enable enforce; then rely on on-save reindex for ongoing edits. Full operator notes: ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+
+### Why isn't my ticket sellable
+
+**Symptom:** a ticket (or other child SKU) with **Requires linked parent** cannot be added to cart / fails checkout with `product requires a linked parent and is not purchasable`, even when stock, price, and Status look fine. Admin Purchasable badge may show `requires_linked_parent` — **expected** when the flag is on and admin resolve uses empty assignment context; that is not the fault by itself.
+
+**Check:**
+1. Product edit form: **Requires linked parent** checkbox is on (core field). Flag + empty assignment context → always-on 422 (enforce irrelevant).
+2. **Default theme** (`themes/default/templates/product.html`) and the default PDP add-to-cart form do **not** stamp assignment context. Stock-theme add will **422 for every flagged SKU**. Selling requires a theme or API client that posts `assignment_parent_product_id`, `assignment_parent_unit_id`, and/or `assignment_deferred`.
+3. Split the stamp kinds:
+   - **Deferred** (`assignment_deferred`): eligibility/`CheckPurchase` is skipped at cart time; bind later via **Sales → Assignments**.
+   - **Named parent** (`assignment_parent_product_id` and/or `assignment_parent_unit_id`): must pass `CheckPurchase` (sign-in, ownership, eligibility, no open RMA as applicable).
+   - If both deferred and a parent id/unit are set, `CheckPurchase` still runs because the parent id/unit is present.
+4. **Linked eligibility** tab: rules matter for named-parent purchase and post-purchase assign; they do **not** alone make the SKU purchasable without a stamp.
+5. Second add, qty increase, or guest-claim merge onto a line that already has a **different** stamp → 422 `cart item already has a different linked parent assignment` (see cart Greppable table).
+
+**Fix:** turn the flag off if the SKU should sell standalone; or ship a theme/API client that stamps `assignment_parent_product_id` / `assignment_parent_unit_id` / `assignment_deferred` at cart time; complete eligibility rules and Assignments for card↔ticket ops. Specific RequiresLinkedParent case of ["Why can't I add this product to cart"](#why-cant-i-add-this-product-to-cart).
+
 ## Planning
 
 | Phase | Status | Doc |
@@ -253,7 +313,7 @@ Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
 - A product with no visibility snapshot (e.g. non-active) is denied (fail-closed).
 - A visibility-facts DB error returns 500 and aborts the claim or checkout; it never drops lines.
 - Admin API contexts bypass the axis but not the `Status` check.
-- **`requires_linked_parent` (PR-1068):** a product with this flag true is not purchasable while the resolved assignment context is empty. Cart add stamps a non-empty request context onto the line (`assignment_parent_product_id` / `assignment_deferred`). Qty increase, guest-cart claim, and checkout `validate_cart` read the line first, then the request. A visibility bypass and a nil facts source do not skip it. Required bundle leaves are rejected the same way, including at `BundleService.Add`. The 422 text is `product requires a linked parent and is not purchasable`. Claim drops a line that has no stored assignment and logs `cart.guest.claim.lines_dropped`. A line that already carries a parent or deferred stamp is kept. Display axes (PLP, search, PDP) are unchanged. `Deferred: true` or any non-whitespace parent id leaves the gate; that parent is not checked for existence, eligibility, or ownership until PR-1070. Storefront must not set `Deferred` on every request. Nothing writes the request context until PR-1070, so a flagged product cannot be added or checked out yet unless a caller stamps the line. Set the flag with admin `POST`/`PUT` `requires_linked_parent` or product CSV (`requires_linked_parent`, create-only). The product response field is `RequiresLinkedParent`. The admin purchasable badge shows `requires_linked_parent` when the flag is set.
+- **`requires_linked_parent` (PR-1068):** a product with this flag true is not purchasable while the resolved assignment context is empty. Cart add stamps a non-empty request context onto the line (`assignment_parent_product_id` / `assignment_parent_unit_id` / `assignment_deferred`); the default theme does not stamp these fields. Qty increase, guest-cart claim, and checkout `validate_cart` read the line first, then the request. A visibility bypass and a nil facts source do not skip it. Required bundle leaves are rejected the same way, including at `BundleService.Add`. The 422 text is `product requires a linked parent and is not purchasable`. Claim drops a line that has no stored assignment and logs `cart.guest.claim.lines_dropped`. A line that already carries a parent or deferred stamp is kept. Display axes (PLP, search, PDP) are unchanged. `Deferred: true` skips existence/eligibility/ownership at cart time (bind later via Assignments). A named parent product and/or unit id must pass `CheckPurchase` (existence, eligibility, ownership, open-RMA rules as applicable — shipped in PR-1070). Storefront must not set `Deferred` on every request. Set the flag with admin `POST`/`PUT` `requires_linked_parent` or product CSV (`requires_linked_parent`, create-only). The product response field is `RequiresLinkedParent`. The admin purchasable badge shows `requires_linked_parent` when the flag is set (empty admin context — expected).
 - Frequent `cart.guest.claim.lines_dropped` warnings after enabling usually mean OOS products are still sitting in guest carts. Expected; no action needed unless volume is surprising.
 - **Admin assignment API (PR-1071):** `assignments.read` lists a card (`GET /api/v1/admin/assignments`, default `status=assigned`, cap 100, `has_more` when another row exists) and the current child row. Both reads include live order status, payment status, and customer id for the parent and the child, and `forced` when the bind was an override. `assignments.write` assigns and revokes. Admin, Manager, and Support have both; Editor has neither. A 409 is an already-assigned child. A 422 is an invalid unit id (`foo/bar`), a missing line, a missing catalog variant, a child that does not require a linked parent, an ineligible parent, or a cancelled/failed/unpaid order. Support may force-bind an unpaid or cancelled unit: `assignments.write` includes `force`. That is an intentional entitlement override. `force: true` with a non-empty `reason` (at most 500 characters) stores `forced_at` and `forced_reason` only when a side is not bindable, and still leaves the order unpaid or cancelled. A reason longer than 500 characters is 422 only when `force` is true. The stored text is returned as `reason`. `force` on an already-bindable pair is 422 `force not applicable`. List, current, and revoke return the same live order facts. If that fact read fails, the response is still 200 with the assignment rows and empty fact fields, and the API logs `admin.assignment.facts_failed` with `route` (`list`, `current`, or `revoke`) and `error`. List logs that once, with `count` set to the row count. `assignment_id` is included when that read is a single row. A failed fact read does not undo a revoke. Revoke of an already-revoked id is 200 and does not write another audit entry. Contract detail is in `docs/guides/DEVELOPER.md`. **Returns (PR-1072):** approving (or refunding) a return for a ticket/child unit auto-revokes that unit's current `ProductAssignment` (`assigned` or never-assigned `unassigned`) in the same transaction as the status write — wrong-status calls do not revoke. Returning a card/parent while tickets are still assigned is **blocked**, unless those tickets are included on the **same** RMA (same-order card+tickets). `ReturnableLines` hides a card that would 422. Assign (customer or admin), checkout `CheckPurchase`/`RecordPurchase` stamping onto a parent unit, and `ListOwnedParents` listing are blocked or filtered while a unit is on an open or refunded RMA (`requested`/`approved`/`received`/`refunded`; rejected/cancelled allow re-bind). `ReturnableLines` keeps a card only when its assigned same-order tickets are also mutually returnable (iterative filter); selecting the card requires submitting those ticket lines together. No silent cascade. Eligibility CSV: `import`/`export:linked-eligible-parents` and `import`/`export:linked-eligible-categories`. Admin GUI: product section **Linked eligibility** and **Sales → Assignments** (unit lookup + assign/revoke). Assignment CSV is not supported.
 
