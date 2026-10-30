@@ -1042,14 +1042,24 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// FPCInvalidationSubscriber likewise must live on this bus (PR-1046):
 	// stock restores would otherwise leave tagged full-page entries stale
 	// until TTL while only serve's bus ran DeleteByTag.
-	cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+	bundleParentsForWorker, bundleParentsErr := postgres.NewBundleComponentRepo(conn)
+	if bundleParentsErr != nil {
+		log.Warn("worker.bundle_parents_unavailable", map[string]interface{}{"error": bundleParentsErr.Error()})
+	}
+	fpcSub := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
 		WithObserver(fpcObs).
-		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce).
-		Register(bus)
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
+	if bundleParentsForWorker != nil {
+		fpcSub = fpcSub.WithBundleParents(bundleParentsForWorker) // PR-1080: leaf → parent kit PDP purge
+	}
+	fpcSub.Register(bus)
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {
 		stockSyncSvc.SetReindexService(reindexService)
+		if bundleParentsForWorker != nil {
+			stockSyncSvc.SetBundleParents(bundleParentsForWorker) // PR-1080: bulk ERP stock → parent kit reindex
+		}
 		if err := registerWorkerIndexUpdateSubscriber(conn, cfg, log, pluginApp, bus, reindexService); err != nil {
 			log.Warn("worker.index_update_subscriber_unavailable", map[string]interface{}{"error": err.Error()})
 		}
@@ -1183,7 +1193,13 @@ func registerWorkerIndexUpdateSubscriber(conn *sql.DB, cfg *config.Config, log l
 	if err != nil {
 		return fmt.Errorf("category lock: %w", err)
 	}
-	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).Register(bus)
+	bundleParents, err := postgres.NewBundleComponentRepo(conn)
+	if err != nil {
+		return fmt.Errorf("bundle component repo: %w", err)
+	}
+	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).
+		WithBundleParents(bundleParents). // PR-1080: leaf product/stock/price/variant → parent bundle reindex
+		Register(bus)
 	return nil
 }
 

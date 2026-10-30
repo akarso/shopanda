@@ -20,7 +20,15 @@ const stockSyncChunkSize = 100
 // reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
 // so it does not inherit a canceled operation context (worker shutdown or
 // a deadline that already expired after earlier chunks committed).
+// Expansion uses its own timeout of the same length so a large parent
+// lookup cannot expire the enqueue context.
 const reindexTriggerTimeout = 30 * time.Second
+
+// stockReindexExpandMaxIDs is the largest touched set we expand to parent
+// bundles. At or above this, ReindexService.Trigger already substitutes a
+// full scan for a scoped ID list (maxScopedReindexProductIDs), so
+// expansion is wasted work and would compete with the enqueue timeout.
+const stockReindexExpandMaxIDs = 10_000
 
 // stockSyncProducts is the product read UpsertBySKU uses to reject dynamic
 // bundles. ListByIDs is optional; postgres implements it.
@@ -67,6 +75,8 @@ type StockSyncService struct {
 
 	// reindex is optional — see SetReindexService.
 	reindex *searchApp.ReindexService
+	// bundleParents is optional — see SetBundleParents.
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewStockSyncService returns a StockSyncService backed by variants and stock repos.
@@ -110,6 +120,14 @@ func (s *StockSyncService) WithTxStarter(starter stockSyncTxStarter) *StockSyncS
 // matching InventoryAdminHandler.SetBus's own optional-wiring convention.
 func (s *StockSyncService) SetReindexService(reindex *searchApp.ReindexService) {
 	s.reindex = reindex
+}
+
+// SetBundleParents expands the post-sync reindex set with parent bundles
+// that include each touched leaf (PR-1080). Bulk ERP sync publishes no
+// per-row EventStockUpdated, so IndexUpdateSubscriber cannot fan out —
+// expand here before Trigger. Nil clears the lookup.
+func (s *StockSyncService) SetBundleParents(lookup catalog.BundleParentLookup) {
+	s.bundleParents = lookup
 }
 
 // UpsertBySKU sets absolute stock quantities for known variant SKUs.
@@ -353,14 +371,30 @@ func (s *StockSyncService) productsByID(ctx context.Context, ids []string) (map[
 
 // triggerReindex fires a single scoped reindex covering every product this
 // sync run actually committed — see SetReindexService's own doc comment
-// for why this is one batched call, not one per row. A Trigger failure is
-// returned to the caller (via UpsertBySKU's named result) so a queue,
-// scope-resolution, or database error is actionable rather than leaving
-// search silently stale.
+// for why this is one batched call, not one per row. When SetBundleParents
+// is wired, parent kit IDs are merged in (PR-1080). Expansion and Trigger
+// each get their own timeout so a large parent lookup cannot starve
+// enqueue. A set at or above stockReindexExpandMaxIDs skips expansion
+// and Triggers a full scan. A Trigger failure is returned to the caller
+// (via UpsertBySKU's named result) so a queue, scope-resolution, or
+// database error is actionable rather than leaving search silently stale.
 func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if s.reindex == nil || len(touchedProductIDs) == 0 {
 		return nil
 	}
+	if len(touchedProductIDs) >= stockReindexExpandMaxIDs {
+		ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+		defer cancel()
+		if _, err := s.reindex.Trigger(ctx, searchApp.ScopeAll{}); err != nil {
+			return fmt.Errorf("stock sync: reindex: %w", err)
+		}
+		return nil
+	}
+
+	expandCtx, expandCancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	expandErr := catalog.ExpandTouchedWithBundleParents(expandCtx, s.bundleParents, touchedProductIDs)
+	expandCancel()
+
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
@@ -369,6 +403,9 @@ func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{})
 	defer cancel()
 	if _, err := s.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
 		return fmt.Errorf("stock sync: reindex: %w", err)
+	}
+	if expandErr != nil {
+		return fmt.Errorf("stock sync: expand bundle parents: %w", expandErr)
 	}
 	return nil
 }

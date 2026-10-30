@@ -605,9 +605,11 @@ Examples already shipped in the codebase:
 
 For the current full set, inspect `internal/domain/**/events.go` and `internal/application/checkout/workflow.go`.
 
-### Search indexing depends on these events (PR-1036)
+### Search indexing depends on these events (PR-1036, PR-1080)
 
 The search index updates itself automatically when a product, its price, its stock, or its category assignment changes — but only because the core admin handlers publish `catalog.EventProductUpdated`/`catalog.EventProductCreated`, `pricing.EventPriceUpserted`, and `inventory.EventStockUpdated` after every successful write, and `internal/application/search.IndexUpdateSubscriber` listens for them.
+
+**PR-1080 additions:** bundle component add/remove and downloadable file attach/replace/remove publish `catalog.EventProductUpdated` (Publish-then-`PublishAsync` fallback, same as category assignment). Sync Publish requires a non-empty slug — a failed product read (or downloadable `SetProducts` unset) is async-only so `rewrite.Subscriber` cannot save `/`. `IndexUpdateSubscriber.WithBundleParents` fans product/stock/price/**variant** events out to parent bundles (`BundleParentLookup.ListBundleIDsByComponentID`) so leaf deactivate/archive/type change and second-variant create flip kit `HasPrice`/`QuantityPositive`. FPC and product-cache subscribers use the same lookup. Bulk `import:stock` / ERP `StockSyncService` expand touched IDs through `ListBundleIDsByComponentIDs` (chunks of 100) before `Trigger`, on a timeout separate from enqueue; 10,000+ touched IDs skip expansion and full-scan. Do **not** reindex on `download.grant.*` or assignment create/revoke — grants are post-purchase; index-time Resolve uses an empty assignment context. CSV `import:bundle-components` / `import:downloadable-files` do not batch-trigger yet (use `search:reindex`; PR-1081). Price CSV relies on per-row `EventPriceUpserted` + subscriber fan-out (no separate parent batch).
 
 If a plugin (or any other code path) mutates that data outside those save paths — writing directly to the database, or through a bulk import that doesn't go through the same handlers — it must keep the index fresh in one of two supported ways:
 
@@ -616,7 +618,7 @@ If a plugin (or any other code path) mutates that data outside those save paths 
 
 If neither happens, changes won't reach the search index until the next manual/scheduled `search:reindex`.
 
-`inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber only reads `ProductID`.
+`inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber reads `ProductID` (and parent bundle IDs when fan-out is wired).
 
 ### Example listener
 

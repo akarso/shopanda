@@ -598,3 +598,60 @@ func TestStockImport_TxStarterRequired(t *testing.T) {
 		t.Fatalf("SetStock calls = %d, want 0", stockRepo.setCalls)
 	}
 }
+
+type stockImportFakeBundleParents struct {
+	byComponent map[string][]string
+	batchCalls  int
+}
+
+func (f *stockImportFakeBundleParents) ListBundleIDsByComponentID(_ context.Context, componentProductID string) ([]string, error) {
+	if f.byComponent == nil {
+		return []string{}, nil
+	}
+	return append([]string(nil), f.byComponent[componentProductID]...), nil
+}
+
+func (f *stockImportFakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	f.batchCalls++
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
+// TestStockImport_ReindexExpandsBundleParents pins PR-1080: bulk stock
+// Trigger set includes parent kits that list touched leaves as components.
+func TestStockImport_ReindexExpandsBundleParents(t *testing.T) {
+	leafID, parentID := id.New(), id.New()
+	varRepo := &mockVariantRepoForStock{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: leafID},
+		},
+	}
+	stockRepo := newMockStockRepo()
+	queue := &stockImportFakeQueue{}
+	parents := &stockImportFakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}}
+	imp := writingStockImporter(varRepo, stockRepo).
+		WithReindex(newTestReindexService(t, queue)).
+		WithBundleParents(parents)
+
+	csv := "sku,quantity\nSKU-001,10\n"
+	if _, err := imp.Import(context.Background(), strings.NewReader(csv)); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if parents.batchCalls != 1 {
+		t.Fatalf("batch parent lookups = %d, want 1", parents.batchCalls)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued %d jobs, want 1", len(queue.enqueued))
+	}
+	ids, ok := queue.enqueued[0].Payload["product_ids"].([]string)
+	if !ok {
+		t.Fatalf("payload product_ids type = %T", queue.enqueued[0].Payload["product_ids"])
+	}
+	sort.Strings(ids)
+	want := []string{leafID, parentID}
+	sort.Strings(want)
+	if len(ids) != 2 || ids[0] != want[0] || ids[1] != want[1] {
+		t.Fatalf("product_ids = %v, want %v", ids, want)
+	}
+}

@@ -123,6 +123,11 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 			return nil, fmt.Errorf("product repo: %w", err)
 		}
 		imp := importer.NewStockImporter(variantRepo, stockRepo).WithProducts(productRepo).WithTxStarter(conn).WithRowHooks(regs.Import)
+		if bundleParents, err := postgres.NewBundleComponentRepo(conn); err == nil {
+			imp = imp.WithBundleParents(bundleParents) // PR-1080: expand Trigger set with parent kits
+		} else {
+			log.Warn("import.stock.bundle_parents_unavailable", map[string]interface{}{"error": err.Error()})
+		}
 		// PR-1049: batch-trigger a scoped reindex for every product this
 		// import touches (see StockImporter.WithReindex's own doc comment
 		// for why this is one call after the whole import, not one per

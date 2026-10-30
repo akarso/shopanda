@@ -81,7 +81,7 @@ C4Component
             Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
             Component(auditRetentionHandler, "AuditRetentionHandler", "Go", "Handles audit.retention jobs: prunes admin_audit_log by config")
             Component(reservationExpiryHandler, "ReservationExpiryHandler", "Go", "Handles inventory.reservation_expiry jobs: releases expired reservations in bounded batches, restores stock, publishes inventory.stock.updated")
-            Component(indexUpdateSubscriber, "IndexUpdateSubscriber", "Go", "On-save search: listens for product/price/stock/category events, debounces, enqueues scoped ReindexService.Trigger")
+            Component(indexUpdateSubscriber, "IndexUpdateSubscriber", "Go", "On-save search: product/price/stock/variant/category events + PR-1080 bundle-parent fan-out; debounces; scoped ReindexService.Trigger")
             Component(webhookDispatcher, "WebhookDispatcher", "Go", "Enqueues outbound webhook deliveries on domain events")
             Component(webhookDeliverHandler, "WebhookDeliverHandler", "Go", "Handles webhook.deliver jobs: POST signed payloads")
             Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")

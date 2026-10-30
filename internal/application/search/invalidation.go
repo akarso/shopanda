@@ -74,6 +74,11 @@ type IndexUpdateSubscriber struct {
 	// by storage shared across every API server instance, not an
 	// in-process-only mutex.
 	categoryLock domainsearch.CategoryLock
+
+	// bundleParents, when set, fans product/stock/price/variant events out
+	// to parent bundles that include the changed leaf (PR-1080). Nil skips
+	// fan-out (tests that do not care about rollup freshness).
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewIndexUpdateSubscriber creates an IndexUpdateSubscriber. engine and
@@ -113,6 +118,17 @@ func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.Searc
 	}
 }
 
+// WithBundleParents enables fan-out of product/stock/price/variant events
+// to parent bundles that include the changed leaf (PR-1080). A dynamic
+// bundle's indexed QuantityPositive / HasPrice depends on component
+// status, type, stock, prices, and "exactly one active leaf variant";
+// without this, only the leaf was reindexed. Nil clears the lookup
+// (fan-out off). Returns s for chaining at wire sites.
+func (s *IndexUpdateSubscriber) WithBundleParents(lookup catalog.BundleParentLookup) *IndexUpdateSubscriber {
+	s.bundleParents = lookup
+	return s
+}
+
 // Register wires event handlers on the given bus.
 //
 // catalog.EventProductCreated is included even though PR-1036's own scope
@@ -121,12 +137,19 @@ func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.Searc
 // inline (a mechanism this subscriber replaces entirely, see PR-1036.md's
 // "Design decisions"); dropping EventProductCreated here would silently
 // stop indexing new products until the next scheduled full reindex.
+//
+// catalog.EventVariantCreated / EventVariantUpdated are included because
+// a dynamic bundle requires exactly one active leaf variant per required
+// component — adding a second variant (or collapsing back to one) flips
+// parent HasPrice / QuantityPositive without a product/stock/price event.
 func (s *IndexUpdateSubscriber) Register(bus *event.Bus) {
 	if bus == nil {
 		panic("IndexUpdateSubscriber.Register: bus is nil")
 	}
 	bus.OnAsync(catalog.EventProductCreated, s.HandleProductCreated)
 	bus.OnAsync(catalog.EventProductUpdated, s.HandleProductUpdated)
+	bus.OnAsync(catalog.EventVariantCreated, s.HandleVariantCreated)
+	bus.OnAsync(catalog.EventVariantUpdated, s.HandleVariantUpdated)
 	bus.OnAsync(pricing.EventPriceUpserted, s.HandlePriceUpserted)
 	bus.OnAsync(inventory.EventStockUpdated, s.HandleStockUpdated)
 	bus.OnAsync(catalog.EventCategoryCreated, s.HandleCategoryCreated)
@@ -134,22 +157,45 @@ func (s *IndexUpdateSubscriber) Register(bus *event.Bus) {
 	bus.OnAsync(catalog.EventCategoryDeleted, s.HandleCategoryDeleted)
 }
 
-// HandleProductCreated schedules a reindex for a newly created product.
+// HandleProductCreated schedules a reindex for a newly created product
+// and any parent bundles that already list it as a component.
 func (s *IndexUpdateSubscriber) HandleProductCreated(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(catalog.ProductCreatedData)
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.scheduleReindex(ctx, data.ProductID)
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
 }
 
-// HandleProductUpdated schedules a reindex for an updated product.
+// HandleProductUpdated schedules a reindex for an updated product and
+// parent bundles that include it. Leaf deactivate/archive/type change
+// flips parent HasPrice / QuantityPositive (PR-1080).
 func (s *IndexUpdateSubscriber) HandleProductUpdated(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(catalog.ProductUpdatedData)
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.scheduleReindex(ctx, data.ProductID)
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
+}
+
+// HandleVariantCreated schedules a reindex for the variant's product and
+// parent bundles (second variant can make kit availability false).
+func (s *IndexUpdateSubscriber) HandleVariantCreated(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.VariantCreatedData)
+	if !ok {
+		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
+	}
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
+}
+
+// HandleVariantUpdated schedules a reindex for the variant's product and
+// parent bundles (status/SKU changes can flip the single-active-variant rule).
+func (s *IndexUpdateSubscriber) HandleVariantUpdated(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.VariantUpdatedData)
+	if !ok {
+		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
+	}
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
 }
 
 // HandlePriceUpserted schedules a reindex for the product whose price
@@ -162,16 +208,20 @@ func (s *IndexUpdateSubscriber) HandlePriceUpserted(ctx context.Context, evt eve
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.scheduleReindex(ctx, data.ProductID)
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
 }
 
 // HandleStockUpdated schedules a reindex for the product whose stock changed.
+// Also reindexes parent bundles that include this product as a component
+// (PR-1080): a dynamic bundle's QuantityPositive is computed from leaf
+// stock, so a leaf crossing zero would otherwise leave the parent stale
+// in search until a manual/scheduled reindex.
 func (s *IndexUpdateSubscriber) HandleStockUpdated(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(inventory.StockUpdatedData)
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.scheduleReindex(ctx, data.ProductID)
+	return s.scheduleReindexWithBundleParents(ctx, data.ProductID)
 }
 
 // HandleCategoryCreated indexes a newly created category document.
@@ -296,6 +346,35 @@ func (s *IndexUpdateSubscriber) retryCategoryEngineCall(ctx context.Context, fn 
 		case <-time.After(delay):
 		}
 		delay *= 2
+	}
+	return err
+}
+
+// scheduleReindexWithBundleParents reindexes productID, then every parent
+// bundle that lists it as a component when s.bundleParents is wired.
+// Lookup errors are logged and do not fail the leaf reindex — losing
+// parent freshness is recoverable by the next leaf edit or a full
+// reindex; failing the leaf path because parents could not be listed
+// would be worse. Parent IDs equal to productID are skipped.
+func (s *IndexUpdateSubscriber) scheduleReindexWithBundleParents(ctx context.Context, productID string) error {
+	err := s.scheduleReindex(ctx, productID)
+	if s.bundleParents == nil || productID == "" {
+		return err
+	}
+	parents, lookupErr := s.bundleParents.ListBundleIDsByComponentID(ctx, productID)
+	if lookupErr != nil {
+		s.log.Error("search.invalidation.bundle_parents_lookup_failed", lookupErr, map[string]interface{}{
+			"product_id": productID,
+		})
+		return err
+	}
+	for _, parentID := range parents {
+		if parentID == "" || parentID == productID {
+			continue
+		}
+		if parentErr := s.scheduleReindex(ctx, parentID); parentErr != nil && err == nil {
+			err = parentErr
+		}
 	}
 	return err
 }

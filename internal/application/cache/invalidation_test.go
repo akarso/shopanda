@@ -16,9 +16,10 @@ import (
 // --- mock cache ---
 
 type mockCache struct {
-	entries        map[string]bool
-	deletedPrefix  string
-	deleteByPfxErr error
+	entries         map[string]bool
+	deletedPrefix   string
+	deletedPrefixes []string
+	deleteByPfxErr  error
 }
 
 func newMockCache() *mockCache {
@@ -39,6 +40,7 @@ func (m *mockCache) CompareAndSubtract(key string, expected int64) (int64, error
 func (m *mockCache) Delete(key string) error { delete(m.entries, key); return nil }
 func (m *mockCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	m.deletedPrefix = prefix
+	m.deletedPrefixes = append(m.deletedPrefixes, prefix)
 	if m.deleteByPfxErr != nil {
 		return m.deleteByPfxErr
 	}
@@ -191,5 +193,42 @@ func TestInvalidation_DeleteByPrefixError(t *testing.T) {
 	err := sub.HandleProductUpdated(context.Background(), evt)
 	if err == nil {
 		t.Fatal("expected error when DeleteByPrefix fails")
+	}
+}
+
+type fakeBundleParents struct {
+	byComponent map[string][]string
+}
+
+func (f *fakeBundleParents) ListBundleIDsByComponentID(_ context.Context, componentProductID string) ([]string, error) {
+	if f.byComponent == nil {
+		return []string{}, nil
+	}
+	return append([]string(nil), f.byComponent[componentProductID]...), nil
+}
+
+func (f *fakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
+// TestInvalidation_ProductUpdated_FansOutToBundleParents pins PR-1080:
+// leaf product updates also clear parent kit product-cache prefixes.
+func TestInvalidation_ProductUpdated_FansOutToBundleParents(t *testing.T) {
+	mc := newMockCache()
+	mc.entries["product:leaf:store1:en:EUR"] = true
+	mc.entries["product:parent:store1:en:EUR"] = true
+	sub := cacheApp.NewInvalidationSubscriber(mc, &mockLogger{}).
+		WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+			"leaf": {"parent"},
+		}})
+	evt := event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{ProductID: "leaf"})
+	if err := sub.HandleProductUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleProductUpdated: %v", err)
+	}
+	if len(mc.deletedPrefixes) != 2 {
+		t.Fatalf("deletedPrefixes = %v, want leaf + parent", mc.deletedPrefixes)
+	}
+	if mc.entries["product:leaf:store1:en:EUR"] || mc.entries["product:parent:store1:en:EUR"] {
+		t.Fatalf("entries still present: %#v", mc.entries)
 	}
 }

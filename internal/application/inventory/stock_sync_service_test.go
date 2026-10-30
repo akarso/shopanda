@@ -542,3 +542,53 @@ func TestStockSyncService_UpsertBySKU_LockSeesDynamicMode(t *testing.T) {
 		t.Fatalf("RejectedSKUs = %v, want [SKU-BUNDLE]", result.RejectedSKUs)
 	}
 }
+
+type stockSyncFakeBundleParents struct {
+	byComponent map[string][]string
+}
+
+func (f *stockSyncFakeBundleParents) ListBundleIDsByComponentID(_ context.Context, componentProductID string) ([]string, error) {
+	if f.byComponent == nil {
+		return []string{}, nil
+	}
+	return append([]string(nil), f.byComponent[componentProductID]...), nil
+}
+
+func (f *stockSyncFakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
+// TestStockSyncService_UpsertBySKU_ReindexExpandsBundleParents pins PR-1080
+// bulk ERP stock Trigger expansion through BundleParentLookup.
+func TestStockSyncService_UpsertBySKU_ReindexExpandsBundleParents(t *testing.T) {
+	leafID, parentID := id.New(), id.New()
+	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
+		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: leafID},
+	}}
+	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+	svc := newTestStockSync(variants, stock)
+	queue := &stockSyncFakeQueue{}
+	svc.SetReindexService(newTestReindexService(t, queue))
+	svc.SetBundleParents(&stockSyncFakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}})
+
+	if _, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+		{SKU: "SKU-1", Quantity: 10},
+	}); err != nil {
+		t.Fatalf("UpsertBySKU: %v", err)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued %d jobs, want 1", len(queue.enqueued))
+	}
+	ids, ok := queue.enqueued[0].Payload["product_ids"].([]string)
+	if !ok {
+		t.Fatalf("payload product_ids type = %T", queue.enqueued[0].Payload["product_ids"])
+	}
+	sort.Strings(ids)
+	want := []string{leafID, parentID}
+	sort.Strings(want)
+	if len(ids) != 2 || ids[0] != want[0] || ids[1] != want[1] {
+		t.Fatalf("product_ids = %v, want %v", ids, want)
+	}
+}

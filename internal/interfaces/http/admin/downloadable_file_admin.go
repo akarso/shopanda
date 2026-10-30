@@ -16,6 +16,7 @@ import (
 	domainDownload "github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // DownloadableFileAdminHandler lists and edits downloadable product → asset
@@ -24,7 +25,9 @@ type DownloadableFileAdminHandler struct {
 	files     *catalogApp.DownloadableFileService
 	downloads *downloadApp.Service
 	assets    media.AssetRepository
+	products  catalog.ProductRepository // optional; enriches ProductUpdatedData
 	auditor   *admin.Auditor
+	bus       *event.Bus // optional; PR-1080 on-save search reindex
 }
 
 // NewDownloadableFileAdminHandler creates a handler over the attachment and
@@ -53,6 +56,25 @@ func NewDownloadableFileAdminHandler(
 		assets:    assets,
 		auditor:   auditor,
 	}
+}
+
+// SetBus enables publishing catalog.EventProductUpdated after a successful
+// downloadable file attach/replace/remove (PR-1080). MissingDownloadableFile
+// forces Purchasable false at index time; without this event, attaching the
+// first file (or removing the last) leaves the indexed purchasable flag
+// stale. Grant-settings writes do not publish — they are post-purchase
+// fulfillment config, not catalog visibility. Left unset (nil), file
+// writes work exactly as before.
+func (h *DownloadableFileAdminHandler) SetBus(bus *event.Bus) {
+	h.bus = bus
+}
+
+// SetProducts enables loading name/slug/status into ProductUpdatedData
+// (same enrich as ProductCompositionAdminHandler). Left unset, publish
+// is async-only (ProductID alone) so rewrite.Subscriber never sees an
+// empty slug.
+func (h *DownloadableFileAdminHandler) SetProducts(products catalog.ProductRepository) {
+	h.products = products
 }
 
 type downloadableFileDTO struct {
@@ -142,6 +164,7 @@ func (h *DownloadableFileAdminHandler) AttachFile() http.HandlerFunc {
 			"asset_id": dto.AssetID,
 			"position": dto.Position,
 		}, nil)
+		h.publishProductUpdated(r.Context(), productID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"file": dto})
 	}
 }
@@ -191,6 +214,7 @@ func (h *DownloadableFileAdminHandler) ReplaceFile() http.HandlerFunc {
 		details["grants_moved"] = result.GrantsMoved
 		details["grants_revoked"] = result.GrantsRevoked
 		h.auditFile(r, admin.AuditDownloadableFileReplace, productID, details, nil)
+		h.publishProductUpdated(r.Context(), productID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 			"file":           dto,
 			"grants_moved":   result.GrantsMoved,
@@ -211,6 +235,7 @@ func (h *DownloadableFileAdminHandler) RemoveFile() http.HandlerFunc {
 			return
 		}
 		h.auditFile(r, admin.AuditDownloadableFileRemove, productID, details, nil)
+		h.publishProductUpdated(r.Context(), productID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"removed": true})
 	}
 }
@@ -328,6 +353,37 @@ func (h *DownloadableFileAdminHandler) fileDTOFrom(ctx context.Context, row cata
 		return downloadableFileDTO{}
 	}
 	return dtos[0]
+}
+
+// publishProductUpdated notifies search that MissingDownloadableFile may
+// have flipped. Loads name/slug/status like composition when products is
+// wired. Publish-then-PublishAsync fallback matches category assignment
+// (PR-1036 Round 4): a sync rewrite.Subscriber failure must not skip the
+// async reindex/cache path. File attach does not change slug. A missing
+// product or empty slug must not go through sync Publish —
+// rewrite.Subscriber writes "/"+Slug and would claim "/" when that path
+// is unclaimed. Async-only still refreshes search and cache from ProductID.
+func (h *DownloadableFileAdminHandler) publishProductUpdated(ctx context.Context, productID string) {
+	if h.bus == nil || productID == "" {
+		return
+	}
+	data := catalog.ProductUpdatedData{ProductID: productID}
+	if h.products != nil {
+		opCtx := catalog.WithOperatorProductReadScope(ctx)
+		if p, err := h.products.FindByID(opCtx, productID); err == nil && p != nil {
+			data.Name = p.Name
+			data.Slug = p.Slug
+			data.Status = p.Status
+		}
+	}
+	evt := event.New(catalog.EventProductUpdated, "downloadable.file", data)
+	if strings.TrimSpace(data.Slug) == "" {
+		h.bus.PublishAsync(evt)
+		return
+	}
+	if err := h.bus.Publish(ctx, evt); err != nil {
+		h.bus.PublishAsync(evt)
+	}
 }
 
 func (h *DownloadableFileAdminHandler) auditFile(r *http.Request, action admin.AuditAction, productID string, details map[string]interface{}, err error) {

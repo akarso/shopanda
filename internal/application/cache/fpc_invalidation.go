@@ -29,6 +29,9 @@ type FPCInvalidationSubscriber struct {
 	// reappear). Off by default — stock churn on every order must not wipe
 	// PLP caches while enforcement is disabled.
 	purgeListingsOnStockPrice bool
+	// bundleParents, when set, also purges parent kit PDP tags when a leaf
+	// product/price/stock changes (PR-1080).
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewFPCInvalidationSubscriber creates an FPCInvalidationSubscriber.
@@ -55,6 +58,16 @@ func (s *FPCInvalidationSubscriber) WithObserver(obs *FPCObserver) *FPCInvalidat
 func (s *FPCInvalidationSubscriber) WithVisibilityListingPurge(enabled bool) *FPCInvalidationSubscriber {
 	if s != nil {
 		s.purgeListingsOnStockPrice = enabled
+	}
+	return s
+}
+
+// WithBundleParents enables FPC fan-out to parent bundles that include the
+// changed leaf (PR-1080), so kit PDPs drop when a component's visibility
+// inputs change. Nil clears the lookup. Returns s for chaining.
+func (s *FPCInvalidationSubscriber) WithBundleParents(lookup catalog.BundleParentLookup) *FPCInvalidationSubscriber {
+	if s != nil {
+		s.bundleParents = lookup
 	}
 	return s
 }
@@ -99,7 +112,7 @@ func (s *FPCInvalidationSubscriber) HandleProductUpdated(ctx context.Context, ev
 	if err := s.deleteTag(ctx, ListingTag(), "tag", ListingTag()); err != nil {
 		return err
 	}
-	return s.deleteTag(ctx, ProductTag(data.ProductID), "product_id", data.ProductID)
+	return s.purgeProductWithBundleParents(ctx, data.ProductID)
 }
 
 func (s *FPCInvalidationSubscriber) HandlePriceUpserted(ctx context.Context, evt event.Event) error {
@@ -113,7 +126,7 @@ func (s *FPCInvalidationSubscriber) HandlePriceUpserted(ctx context.Context, evt
 			return err
 		}
 	}
-	return s.deleteTag(ctx, ProductTag(data.ProductID), "product_id", data.ProductID)
+	return s.purgeProductWithBundleParents(ctx, data.ProductID)
 }
 
 func (s *FPCInvalidationSubscriber) HandleStockUpdated(ctx context.Context, evt event.Event) error {
@@ -126,7 +139,32 @@ func (s *FPCInvalidationSubscriber) HandleStockUpdated(ctx context.Context, evt 
 			return err
 		}
 	}
-	return s.deleteTag(ctx, ProductTag(data.ProductID), "product_id", data.ProductID)
+	return s.purgeProductWithBundleParents(ctx, data.ProductID)
+}
+
+// purgeProductWithBundleParents clears the product FPC tag for productID
+// and every parent bundle that lists it as a component (PR-1080).
+func (s *FPCInvalidationSubscriber) purgeProductWithBundleParents(ctx context.Context, productID string) error {
+	err := s.deleteTag(ctx, ProductTag(productID), "product_id", productID)
+	if s.bundleParents == nil || productID == "" {
+		return err
+	}
+	parents, lookupErr := s.bundleParents.ListBundleIDsByComponentID(ctx, productID)
+	if lookupErr != nil {
+		s.log.Error("cache.fpc_invalidation.bundle_parents_lookup_failed", lookupErr, map[string]interface{}{
+			"product_id": productID,
+		})
+		return err
+	}
+	for _, parentID := range parents {
+		if parentID == "" || parentID == productID {
+			continue
+		}
+		if parentErr := s.deleteTag(ctx, ProductTag(parentID), "product_id", parentID); parentErr != nil && err == nil {
+			err = parentErr
+		}
+	}
+	return err
 }
 
 func (s *FPCInvalidationSubscriber) HandleCategoryCreated(ctx context.Context, evt event.Event) error {

@@ -20,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -811,5 +812,180 @@ func TestProductCompositionAdmin_ListBundleComponents_MissingParent(t *testing.T
 	h.ListBundleComponents().ServeHTTP(rec, compositionRequest(http.MethodGet, "/x", nil, map[string]string{"id": "missing"}))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestProductCompositionAdmin_AddBundleComponent_EmitsProductUpdatedEvent
+// pins PR-1080: adding a component publishes catalog.EventProductUpdated
+// for the parent so IndexUpdateSubscriber refreshes rollup visibility.
+func TestProductCompositionAdmin_AddBundleComponent_EmitsProductUpdatedEvent(t *testing.T) {
+	products := compositionProducts(
+		&catalog.Product{ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive, Name: "Kit", Slug: "kit"},
+		&catalog.Product{ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive, Name: "Leaf", Slug: "leaf"},
+	)
+	h := newCompositionHandler(products, &compBundleRepo{}, nil)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	asyncRan := make(chan catalog.ProductUpdatedData, 1)
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if !ok {
+			t.Errorf("data type %T", evt.Data)
+			return nil
+		}
+		asyncRan <- data
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	h.AddBundleComponent().ServeHTTP(rec, compositionRequest(http.MethodPost, "/x", map[string]any{
+		"component_product_id": "c1",
+		"quantity":             1,
+	}, map[string]string{"id": "b1"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case data := <-asyncRan:
+		if data.ProductID != "b1" || data.Slug != "kit" || data.Name != "Kit" || data.Status != catalog.StatusActive {
+			t.Fatalf("data = %+v", data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated for parent bundle")
+	}
+}
+
+// TestProductCompositionAdmin_RemoveBundleComponent_EmitsProductUpdatedEvent
+// is Add's counterpart for Remove.
+func TestProductCompositionAdmin_RemoveBundleComponent_EmitsProductUpdatedEvent(t *testing.T) {
+	products := compositionProducts(
+		&catalog.Product{ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive, Name: "Kit", Slug: "kit"},
+	)
+	components := &compBundleRepo{list: []catalog.BundleComponent{{
+		BundleProductID: "b1", ComponentProductID: "c1", Quantity: 1, Required: true,
+	}}}
+	h := newCompositionHandler(products, components, nil)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	asyncRan := make(chan string, 1)
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if ok {
+			asyncRan <- data.ProductID
+		}
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	h.RemoveBundleComponent().ServeHTTP(rec, compositionRequest(http.MethodDelete, "/x", nil, map[string]string{
+		"id": "b1", "componentId": "c1",
+	}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case id := <-asyncRan:
+		if id != "b1" {
+			t.Fatalf("product id = %s, want b1", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated for parent bundle")
+	}
+}
+
+// TestProductCompositionAdmin_AddBundleComponent_FailedProductRead_SkipsSyncPublish
+// pins that a post-write FindByID failure must not Publish an empty Slug
+// synchronously (rewrite.Subscriber would save "/"). Async still fires
+// so search/cache refresh from ProductID.
+func TestProductCompositionAdmin_AddBundleComponent_FailedProductRead_SkipsSyncPublish(t *testing.T) {
+	byID := map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive, Name: "Kit", Slug: "kit"},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive, Name: "Leaf", Slug: "leaf"},
+	}
+	products := &mockAdminProductRepo{
+		findByIDFn: func(ctx context.Context, id string) (*catalog.Product, error) {
+			if catalog.IncludeNonActiveProducts(ctx) {
+				return nil, errors.New("product read failed")
+			}
+			return byID[id], nil
+		},
+	}
+	h := newCompositionHandler(products, &compBundleRepo{}, nil)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	syncPublished := false
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		syncPublished = true
+		return nil
+	})
+	asyncRan := make(chan catalog.ProductUpdatedData, 1)
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if ok {
+			asyncRan <- data
+		}
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	h.AddBundleComponent().ServeHTTP(rec, compositionRequest(http.MethodPost, "/x", map[string]any{
+		"component_product_id": "c1",
+		"quantity":             1,
+	}, map[string]string{"id": "b1"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if syncPublished {
+		t.Fatal("empty slug must not Publish synchronously")
+	}
+	select {
+	case data := <-asyncRan:
+		if data.ProductID != "b1" || data.Slug != "" {
+			t.Fatalf("async data = %+v, want ProductID b1 and empty Slug", data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated after failed product read")
+	}
+}
+
+// TestProductCompositionAdmin_AddBundleComponent_NoBusStillSucceeds pins
+// that SetBus is optional — nil bus must not break composition writes.
+func TestProductCompositionAdmin_AddBundleComponent_NoBusStillSucceeds(t *testing.T) {
+	products := compositionProducts(
+		&catalog.Product{ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		&catalog.Product{ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	)
+	h := newCompositionHandler(products, &compBundleRepo{}, nil)
+	rec := httptest.NewRecorder()
+	h.AddBundleComponent().ServeHTTP(rec, compositionRequest(http.MethodPost, "/x", map[string]any{
+		"component_product_id": "c1",
+		"quantity":             1,
+	}, map[string]string{"id": "b1"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestProductCompositionAdmin_AddGroupedMember_NoProductUpdatedEvent pins
+// that grouped membership is display-only and does not publish.
+func TestProductCompositionAdmin_AddGroupedMember_NoProductUpdatedEvent(t *testing.T) {
+	products := compositionProducts(
+		&catalog.Product{ID: "g1", Type: catalog.TypeGrouped, Status: catalog.StatusActive, Name: "Group", Slug: "group"},
+		&catalog.Product{ID: "m1", Type: catalog.TypeSimple, Status: catalog.StatusActive, Name: "Member", Slug: "member"},
+	)
+	h := newCompositionHandler(products, nil, &compGroupedRepo{})
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	published := false
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		published = true
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	h.AddGroupedMember().ServeHTTP(rec, compositionRequest(http.MethodPost, "/x", map[string]any{
+		"member_product_id": "m1",
+	}, map[string]string{"id": "g1"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if published {
+		t.Fatal("grouped membership must not publish ProductUpdated")
 	}
 }
