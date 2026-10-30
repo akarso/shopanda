@@ -25,12 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1067 are done. Track B (visibility & purchasability) is complete. Track C (bundle & grouped) is complete. Track D started: `LinkedProduct` catalog eligibility (explicit parent allowlist and/or category rule; `IsEligible` is OR; does not gate `Purchasable`). Next: PR-1068 (`RequiresLinkedParent` purchasability gate). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**PR-1083 docs done; Phase 12 PR list closed** (PR-1048–1083). Do **not** read that as Track F’s original “search / CSV / GraphQL / GUI closeout” goal fully met without caveats: VAT sign-off for digital VAT (PR-1076) remains open; configurable storefront/admin is incomplete; assignment/grant settings have no CSV; the default storefront cannot sell `requires_linked_parent` (no assignment stamp on the default PDP). Next: those gaps and/or [Phase 13](../phase-13-plugin-runtime/README.md) (site-ready gate).
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1067 done — Track D started, eligibility relation only; next PR-1068; ids collide with Phase 11 — use phase folder) |
-| Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **Engineering complete (with caveats)** — PR list closed; VAT / configurable / assignment CSV / default-theme linked-parent gaps; ids collide with Phase 11 — use phase folder |
+| Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); **site-ready gate** before a real merchant site (Phase 14 already shipped) |

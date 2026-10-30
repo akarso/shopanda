@@ -186,6 +186,11 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		r = withRequestAssignment(r, assignmentContextFromFields(
+			r.FormValue("assignment_parent_product_id"),
+			r.FormValue("assignment_parent_unit_id"),
+			assignmentDeferredFromForm(r.FormValue("assignment_deferred")),
+		))
 		customerID := storefrontCustomerID(r)
 		if _, err := h.addLineToStorefrontCart(r, currentCart, customerID, variantID, quantity, h.storefrontExtensionInputsFromForm(r)); err != nil {
 			status := http.StatusInternalServerError

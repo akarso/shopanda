@@ -152,24 +152,29 @@ func TestProductHandler_List_FiltersHiddenCatalog(t *testing.T) {
 }
 
 func TestSearchHandler_FiltersHiddenSearch(t *testing.T) {
+	// Enforce on: applies visible_in_search to the engine query and still
+	// post-filters (fail-closed if the engine ignored the new key).
 	modes := catalog.DefaultVisibilityAxes()
-	hidden := modes
-	hidden.Search = catalog.VisibilityModeHidden
 	engine := &mockSearchEngine{
-		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
+		searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+			if q.Filters[search.FilterVisibleInSearch] != true {
+				t.Fatalf("expected Filters[%q]=true, got %v", search.FilterVisibleInSearch, q.Filters)
+			}
 			return search.SearchResult{
 				Products: []search.Product{
-					{ID: "h1", Name: "Hidden"},
-					{ID: "v1", Name: "Visible"},
+					{ID: "v1", Name: "Visible", VisibleInSearch: true},
+					{ID: "h1", Name: "Hidden", VisibleInSearch: false},
 				},
 				Total: 2,
 			}, nil
 		},
 	}
+	hidden := modes
+	hidden.Search = catalog.VisibilityModeHidden
 	h := storefront.NewSearchHandler(engine).WithVisibilityFacts(enforceFacts{
-		"h1": enforceSnap(hidden),
 		"v1": enforceSnap(modes),
-	})
+		"h1": enforceSnap(hidden),
+	}, catalog.VisibilityOptions{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/search?q=x", nil)
@@ -182,26 +187,52 @@ func TestSearchHandler_FiltersHiddenSearch(t *testing.T) {
 	data := body["data"].(map[string]interface{})
 	products := data["products"].([]interface{})
 	if len(products) != 1 {
-		t.Fatalf("products len = %d, want 1 (total may still be 2)", len(products))
+		t.Fatalf("products len = %d, want 1 after post-filter", len(products))
+	}
+}
+
+func TestSearchHandler_EnforceOff_NoVisibilityFilter(t *testing.T) {
+	engine := &mockSearchEngine{
+		searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+			if _, ok := q.Filters[search.FilterVisibleInSearch]; ok {
+				t.Fatal("enforce off must not set visible_in_search filter")
+			}
+			return search.SearchResult{
+				Products: []search.Product{{ID: "any", Name: "Any"}},
+				Total:    1,
+			}, nil
+		},
+	}
+	h := storefront.NewSearchHandler(engine) // facts nil = enforce off
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search?q=x", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
 	}
 }
 
 func TestSuggestHandler_FiltersHiddenSearch(t *testing.T) {
+	// Enforce on: pass visible_in_search to Suggest + post-filter safety net.
 	modes := catalog.DefaultVisibilityAxes()
-	hidden := modes
-	hidden.Search = catalog.VisibilityModeHidden
 	engine := &mockSearchEngine{
-		suggestFn: func(_ context.Context, _ string, _ int) ([]search.Suggestion, error) {
+		suggestFn: func(_ context.Context, q search.SuggestQuery) ([]search.Suggestion, error) {
+			if q.Filters[search.FilterVisibleInSearch] != true {
+				t.Fatalf("expected Suggest Filters[%q]=true, got %v", search.FilterVisibleInSearch, q.Filters)
+			}
 			return []search.Suggestion{
-				{Text: "Hidden", Type: "product", URL: "/products/h", ProductID: "h1"},
 				{Text: "Visible", Type: "product", URL: "/products/v", ProductID: "v1"},
+				{Text: "Hidden", Type: "product", URL: "/products/h", ProductID: "h1"},
 			}, nil
 		},
 	}
+	hidden := modes
+	hidden.Search = catalog.VisibilityModeHidden
 	h := storefront.NewSearchHandler(engine).WithVisibilityFacts(enforceFacts{
-		"h1": enforceSnap(hidden),
 		"v1": enforceSnap(modes),
-	})
+		"h1": enforceSnap(hidden),
+	}, catalog.VisibilityOptions{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=v", nil)
@@ -217,7 +248,28 @@ func TestSuggestHandler_FiltersHiddenSearch(t *testing.T) {
 	data := wrap["data"].(map[string]interface{})
 	suggestions := data["suggestions"].([]interface{})
 	if len(suggestions) != 1 {
-		t.Fatalf("suggestions len = %d, want 1", len(suggestions))
+		t.Fatalf("suggestions len = %d, want 1 after post-filter", len(suggestions))
+	}
+}
+
+func TestSuggestHandler_EnforceOff_Unfiltered(t *testing.T) {
+	engine := &mockSearchEngine{
+		suggestFn: func(_ context.Context, q search.SuggestQuery) ([]search.Suggestion, error) {
+			if len(q.Filters) != 0 {
+				t.Fatalf("enforce off must not pass Suggest filters, got %v", q.Filters)
+			}
+			return []search.Suggestion{
+				{Text: "Any", Type: "product", URL: "/products/a", ProductID: "a1"},
+			}, nil
+		},
+	}
+	h := storefront.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=a", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
 	}
 }
 
@@ -410,7 +462,7 @@ func TestStorefrontHandler_Product_HiddenIndividually(t *testing.T) {
 	}
 	engine := createTestTheme(t)
 	h := storefront.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()).
-		WithVisibilityFacts(enforceFacts{"p1": enforceSnap(modes)})
+		WithVisibilityFacts(enforceFacts{"p1": enforceSnap(modes)}, catalog.VisibilityOptions{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/secret", nil)

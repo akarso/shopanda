@@ -40,42 +40,43 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | --- | --- | --- | --- |
 | — | Dashboard | `/admin/dashboard` | Daily snapshot |
 | Sales | Orders | `/admin/orders` | List, detail, status updates |
-| Sales | Returns | `/admin/sales/returns` | RMA workflow ([PR-502](../phase-5-maturity/prs/PR-502.md)) |
-| Sales | Transactions | `/admin/sales/transactions` | Payment ledger ([PR-504](../phase-5-maturity/prs/PR-504.md)) |
+| Sales | Returns | `/admin/sales/returns` | RMA workflow (PR-502) |
+| Sales | Transactions | `/admin/sales/transactions` | Payment ledger (PR-504) |
 | Catalog | Products | `/admin/products` | Create, edit, variants, media |
-| Catalog | Categories | `/admin/catalog/categories` | Tree + product assignment ([PR-631](../phase-6-merchant-complete/prs/PR-631.md)) |
+| Catalog | Categories | `/admin/catalog/categories` | Tree + product assignment (PR-631) |
+| Sales | Assignments | `/admin/sales/assignments` | Card/ticket unit assignment lookup + assign/revoke (PR-1073) |
 | Catalog | Attributes | `/admin/catalog/attributes` | Attribute groups + product fields |
-| Catalog | Bulk Prices | `/admin/catalog/prices` | Grid price edits ([PR-630](../phase-6-merchant-complete/prs/PR-630.md)) |
-| Catalog | Reviews | `/admin/catalog/reviews` | Moderation ([PR-640](../phase-6-merchant-complete/prs/PR-640.md)) |
+| Catalog | Bulk Prices | `/admin/catalog/prices` | Grid price edits (PR-630) |
+| Catalog | Reviews | `/admin/catalog/reviews` | Moderation (PR-640) |
 | Customers | Customers | `/admin/customers` | Profile + store credit panel |
-| Customers | Groups | `/admin/customers/groups` | **B2B license required** ([PR-610](../phase-6-merchant-complete/prs/PR-610.md)) |
-| Marketing | Promotions | `/admin/marketing/promotions` | Guided + advanced rules ([PR-642](../phase-6-merchant-complete/prs/PR-642.md)) |
+| Customers | Groups | `/admin/customers/groups` | **B2B license required** (PR-610) |
+| Marketing | Promotions | `/admin/marketing/promotions` | Guided + advanced rules (PR-642) |
 | Marketing | Coupons | `/admin/marketing/coupons` | Coupon codes |
-| Marketing | Abandoned Cart | `/admin/marketing/abandoned-cart` | Recovery email settings ([PR-641](../phase-6-merchant-complete/prs/PR-641.md)) |
+| Marketing | Abandoned Cart | `/admin/marketing/abandoned-cart` | Recovery email settings (PR-641) |
 | Content | Pages | `/admin/content/pages` | CMS pages |
-| Content | Navigation | `/admin/content/navigation` | Menu builder ([PR-600](../phase-6-merchant-complete/prs/PR-600.md)) |
-| Content | Blocks | `/admin/content/blocks` | Reusable blocks ([PR-601](../phase-6-merchant-complete/prs/PR-601.md)) |
-| Content | Home Blocks | `/admin/content/home-blocks` | Homepage placements ([PR-602](../phase-6-merchant-complete/prs/PR-602.md)) — linked from Blocks grid |
+| Content | Navigation | `/admin/content/navigation` | Menu builder (PR-600) |
+| Content | Blocks | `/admin/content/blocks` | Reusable blocks (PR-601) |
+| Content | Home Blocks | `/admin/content/home-blocks` | Homepage placements (PR-602) — linked from Blocks grid |
 | Content | Media | `/admin/media` | Asset library |
 | Operations | Inventory | `/admin/operations/inventory` | Stock levels |
-| Operations | Shipping | `/admin/operations/shipping` | Zones, rates, EU compliance toggles ([PR-524](../phase-5-maturity/prs/PR-524.md)) |
+| Operations | Shipping | `/admin/operations/shipping` | Zones, rates, EU compliance toggles (PR-524) |
 | Operations | Payments | `/admin/operations/payments` | Currency display defaults |
-| Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
-| Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
-| Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history ([PR-1038](../phase-11-jobs-search-cache/prs/PR-1038.md)) |
-| Operations | Cache | `/admin/operations/cache` | Cache stats, FPC hit rates, and clear (prefix/tag/key/all) ([PR-1043](../phase-11-jobs-search-cache/prs/PR-1043.md), [PR-1047](../phase-11-jobs-search-cache/prs/PR-1047.md)) |
+| Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel (PR-1031) |
+| Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable (PR-1031) |
+| Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history (PR-1038) |
+| Operations | Cache | `/admin/operations/cache` | Cache stats, FPC hit rates, and clear (prefix/tag/key/all) (PR-1043, PR-1047) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
-| Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
+| Settings | Users & Roles | `/admin/settings/users` | Admin users (PR-520) |
 | Settings | Audit Log | `/admin/settings/audit` | Admin action history |
-| Settings | Extension Fields | `/admin/settings/extension-fields` | Custom field definitions ([PR-866](../phase-9-merchant-discovery/prs/PR-866.md)); variant values on product edit ([PR-867](../phase-9-merchant-discovery/prs/PR-867.md)) |
+| Settings | Extension Fields | `/admin/settings/extension-fields` | Custom field definitions (PR-866); variant values on product edit (PR-867) |
 | Store | Stores | `/admin/store` | Multi-store entities |
 | Store | Domains | `/admin/store/domains` | Hostname mapping |
 | Store | Languages | `/admin/store/languages` | Store language config |
 | Store | Currencies | `/admin/store/currencies` | Store currency config |
 | Integrations | Integrations | `/admin/integrations` | SMTP/media/plugin summary |
-| Integrations | Webhooks | `/admin/integrations/webhooks` | Outbound endpoints ([PR-620](../phase-6-merchant-complete/prs/PR-620.md)) — linked from Integrations |
-| Integrations | Inbound Idempotency | `/admin/integrations/idempotency` | ERP callback dedupe keys ([PR-864](../phase-9-merchant-discovery/prs/PR-864.md)) — linked from Integrations |
+| Integrations | Webhooks | `/admin/integrations/webhooks` | Outbound endpoints (PR-620) — linked from Integrations |
+| Integrations | Inbound Idempotency | `/admin/integrations/idempotency` | ERP callback dedupe keys (PR-864) — linked from Integrations |
 | Account | Account | `/admin/account` | Your admin profile (header link) |
 
 Use the **Store / Language / Currency** switcher in the admin header when a screen is scope-sensitive (catalog, settings, bulk prices, store credit).
@@ -86,12 +87,12 @@ Use the **Store / Language / Currency** switcher in the admin header when a scre
 
 1. Open `/admin/products`.
 2. Select **New Product**.
-3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Choosing **Bundle** shows pricing mode, stock mode, and explode order lines. Explode order lines can be turned on only when both modes are dynamic. Choosing **Grouped** shows a members panel after the product is saved. Linked-child and downloadable file panels are still later tracks.
+3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Choosing **Bundle** shows pricing mode, stock mode, and explode order lines. Explode order lines can be turned on only when both modes are dynamic. Choosing **Grouped** shows a members panel after the product is saved. Linked eligibility is on the product edit form (PR-1073). A **Downloadable** product must have at least one file attached before it can be set to Active (and cannot be purchased without a file — including as a required component of a bundle). After save, the **Downloadable files** section lists attachments, uploads with Private download on, and optional grant expiry/limit overrides. Replacing a file asks whether to allow **global retarget** — grants move by asset (not this product only); shared files refuse unless you confirm. Customers download via their account (post-purchase grants). Support can list/revoke/re-issue grants on the order detail and customer detail pages.
 4. Save the product. On edit, changing **Type** asks for confirmation: it can alter shipping behavior and which type-specific panels apply. Bundle components and grouped members are edited after that type is saved: changing a product to bundle or grouped and saving opens that picker. The picker shows a page of simple, virtual, or downloadable products, Load more fetches the next page until the page is not full, and search filters products already loaded. Set quantity and required for a bundle component, and add or remove the link. A saved quantity or required flag stays when you load more products. Those links are not edited from the variant grid.
 
 The product form is schema-driven, so the exact fields can vary by deployment. Use the fields your store exposes rather than assuming every catalog uses the same product structure.
 
-**Bulk composition CSV (optional):** operators with shell access can import and export the same links. Import adds or updates rows. A row missing from the file is not deleted. Product CSV does not change `pricing_mode`, `stock_mode`, or `explode_order_lines` on a product that already exists; empty cells on create mean fixed / fixed / false.
+**Bulk composition CSV (optional):** operators with shell access can import and export the same links. Import adds or updates rows. A row missing from the file is not deleted. Product CSV does not change `pricing_mode`, `stock_mode`, `explode_order_lines`, `status`, or the four visibility mode columns (`visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable`) on a product that already exists — a mismatch skips the slug (and any new SKUs for that slug). Empty cells on create mean fixed / fixed / false / draft / auto×4. New exports always carry those tokens; older files without the columns still import. Tokens are lowercase and case-sensitive (`HIDDEN` / `ACTIVE` are rejected). Downloadable cannot be created as `active` via product CSV — import as draft, `import:downloadable-files`, then activate in admin. Assignment units and downloadable grant settings have no CSV — use Sales → Assignments and the product form’s downloadable settings.
 
 ```bash
 app export:bundle-components bundle-components.csv
@@ -141,7 +142,7 @@ The media library shows a thumbnail, file name, file size, public URL, and delet
 
 For very large catalog migrations, CSV workflows remain available.
 
-**On the storefront:** with the **PostgreSQL** search engine (default), category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` on PostgreSQL and Meilisearch ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). On `/search`, attributes flagged for advanced search appear as additional filter chips on both engines ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md)). PostgreSQL picks up discovery-flag changes on the next request. **Meilisearch** syncs filterable fields when you change flags in admin ([PR-907](../phase-9-merchant-discovery/prs/PR-907.md)) or import attributes via CSV ([PR-908](../phase-9-merchant-discovery/prs/PR-908.md)); reindex products so facet counts reflect existing catalog data.
+**On the storefront:** with the **PostgreSQL** search engine (default), category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog (PR-900). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` on PostgreSQL and Meilisearch (PR-904, PR-906). The header search box shows product name suggestions while typing (PR-901). On `/search`, attributes flagged for advanced search appear as additional filter chips on both engines (PR-905). PostgreSQL picks up discovery-flag changes on the next request. **Meilisearch** syncs filterable fields when you change flags in admin (PR-907) or import attributes via CSV (PR-908); reindex products so facet counts reflect existing catalog data.
 
 ### Attribute discovery flags
 
@@ -149,8 +150,8 @@ On **Catalog → Attributes**, each attribute has optional flags under **Discove
 
 | Flag | Purpose |
 | --- | --- |
-| Use in advanced search | Include in storefront `/search` filters and `GET /api/v1/search` attribute params — PostgreSQL and Meilisearch ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)); Meilisearch admin/CSV import changes sync filterable fields ([PR-907](../phase-9-merchant-discovery/prs/PR-907.md), [PR-908](../phase-9-merchant-discovery/prs/PR-908.md)); reindex for existing product counts |
-| Use in layered navigation | Include as a PLP facet candidate — interactive chips on `/products`, `/search`, and category pages with PostgreSQL or Meilisearch search ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)); Meilisearch admin/CSV import changes sync filterable fields ([PR-907](../phase-9-merchant-discovery/prs/PR-907.md), [PR-908](../phase-9-merchant-discovery/prs/PR-908.md)); reindex for existing product counts |
+| Use in advanced search | Include in storefront `/search` filters and `GET /api/v1/search` attribute params — PostgreSQL and Meilisearch (PR-905, PR-906); Meilisearch admin/CSV import changes sync filterable fields (PR-907, PR-908); reindex for existing product counts |
+| Use in layered navigation | Include as a PLP facet candidate — interactive chips on `/products`, `/search`, and category pages with PostgreSQL or Meilisearch search (PR-904, PR-906); Meilisearch admin/CSV import changes sync filterable fields (PR-907, PR-908); reindex for existing product counts |
 | Use in promotion rules | Allow in promotion condition builders (future) |
 
 All flags default to off for existing attributes.
@@ -184,6 +185,8 @@ app export:prices prices.csv
 app import:categories categories.csv
 app export:categories categories.csv
 ```
+
+Product CSV includes create-only `status` (`draft|active|archived`) and visibility columns `visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable` (`auto|visible|hidden`). Empty cells on create mean draft / auto×4. Those fields are not updated on an existing product — a mismatch skips the whole slug. **Downloadable products** cannot be created as `active` via CSV (same rule as admin: at least one file must be attached first). Import them as `draft`, attach files with `import:downloadable-files`, then activate in the admin product form.
 
 Use these when:
 
@@ -264,7 +267,7 @@ Open **Customers → Customers** at `/admin/customers` to browse accounts and op
 
 ### Store credit
 
-On a customer detail page, use the **Store Credit** panel to view balance and issue credit in the selected currency ([PR-611](../phase-6-merchant-complete/prs/PR-611.md)).
+On a customer detail page, use the **Store Credit** panel to view balance and issue credit in the selected currency (PR-611).
 
 Select a currency in the header switcher if the panel asks for one.
 
@@ -376,7 +379,7 @@ Open **Settings → Localization** at `/admin/settings/localization` for currenc
 
 - **Users & Roles** (`/admin/settings/users`): manage admin accounts and roles.
 - **Audit Log** (`/admin/settings/audit`): review admin actions.
-- **Extension Fields** (`/admin/settings/extension-fields`): define custom field schemas for products, variants, cart lines, and other entities ([PR-866](../phase-9-merchant-discovery/prs/PR-866.md)). Product-scoped values are edited in the product **Extensions** panel; variant-scoped values are edited per row in the **Variants** panel on product edit ([PR-867](../phase-9-merchant-discovery/prs/PR-867.md)).
+- **Extension Fields** (`/admin/settings/extension-fields`): define custom field schemas for products, variants, cart lines, and other entities (PR-866). Product-scoped values are edited in the product **Extensions** panel; variant-scoped values are edited per row in the **Variants** panel on product edit (PR-867).
 
 ### Multi-store usage
 
@@ -384,7 +387,7 @@ Use **Store Management → Stores** at `/admin/store` for store entities, plus *
 
 ## Integrations
 
-Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`. Use **Inbound Idempotency** at `/admin/integrations/idempotency` to inspect ERP callback dedupe keys and preview stored replay responses ([PR-864](../phase-9-merchant-discovery/prs/PR-864.md)).
+Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`. Use **Inbound Idempotency** at `/admin/integrations/idempotency` to inspect ERP callback dedupe keys and preview stored replay responses (PR-864).
 
 Outbound webhook URLs must be public **https** destinations. Private, loopback, and link-local addresses (including cloud metadata) are blocked — see [RUNBOOK.md](../../RUNBOOK.md#outbound-webhooks-ssrf).
 
@@ -457,18 +460,28 @@ That split is intentional: frequent tasks live in admin; large migrations and pr
 
 ## Roadmap and Known Gaps
 
-Phases 4–6 delivered merchant-complete admin coverage for catalog, sales, marketing, content, operations, and settings. See the [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) for the full plan.
+Phases 4–6 delivered merchant-complete admin coverage for catalog, sales, marketing, content, operations, and settings.
 
 | Capability | Status |
 | --- | --- |
-| Navigation / blocks / home placements | Shipped — [PR-600](../phase-6-merchant-complete/prs/PR-600.md)–[602](../phase-6-merchant-complete/prs/PR-602.md) |
+| Navigation / blocks / home placements | Shipped — PR-600–602 |
 | Returns / transactions / invoices / refunds | Shipped — Phase 5–6 sales PRs |
-| Bulk prices + category picker | Shipped — [PR-630](../phase-6-merchant-complete/prs/PR-630.md), [PR-631](../phase-6-merchant-complete/prs/PR-631.md) |
-| Reviews + abandoned cart + promotion helper | Shipped — [PR-640](../phase-6-merchant-complete/prs/PR-640.md)–[642](../phase-6-merchant-complete/prs/PR-642.md) |
-| Customer groups | B2B plugin + license — [PR-610](../phase-6-merchant-complete/prs/PR-610.md) |
-| Store credit | Customer detail panel — [PR-611](../phase-6-merchant-complete/prs/PR-611.md) |
-| Webhooks | Integrations → Webhooks — [PR-620](../phase-6-merchant-complete/prs/PR-620.md) |
+| Bulk prices + category picker | Shipped — PR-630, PR-631 |
+| Reviews + abandoned cart + promotion helper | Shipped — PR-640–642 |
+| Customer groups | B2B plugin + license — PR-610 |
+| Store credit | Customer detail panel — PR-611 |
+| Webhooks | Integrations → Webhooks — PR-620 |
 | Payment provider setup | Deployment-level (Stripe keys, etc.) |
 | Non-English admin UI | Not available |
 
-EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
+EU directive overview: [Compliance Reference](COMPLIANCE_EU.md).
+
+**Digital goods tax class (PR-1076):** `downloadable` products use tax class `digital`; `virtual` stays `standard` unless you later get an ESS opt-in. Checkout taxes by the address country. If no digital rate exists for that country (or the digital rate is 0 bps), checkout **fails** (does not charge 0% VAT). Releases require `shopanda migrate` (and optionally seed) so digital rows exist for each non-zero standard rate — still confirm destination coverage for every country you sell into. There is no Tax settings screen yet — ask your advisor for correct bps per member state and apply them via SQL / ops (see RUNBOOK). Reverse charge / VAT ID is not collected yet. This is rate-table wiring, not a finished EU digital VAT product.
+
+## Linked products & assignment (PR-1073)
+
+- On any product edit form, the **Linked eligibility** section (type-agnostic) lists which parent products and/or categories a child may later be assigned to. Use the **Requires linked parent** checkbox on create/update to gate purchasability. Rules are additive; removing a row does not delete products.
+- Bulk rules: CLI `import:linked-eligible-parents` / `export:linked-eligible-parents` (`child_slug,parent_slug`) and `import:linked-eligible-categories` / `export:linked-eligible-categories` (`child_slug,category_slug`).
+- Instance assignment (which purchased ticket sits on which purchased card) is on **Sales → Assignments**. Enter a parent unit id (`orderID/variantID`) to list assigned tickets, or a child unit id to see the current card. Assign/revoke requires `assignments.write` (Admin, Manager, Support).
+- Product CSV can set `requires_linked_parent`, `status` (`draft|active|archived`; empty → draft), and `visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable` on create only (`auto|visible|hidden`; empty → auto; case-sensitive). Downloadable + `active` on create is rejected — import as draft → `import:downloadable-files` → activate in admin.
+

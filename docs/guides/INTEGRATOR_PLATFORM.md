@@ -1,16 +1,16 @@
 # Integrator Platform — Extension Strategy & External Systems
 
-Status: **published** (Phase 8 complete — PR-800–854)  
+How integrators extend cart, pricing, CSV import, and ERP seams without forking core.
+
 Audience: core maintainers, integrators, plugin authors
 
 Related:
 
-- [Phase 8 ROADMAP](../ROADMAP.md)
-- [Plugin Authoring Guide](../../../PLUGINS.md)
-- [Developer Extension Guide](../../guides/DEVELOPER.md)
-- [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md)
-- [PRICING_PIPELINE.md](../../phase-1-core/specs/PRICING_PIPELINE.md)
-- [FOUNDATION.md](../../phase-1-core/specs/FOUNDATION.md) §2.7 — extensibility without chaos
+- [Plugin Authoring Guide](../../PLUGINS.md)
+- [Developer Extension Guide](DEVELOPER.md)
+- [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md)
+
+Historical design dumps (pricing pipeline, foundation, checkout workflow, Phase 8 roadmap) live on the `dev` branch under `docs/phase-1-core/specs/` and `docs/phase-8-integrator-platform/`. Those paths are not on `main`.
 
 ---
 
@@ -18,7 +18,7 @@ Related:
 
 | Section | Status |
 | --- | --- |
-| §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
+| §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
@@ -140,7 +140,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 ### 4.3 Checkout
 
-`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **shipped** (PR-854); see [CHECKOUT_WORKFLOW.md](../../phase-1-core/specs/CHECKOUT_WORKFLOW.md).
+`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **shipped** (PR-854). Checkout step design history: `docs/phase-1-core/specs/CHECKOUT_WORKFLOW.md` on the `dev` branch.
 
 ---
 
@@ -148,7 +148,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 **Goal:** Integrator transforms row values **before** core persistence without copying `internal/application/importer`.
 
-**Status:** shipped (PR-820–823). Reference plugin: [`plugins/importdemo`](../../../plugins/importdemo).
+**Status:** shipped (PR-820–823). Reference plugin: [`plugins/importdemo`](../../plugins/importdemo).
 
 ### Model
 
@@ -269,7 +269,7 @@ Integrator owns **`cmd/api/register_plugins.go`** ordering for init; runtime han
 
 When two plugins extend the same seam, resolution is **explicit** — no preference XML.
 
-**Practical guide:** [Multi-Plugin Composition §Multi-team precedence](../../guides/PLUGIN_COMPOSITION.md#multi-team-precedence) (PR-802).
+**Practical guide:** [Multi-Plugin Composition §Multi-team precedence](PLUGIN_COMPOSITION.md#multi-team-precedence) (PR-802).
 
 | Seam type | Resolution |
 | --- | --- |

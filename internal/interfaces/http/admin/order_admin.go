@@ -13,6 +13,7 @@ import (
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -22,6 +23,7 @@ type OrderAdminHandler struct {
 	extensions *extensionapp.ValueService
 	auditor    *admin.Auditor
 	validator  admin.OrderValidator
+	bus        *event.Bus
 }
 
 // NewOrderAdminHandler creates an OrderAdminHandler.
@@ -54,6 +56,16 @@ func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admi
 		auditor:    auditor,
 		validator:  admin.NewOrderValidator(),
 	}
+}
+
+// WithEventBus publishes order.paid after a successful admin transition to
+// paid (PR-1075). Nil skips publish.
+func (h *OrderAdminHandler) WithEventBus(bus *event.Bus) *OrderAdminHandler {
+	if h == nil {
+		return nil
+	}
+	h.bus = bus
+	return h
 }
 
 func (h *OrderAdminHandler) getAdminID(r *http.Request) string {
@@ -293,6 +305,11 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if o.Status() == next {
+			// Already-paid heal: republish so a prior publish failure can
+			// still issue grants (mirrors ApplyStatus / webhook retry).
+			if next == order.OrderStatusPaid {
+				_ = orderApp.PublishPaid(r.Context(), h.bus, "admin.order", o.ID, string(next), string(next))
+			}
 			resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, o)
 			if err != nil {
 				httpshared.JSONError(w, extensionapp.MapValueError(err))
@@ -332,6 +349,12 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 			})
 			httpshared.JSONError(w, err)
 			return
+		}
+
+		if next == order.OrderStatusPaid {
+			// Persist already succeeded — do not HTTP 500 on publish failure.
+			// Already-paid retries still republish above.
+			_ = orderApp.PublishPaid(r.Context(), h.bus, "admin.order", o.ID, oldStatus, string(next))
 		}
 
 		resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, o)

@@ -61,6 +61,10 @@ type Product struct {
 	Name        string
 	Slug        string
 	Description string
+	// Type is the catalog product type as a plain string (simple|virtual|
+	// bundle|grouped|configurable|downloadable). Kept as string so the
+	// search package does not import catalog (PR-1079).
+	Type string
 	// CategoryIDs lists every category the product is assigned to. Was a
 	// single CategoryID string before PR-1037 — that silently dropped every
 	// category past the first for a multi-category product in engines that
@@ -74,6 +78,21 @@ type Product struct {
 	InStock     bool
 	CreatedAt   time.Time
 	Attributes  map[string]interface{}
+	// Status is the catalog lifecycle status as a plain string (draft|
+	// active|archived). Indexed for Meilisearch defense-in-depth filtering
+	// (PR-1079 review); Postgres Search/Suggest already restrict to active
+	// via the products.status column.
+	Status string
+	// Visibility axes resolved at index time (PR-1079), not at query time.
+	// SearchProductSource fills storefront-effective values (non-active →
+	// all false). Engines denormalize them into filterable fields.
+	// Storefront search applies FilterVisibleInSearch via
+	// ApplyVisibilityAxisFilter when enforce is on, with a fail-closed
+	// post-filter safety net.
+	VisibleInCatalog    bool
+	VisibleInSearch     bool
+	VisibleIndividually bool
+	Purchasable         bool
 }
 
 // Category is a lightweight search-index representation of a catalog
@@ -114,6 +133,29 @@ const MaxSuggestLimit = 10
 // DefaultSuggestLimit is applied when limit is zero.
 const DefaultSuggestLimit = 5
 
+// SuggestQuery describes an autocomplete request.
+// Filters use the same well-known keys as SearchQuery (category, attr_*,
+// FilterVisibleInSearch, FilterType, …). Engines apply shared filter keys
+// consistently with Search. Engines must not bake storefront visibility into
+// Suggest semantics — callers pass filters only when enforce is on.
+type SuggestQuery struct {
+	Prefix  string
+	Limit   int
+	Filters map[string]interface{}
+}
+
+// EffectiveLimit returns the suggest limit clamped to [1, MaxSuggestLimit].
+// A zero or negative Limit is treated as DefaultSuggestLimit.
+func (q SuggestQuery) EffectiveLimit() int {
+	if q.Limit <= 0 {
+		return DefaultSuggestLimit
+	}
+	if q.Limit > MaxSuggestLimit {
+		return MaxSuggestLimit
+	}
+	return q.Limit
+}
+
 // SearchEngine is the port for product search backends.
 // Implementations range from Postgres full-text search to external engines
 // like Meilisearch.
@@ -136,7 +178,9 @@ type SearchEngine interface {
 	// Search executes the given query and returns matching products.
 	Search(ctx context.Context, query SearchQuery) (SearchResult, error)
 
-	// Suggest returns autocomplete suggestions for a prefix string.
-	// limit is clamped to [1, MaxSuggestLimit]; zero uses DefaultSuggestLimit.
-	Suggest(ctx context.Context, prefix string, limit int) ([]Suggestion, error)
+	// Suggest returns autocomplete suggestions for query.Prefix.
+	// Limit is clamped via SuggestQuery.EffectiveLimit. Shared Filters keys
+	// (category, attr_*, visibility, type, …) are applied only when present —
+	// same contract as Search.
+	Suggest(ctx context.Context, query SuggestQuery) ([]Suggestion, error)
 }

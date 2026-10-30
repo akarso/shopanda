@@ -19,12 +19,12 @@ func TestRegisterProductSchemas_Form(t *testing.T) {
 	if form.Name != "product.form" {
 		t.Errorf("form.Name = %q, want %q", form.Name, "product.form")
 	}
-	if len(form.Fields) != 5 {
-		t.Fatalf("fields count = %d, want 5", len(form.Fields))
+	if len(form.Fields) != 6 {
+		t.Fatalf("fields count = %d, want 6", len(form.Fields))
 	}
 
 	// Verify field names in order.
-	wantNames := []string{"name", "slug", "description", "type", "status"}
+	wantNames := []string{"name", "slug", "description", "type", "status", "requires_linked_parent"}
 	for i, want := range wantNames {
 		if form.Fields[i].Name != want {
 			t.Errorf("field[%d].Name = %q, want %q", i, form.Fields[i].Name, want)
@@ -83,13 +83,22 @@ func TestRegisterProductSchemas_Form(t *testing.T) {
 		t.Errorf("status default = %v, want %q", statusField.Default, "draft")
 	}
 
+	linkedField := form.Fields[5]
+	if linkedField.Type != "checkbox" {
+		t.Errorf("requires_linked_parent field type = %q, want checkbox", linkedField.Type)
+	}
+	if linkedField.Required {
+		t.Error("requires_linked_parent should not be required")
+	}
+
 	// Each field declares its scope so the admin UI can render scope badges.
 	wantScopes := map[string]string{
 		"name":        "translatable",
 		"slug":        "global",
 		"description": "translatable",
 		"type":        "global",
-		"status":      "global",
+		"status":                 "global",
+		"requires_linked_parent": "global",
 	}
 	for _, field := range form.Fields {
 		want := wantScopes[field.Name]

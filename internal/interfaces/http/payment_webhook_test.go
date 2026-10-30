@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
@@ -157,6 +158,98 @@ func TestPaymentWebhook_Failure(t *testing.T) {
 	}
 }
 
+func TestPaymentWebhook_FailedPublishReturns500(t *testing.T) {
+	py := seedPendingPayment(t)
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, id string) (*payment.Payment, error) {
+			if id == "pay-1" {
+				return py, nil
+			}
+			return nil, nil
+		},
+	}
+	bus := event.NewBus(webhookTestLogger())
+	bus.On(payment.EventPaymentFailed, func(context.Context, event.Event) error {
+		return errors.New("revoke failed")
+	})
+	h := shophttp.NewPaymentWebhookHandler(repo, bus, webhook.NewHMACVerifier(nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/payments/webhook/{provider}", h.Handle())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/manual", strings.NewReader(`{"payment_id":"pay-1","success":false}`))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+	if py.Status() != payment.StatusFailed {
+		t.Errorf("payment status = %v, want failed after publish error", py.Status())
+	}
+}
+
+func TestPaymentWebhook_AlreadyFailedRetryPublishes(t *testing.T) {
+	py := seedPendingPayment(t)
+	if err := py.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, id string) (*payment.Payment, error) {
+			if id == "pay-1" {
+				return py, nil
+			}
+			return nil, nil
+		},
+	}
+	bus := event.NewBus(webhookTestLogger())
+	published := 0
+	bus.On(payment.EventPaymentFailed, func(context.Context, event.Event) error {
+		published++
+		return nil
+	})
+	h := shophttp.NewPaymentWebhookHandler(repo, bus, webhook.NewHMACVerifier(nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/payments/webhook/{provider}", h.Handle())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/manual", strings.NewReader(`{"payment_id":"pay-1","success":false}`))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if published != 1 {
+		t.Fatalf("payment.failed publishes = %d, want 1", published)
+	}
+}
+
+func TestPaymentWebhook_AlreadyFailedRetryPublishError(t *testing.T) {
+	py := seedPendingPayment(t)
+	if err := py.Fail(); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, id string) (*payment.Payment, error) {
+			if id == "pay-1" {
+				return py, nil
+			}
+			return nil, nil
+		},
+	}
+	bus := event.NewBus(webhookTestLogger())
+	bus.On(payment.EventPaymentFailed, func(context.Context, event.Event) error {
+		return errors.New("revoke failed")
+	})
+	h := shophttp.NewPaymentWebhookHandler(repo, bus, webhook.NewHMACVerifier(nil))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/payments/webhook/{provider}", h.Handle())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/manual", strings.NewReader(`{"payment_id":"pay-1","success":false}`))
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPaymentWebhook_NotFound(t *testing.T) {
 	repo := &mockPaymentRepo{}
 	mux := webhookSetup(repo)
@@ -221,15 +314,32 @@ func TestPaymentWebhook_AlreadyCompleted(t *testing.T) {
 			return py, nil
 		},
 	}
-	mux := webhookSetup(repo)
+	bus := event.NewBus(webhookTestLogger())
+	var paid int
+	bus.On(order.EventOrderPaid, func(_ context.Context, _ event.Event) error {
+		paid++
+		return nil
+	})
+	verifier := webhook.NewHMACVerifier(nil)
+	h := shophttp.NewPaymentWebhookHandler(repo, bus, verifier)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/payments/webhook/{provider}", h.Handle())
 
 	body := `{"payment_id":"pay-1","provider_ref":"ref-new","success":true}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/manual", strings.NewReader(body))
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	resp := parseWebhookBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	if data["status"] != "already_processed" {
+		t.Errorf("status = %v, want already_processed", data["status"])
+	}
+	if paid != 1 {
+		t.Fatalf("order.paid republish count = %d, want 1", paid)
 	}
 }
 

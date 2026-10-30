@@ -19,8 +19,16 @@ import (
 )
 
 // reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
-// so it does not inherit a canceled operation context.
+// so it does not inherit a canceled operation context. Expansion uses its
+// own timeout of the same length so a large parent lookup cannot expire
+// the enqueue context.
 const reindexTriggerTimeout = 30 * time.Second
+
+// stockReindexExpandMaxIDs is the largest touched set we expand to parent
+// bundles. At or above this, ReindexService.Trigger already substitutes a
+// full scan for a scoped ID list (maxScopedReindexProductIDs), so
+// expansion is wasted work and would compete with the enqueue timeout.
+const stockReindexExpandMaxIDs = 10_000
 
 // StockResult holds the summary of a stock import run.
 type StockResult struct {
@@ -46,6 +54,8 @@ type StockImporter struct {
 
 	// reindex is optional — see WithReindex.
 	reindex *searchApp.ReindexService
+	// bundleParents is optional — see WithBundleParents.
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewStockImporter creates a StockImporter.
@@ -87,6 +97,15 @@ func (imp *StockImporter) WithRowHooks(registry *importctx.Registry) *StockImpor
 // Import works exactly as before — no reindex triggered, no error.
 func (imp *StockImporter) WithReindex(reindex *searchApp.ReindexService) *StockImporter {
 	imp.reindex = reindex
+	return imp
+}
+
+// WithBundleParents expands the post-import reindex set with parent
+// bundles that include each touched leaf (PR-1080). Bulk stock publishes
+// no per-row EventStockUpdated, so IndexUpdateSubscriber cannot fan out
+// for us — expand here before Trigger. Nil clears the lookup.
+func (imp *StockImporter) WithBundleParents(lookup catalog.BundleParentLookup) *StockImporter {
+	imp.bundleParents = lookup
 	return imp
 }
 
@@ -232,7 +251,7 @@ func (imp *StockImporter) setStockUnderLock(ctx context.Context, productID strin
 	if !ok {
 		return fmt.Errorf("stock import: product repository does not support row locks")
 	}
-	productType, _, stockMode, _, err := locker.LockTypeAndModes(ctx, productID)
+	productType, _, stockMode, _, _, err := locker.LockTypeAndModes(ctx, productID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
@@ -255,12 +274,30 @@ func (imp *StockImporter) setStockUnderLock(ctx context.Context, productID strin
 // this import run touched (deferred by Import — see its own doc comment
 // on why this can't just be a plain call at the end) — see WithReindex's
 // own doc comment for why this is one batched call, not one per row.
-// A Trigger failure is returned so a queue, scope-resolution, or database
-// error is actionable rather than leaving search silently stale.
+// When WithBundleParents is wired, parent kit IDs are merged in so
+// dynamic-bundle QuantityPositive stays fresh (PR-1080). Expansion and
+// Trigger each get their own timeout so a large parent lookup cannot
+// starve enqueue. A set at or above stockReindexExpandMaxIDs skips
+// expansion and Triggers a full scan. A Trigger failure is returned so
+// a queue, scope-resolution, or database error is actionable rather
+// than leaving search silently stale.
 func (imp *StockImporter) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if imp.reindex == nil || len(touchedProductIDs) == 0 {
 		return nil
 	}
+	if len(touchedProductIDs) >= stockReindexExpandMaxIDs {
+		ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+		defer cancel()
+		if _, err := imp.reindex.Trigger(ctx, searchApp.ScopeAll{}); err != nil {
+			return fmt.Errorf("stock import: reindex: %w", err)
+		}
+		return nil
+	}
+
+	expandCtx, expandCancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	expandErr := catalog.ExpandTouchedWithBundleParents(expandCtx, imp.bundleParents, touchedProductIDs)
+	expandCancel()
+
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
@@ -269,6 +306,9 @@ func (imp *StockImporter) triggerReindex(touchedProductIDs map[string]struct{}) 
 	defer cancel()
 	if _, err := imp.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
 		return fmt.Errorf("stock import: reindex: %w", err)
+	}
+	if expandErr != nil {
+		return fmt.Errorf("stock import: expand bundle parents: %w", expandErr)
 	}
 	return nil
 }

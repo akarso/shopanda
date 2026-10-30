@@ -74,6 +74,40 @@ func TestCartRepo_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestCartRepo_AssignmentRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM cart_items")
+		db.Exec("DELETE FROM carts")
+	})
+
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCart(t, "EUR")
+	price := shared.MustNewMoney(1500, "EUR")
+	variantID := id.New()
+	if err := c.AddItem(variantID, 1, price); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	c.SetItemAssignment(variantID, " card-1 ", " order-1/var-card ", true)
+
+	if err := repo.Save(ctx, &c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil || got == nil || len(got.Items) != 1 {
+		t.Fatalf("FindByID: got=%v err=%v", got, err)
+	}
+	if got.Items[0].AssignmentParent() != "card-1" || got.Items[0].AssignmentUnit() != "order-1/var-card" || !got.Items[0].AssignmentDeferred {
+		t.Fatalf("assignment = %+v, want parent card-1 unit order-1/var-card deferred", got.Items[0])
+	}
+}
+
 func TestCartRepo_SaveAndFindByID_PersistsMergedGuestID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

@@ -76,6 +76,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// Permission-based middleware for admin routes.
 	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	requireAssignmentsRead := admin.RequirePermission(rbac.AssignmentsRead)
+	requireAssignmentsWrite := admin.RequirePermission(rbac.AssignmentsWrite)
+	requireDownloadsRead := admin.RequirePermission(rbac.DownloadsRead)
+	requireDownloadsWrite := admin.RequirePermission(rbac.DownloadsWrite)
 	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
 	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
 	requireCustomersRead := admin.RequirePermission(rbac.CustomersRead)
@@ -175,6 +179,28 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/products/{id}/grouped-members", requireProductsRead(rt.productCompositionAdmin.ListGroupedMembers()))
 	router.Handle("POST /api/v1/admin/products/{id}/grouped-members", requireProductsWrite(rt.productCompositionAdmin.AddGroupedMember()))
 	router.Handle("DELETE /api/v1/admin/products/{id}/grouped-members/{memberId}", requireProductsWrite(rt.productCompositionAdmin.RemoveGroupedMember()))
+	router.Handle("GET /api/v1/admin/products/{id}/linked-eligible-parents", requireProductsRead(rt.linkedEligibilityAdmin.ListParents()))
+	router.Handle("POST /api/v1/admin/products/{id}/linked-eligible-parents", requireProductsWrite(rt.linkedEligibilityAdmin.AddParent()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/linked-eligible-parents/{parentId}", requireProductsWrite(rt.linkedEligibilityAdmin.RemoveParent()))
+	router.Handle("GET /api/v1/admin/products/{id}/linked-eligible-categories", requireProductsRead(rt.linkedEligibilityAdmin.ListCategories()))
+	router.Handle("POST /api/v1/admin/products/{id}/linked-eligible-categories", requireProductsWrite(rt.linkedEligibilityAdmin.AddCategory()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/linked-eligible-categories/{categoryId}", requireProductsWrite(rt.linkedEligibilityAdmin.RemoveCategory()))
+	router.Handle("GET /api/v1/admin/products/{id}/downloadable-files", requireProductsRead(rt.downloadableFileAdmin.ListFiles()))
+	router.Handle("POST /api/v1/admin/products/{id}/downloadable-files", requireProductsWrite(rt.downloadableFileAdmin.AttachFile()))
+	router.Handle("PUT /api/v1/admin/products/{id}/downloadable-files", requireProductsWrite(rt.downloadableFileAdmin.ReplaceFile()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/downloadable-files/{assetId}", requireProductsWrite(rt.downloadableFileAdmin.RemoveFile()))
+	router.Handle("GET /api/v1/admin/products/{id}/downloadable-grant-settings", requireProductsRead(rt.downloadableFileAdmin.GetSettings()))
+	router.Handle("PUT /api/v1/admin/products/{id}/downloadable-grant-settings", requireProductsWrite(rt.downloadableFileAdmin.PutSettings()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/downloadable-grant-settings", requireProductsWrite(rt.downloadableFileAdmin.DeleteSettings()))
+	// Unit ids are orderID/variantID and contain "/", so list and current
+	// take them as query parameters (PR-1071).
+	router.Handle("GET /api/v1/admin/assignments", requireAssignmentsRead(rt.assignmentAdmin.ListByParent()))
+	router.Handle("GET /api/v1/admin/assignments/current", requireAssignmentsRead(rt.assignmentAdmin.GetCurrent()))
+	router.Handle("POST /api/v1/admin/assignments", requireAssignmentsWrite(rt.assignmentAdmin.Create()))
+	router.Handle("POST /api/v1/admin/assignments/{id}/revoke", requireAssignmentsWrite(rt.assignmentAdmin.Revoke()))
+	router.Handle("GET /api/v1/admin/download-grants", requireDownloadsRead(rt.downloadGrantAdmin.List()))
+	router.Handle("POST /api/v1/admin/download-grants/{id}/revoke", requireDownloadsWrite(rt.downloadGrantAdmin.Revoke()))
+	router.Handle("POST /api/v1/admin/download-grants/{id}/reissue", requireDownloadsWrite(rt.downloadGrantAdmin.Reissue()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(rt.statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/customers", requireCustomersRead(rt.customerAdmin.List()))
 	router.Handle("GET /api/v1/admin/customers/{customerId}", requireCustomersRead(rt.customerAdmin.Get()))
@@ -199,6 +225,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(rt.orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(rt.orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(rt.orderAdmin.Update()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}/download-grants", requireDownloadsRead(rt.downloadGrantAdmin.ListByOrder()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}/invoices", requireInvoicesRead(rt.invoiceAdmin.ListByOrder()))
 	router.Handle("GET /api/v1/admin/invoices/{invoiceId}/pdf", requireInvoicesRead(rt.invoiceAdmin.DownloadPDF()))
 	if rt.refundHandler != nil {
@@ -348,6 +375,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/account/returns", requireAuth(rt.returnAccount.List()))
 	router.Handle("GET /api/v1/account/returns/{returnId}", requireAuth(rt.returnAccount.Get()))
 	router.Handle("POST /api/v1/account/returns/{returnId}/cancel", requireAuth(rt.returnAccount.Cancel()))
+	router.Handle("GET /api/v1/account/assignment-parents", requireAuth(rt.assignmentAccount.ListParents()))
+	router.Handle("GET /api/v1/account/assignments", requireAuth(rt.assignmentAccount.GetCurrent()))
+	router.Handle("POST /api/v1/account/assignments", requireAuth(rt.assignmentAccount.Assign()))
+	router.Handle("POST /api/v1/account/downloads/{grantID}", requireAuth(rt.downloadAccount.Deliver()))
 	router.Handle("GET /api/v1/account/consent", requireAuth(rt.accountHandler.GetConsent()))
 	router.Handle("GET /api/v1/account/store-credit", requireAuth(rt.storeCreditAccount.GetBalance()))
 	router.Handle("PUT /api/v1/account/consent", requireAuth(rt.accountHandler.UpdateConsent()))
@@ -393,7 +424,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}
 		sfHandler = storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
-			WithVisibilityFacts(rt.visibilityFacts).
+			WithVisibilityFacts(rt.visibilityFacts, rt.visibilityOpts).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
@@ -536,7 +567,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// category/page create/update/delete) and, on a match, returns the
 	// resolved entity type + ID as JSON — callers (frontend, API composers)
 	// decide how to render or redirect from there, per the original design
-	// in docs/phase-1-core/specs/ROUTING.md and PR-089. On no match, 404.
+	// in PR-089 (storefront rewrite resolver). On no match, 404.
 	router.Handle("GET /{path...}", shophttp.ResolverMiddleware(rt.repos.rewriteRepo, log)(storefront.NewRewriteHandler().Resolve()))
 
 	// Probes skip the store/auth stack (hung DB must not block liveness).

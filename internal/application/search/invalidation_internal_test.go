@@ -102,7 +102,7 @@ func (f *fakeInternalSearchEngine) RemoveCategory(context.Context, string) error
 func (f *fakeInternalSearchEngine) Search(context.Context, domainsearch.SearchQuery) (domainsearch.SearchResult, error) {
 	return domainsearch.SearchResult{}, nil
 }
-func (f *fakeInternalSearchEngine) Suggest(context.Context, string, int) ([]domainsearch.Suggestion, error) {
+func (f *fakeInternalSearchEngine) Suggest(context.Context, domainsearch.SuggestQuery) ([]domainsearch.Suggestion, error) {
 	return nil, nil
 }
 

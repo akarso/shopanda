@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -106,6 +107,9 @@ func RequiredLeafVariants(
 				component.ComponentProductID,
 			)))
 		}
+		if catalog.LinkedParentBlocksPurchase(product, catalog.AssignmentContextFrom(ctx)) {
+			return nil, apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+		}
 	}
 
 	variantsByProduct, err := variants.ListByProductIDs(ctx, productIDs, ComponentVariantProbe)
@@ -130,6 +134,169 @@ func RequiredLeafVariants(
 	return leaves, nil
 }
 
+// RejectRequiredLinkedParentLeaves denies a bundle whose required child has
+// RequiresLinkedParent set and assignment empty. Used by cart and checkout
+// for every bundle type, not only dynamic explode. Optional components are
+// ignored. A missing products or components repo is a no-op.
+func RejectRequiredLinkedParentLeaves(
+	ctx context.Context,
+	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
+	bundleProductID string,
+	assignment catalog.AssignmentContext,
+) error {
+	if products == nil || components == nil {
+		return nil
+	}
+	bundleProductID = strings.TrimSpace(bundleProductID)
+	if bundleProductID == "" {
+		return nil
+	}
+	rows, err := components.ListByBundleID(ctx, bundleProductID)
+	if err != nil {
+		return fmt.Errorf("bundle %s components: %w", bundleProductID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if catalog.LinkedParentBlocksPurchase(byID[id], assignment) {
+			return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
+		}
+	}
+	return nil
+}
+
+// DownloadableFileCounter counts product → asset attachments for sell-path
+// gates (PR-1074). Cart, checkout, and RejectRequiredMissingDownloadableFileLeaves
+// share this shape so the counter cannot drift.
+type DownloadableFileCounter interface {
+	CountByProductID(ctx context.Context, productID string) (int, error)
+}
+
+// RejectRequiredMissingDownloadableFileLeaves denies a bundle whose required
+// child is TypeDownloadable with zero attached files. Used by cart and
+// checkout for every bundle type (fixed and dynamic), not only explode.
+// Optional components are ignored. A missing products or components repo is
+// a no-op. A nil files counter fails closed when a required leaf is
+// downloadable (same as cart ensureDownloadableHasFile). Draft file-less
+// downloadable leaves are rejected too — AutoBasis does not override.
+func RejectRequiredMissingDownloadableFileLeaves(
+	ctx context.Context,
+	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
+	files DownloadableFileCounter,
+	bundleProductID string,
+) error {
+	if products == nil || components == nil {
+		return nil
+	}
+	bundleProductID = strings.TrimSpace(bundleProductID)
+	if bundleProductID == "" {
+		return nil
+	}
+	rows, err := components.ListByBundleID(ctx, bundleProductID)
+	if err != nil {
+		return fmt.Errorf("bundle %s components: %w", bundleProductID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		p := byID[id]
+		if p == nil || p.Type != catalog.TypeDownloadable {
+			continue
+		}
+		if files == nil {
+			return apperror.Internal("downloadable file repository is not configured")
+		}
+		n, err := files.CountByProductID(ctx, p.ID)
+		if err != nil {
+			return fmt.Errorf("bundle %s component %s downloadable files: %w", bundleProductID, p.ID, err)
+		}
+		if catalog.DownloadableMissingFileBlocksPurchase(p, n) {
+			return apperror.Validation(catalog.DownloadableMissingFileNotPurchasableMessage)
+		}
+	}
+	return nil
+}
+
+// LinkedParentChildProductIDs is the products IsEligible must accept for
+// this cart/order line. A RequiresLinkedParent product is itself. A bundle
+// contributes each required leaf that has the flag. Other types are empty.
+func LinkedParentChildProductIDs(
+	ctx context.Context,
+	products productByID,
+	components bundleComponentsByBundle,
+	p *catalog.Product,
+) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if p.RequiresLinkedParent {
+		return []string{p.ID}, nil
+	}
+	if p.Type != catalog.TypeBundle || products == nil || components == nil {
+		return nil, nil
+	}
+	rows, err := components.ListByBundleID(ctx, p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("bundle %s components: %w", p.ID, err)
+	}
+	ids := make([]string, 0)
+	for _, component := range rows {
+		if component.Required {
+			ids = append(ids, component.ComponentProductID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	loadCtx := ctx
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
+	}
+	byID, err := loadProductsByID(loadCtx, products, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, id := range ids {
+		if byID[id] != nil && byID[id].RequiresLinkedParent {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 // BundleCustomerError returns a validation error whose Message is
 // catalog.BundleCannotBeReservedMessage. detail stays available via Unwrap
 // for logs. A detail that already uses that message is returned unchanged
@@ -145,7 +312,15 @@ func BundleCustomerError(detail error) error {
 	return apperror.Wrap(apperror.CodeValidation, catalog.BundleCannotBeReservedMessage, detail)
 }
 
-func loadProductsByID(ctx context.Context, products catalog.ProductRepository, ids []string) (map[string]*catalog.Product, error) {
+type productByID interface {
+	FindByID(ctx context.Context, id string) (*catalog.Product, error)
+}
+
+type bundleComponentsByBundle interface {
+	ListByBundleID(ctx context.Context, bundleProductID string) ([]catalog.BundleComponent, error)
+}
+
+func loadProductsByID(ctx context.Context, products productByID, ids []string) (map[string]*catalog.Product, error) {
 	if lister, ok := products.(productIDLister); ok {
 		byID, err := lister.ListByIDs(ctx, ids)
 		if err != nil {

@@ -12,7 +12,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // ============================================================
@@ -682,8 +684,16 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from update status")
 	}
-	if _, ok := cctx.GetMeta("payment_initiated"); ok {
-		t.Error("payment_initiated should not be set on error")
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Fatal("payment_initiated must be set before UpdateStatus on a synchronous approve")
+	}
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		t.Fatal("expected payment in meta after synchronous approve")
+	}
+	py := raw.(*payment.Payment)
+	if py.Status() != payment.StatusCompleted {
+		t.Fatalf("payment status = %v, want completed", py.Status())
 	}
 }
 
@@ -834,5 +844,148 @@ func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for pending result with empty ProviderRef")
+	}
+	if _, ok := cctx.GetMeta("payment_initiated"); ok {
+		t.Error("payment_initiated should not be set when pending has no provider reference")
+	}
+}
+
+func TestInitiatePaymentStep_Pending_UpdateStatusErrorSetsInitiated(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{
+			ProviderRef:  "pi_accepted",
+			Pending:      true,
+			ClientSecret: "pi_accepted_secret",
+		},
+	}
+	repo := &mockPaymentRepo047{updateErr: errors.New("conflict")}
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil {
+		t.Fatal("expected error from update status")
+	}
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Fatal("payment_initiated must be set before UpdateStatus on an accepted pending charge")
+	}
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		t.Fatal("expected payment in meta after accepted pending initiate")
+	}
+	py := raw.(*payment.Payment)
+	if py.Status() != payment.StatusPending {
+		t.Fatalf("payment status = %v, want pending", py.Status())
+	}
+	if py.ProviderRef != "pi_accepted" {
+		t.Fatalf("ProviderRef = %q, want pi_accepted", py.ProviderRef)
+	}
+}
+
+func TestInitiatePaymentStep_PublishesOrderPaidOnSuccess(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodManual,
+		result: payment.ProviderResult{ProviderRef: "manual:pay-1", Success: true},
+	}
+	repo := &mockPaymentRepo047{}
+	bus := event.NewBus(logger.New("error"))
+	var paid []string
+	bus.On(order.EventOrderPaid, func(_ context.Context, evt event.Event) error {
+		data := evt.Data.(order.OrderStatusChangedData)
+		paid = append(paid, data.OrderID)
+		return nil
+	})
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo).WithEventBus(bus)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(paid) != 1 || paid[0] != cctx.Order.ID {
+		t.Fatalf("order.paid = %v, want [%s]", paid, cctx.Order.ID)
+	}
+}
+
+func TestInitiatePaymentStep_PendingDoesNotPublishOrderPaid(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{ProviderRef: "pi_pending", Pending: true, ClientSecret: "sec"},
+	}
+	bus := event.NewBus(logger.New("error"))
+	bus.On(order.EventOrderPaid, func(_ context.Context, _ event.Event) error {
+		t.Fatal("order.paid must not fire before Stripe capture")
+		return nil
+	})
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), &mockPaymentRepo047{}).WithEventBus(bus)
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+}
+
+func TestInitiatePaymentStep_ZeroPayablePublishesOrderPaid(t *testing.T) {
+	item, err := order.NewItem("v1", "SKU-v1", "Free", 1, shared.MustNewMoney(0, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	bus := event.NewBus(logger.New("error"))
+	var paid int
+	bus.On(order.EventOrderPaid, func(_ context.Context, _ event.Event) error {
+		paid++
+		return nil
+	})
+	step := checkout.NewInitiatePaymentStep(
+		paymentRegistryWith(&mockPaymentProvider047{method: payment.MethodManual}),
+		&mockPaymentRepo047{},
+	).WithEventBus(bus)
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = &o
+	setShippingRequired047(cctx, true)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if paid != 1 {
+		t.Fatalf("order.paid count = %d, want 1", paid)
+	}
+	if v, ok := cctx.GetMeta("payment_skipped"); !ok || v != true {
+		t.Fatal("expected payment_skipped=true")
+	}
+	// Idempotent already-paid heal: retry republishes order.paid.
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("retry Execute: %v", err)
+	}
+	if paid != 2 {
+		t.Fatalf("order.paid count after retry = %d, want 2", paid)
+	}
+}
+
+func TestInitiatePaymentStep_PublishErrorAfterSuccessReturnsNil(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodManual,
+		result: payment.ProviderResult{ProviderRef: "manual:pay-1", Success: true},
+	}
+	bus := event.NewBus(logger.New("error"))
+	bus.On(order.EventOrderPaid, func(_ context.Context, _ event.Event) error {
+		return errors.New("subscriber down")
+	})
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), &mockPaymentRepo047{}).WithEventBus(bus)
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute after publish failure must return nil, got %v", err)
 	}
 }

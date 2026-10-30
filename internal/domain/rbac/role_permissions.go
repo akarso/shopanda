@@ -11,6 +11,8 @@ import (
 var rolePermissions = map[identity.Role]map[Permission]struct{}{
 	identity.RoleAdmin: toSet(
 		ProductsRead, ProductsWrite,
+		AssignmentsRead, AssignmentsWrite,
+		DownloadsRead, DownloadsWrite,
 		OrdersRead, OrdersWrite,
 		CategoriesRead, CategoriesWrite,
 		CustomersRead, CustomersWrite, StoreCreditWrite,
@@ -27,6 +29,8 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 	),
 	identity.RoleManager: toSet(
 		ProductsRead, ProductsWrite,
+		AssignmentsRead, AssignmentsWrite,
+		DownloadsRead, DownloadsWrite,
 		OrdersRead, OrdersWrite,
 		CategoriesRead, CategoriesWrite,
 		CustomersRead,
@@ -43,6 +47,8 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 	),
 	identity.RoleSupport: toSet(
 		ProductsRead,
+		AssignmentsRead, AssignmentsWrite,
+		DownloadsRead, DownloadsWrite,
 		OrdersRead,
 		CustomersRead,
 		InvoicesRead,

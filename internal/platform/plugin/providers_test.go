@@ -38,7 +38,7 @@ func (s *stubSearchProvider) RemoveCategory(context.Context, string) error { ret
 func (s *stubSearchProvider) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }
-func (s *stubSearchProvider) Suggest(context.Context, string, int) ([]search.Suggestion, error) {
+func (s *stubSearchProvider) Suggest(context.Context, search.SuggestQuery) ([]search.Suggestion, error) {
 	return nil, nil
 }
 

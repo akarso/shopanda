@@ -81,3 +81,48 @@ func TestPlugin_Init_RegistersPublicRoute(t *testing.T) {
 		t.Fatalf("Pattern = %q", routes[0].Pattern)
 	}
 }
+
+func TestPlugin_Init_EnforceAttachesVisibility(t *testing.T) {
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{GraphQL: config.GraphQLPluginConfig{Enabled: true}},
+		Catalog: config.CatalogConfig{Visibility: config.CatalogVisibilityConfig{Enforce: true}},
+	}
+	app := testApp(cfg)
+
+	product := mustActiveProduct(t, "prod-1", "Widget", "widget")
+	var captured *cgraphql.Resolver
+
+	plugin := cgraphql.NewPlugin()
+	plugin.NewResolver = func(_ *sql.DB, _ *extensionapp.Registry) (*cgraphql.Resolver, error) {
+		resolver, err := cgraphql.NewResolver(
+			&stubProductRepo{
+				findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+					if id == product.ID {
+						return &product, nil
+					}
+					return nil, nil
+				},
+			},
+			&stubCategoryRepo{},
+		)
+		captured = resolver
+		return resolver, err
+	}
+
+	plugin.NewVisibilityFactsSource = func(_ *sql.DB) (catalog.VisibilityFactsSource, error) {
+		return mapVisibilityFacts{product.ID: hiddenIndividuallySnap()}, nil
+	}
+
+	if err := plugin.Init(app); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("resolver was not captured")
+	}
+
+	resp := execGraphQL(t, captured, `{ product(id: "prod-1") { id } }`)
+	if resp["data"].(map[string]interface{})["product"] != nil {
+		t.Fatalf("enforce attach must gate individually-hidden product to null, got %v", resp)
+	}
+}
+

@@ -9,50 +9,55 @@ import (
 
 // serveRepos holds every postgres repository opened for the HTTP serve path.
 type serveRepos struct {
-	productRepo                *postgres.ProductRepo
-	variantRepo                *postgres.VariantRepo
-	cartRepo                   *postgres.CartRepo
-	priceRepo                  *postgres.PriceRepo
-	priceHistoryRepo           *postgres.PriceHistoryRepo
-	customerRepo               *postgres.CustomerRepo
-	resetTokenRepo             *postgres.ResetTokenRepo
-	reservationRepo            *postgres.ReservationRepo
-	stockRepo                  *postgres.StockRepo
-	orderRepo                  *postgres.OrderRepo
-	storeCreditRepo            *postgres.StoreCreditRepo
-	returnRepo                 *postgres.ReturnRepo
-	reviewRepo                 *postgres.ReviewRepo
-	statsRepo                  *postgres.StatsRepo
-	paymentRepo                *postgres.PaymentRepo
-	shippingRepo               *postgres.ShippingRepo
-	configRepo                 *postgres.ConfigRepo
-	zoneRepo                   *postgres.ZoneRepo
-	categoryRepo               *postgres.CategoryRepo
-	collectionRepo             *postgres.CollectionRepo
-	bundleComponentRepo        *postgres.BundleComponentRepo
-	groupedMemberRepo          *postgres.GroupedMemberRepo
-	linkedEligibilityRepo      *postgres.LinkedEligibilityRepo
-	taxRateRepo                *postgres.TaxRateRepo
-	promotionRepo              *postgres.PromotionRepo
-	couponRepo                 *postgres.CouponRepo
-	invoiceRepo                *postgres.InvoiceRepo
-	assetRepo                  *postgres.AssetRepo
-	rewriteRepo                *postgres.RewriteRepo
-	pageRepo                   *postgres.PageRepo
-	menuRepo                   *postgres.MenuRepo
-	contentBlockRepo           *postgres.ContentBlockRepo
-	storeRepo                  *postgres.StoreRepo
-	translationRepo            *postgres.TranslationRepo
-	contentTranslationRepo     *postgres.ContentTranslationRepo
-	consentRepo                *postgres.ConsentRepo
-	customerAddressRepo        *postgres.CustomerAddressRepo
-	mfaRepo                    *postgres.MFARepo
-	auditLogRepo               *postgres.AuditLogRepo
-	webhookEndpointRepo        *postgres.WebhookEndpointRepo
-	integrationIdempotencyRepo *postgres.IntegrationIdempotencyRepo
-	extensionFieldRepo         *postgres.ExtensionFieldRepo
-	extensionValueRepo         *postgres.ExtensionValueRepo
-	rolePermRepo               *postgres.RolePermissionRepo
+	productRepo                   *postgres.ProductRepo
+	variantRepo                   *postgres.VariantRepo
+	cartRepo                      *postgres.CartRepo
+	priceRepo                     *postgres.PriceRepo
+	priceHistoryRepo              *postgres.PriceHistoryRepo
+	customerRepo                  *postgres.CustomerRepo
+	resetTokenRepo                *postgres.ResetTokenRepo
+	reservationRepo               *postgres.ReservationRepo
+	stockRepo                     *postgres.StockRepo
+	orderRepo                     *postgres.OrderRepo
+	storeCreditRepo               *postgres.StoreCreditRepo
+	returnRepo                    *postgres.ReturnRepo
+	reviewRepo                    *postgres.ReviewRepo
+	statsRepo                     *postgres.StatsRepo
+	paymentRepo                   *postgres.PaymentRepo
+	shippingRepo                  *postgres.ShippingRepo
+	configRepo                    *postgres.ConfigRepo
+	zoneRepo                      *postgres.ZoneRepo
+	categoryRepo                  *postgres.CategoryRepo
+	collectionRepo                *postgres.CollectionRepo
+	bundleComponentRepo           *postgres.BundleComponentRepo
+	groupedMemberRepo             *postgres.GroupedMemberRepo
+	linkedEligibilityRepo         *postgres.LinkedEligibilityRepo
+	downloadableFileRepo          *postgres.DownloadableFileRepo
+	downloadGrantRepo             *postgres.DownloadGrantRepo
+	downloadableGrantSettingsRepo *postgres.DownloadableGrantSettingsRepo
+	notificationDedupeRepo        *postgres.NotificationDedupeRepo
+	productAssignmentRepo         *postgres.ProductAssignmentRepo
+	taxRateRepo                   *postgres.TaxRateRepo
+	promotionRepo                 *postgres.PromotionRepo
+	couponRepo                    *postgres.CouponRepo
+	invoiceRepo                   *postgres.InvoiceRepo
+	assetRepo                     *postgres.AssetRepo
+	rewriteRepo                   *postgres.RewriteRepo
+	pageRepo                      *postgres.PageRepo
+	menuRepo                      *postgres.MenuRepo
+	contentBlockRepo              *postgres.ContentBlockRepo
+	storeRepo                     *postgres.StoreRepo
+	translationRepo               *postgres.TranslationRepo
+	contentTranslationRepo        *postgres.ContentTranslationRepo
+	consentRepo                   *postgres.ConsentRepo
+	customerAddressRepo           *postgres.CustomerAddressRepo
+	mfaRepo                       *postgres.MFARepo
+	auditLogRepo                  *postgres.AuditLogRepo
+	webhookEndpointRepo           *postgres.WebhookEndpointRepo
+	integrationIdempotencyRepo    *postgres.IntegrationIdempotencyRepo
+	extensionFieldRepo            *postgres.ExtensionFieldRepo
+	extensionValueRepo            *postgres.ExtensionValueRepo
+	rolePermRepo                  *postgres.RolePermissionRepo
 }
 
 func wrapRepoOpen(name string, err error) error {
@@ -167,6 +172,41 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	}
 	// linkedEligibilityRepo: opened at serve start. wire_services constructs
 	// LinkedEligibilityService. Admin HTTP / CSV remain PR-1073.
+
+	repos.downloadableFileRepo, err = postgres.NewDownloadableFileRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("downloadableFileRepo", err)
+	}
+	// downloadableFileRepo: opened at serve start. wire_services wires
+	// ProductAdminHandler.WithDownloadableFiles / cart / checkout / media
+	// guards. DownloadableFileService HTTP / CSV / GUI remain PR-1078.
+
+	repos.downloadGrantRepo, err = postgres.NewDownloadGrantRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("downloadGrantRepo", err)
+	}
+	repos.downloadableGrantSettingsRepo, err = postgres.NewDownloadableGrantSettingsRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("downloadableGrantSettingsRepo", err)
+	}
+	// downloadGrantRepo + settings: opened at serve start. wire_services
+	// constructs DownloadGrant Service + order.paid Issuer (PR-1075).
+	// Delivery HTTP is PR-1077; admin grant HTTP is PR-1078.
+
+	repos.notificationDedupeRepo, err = postgres.NewNotificationDedupeRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("notificationDedupeRepo", err)
+	}
+	// notificationDedupeRepo: order confirmation email claim store so
+	// order.paid republish does not depend on queue-driver job-id PK.
+
+	repos.productAssignmentRepo, err = postgres.NewProductAssignmentRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("productAssignmentRepo", err)
+	}
+	// productAssignmentRepo: opened at serve start. wire_services constructs
+	// ProductAssignmentService. Cart/checkout writers remain PR-1070;
+	// admin HTTP remains PR-1071.
 
 	repos.taxRateRepo, err = postgres.NewTaxRateRepo(conn)
 	if err != nil {

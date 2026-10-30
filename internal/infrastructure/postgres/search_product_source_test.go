@@ -278,6 +278,209 @@ func TestSearchProductSource_ProductIDsByCategory_RequiresAtLeastOneID(t *testin
 	}
 }
 
+// TestSearchProductSource_ListAll_TypeAndVisibilityNilFacts pins PR-1079:
+// Type is selected from products.type, and with no factsAdmin wired active
+// products get all four visibility bools true (backwards-compat empty-index
+// guard). Non-active rows still index as all-false (storefront-effective).
+func TestSearchProductSource_ListAll_TypeAndVisibilityNilFacts(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	p := mustNewProduct(t, "Typed Widget", "typed-widget-vis")
+	p.Type = catalog.TypeVirtual
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p.Status = catalog.StatusActive
+	if err := productRepo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	source, err := postgres.NewSearchProductSource(db)
+	if err != nil {
+		t.Fatalf("NewSearchProductSource: %v", err)
+	}
+	page, err := source.ListAll(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	var found *struct{}
+	for i := range page {
+		if page[i].ID != p.ID {
+			continue
+		}
+		found = &struct{}{}
+		if page[i].Type != string(catalog.TypeVirtual) {
+			t.Fatalf("Type = %q, want %q", page[i].Type, catalog.TypeVirtual)
+		}
+		if page[i].Status != string(catalog.StatusActive) {
+			t.Fatalf("Status = %q, want active", page[i].Status)
+		}
+		if !page[i].VisibleInCatalog || !page[i].VisibleInSearch || !page[i].VisibleIndividually || !page[i].Purchasable {
+			t.Fatalf("nil factsAdmin + active should set all visibility true, got catalog=%v search=%v individually=%v purchasable=%v",
+				page[i].VisibleInCatalog, page[i].VisibleInSearch, page[i].VisibleIndividually, page[i].Purchasable)
+		}
+	}
+	if found == nil {
+		t.Fatal("product not returned by ListAll")
+	}
+}
+
+type stubVisibilityFactsAdmin map[string]catalog.VisibilitySnapshot
+
+func (s stubVisibilityFactsAdmin) LoadManyAnyStatus(_ context.Context, ids []string) (map[string]catalog.VisibilitySnapshot, error) {
+	out := make(map[string]catalog.VisibilitySnapshot, len(ids))
+	for _, id := range ids {
+		if snap, ok := s[id]; ok {
+			out[id] = snap
+		}
+	}
+	return out, nil
+}
+
+// TestSearchProductSource_WithVisibility_MissingSnapshotFailClosed indexes
+// missing facts as all-false (PR-1079 review).
+func TestSearchProductSource_WithVisibility_MissingSnapshotFailClosed(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	p := mustNewProduct(t, "No Snap", "no-snap-vis")
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p.Status = catalog.StatusActive
+	if err := productRepo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	source, err := postgres.NewSearchProductSource(db)
+	if err != nil {
+		t.Fatalf("NewSearchProductSource: %v", err)
+	}
+	source.WithVisibility(stubVisibilityFactsAdmin{}, catalog.VisibilityOptions{})
+
+	page, err := source.ListByIDs(ctx, []string{p.ID})
+	if err != nil {
+		t.Fatalf("ListByIDs: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("len = %d, want 1", len(page))
+	}
+	if page[0].VisibleInCatalog || page[0].VisibleInSearch || page[0].VisibleIndividually || page[0].Purchasable {
+		t.Fatalf("missing snapshot must fail closed, got catalog=%v search=%v individually=%v purchasable=%v",
+			page[0].VisibleInCatalog, page[0].VisibleInSearch, page[0].VisibleIndividually, page[0].Purchasable)
+	}
+}
+
+// TestSearchProductSource_WithVisibility_ForcedVisibleDraftHidden ensures
+// storefront-effective axes are false when Status != active even if modes
+// force visible (PR-1079 review).
+func TestSearchProductSource_WithVisibility_ForcedVisibleDraftHidden(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	p := mustNewProduct(t, "Draft Forced", "draft-forced-vis")
+	p.VisibilityModes.Catalog = catalog.VisibilityModeVisible
+	p.VisibilityModes.Search = catalog.VisibilityModeVisible
+	p.VisibilityModes.Individually = catalog.VisibilityModeVisible
+	p.VisibilityModes.Purchasable = catalog.VisibilityModeVisible
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Leave Status as draft (NewProduct default).
+
+	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
+	if err != nil {
+		t.Fatalf("NewVisibilityFactsRepo: %v", err)
+	}
+	source, err := postgres.NewSearchProductSource(db)
+	if err != nil {
+		t.Fatalf("NewSearchProductSource: %v", err)
+	}
+	source.WithVisibility(factsRepo, catalog.VisibilityOptions{})
+
+	page, err := source.ListByIDs(ctx, []string{p.ID})
+	if err != nil {
+		t.Fatalf("ListByIDs: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("len = %d, want 1", len(page))
+	}
+	if page[0].Status != string(catalog.StatusDraft) {
+		t.Fatalf("Status = %q, want draft", page[0].Status)
+	}
+	if page[0].VisibleInCatalog || page[0].VisibleInSearch || page[0].VisibleIndividually || page[0].Purchasable {
+		t.Fatalf("forced-visible draft must index as hidden, got catalog=%v search=%v individually=%v purchasable=%v",
+			page[0].VisibleInCatalog, page[0].VisibleInSearch, page[0].VisibleIndividually, page[0].Purchasable)
+	}
+}
+
+// TestSearchProductSource_WithVisibility_HiddenSearch resolves axes via
+// LoadManyAnyStatus + Resolve (PR-1079).
+func TestSearchProductSource_WithVisibility_HiddenSearch(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	p := mustNewProduct(t, "Hidden Search", "hidden-search-vis")
+	p.VisibilityModes.Search = catalog.VisibilityModeHidden
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p.Status = catalog.StatusActive
+	if err := productRepo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	v := mustNewVariant(t, p.ID, "SKU-HS-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &v); err != nil {
+		t.Fatalf("variant Create: %v", err)
+	}
+
+	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
+	if err != nil {
+		t.Fatalf("NewVisibilityFactsRepo: %v", err)
+	}
+	source, err := postgres.NewSearchProductSource(db)
+	if err != nil {
+		t.Fatalf("NewSearchProductSource: %v", err)
+	}
+	source.WithVisibility(factsRepo, catalog.VisibilityOptions{})
+
+	page, err := source.ListByIDs(ctx, []string{p.ID})
+	if err != nil {
+		t.Fatalf("ListByIDs: %v", err)
+	}
+	if len(page) != 1 {
+		t.Fatalf("len = %d, want 1", len(page))
+	}
+	if page[0].VisibleInSearch {
+		t.Fatal("VisibleInSearch should be false for forced-hidden search axis")
+	}
+}
+
 // TestSearchProductSource_ProductIDsUpdatedSince covers PR-1034's
 // ScopeSince resolution: only products whose updated_at is at or after
 // the cutoff are returned.

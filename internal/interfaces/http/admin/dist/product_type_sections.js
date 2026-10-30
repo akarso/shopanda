@@ -10,7 +10,8 @@
         slug: true,
         description: true,
         status: true,
-        type: true
+        type: true,
+        requires_linked_parent: true
     };
 
     function sectionTypes(attr) {
@@ -26,6 +27,35 @@
         var types = sectionTypes(attr);
         var selected = String(selectedType || "simple");
         return types.length === 0 || types.indexOf(selected) !== -1;
+    }
+
+    // Encode form-schema section.types the same way admin.js sets
+    // data-product-type-section (join with commas; empty/missing = always visible).
+    function sectionTypesAttr(types) {
+        if (!Array.isArray(types) || types.length === 0) {
+            return "";
+        }
+        return types.map(function (t) {
+            return String(t == null ? "" : t).trim();
+        }).filter(function (t) {
+            return t.length > 0;
+        }).join(",");
+    }
+
+    // Pure map of section id → Types attr from a form schema (or section list).
+    // Does not mutate form / globals; callers pass registered product.form.sections.
+    function sectionAttrsFromForm(form) {
+        var out = {};
+        var sections = form && Array.isArray(form.sections) ? form.sections : [];
+        for (var i = 0; i < sections.length; i++) {
+            var s = sections[i] || {};
+            var id = String(s.id || "");
+            if (!id) {
+                continue;
+            }
+            out[id] = sectionTypesAttr(s.types);
+        }
+        return out;
     }
 
     function syncSections(root, selectedType) {
@@ -138,6 +168,8 @@
         TYPE_CHANGE_CONFIRM: TYPE_CHANGE_CONFIRM,
         sectionTypes: sectionTypes,
         sectionVisible: sectionVisible,
+        sectionTypesAttr: sectionTypesAttr,
+        sectionAttrsFromForm: sectionAttrsFromForm,
         syncSections: syncSections,
         selectNeedsUnknownOption: selectNeedsUnknownOption,
         labelsFromForm: labelsFromForm,

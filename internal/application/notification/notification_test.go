@@ -3,6 +3,7 @@ package notification_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/url"
 	"regexp"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
@@ -41,11 +43,72 @@ func (m *mockOrderRepo) FindByID(ctx context.Context, id string) (*order.Order, 
 
 type mockQueue struct {
 	jobs.Queue
-	enqueued []jobs.Job
+	enqueued  []jobs.Job
+	byID      map[string]struct{}
+	errOnce   error
+	ignoreID  bool // when true, do not conflict on duplicate job ids
+	enqueueFn func(ctx context.Context, job jobs.Job) error
 }
 
-func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
+func (m *mockQueue) Enqueue(ctx context.Context, job jobs.Job) error {
+	if m.enqueueFn != nil {
+		return m.enqueueFn(ctx, job)
+	}
+	if m.errOnce != nil {
+		err := m.errOnce
+		m.errOnce = nil
+		return err
+	}
+	if m.byID == nil {
+		m.byID = map[string]struct{}{}
+	}
+	if !m.ignoreID {
+		if _, ok := m.byID[job.ID]; ok {
+			return apperror.Conflict("job already enqueued")
+		}
+	}
+	m.byID[job.ID] = struct{}{}
 	m.enqueued = append(m.enqueued, job)
+	return nil
+}
+
+type mockDedupe struct {
+	keys              map[string]struct{}
+	failDeleteIfDone  bool
+	lastDeleteCtxDone bool
+}
+
+func (m *mockDedupe) key(subject, kind string) string { return subject + "|" + kind }
+
+func (m *mockDedupe) TryInsert(_ context.Context, subjectKey, kind string) (bool, error) {
+	if m.keys == nil {
+		m.keys = map[string]struct{}{}
+	}
+	k := m.key(subjectKey, kind)
+	if _, ok := m.keys[k]; ok {
+		return false, nil
+	}
+	m.keys[k] = struct{}{}
+	return true, nil
+}
+
+func (m *mockDedupe) MarkCompleted(_ context.Context, subjectKey, kind string) error {
+	// Successful claim stays in the map (permanent for this mock).
+	if m.keys == nil {
+		m.keys = map[string]struct{}{}
+	}
+	m.keys[m.key(subjectKey, kind)] = struct{}{}
+	return nil
+}
+
+func (m *mockDedupe) Delete(ctx context.Context, subjectKey, kind string) error {
+	m.lastDeleteCtxDone = ctx.Err() != nil
+	if m.failDeleteIfDone && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if m.keys != nil {
+		delete(m.keys, m.key(subjectKey, kind))
+	}
 	return nil
 }
 
@@ -88,9 +151,9 @@ func (mockLogger) Warn(string, map[string]interface{})         {}
 func (mockLogger) Error(string, error, map[string]interface{}) {}
 
 // newTestService creates a Service with test dependencies.
-func newTestService(t *testing.T, tmpl *mail.Templates, custRepo *mockCustomerRepo, ordRepo *mockOrderRepo, q *mockQueue) *notification.Service {
+func newTestService(t *testing.T, tmpl *mail.Templates, custRepo *mockCustomerRepo, ordRepo *mockOrderRepo, q *mockQueue, opts ...notification.Option) *notification.Service {
 	t.Helper()
-	return notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	return notification.New(tmpl, custRepo, ordRepo, q, mockLogger{}, opts...)
 }
 
 // --- HandleOrderPaid tests ---
@@ -119,7 +182,10 @@ func TestHandleOrderPaid(t *testing.T) {
 		},
 	}
 
-	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	// ignoreID: prove notification_dedupe (not job-id collision) suppresses the second send.
+	q.ignoreID = true
+	dedupe := &mockDedupe{}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithEmailDedupe(dedupe))
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID:   "ord-1",
 		OldStatus: "pending",
@@ -145,6 +211,121 @@ func TestHandleOrderPaid(t *testing.T) {
 	}
 	if body, _ := job.Payload["body"].(string); body == "" {
 		t.Error("payload.body is empty")
+	}
+
+	// Republish order.paid (grant heal) must not enqueue a second confirmation.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("second HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected still 1 enqueued job after republish, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleOrderPaid_EnqueueFailureAllowsRetry(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{errOnce: errors.New("queue down"), ignoreID: true}
+	dedupe := &mockDedupe{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithEmailDedupe(dedupe))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+
+	if err := svc.HandleOrderPaid(context.Background(), evt); err == nil {
+		t.Fatal("expected enqueue failure")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected no enqueue after failure, got %d", len(q.enqueued))
+	}
+
+	// Claim released → retry can send.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("retry HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job after retry, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleOrderPaid_EnqueueFailureCancelledCtxStillReleasesClaim(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	q := &mockQueue{ignoreID: true}
+	q.enqueueFn = func(c context.Context, job jobs.Job) error {
+		cancel() // simulate shutdown cancelling the request ctx while Enqueue waits
+		q.enqueueFn = nil // subsequent retries use normal enqueue
+		return context.Canceled
+	}
+	dedupe := &mockDedupe{failDeleteIfDone: true}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithEmailDedupe(dedupe))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+
+	if err := svc.HandleOrderPaid(ctx, evt); err == nil {
+		t.Fatal("expected enqueue failure")
+	}
+	if dedupe.lastDeleteCtxDone {
+		t.Fatal("dedupe Delete must use a live background ctx, not the cancelled request ctx")
+	}
+	if _, stuck := dedupe.keys["ord-1|"+notification.KindOrderConfirmed]; stuck {
+		t.Fatal("claim must be released so a later order.paid can retry")
+	}
+
+	// Fresh request ctx can claim and enqueue.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("retry HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job after retry, got %d", len(q.enqueued))
 	}
 }
 

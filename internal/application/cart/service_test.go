@@ -11,8 +11,10 @@ import (
 	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -244,8 +246,15 @@ func (r *stubTaxRateRepo) ListByCountry(_ context.Context, _ string) ([]tax.TaxR
 	return nil, nil
 }
 
+func (r *stubTaxRateRepo) ListByClass(_ context.Context, _ string) ([]tax.TaxRate, error) {
+	return nil, nil
+}
+
 func (r *stubTaxRateRepo) Upsert(_ context.Context, _ *tax.TaxRate) error { return nil }
-func (r *stubTaxRateRepo) Delete(_ context.Context, _ string) error       { return nil }
+func (r *stubTaxRateRepo) CreateIfNotExists(_ context.Context, _ *tax.TaxRate) (bool, error) {
+	return false, nil
+}
+func (r *stubTaxRateRepo) Delete(_ context.Context, _ string) error { return nil }
 
 var permissiveVR, permissivePR = cartApp.PermissiveCatalogRepos()
 
@@ -1041,6 +1050,191 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 	}
 	if !sawTaxAdjustment {
 		t.Fatal("expected tax step to add a tax adjustment")
+	}
+}
+
+func TestService_AddItem_SetsTaxClassesByProductType(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("v-simple", "EUR", 1000)
+	prices.set("v-virtual", "EUR", 1000)
+	prices.set("v-downloadable", "EUR", 1000)
+	vr := mapVariantRepo{variants: map[string]*catalog.Variant{
+		"v-simple":       {ID: "v-simple", ProductID: "prod-simple"},
+		"v-virtual":      {ID: "v-virtual", ProductID: "prod-virtual"},
+		"v-downloadable": {ID: "v-downloadable", ProductID: "prod-downloadable"},
+	}}
+	pr := mapProductRepo{products: map[string]*catalog.Product{
+		"prod-simple":       {ID: "prod-simple", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+		"prod-virtual":      {ID: "prod-virtual", Status: catalog.StatusActive, Type: catalog.TypeVirtual},
+		"prod-downloadable": {ID: "prod-downloadable", Status: catalog.StatusActive, Type: catalog.TypeDownloadable},
+	}}
+	saw := map[string]string{}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		probeStep{name: "assert-tax-classes", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
+			classes, _ := pctx.Meta["tax_classes"].(map[string]string)
+			if classes == nil {
+				return fmt.Errorf("tax_classes missing")
+			}
+			for k, v := range classes {
+				saw[k] = v
+			}
+			return nil
+		}},
+		pricing.NewFinalizeStep(),
+	)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, testLogger(), testBus(), nil, nil).
+		WithDownloadableFiles(stubDownloadableFileCount{n: 1})
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	for _, vid := range []string{"v-simple", "v-virtual", "v-downloadable"} {
+		if _, err := svc.AddItem(ctx, c.ID, "cust-1", vid, 1, cartApp.AddItemOptions{}); err != nil {
+			t.Fatalf("AddItem(%s): %v", vid, err)
+		}
+	}
+	want := map[string]string{
+		"v-simple":       "standard",
+		"v-virtual":      "standard",
+		"v-downloadable": "digital",
+	}
+	for vid, class := range want {
+		if got := saw[vid]; got != class {
+			t.Errorf("tax_classes[%q] = %q, want %q (last recalculate snapshot)", vid, got, class)
+		}
+	}
+}
+
+func TestService_AddItem_PreservesExistingTaxClassKeys(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("v1", "EUR", 1000)
+	prices.set("v2", "EUR", 1000)
+	vr := mapVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "prod-1"},
+		"v2": {ID: "v2", ProductID: "prod-2"},
+	}}
+	pr := mapProductRepo{products: map[string]*catalog.Product{
+		"prod-1": {ID: "prod-1", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+		"prod-2": {ID: "prod-2", Status: catalog.StatusActive, Type: catalog.TypeDownloadable},
+	}}
+	reg := hooks.NewRegistry(nil)
+	if err := reg.Register(hooks.HookCartRecalculateBefore, 100, "plugin.test", func(ctx *hooks.Context) error {
+		raw, _ := ctx.Get("pricing_meta")
+		meta := raw.(map[string]interface{})
+		meta["tax_classes"] = map[string]string{"v1": tax.TaxClassReduced}
+		return nil
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	saw := map[string]string{}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		probeStep{name: "assert-tax-classes", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
+			classes, _ := pctx.Meta["tax_classes"].(map[string]string)
+			for k, v := range classes {
+				saw[k] = v
+			}
+			return nil
+		}},
+		pricing.NewFinalizeStep(),
+	)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, testLogger(), testBus(), nil, reg).
+		WithDownloadableFiles(stubDownloadableFileCount{n: 1})
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "v1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem v1: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "v2", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem v2: %v", err)
+	}
+	if saw["v1"] != tax.TaxClassReduced {
+		t.Errorf("v1 = %q, want reduced (hook override preserved)", saw["v1"])
+	}
+	if saw["v2"] != tax.TaxClassDigital {
+		t.Errorf("v2 = %q, want digital (filled for missing)", saw["v2"])
+	}
+}
+
+// TestService_Recalculate_TaxClassesBatchLoadsCatalog proves ensureTaxClasses
+// uses FindByIDs / ListByIDs once each instead of FindByID per line/product
+// when the repositories expose those batch methods (postgres).
+func TestService_Recalculate_TaxClassesBatchLoadsCatalog(t *testing.T) {
+	const n = 8
+	variants := make(map[string]*catalog.Variant, n)
+	products := make(map[string]*catalog.Product, n)
+	prices := newStubPriceRepo()
+	unit := shared.MustNewMoney(1000, "EUR")
+	items := make([]domainCart.Item, 0, n)
+	for i := 0; i < n; i++ {
+		vid := fmt.Sprintf("v-%d", i)
+		pid := fmt.Sprintf("prod-%d", i)
+		variants[vid] = &catalog.Variant{ID: vid, ProductID: pid}
+		products[pid] = &catalog.Product{ID: pid, Status: catalog.StatusActive, Type: catalog.TypeDownloadable}
+		prices.set(vid, "EUR", 1000)
+		items = append(items, domainCart.Item{VariantID: vid, Quantity: 1, UnitPrice: unit})
+	}
+	vr := &countingBatchVariants{mapVariantRepo: mapVariantRepo{variants: variants}}
+	pr := &countingBatchProducts{mapProductRepo: mapProductRepo{products: products}}
+	saw := map[string]string{}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		probeStep{name: "assert-tax-classes", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
+			classes, _ := pctx.Meta["tax_classes"].(map[string]string)
+			for k, v := range classes {
+				saw[k] = v
+			}
+			return nil
+		}},
+		pricing.NewFinalizeStep(),
+	)
+	carts := newStubCartRepo()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, testLogger(), testBus(), nil, nil).
+		WithDownloadableFiles(stubDownloadableFileCount{n: 1})
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	stored := carts.carts[c.ID]
+	stored.Items = items
+
+	vr.findByIDCalls = 0
+	vr.findByIDsCalls = 0
+	pr.findByIDCalls = 0
+	pr.listByIDsCalls = 0
+
+	// RemoveCoupon with no code still recalculates — no purchasability FindByID.
+	if _, err := svc.RemoveCoupon(ctx, c.ID, "cust-1"); err != nil {
+		t.Fatalf("RemoveCoupon (recalculate): %v", err)
+	}
+	if vr.findByIDsCalls != 1 {
+		t.Fatalf("variant FindByIDs calls = %d, want 1", vr.findByIDsCalls)
+	}
+	if pr.listByIDsCalls != 1 {
+		t.Fatalf("product ListByIDs calls = %d, want 1", pr.listByIDsCalls)
+	}
+	if vr.findByIDCalls != 0 {
+		t.Fatalf("variant FindByID calls = %d, want 0 (batch path)", vr.findByIDCalls)
+	}
+	if pr.findByIDCalls != 0 {
+		t.Fatalf("product FindByID calls = %d, want 0 (batch path)", pr.findByIDCalls)
+	}
+	for i := 0; i < n; i++ {
+		vid := fmt.Sprintf("v-%d", i)
+		if got := saw[vid]; got != tax.TaxClassDigital {
+			t.Errorf("tax_classes[%q] = %q, want digital", vid, got)
+		}
 	}
 }
 

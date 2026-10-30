@@ -4,8 +4,12 @@
 #   - CI / unit
 #   - CI / integration
 #   - CI / govuln
-# Merge blocking requires a repo admin to mark those checks required on main/dev
-# (branch protection / ruleset).
+#   - CI / docs-policy (product-doc relative-link check + promote replay fixture)
+#   - CI / docs-main (main / PRs to main / merge queue to main — forbids docs/phase-*)
+#
+# Require on main AND dev: CI / unit, CI / integration, CI / govuln, CI / docs-policy.
+# Require on main ONLY: CI / docs-main. Do not require docs-main on dev — the job
+# is skipped there, and a skipped required check blocks merges.
 name: CI
 
 on:
@@ -17,6 +21,7 @@ on:
     branches:
       - main
       - dev
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -166,3 +171,45 @@ jobs:
 
       - name: govulncheck (fail-closed + baseline)
         run: bash .github/scripts/run-govulncheck.sh
+
+  docs-policy:
+    name: docs-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Product docs must not relative-link into docs/phase-*
+        run: bash .github/scripts/check-product-docs-links.sh
+
+      - name: Promote script replays (second run, overwrite, FORCE, two-parent merge)
+        run: bash scripts/promote-dev-to-main_test.sh
+
+  docs-main:
+    name: docs-main
+    # Working history is stripped on promote. Fail closed on main only.
+    if: >
+      github.base_ref == 'main' ||
+      github.ref == 'refs/heads/main' ||
+      github.event.merge_group.base_ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Forbid working-history docs on main
+        run: |
+          set -euo pipefail
+          leftover="$(git ls-files -- 'docs/phase-*')"
+          if [[ -n "${leftover}" ]]; then
+            echo "ERROR: docs/phase-* must not exist on main (working history stays on dev)." >&2
+            echo "Promote with scripts/promote-dev-to-main.sh; do not raw-merge dev." >&2
+            printf '%s\n' "${leftover}" >&2
+            exit 1
+          fi

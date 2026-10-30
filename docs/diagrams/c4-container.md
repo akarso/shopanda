@@ -37,4 +37,4 @@ C4Container
     UpdateRelStyle(admin, apiServer, $offsetY="40")
 ```
 
-> **Runtime layout:** Development uses `app dev` (single process with embedded worker + scheduler). Production runs `serve`, `worker`, and `scheduler` as separate services from the same image. The Event Bus container is **in-process per runtime**, not a shared bus between `serve` and standalone `worker` — each process that publishes domain events (API server, and the standalone worker for reservation-expiry stock restores) has its own. See [Runtime Modes](../phase-4-refactoring/specs/RUNTIME_MODES.md).
+> **Runtime layout:** Development uses `app dev` (single process with embedded worker + scheduler). Production runs `serve`, `worker`, and `scheduler` as separate services from the same image. The Event Bus container is **in-process per runtime**, not a shared bus between `serve` and standalone `worker` — each process that publishes domain events (API server, and the standalone worker for reservation-expiry stock restores) has its own. See [Runtime Modes](../guides/RUNTIME_MODES.md).

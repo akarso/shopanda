@@ -32,7 +32,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-543 | E | [oss] | done | [GraphQL API plugin (stretch)](PR-543.md) |
 | PR-544 | E | [oss] | done | [Dynamic plugin loading research](PR-544.md) |
 
-Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Plugin loading: [`../specs/DYNAMIC_PLUGIN_LOADING.md`](../specs/DYNAMIC_PLUGIN_LOADING.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
+Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../../guides/COMPLIANCE_EU.md`](../../guides/COMPLIANCE_EU.md) · Plugin loading: [`../specs/DYNAMIC_PLUGIN_LOADING.md`](../specs/DYNAMIC_PLUGIN_LOADING.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
 **Phase 5 complete.** Next: [Phase 6 PR-600](../../phase-6-merchant-complete/prs/PR-600.md) (navigation admin UI).
 

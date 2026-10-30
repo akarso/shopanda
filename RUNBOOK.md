@@ -177,12 +177,69 @@ See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 **Fix:** fix tag attachment on the render path; wait for / trigger reindex; use tag clear or purge-url for the exact vary.
 
+### Why can't I add this product to cart
+
+**Symptom:** storefront or API add-to-cart / qty increase returns **422**. Greppable messages operators see (qty **decrease** / **remove** skip purchase checks, but pricing or tax errors in the remaining cart can still block them):
+
+| Message | Usual cause |
+| --- | --- |
+| `product is not available for purchase` | Status not `active` (always-on) |
+| `grouped products are not purchasable` | Grouped **parent** (always-on; sell member SKUs) |
+| `product requires a linked parent and is not purchasable` | Empty assignment context, or required **bundle leaf** with the flag (always-on) |
+| `downloadable product has no attached file and is not purchasable` | No attached file, or required bundle leaf missing a file (always-on) |
+| `product is not currently purchasable` | Purchasable axis false under enforce: AutoBasis (`no_stock` / `no_price` / `status_inactive`), forced-`hidden` Purchasable, or missing visibility snapshot — **only when enforce is on** (facts unwired when enforce is off) |
+| `cart item already has a different linked parent assignment` | Second add, qty increase, or guest-claim merge (`mergeIntoCustomerCart`) onto a line that already has a different stamp |
+| `only ` / ` available` (N varies; e.g. only 3 available) | Qty above available stock |
+| `price is not available` / `bundle cannot be reserved` | Missing unit price / dynamic-bundle reserve fail |
+| `linked parent is not eligible for this product` / `linked parent instance is not owned by this customer` / `sign in to assign this product to an owned instance` / `linked parent product does not match the selected instance` / `cannot assign a unit that is on an open or refunded return` | Named-parent `CheckPurchase` (assignment) |
+| `tax calculator: no "digital" rate` / `is 0 bps` / `refusing 0% VAT` | Digital-tax fail-closed (PR-1076) during cart recalculate |
+
+**Check:**
+1. Open the product in admin (`/admin/products/{id}`). Confirm **Status** is `active` — draft/archived fail even when visibility enforce is off (PR-1054). Always-on (enforce irrelevant): Status, grouped parent, linked-parent empty context, missing downloadable file — match the 422 strings above.
+2. **Purchasable AutoBasis** (`no_stock` / `no_price` / `status_inactive`) is live **only with** `catalog.visibility.enforce: true` (or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`). Do **not** list `requires_linked_parent` / `no_downloadable_file` as AutoBasis inputs — those are separate always-on gates (admin badge may still show them). Modes are always editable; see ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+3. Linked-parent 422 → ["Why isn't my ticket sellable"](#why-isnt-my-ticket-sellable) (assignment stamp / deferred vs named parent). Conflicting stamp on a second add, qty increase, or guest-claim merge → `cart item already has a different linked parent assignment` (table above).
+4. Downloadable with no file: **Downloadable files** tab must show ≥1 attachment (PR-1074 language) — not the grants section (grants are for “paid, no grant”).
+5. Grouped parents are never purchasable by design; sell the member SKUs (**Grouped** tab).
+6. Bundle: required leaves inherit the linked-parent / missing-file always-on rejects. Digital SKUs: a missing/zero digital VAT rate fails closed at add (PR-1076) even when stock/price look fine.
+
+**Fix:** restore stock + price + active when enforce is on and AutoBasis is the miss; for SEO OOS keep Catalog/Search/Individually force-`visible` and leave Purchasable `auto`/`hidden` — do **not** force Purchasable `visible` as the cart fix. Clear `requires_linked_parent` or stamp a valid assignment context; attach a downloadable file before expecting purchasability. Detail: ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+
+### Why is this product not visible
+
+**Symptom:** product missing from PLP/category/search/suggest/carousel/sitemap, or PDP / variants / reviews return **404**, while admin still shows the product.
+
+**Check (four-axis default-rule checklist — PR-1055):**
+1. **Admin vs storefront:** admin always sees every product. Storefront **axis** gates (Catalog / Search / Individually / Purchasable) apply only when `catalog.visibility.enforce` is on. With enforce **off**, search applies **no** visibility-axis filter; sitemap still **status**-filters to active; Individually (PDP 404 for hidden modes) only after enforce. A "hidden" mode is preview-only (admin caption **"Enforcement off — preview"**). Status = active (PR-1054) still applies to public reads either way.
+2. On the **Visibility** tab, walk each axis that should apply to the missing surface:
+   - PLP / category / carousels → **Catalog**
+   - Search / suggest → **Search**
+   - Direct PDP → **Individually**
+   - Cart/checkout → **Purchasable** (separate incident above)
+3. For each axis in mode `auto`, AutoBasis needs **active** + stock qty > 0 + a price (category assignment is off by default). **Grouped parents** never resolve `HasPrice` / `QuantityPositive` under AutoBasis — force Catalog/Search/Individually `visible` or they vanish from PLP under AutoBasis. Virtual/downloadable use their **own** stock row; force-visible on a display axis ≠ sellable at zero stock. Failure codes under the axis name the miss. Mode `hidden` hides that axis **once enforce is on**; with enforce **off** it is badge/preview-only (same as Check 1). Mode `visible` on a draft/archived product still shows **"Forced visible — not live (product inactive)"** — public reads stay active-only.
+4. **Canonical cutover:** migrate → full `search:reindex` → **then** enable enforce. Never enable first. See ["Search reindex"](#search-reindex-searchreindex) (PR-1079). After enforce is correctly on, on-save reindex (PR-1080) keeps stock/price/file edits fresh — a full reindex is not required for every later edit.
+5. Stale PLP after restock/price: FPC may still be serving a HIT — see ["Cache appears stale after a product/price/content change"](#cache-appears-stale-after-a-productpricecontent-change).
+
+**Fix:** flip Status to `active`; fix stock/price (or force Catalog/Search/Individually `visible` for SEO-critical OOS / grouped parents while leaving Purchasable `auto`/`hidden`); follow migrate → full reindex → enable enforce; then rely on on-save reindex for ongoing edits. Full operator notes: ["Catalog visibility enforcement"](#catalog-visibility-enforcement-pr-1057).
+
+### Why isn't my ticket sellable
+
+**Symptom:** a ticket (or other child SKU) with **Requires linked parent** cannot be added to cart / fails checkout with `product requires a linked parent and is not purchasable`, even when stock, price, and Status look fine. Admin Purchasable badge may show `requires_linked_parent` — **expected** when the flag is on and admin resolve uses empty assignment context; that is not the fault by itself.
+
+**Check:**
+1. Product edit form: **Requires linked parent** checkbox is on (core field). Flag + empty assignment context → always-on 422 (enforce irrelevant).
+2. **Default theme** (`themes/default/templates/product.html`) and the default PDP add-to-cart form do **not** stamp assignment context. Stock-theme add will **422 for every flagged SKU**. Selling requires a theme or API client that posts `assignment_parent_product_id`, `assignment_parent_unit_id`, and/or `assignment_deferred`.
+3. Split the stamp kinds:
+   - **Deferred** (`assignment_deferred`): eligibility/`CheckPurchase` is skipped at cart time; bind later via **Sales → Assignments**.
+   - **Named parent** (`assignment_parent_product_id` and/or `assignment_parent_unit_id`): must pass `CheckPurchase` (sign-in, ownership, eligibility, no open RMA as applicable).
+   - If both deferred and a parent id/unit are set, `CheckPurchase` still runs because the parent id/unit is present.
+4. **Linked eligibility** tab: rules matter for named-parent purchase and post-purchase assign; they do **not** alone make the SKU purchasable without a stamp.
+5. Second add, qty increase, or guest-claim merge onto a line that already has a **different** stamp → 422 `cart item already has a different linked parent assignment` (see cart Greppable table).
+
+**Fix:** turn the flag off if the SKU should sell standalone; or ship a theme/API client that stamps `assignment_parent_product_id` / `assignment_parent_unit_id` / `assignment_deferred` at cart time; complete eligibility rules and Assignments for card↔ticket ops. Specific RequiresLinkedParent case of ["Why can't I add this product to cart"](#why-cant-i-add-this-product-to-cart).
+
 ## Planning
 
-| Phase | Status | Doc |
-| --- | --- | --- |
-| Phase 5 — Mature commerce | **Complete** | [Roadmap](docs/phase-5-maturity/ROADMAP.md) |
-| Phase 6 — Merchant-complete admin | Active | [Roadmap](docs/phase-6-merchant-complete/ROADMAP.md) |
+Product docs: [docs/README.md](docs/README.md). Phase roadmaps and PR specs stay on the `dev` branch under `docs/phase-*`.
 
 ## Plugin extension (operators & integrators)
 
@@ -192,7 +249,7 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - Enable **external plugins** via config flags after they are registered in `cmd/api/register_plugins.go`.
 - Failed plugin init is logged as `plugin.init.failed`; the process continues with other plugins.
 
-**Why no `.so` loading?** See [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) (PR-544). Adding a custom external plugin requires rebuilding the binary with your plugin import.
+**Why no `.so` loading?** The Go plugin ABI is fragile across compiler versions, and plugins need domain ports at process start (PR-544). Adding a custom external plugin requires rebuilding the binary with your plugin import. See [PLUGINS.md](PLUGINS.md#deferred-capabilities).
 
 **Check plugin status:** startup logs emit `plugin.status` per registered plugin (`active` / `failed`). Use `app help` to list plugin CLI commands when enabled.
 
@@ -253,7 +310,11 @@ Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
 - A product with no visibility snapshot (e.g. non-active) is denied (fail-closed).
 - A visibility-facts DB error returns 500 and aborts the claim or checkout; it never drops lines.
 - Admin API contexts bypass the axis but not the `Status` check.
+- **`requires_linked_parent` (PR-1068):** a product with this flag true is not purchasable while the resolved assignment context is empty. Cart add stamps a non-empty request context onto the line (`assignment_parent_product_id` / `assignment_parent_unit_id` / `assignment_deferred`); the default theme does not stamp these fields. Qty increase, guest-cart claim, and checkout `validate_cart` read the line first, then the request. A visibility bypass and a nil facts source do not skip it. Required bundle leaves are rejected the same way, including at `BundleService.Add`. The 422 text is `product requires a linked parent and is not purchasable`. Claim drops a line that has no stored assignment and logs `cart.guest.claim.lines_dropped`. A line that already carries a parent or deferred stamp is kept. Display axes (PLP, search, PDP) are unchanged. `Deferred: true` skips existence/eligibility/ownership at cart time (bind later via Assignments). A named parent product and/or unit id must pass `CheckPurchase` (existence, eligibility, ownership, open-RMA rules as applicable — shipped in PR-1070). Storefront must not set `Deferred` on every request. Set the flag with admin `POST`/`PUT` `requires_linked_parent` or product CSV (`requires_linked_parent`, create-only). The product response field is `RequiresLinkedParent`. The admin purchasable badge shows `requires_linked_parent` when the flag is set (empty admin context — expected).
 - Frequent `cart.guest.claim.lines_dropped` warnings after enabling usually mean OOS products are still sitting in guest carts. Expected; no action needed unless volume is surprising.
+- **Admin assignment API (PR-1071):** `assignments.read` lists a card (`GET /api/v1/admin/assignments`, default `status=assigned`, cap 100, `has_more` when another row exists) and the current child row. Both reads include live order status, payment status, and customer id for the parent and the child, and `forced` when the bind was an override. `assignments.write` assigns and revokes. Admin, Manager, and Support have both; Editor has neither. A 409 is an already-assigned child. A 422 is an invalid unit id (`foo/bar`), a missing line, a missing catalog variant, a child that does not require a linked parent, an ineligible parent, or a cancelled/failed/unpaid order. Support may force-bind an unpaid or cancelled unit: `assignments.write` includes `force`. That is an intentional entitlement override. `force: true` with a non-empty `reason` (at most 500 characters) stores `forced_at` and `forced_reason` only when a side is not bindable, and still leaves the order unpaid or cancelled. A reason longer than 500 characters is 422 only when `force` is true. The stored text is returned as `reason`. `force` on an already-bindable pair is 422 `force not applicable`. List, current, and revoke return the same live order facts. If that fact read fails, the response is still 200 with the assignment rows and empty fact fields, and the API logs `admin.assignment.facts_failed` with `route` (`list`, `current`, or `revoke`) and `error`. List logs that once, with `count` set to the row count. `assignment_id` is included when that read is a single row. A failed fact read does not undo a revoke. Revoke of an already-revoked id is 200 and does not write another audit entry. Contract detail is in `docs/guides/DEVELOPER.md`. **Returns (PR-1072):** approving (or refunding) a return for a ticket/child unit auto-revokes that unit's current `ProductAssignment` (`assigned` or never-assigned `unassigned`) in the same transaction as the status write — wrong-status calls do not revoke. Returning a card/parent while tickets are still assigned is **blocked**, unless those tickets are included on the **same** RMA (same-order card+tickets). `ReturnableLines` hides a card that would 422. Assign (customer or admin), checkout `CheckPurchase`/`RecordPurchase` stamping onto a parent unit, and `ListOwnedParents` listing are blocked or filtered while a unit is on an open or refunded RMA (`requested`/`approved`/`received`/`refunded`; rejected/cancelled allow re-bind). `ReturnableLines` keeps a card only when its assigned same-order tickets are also mutually returnable (iterative filter); selecting the card requires submitting those ticket lines together. No silent cascade. Eligibility CSV: `import`/`export:linked-eligible-parents` and `import`/`export:linked-eligible-categories`. Admin GUI: product section **Linked eligibility** and **Sales → Assignments** (unit lookup + assign/revoke). Assignment CSV is not supported.
+
+**Product CSV visibility + status (PR-1081):** export/import columns `visibility_catalog`, `visibility_search`, `visibility_individually`, `visibility_purchasable` (`auto|visible|hidden`, case-sensitive — `HIDDEN` is rejected) and `status` (`draft|active|archived`, case-sensitive). Create-only: a non-empty consensus that differs from the stored product skips the whole slug group (including any new SKUs in that file). New exports always include the four visibility tokens and `status` (empty stored → `auto` / `draft`). Old product CSVs without those columns still import — omitted columns do not trip the create-only check. Positional column layout changed (status + four visibility headers sit before `variant_name`); prefer header names, not column indexes. Attribute keys that collide with those exact reserved headers are omitted on export — rename the attribute to round-trip its values. **Downloadable + `active` on CSV create is rejected** (`DownloadableRequiresFileMessage`, same as admin) — import as `draft`, then `import:downloadable-files`, then activate via admin. Successful product creates publish `catalog.EventProductCreated` (Publish-then-PublishAsync). CLI `import:products` registers `rewrite.Subscriber` on that short-lived bus so `/<slug>` rewrites are written (serve alone cannot see the CLI bus), and also batch-Triggers a scoped reindex of created IDs when `ReindexService` is available (logged `import.products.reindex_service_unavailable` otherwise — fall back to `search:reindex`). Publishing the event alone is not enough — the CLI process must register the rewrite listener. **Still non-CSV:** assignment units (`/admin/sales/assignments`), `downloadable_grant_settings` (admin product form / HTTP), downloadable blobs, product↔category links. Prices/stock/attributes/categories CSV pipelines were not re-proven by this PR’s consistency suite.
 
 **Admin GUI (PR-1059):** the product edit form in `/admin` now exposes all four `VisibilityModes` (catalog/search/individually/purchasable) as per-axis selects, independent of whether `catalog.visibility.enforce` is on — this is always available so merchants can set up modes ahead of enabling enforcement. A single axis can be changed at a time: `visibility_modes` in the save request is a **partial** merge, so `{"catalog": "hidden"}` alone does not touch the other three axes.
 
@@ -282,9 +343,55 @@ Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-10
 
 - Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.
 - Changing a live SKU between physical and `virtual`/`downloadable` changes whether **new** checkouts require a shipping method (derived in cart validation). Carts already mid-checkout keep the shipping requirement cached from when they last validated.
-- `bundle` / `grouped` composition is editable in admin and CSV. `configurable` and `downloadable` can be stored before their later tracks fully ship; expect incomplete storefront/admin behavior for those types until those PRs land.
+- `bundle` / `grouped` composition is editable in admin and CSV. `downloadable` file attach/settings are admin HTTP + CSV + product form (PR-1078); grants issue on `order.paid` (PR-1075); customers download via `POST /api/v1/account/downloads/{grantID}` (PR-1077); support revoke/re-issue uses `downloads.write` on order/customer detail. `configurable` still has incomplete storefront/admin behavior until its track lands.
+- **Replace file (PR-1078 blast radius):** `PUT …/downloadable-files` retargets grants by **asset id**, not "this product only". If other products still attach `old_asset_id`, the API returns **422** unless the body sets `global_retarget=true` (then every grant on that blob moves — including other products' order lines). Response includes `grants_moved` / `grants_revoked`. Expired old grants deleted to free UNIQUE `(order_item_id, asset_id)` vanish (IDs gone; no revoke webhook for those rows). Live UNIQUE conflict publishes `download.grant.revoked`. Subscribe to `download.grant.issued` / `revoked` / `reissued` on outbound webhooks.
 - Bundle mode fields (`pricing_mode`, `stock_mode`, `explode_order_lines`) save with the product when type is bundle. The explode checkbox is enabled only when both modes are dynamic. Component and member links use dedicated routes, not the product PUT: `GET`/`POST /api/v1/admin/products/{id}/bundle-components`, `DELETE .../bundle-components/{componentId}`, and the grouped-members pair. A parent of the wrong type is 422. Removing a link that is not there is 404. Adding a required bundle component past `catalog.MaxBundleRequiredComponents` (50) is 422 and the link is not saved. `products.read` lists; `products.write` adds and removes.
 - CLI (operator scope, additive — a missing CSV row does not delete a link): `import:bundle-components` / `export:bundle-components` (`parent_slug,component_slug,quantity,required`; empty `required` means true) and `import:grouped-members` / `export:grouped-members` (`parent_slug,member_slug`). Row failures are `line N:` and do not abort the rest of the file. Product CSV exports stored modes and refuses a non-empty mode that does not match an existing product. It does not update modes; use the admin product PUT for that (it still locks the row and rejects dynamic pricing or stock while an own price or stock row exists).
+
+## Downloadable grants (PR-1075)
+
+**Symptom:** customer paid for a downloadable product but has no grant row.
+
+**Check:**
+
+1. Confirm the product `type` is `downloadable` (or a non-exploded bundle with a **required** downloadable leaf) and `downloadable_files` has ≥1 row for that product/leaf.
+2. Confirm `order.paid` fired. Publishers: sync payment success, `$0`/`payment_skipped` checkout, `payment.completed` webhooks (after persist), admin/integration status → `paid`. Pending Stripe initiate does **not** fire `order.paid` (wait for capture webhook). Do not expect grants from `checkout.completed` alone.
+3. Look up `download_grants` by `order_item_id = '<orderUUID>/<variantID>'` (same mint as assignment unit ids). Bundle leaf grants use the **parent** line's order_item_id.
+4. Global defaults: `catalog.downloadable.default_expiry` / `default_download_limit` (env `SHOPANDA_CATALOG_DOWNLOADABLE_*`). Explicit `default_download_limit: 0` is rejected. Product overrides: `downloadable_grant_settings`.
+5. Guest orders issue grants with empty `customer_id` — `ListByCustomer` rejects empty id; list by order item until account-link rebind (follow-up).
+6. Approve/refund of a return **revokes** grants for those lines (same TX as assignment revoke). Operator consequence: refunded downloadables lose access.
+7. If `order.paid` published but the async issuer failed, there is no durable outbox in this PR — re-deliver the payment webhook / admin paid update / `ApplyStatus(paid)` (they republish `order.paid` on already-completed/already-paid) or call `IssueForOrder`. UNIQUE + IssueIdempotent leave existing rows unchanged (including revoked — paid redelivery does **not** resurrect). Support re-issue is admin `POST /api/v1/admin/download-grants/{id}/reissue` (or the order/customer GUI). Delivery endpoint is PR-1077. Confirmation email on republish is claimed in `notification_dedupe` `(subject_key, kind=order_confirmed)` as `pending` before enqueue and marked `completed` after success (queue job-id alone is not enough on SQS/RabbitMQ); enqueue failure deletes the pending claim so a later paid signal can retry.
+
+## Digital-goods tax class (PR-1076)
+
+- `downloadable` lines use tax class `digital`; `virtual` and other types (including bundle parents) use `standard`. Cart + checkout share `EnsureTaxClasses` (existing Meta keys are not overwritten).
+- **Release requirement:** run `shopanda migrate` (migration `108` creates `digital` rows from every non-zero `standard` rate, `ON CONFLICT DO NOTHING`). Optionally run seed afterward — TaxSeeder is a second idempotent backfill via `tax.RateRepository` (`ListByClass` + `CreateIfNotExists`). Fail-closed must not ship without migrate-path data.
+- **Fail-closed:** if a line is `digital` and there is no usable `tax_rates` row for the destination country (+ store scope fallback), or the digital row has `rate = 0`, checkout recalculate / pricing returns a **validation error** — it does **not** apply 0% VAT. Intentional 0% VAT must use class `zero`, not a zero-bps `digital` row. Operators must still ensure destination coverage for every country they sell into.
+- **Zero-rate policy:** migration/seed do **not** copy zero-bps `standard` into `digital`. Application `Upsert` of a `standard` rate does **not** create a matching digital row (no Tax settings UI / RateService yet).
+- **After migrate — new destinations:** when you add a new `standard` rate for a country (or store scope) after migration `108`, you must also insert a matching `digital` row. Migrate only backfills rows that exist at migrate time; later standard-only inserts leave downloadable checkout fail-closed for that destination.
+- **Existing `digital` rows with `rate = 0`:** after this release they fail checkout. `UPDATE` the bps, `DELETE` the row (then insert a correct digital rate), or move intentional 0% VAT to class `zero` (and stop using class `digital` for that line).
+- **Hook / Meta override risk:** a trusted hook that pre-sets `tax_classes` for a downloadable to a non-digital class (e.g. `standard`) skips digital fail-closed for that line — treat as trusted-VAT risk.
+- Place of supply at **checkout** is the address country (`tax_country`). Cart tax preview may use the **store** country when no destination is set — not OSS place-of-supply.
+- There is **no Tax settings admin UI** yet. Insert a digital rate with SQL, e.g.:
+
+```sql
+-- Insert digital for a destination (leave existing digital untouched).
+INSERT INTO tax_rates (id, country, class, store_id, rate)
+VALUES (gen_random_uuid(), 'FR', 'digital', '', 2000)
+ON CONFLICT (country, class, store_id) DO NOTHING;
+
+-- Or copy non-zero bps from that country's standard rate (use after adding a new standard destination):
+INSERT INTO tax_rates (id, country, class, store_id, rate)
+SELECT gen_random_uuid(), country, 'digital', store_id, rate
+FROM tax_rates WHERE class = 'standard' AND country = 'FR' AND rate > 0
+ON CONFLICT (country, class, store_id) DO NOTHING;
+
+-- Fix a leftover zero-bps digital row (example: set to standard bps, or DELETE):
+-- UPDATE tax_rates SET rate = 2000 WHERE country = 'FR' AND class = 'digital' AND store_id = '' AND rate = 0;
+-- DELETE FROM tax_rates WHERE country = 'FR' AND class = 'digital' AND store_id = '' AND rate = 0;
+```
+
+- Reverse charge / VAT ID is not implemented. OSS CSV columns are unchanged (PR-534). Plugin tax calculators (e.g. `taxdemo`) ignore `tax_classes` — an operator trap if you expect class-aware rates from a flat plugin. Treat live EU digital VAT as needing tax-domain sign-off; this PR is a seam, not compliance-complete.
 
 ## Admin store credit issuance
 
@@ -339,12 +446,14 @@ Runs every 5 minutes (`*/5 * * * *`) via the scheduler → job queue → worker,
 
 ## Search reindex (`search:reindex`)
 
+- **After deploying PR-1079 (search visibility schema): migrate → full `search:reindex` → then enable `catalog.visibility.enforce`.** See [DEPLOYMENT.md — Meilisearch / search visibility schema (PR-1079)](docs/guides/DEPLOYMENT.md#meilisearch--search-visibility-schema-pr-1079). Migration `110` adds `products.search_visible_*` / `search_purchasable` with `DEFAULT true` (Postgres fail-open until reindex). Meili unreindexed docs lack those attrs; query filters use `(attr = true OR attr NOT EXISTS)` so missing fields also fail open — **but** enforce must stay off until reindex finishes, or Total/Facets disagree with the post-filter safety net. Meili also filters `(status = "active" OR status NOT EXISTS)` as defense in depth (fail-open until reindex writes `status`). After migrate, prefer a full reindex in a low-write period before enabling enforce. Ongoing freshness for Phase 12 visibility fields is covered by PR-1080 on-save triggers (plus the existing PR-1036/1049 stock paths).
 - **`app search:reindex` runs as a background job (PR-1033), not inline in the CLI process.** It creates a `search_index_runs` row, enqueues a `search.reindex` job onto the configured queue, and returns immediately (unless `--wait`) — the actual scan-and-index work happens in whichever process runs the worker (`./app worker`, or `serve`'s embedded worker). A CLI invocation with no worker running anywhere just enqueues a job that never gets picked up; check `jobs:list --type=search.reindex` if a reindex seems to be stuck at 0 progress.
 - **`--wait`** polls the run row every 500ms and blocks until the worker marks it `completed` (prints the indexed/total count) or `failed` (non-zero exit, prints the last error). SIGINT/SIGTERM while waiting exits with an error but does **not** cancel the job itself — the reindex keeps running in the background; re-run `search:reindex --wait` (or check `jobs:list`) to see it finish.
 - **`jobs:list`/`jobs:show`/the jobs admin API (PR-1028/1029/1032) show the underlying `search.reindex` job's queue status only** (pending/processing/done/failed, attempts) — a stuck or failed reindex is retried/investigated through that same job admin surface as any other job. They do **not** show reindex-specific progress: `search_index_runs.processed_count`/`total_count` isn't exposed there — for that, use `search:reindex --wait` (final count only, not live) or `GET /api/v1/admin/search/reindex/{runID}` (PR-1035; live `total_count`/`processed_count`/`status`).
 - **`search:reindex` (the CLI command) itself always triggers a full-table scan** — the same scope it always did. Partial/scoped reindex (explicit product/category IDs, or "changed since") is available via `POST /api/v1/admin/search/reindex` (PR-1035; a single product ID indexes synchronously, everything else is queued) — `ReindexService.Trigger` resolves any of these to a `search.ScopeProducts`/`ScopeCategories`/`ScopeSince`/`ScopeAll` value before enqueueing. A scope covering more than `search.reindex_full_scan_threshold` (default 20%, config-overridable) of the catalog is automatically substituted with a full scan by `Trigger` itself before enqueueing — visible, not silent: the run's recorded `scope_params` still shows what was requested.
-- **The index no longer goes stale between reindexes for admin-driven edits (PR-1036).** Editing a product, its price, its stock (via the admin inventory screen), or its category assignment through the admin API automatically enqueues a scoped reindex for that product — event-driven, debounced (`internal/application/search.IndexUpdateSubscriber`, a few seconds per product, so a burst of edits to one product enqueues one reindex, not one per edit), and going through the same job queue/`search_index_runs` tracking as every other reindex, not a separate ad-hoc mechanism.
-- **Checkout, reservation-expiry release, and returns restocking now all publish `inventory.EventStockUpdated` too (PR-1049)** — closing what was previously the biggest gap in this coverage: an ordinary customer purchase (`internal/application/checkout.ReserveInventoryStep`, via `WithStockEventPublishing`), a reservation expiring and its stock being restored (`inventoryApp.ReservationExpiryHandler`, via `SetEventPublishing`), and a return being received and restocked (`internal/application/returns.Service.Receive`) all now keep the index fresh, the same as an admin-panel edit. The two **bulk** stock-mutation paths (`import:stock` CLI/CSV, and the ERP `StockSyncService.UpsertBySKU` sync) deliberately do **not** publish a per-row event — that would enqueue one reindex per row on a large import. Instead, when a `ReindexService` is successfully wired, each collects every product it actually committed during its own run and fires one `ReindexService.Trigger(ScopeProducts{...})` call afterward (`StockImporter.WithReindex` / `StockSyncService.SetReindexService`), letting the existing full-scan-threshold/hard-cap logic (PR-1034) take over automatically if the touched set is large. That wiring is not guaranteed on every entry point: `import:stock` continues without reindexing when `newSearchReindexService` fails (logged `import.stock.reindex_service_unavailable`), and the standalone `worker` does the same when `newWorkerReindexService` fails — there is then no `Trigger` call, and the existing manual/scheduled `search:reindex` remains the fallback. Wiring a real `ReindexService` into `serve`'s embedded ERP sync path was straightforward once the queue exists; the standalone `worker` process needed the same two-step wiring `serve` itself uses (queue exists only after `setupWorker` runs, `ReindexService` needs that queue) plus `IndexUpdateSubscriber` on the worker's own bus so reservation-expiry events in that process actually enqueue a reindex — see `cmd/api/main.go`'s `runWorker`. `schedule:trigger`'s own plugin bootstrap (any named cron task, not specifically ERP sync) is not wired to a `ReindexService` at all — a deliberate, low-value-to-close gap for that one low-frequency, manual-trigger CLI path.
+- **On-save indexing covers most admin-driven catalog edits (PR-1036, PR-1080) — not every write path.** Editing a product, its price, its stock (via the admin inventory screen), its category assignment, a variant create/update, a bundle component add/remove, or a downloadable file attach/replace/remove through the admin API enqueues a scoped reindex — event-driven, debounced (`internal/application/search.IndexUpdateSubscriber`, a few seconds per product), via the same job queue/`search_index_runs` tracking as every other reindex. PR-1080 fans leaf product/stock/price/variant events out to parent bundles (`BundleParentLookup`) so dynamic-kit `HasPrice` / `QuantityPositive` stay fresh when a leaf deactivates, gains a second variant, or crosses zero stock. Linked-child assignment and download-grant issue/revoke do **not** trigger reindex (index-time Resolve uses empty assignment context; grants are post-purchase). **Still stale until a manual/scheduled `search:reindex`:** CSV `import:bundle-components` and `import:downloadable-files` do not batch-trigger (accepted gap from PR-1080; out of scope for PR-1081). **`import:products` is wired (PR-1081):** each successful create publishes `catalog.EventProductCreated`; the CLI registers `rewrite.Subscriber` on that bus (required for `/<slug>` — serve cannot see the CLI bus) and batch-Triggers created product IDs when `ReindexService` is available (same fallback log pattern as `import:stock`). Price CSV is covered indirectly — each row publishes `pricing.EventPriceUpserted`, and the subscriber fans parents out — but a huge price import still incurs one debounced event path per distinct product (same as before PR-1080).
+- **Checkout, reservation-expiry release, and returns restocking now all publish `inventory.EventStockUpdated` too (PR-1049)** — closing what was previously the biggest gap in this coverage: an ordinary customer purchase (`internal/application/checkout.ReserveInventoryStep`, via `WithStockEventPublishing`), a reservation expiring and its stock being restored (`inventoryApp.ReservationExpiryHandler`, via `SetEventPublishing`), and a return being received and restocked (`internal/application/returns.Service.Receive`) all now keep the index fresh, the same as an admin-panel edit. The two **bulk** stock-mutation paths (`import:stock` CLI/CSV, and the ERP `StockSyncService.UpsertBySKU` sync) deliberately do **not** publish a per-row event — that would enqueue one reindex per row on a large import. Instead, when a `ReindexService` is successfully wired, each collects every product it actually committed during its own run, **expands that set through `BundleParentLookup` so parent kits are included (PR-1080; batched, on a timeout separate from enqueue; 10,000+ IDs skip expansion and full-scan)**, and fires one `ReindexService.Trigger(ScopeProducts{...})` call afterward (`StockImporter.WithReindex`+`WithBundleParents` / `StockSyncService.SetReindexService`+`SetBundleParents`), letting the existing full-scan-threshold/hard-cap logic (PR-1034) take over automatically if the touched set is large. That wiring is not guaranteed on every entry point: `import:stock` continues without reindexing when `newSearchReindexService` fails (logged `import.stock.reindex_service_unavailable`), and the standalone `worker` does the same when `newWorkerReindexService` fails — there is then no `Trigger` call, and the existing manual/scheduled `search:reindex` remains the fallback. Wiring a real `ReindexService` into `serve`'s embedded ERP sync path was straightforward once the queue exists; the standalone `worker` process needed the same two-step wiring `serve` itself uses (queue exists only after `setupWorker` runs, `ReindexService` needs that queue) plus `IndexUpdateSubscriber` on the worker's own bus so reservation-expiry events in that process actually enqueue a reindex — see `cmd/api/main.go`'s `runWorker`. `schedule:trigger`'s own plugin bootstrap (any named cron task, not specifically ERP sync) is not wired to a `ReindexService` at all — a deliberate, low-value-to-close gap for that one low-frequency, manual-trigger CLI path.
+
 - See `docs/guides/DEVELOPER.md`'s "Add Custom Event Listeners" section for the exact events a plugin author needs to publish to participate in on-save indexing for whatever isn't covered above.
 - If the worker process crashes mid-run, the `search_index_runs` row is left `processing` with a partial `processed_count` — it is not automatically resumed or retried. **A reconciliation sweep now runs automatically** (`search.reindex.reconcile`, cron `*/30 * * * *`, PR-1048): every 30 minutes it checks every run still `processing` after 2 hours (`ReconcileHandler`'s `staleAfter`) against its underlying `search.reindex` job (found via `payload->>'run_id'`, `jobs:show <job-id>`). If that job has already reached a real terminal status (`done`/`failed`/`cancelled`), **or no such job exists at all** (e.g. `ReindexService.Trigger`'s `Create` succeeded but `Enqueue` never did), the sweep corrects the run to `failed`, recording why in `last_error` — in both cases nothing will ever call `Finish` for that run again. It deliberately does **not** touch a run whose job is *found* still `pending`/`processing`: job status alone can't distinguish a genuinely orphaned job (the crashed-worker case — there is no lease/heartbeat on the `jobs` table, so a job a worker was handling when it died stays `processing` forever too, with nothing to ever reclaim it) from one still legitimately running or retrying — that case is left `processing` for an operator to judge manually (see below). Run `schedule:trigger search.reindex.reconcile` to fire the sweep immediately instead of waiting for the next tick.
 - **For the ambiguous case the sweep leaves alone** (the run's underlying job is *found* but still `processing`/`pending`) — first confirm independently that the job is never coming back (e.g. the worker process that held it is confirmed dead/restarted, and no reindex is actually progressing), then run `app search:reindex-runs:reconcile <run-id> --reason="<why>"` to flip that one run to `failed` with your reason recorded in `last_error`. It refuses (409) if the run isn't currently `processing`, and requires `--reason`. This is the supported alternative to editing `search_index_runs` directly in the database.
@@ -450,7 +559,7 @@ The `sha-<commit>` tag is never overwritten: the Release workflow refuses to re-
 ## Supply chain
 
 - Dependabot: weekly PRs for Go modules, Actions, and Docker digests (`.github/dependabot.yml`).
-- `CI / govuln`: pinned fail-closed `govulncheck`; exceptions only via [`GOVULN_BASELINE.md`](docs/phase-10-platform-excellence/GOVULN_BASELINE.md). Details in [DEVELOPER.md](docs/guides/DEVELOPER.md#supply-chain-dependabot--govulncheck).
+- `CI / govuln`: pinned fail-closed `govulncheck`; exceptions only via [`GOVULN_BASELINE.md`](docs/GOVULN_BASELINE.md). Details in [DEVELOPER.md](docs/guides/DEVELOPER.md#supply-chain-dependabot--govulncheck).
 
 ## Outbound webhooks (SSRF)
 
@@ -495,9 +604,37 @@ The grace/cancel split is **hardcoded**, not configurable: remainder is `min(Dra
 
 **Limitation:** there is no outbox/retry. Work that is still in the handler when grace ends is cancelled and not retried (same as a crash). Keep `OnAsync` bodies short (enqueue a job, don’t call the PSP inline). Ignoring `ctx` after cancel can still delay or drop the last second of shutdown.
 
+### Customer cannot download a digital product
+
+**Symptom:** `POST /api/v1/account/downloads/{grantID}` returns 401 / 403 / 404 / 422 / 409 / 500, or the customer says the link “does nothing.” (Delivery is **POST**, not GET — prefetch must not burn slots.)
+
+**Check:**
+```bash
+# Grant row (must exist; customer_id must match the logged-in customer)
+psql "$DATABASE_URL" -c "select id, customer_id, expires_at, download_limit, download_count, asset_id from download_grants where id = '<grant-id>';"
+
+# Live vs expired: expires_at <= now() means revoked or timed out (PR-1075 revoke sets expires_at = now)
+# Exhausted: download_count >= download_limit → 422 validation ("download limit reached")
+# Wrong / empty customer_id → 403 (guest grants until account-link rebind)
+# Asset path: prefer private/downloads/… for grant targets (upload with private_download=1)
+psql "$DATABASE_URL" -c "select id, path, filename from assets where id = '<asset-id>';"
+```
+
+**Fix:**
+| HTTP | Cause | Operator action |
+| --- | --- | --- |
+| 401 | Not signed in | Customer must authenticate |
+| 403 | Grant owned by another customer, or guest `customer_id` empty | Confirm account; guest rebind is a follow-up (PR-1075) — do not invent a re-issue without paid/link context |
+| 404 | Unknown grant id, missing asset row, or missing blob (Head/Read miss) | Confirm grant + `assets` + object in storage; missing blob does **not** increment `download_count` |
+| 422 | Expired or download limit reached | Support: open the order or customer detail → Download grants → **Re-issue** (or `POST /api/v1/admin/download-grants/{id}/reissue` with `expiry_days`/`expires_at` + `reason`; defaults to reset count). Requires `downloads.write`. Do not rely on paid redelivery — it will not resurrect a revoked grant |
+| 409 | Concurrent atomic claim race | Customer retries once |
+| 500 | Presign / storage failure | Check API logs for `download delivery … failed`; do not hand out permanent `/media/...` URLs |
+
+Delivery never returns a permanent public media URL (local streams; S3 uses a short-lived signed redirect with `private, no-store`, Location host-restricted to AWS path/virtual-hosted or MinIO endpoint — not CDN BaseURL alone). New Attach rejects non-`private/downloads/` assets; legacy `uploads/` joins remain deliverable until re-uploaded privately. **Residual risk:** keep `private/downloads/` off public `/media` aliases. See [DEVELOPER.md — Storefront download delivery](docs/guides/DEVELOPER.md#storefront-download-delivery-pr-1077).
+
 ## Common references
 
-- [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
+- [EU compliance fields](docs/guides/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
 - Omnibus reads catalog `price_history` for the SKU on the page. Exploding a kit onto order lines does not change that, and checkout does not `Record`. History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
 
 | Surface | History used |
@@ -506,5 +643,5 @@ The grace/cancel split is **hardcoded**, not configurable: remainder is `min(Dra
 | Dynamic kit PDP/PLP | No block (the headline sum is not one SKU's prior-30-day price) |
 | Leaf / component PDP/PLP | That variant's `price_history` |
 | Admin price PUT and CSV price import | Append a snapshot for the variant just written. PUT fails closed if the history repo is unwired. |
-- [Runtime modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
+- [Runtime modes](docs/guides/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
 - [Commercial B2B module](docs/COMMERCIAL.md) — license-gated `plugins/b2b`

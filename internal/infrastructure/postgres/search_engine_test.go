@@ -773,3 +773,147 @@ func TestSearchEngine_Search_DynamicBundleVirtualComponentInStock(t *testing.T) 
 		t.Fatal("InStock = false, want true for a virtual required component with no stock row")
 	}
 }
+
+// TestSearchEngine_IndexProduct_VisibilityColumnsAndFilter pins PR-1079:
+// IndexProduct writes denormalized search_visible_* columns, Search honors
+// visible_in_search, and Suggest applies visible_in_search when the
+// caller/enforce layer passes that filter.
+func TestSearchEngine_IndexProduct_VisibilityColumnsAndFilter(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+
+	visible := mustNewProduct(t, "Vis Filter Visible", "vis-filter-visible-"+id.New()[:8])
+	hidden := mustNewProduct(t, "Vis Filter Hidden", "vis-filter-hidden-"+id.New()[:8])
+	for _, p := range []*catalog.Product{&visible, &hidden} {
+		if err := repo.Create(ctx, p); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		p.Status = catalog.StatusActive
+		if err := repo.Update(ctx, p); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+
+	if err := engine.IndexProduct(ctx, search.Product{
+		ID: visible.ID, Name: visible.Name, Description: "visibilityfiltertoken",
+		VisibleInCatalog: true, VisibleInSearch: true, VisibleIndividually: true, Purchasable: true,
+	}); err != nil {
+		t.Fatalf("IndexProduct visible: %v", err)
+	}
+	if err := engine.IndexProduct(ctx, search.Product{
+		ID: hidden.ID, Name: hidden.Name, Description: "visibilityfiltertoken",
+		VisibleInCatalog: true, VisibleInSearch: false, VisibleIndividually: true, Purchasable: true,
+	}); err != nil {
+		t.Fatalf("IndexProduct hidden: %v", err)
+	}
+
+	var searchVis bool
+	if err := db.QueryRowContext(ctx, `SELECT search_visible_in_search FROM products WHERE id = $1`, hidden.ID).Scan(&searchVis); err != nil {
+		t.Fatalf("scan search_visible_in_search: %v", err)
+	}
+	if searchVis {
+		t.Fatal("expected search_visible_in_search=false after IndexProduct")
+	}
+
+	result, err := engine.Search(ctx, search.SearchQuery{
+		Text: "visibilityfiltertoken",
+		Filters: map[string]interface{}{
+			search.FilterVisibleInSearch: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.Total != 1 || len(result.Products) != 1 || result.Products[0].ID != visible.ID {
+		t.Fatalf("Search with visible_in_search: total=%d products=%v, want only %s", result.Total, result.Products, visible.ID)
+	}
+	if result.Products[0].Type == "" {
+		t.Error("expected Type projected onto search.Product")
+	}
+	if !result.Products[0].VisibleInSearch {
+		t.Error("expected VisibleInSearch=true on hit")
+	}
+
+	suggestions, err := engine.Suggest(ctx, search.SuggestQuery{
+		Prefix: "Vis Filter", Limit: 10,
+		Filters: map[string]interface{}{search.FilterVisibleInSearch: true},
+	})
+	if err != nil {
+		t.Fatalf("Suggest: %v", err)
+	}
+	sawVisible := false
+	for _, s := range suggestions {
+		if s.ProductID == hidden.ID {
+			t.Fatal("Suggest must exclude search_visible_in_search=false products")
+		}
+		if s.ProductID == visible.ID {
+			sawVisible = true
+		}
+	}
+	if !sawVisible {
+		t.Fatal("Suggest must include the visible product")
+	}
+}
+
+// TestSearchEngine_Suggest_CategoryFilter pins Search/Suggest filter parity:
+// category on SuggestQuery.Filters must exclude products outside that category.
+func TestSearchEngine_Suggest_CategoryFilter(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+
+	catIn := mustNewCategory(t, "Suggest Cat In", "suggest-cat-in-"+id.New()[:8])
+	catOut := mustNewCategory(t, "Suggest Cat Out", "suggest-cat-out-"+id.New()[:8])
+	for _, c := range []catalog.Category{catIn, catOut} {
+		mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, now(), now())", c.ID, c.Name, c.Slug)
+	}
+
+	inCat := mustNewProduct(t, "SuggestParity Alpha", "suggest-parity-alpha-"+id.New()[:8])
+	outCat := mustNewProduct(t, "SuggestParity Beta", "suggest-parity-beta-"+id.New()[:8])
+	for _, p := range []*catalog.Product{&inCat, &outCat} {
+		p.Status = catalog.StatusActive
+		if err := productRepo.Create(ctx, p); err != nil {
+			t.Fatalf("Create product: %v", err)
+		}
+	}
+	if err := productRepo.AssignCategory(ctx, inCat.ID, catIn.ID); err != nil {
+		t.Fatalf("AssignCategory in: %v", err)
+	}
+	if err := productRepo.AssignCategory(ctx, outCat.ID, catOut.ID); err != nil {
+		t.Fatalf("AssignCategory out: %v", err)
+	}
+
+	suggestions, err := engine.Suggest(ctx, search.SuggestQuery{
+		Prefix:  "SuggestParity",
+		Limit:   10,
+		Filters: map[string]interface{}{"category": catIn.ID},
+	})
+	if err != nil {
+		t.Fatalf("Suggest: %v", err)
+	}
+	if len(suggestions) != 1 || suggestions[0].ProductID != inCat.ID {
+		t.Fatalf("Suggest with category = %+v, want only %s", suggestions, inCat.ID)
+	}
+	for _, s := range suggestions {
+		if s.ProductID == outCat.ID {
+			t.Fatal("Suggest must exclude out-of-category products")
+		}
+	}
+}

@@ -22,22 +22,22 @@
 | PR-1065 | C | done | [Omnibus catalog history for kits](PR-1065.md) |
 | PR-1066 | C | done | [Bundle/grouped admin API + CSV + GUI](PR-1066.md) |
 | PR-1067 | D | done | [`LinkedProduct` catalog eligibility](PR-1067.md) |
-| PR-1068 | D | planned | [`RequiresLinkedParent` purchasability gate](PR-1068.md) |
-| PR-1069 | D | planned | [`ProductAssignment` instance domain](PR-1069.md) |
-| PR-1070 | D | planned | [Assignment flow: cart-time + post-purchase](PR-1070.md) |
-| PR-1071 | D | planned | [Admin API for assignment](PR-1071.md) |
-| PR-1072 | D | planned | [Returns integration for assigned children](PR-1072.md) |
-| PR-1073 | D | planned | [CSV import/export + admin GUI](PR-1073.md) |
-| PR-1074 | E | planned | [`Downloadable` type + file asset attachment](PR-1074.md) |
-| PR-1075 | E | planned | [`DownloadGrant` domain](PR-1075.md) |
-| PR-1076 | E | planned | [Digital-goods VAT/tax category](PR-1076.md) |
-| PR-1077 | E | planned | [Storefront download delivery endpoint](PR-1077.md) |
-| PR-1078 | E | planned | [Admin API + CSV + GUI for downloadable management](PR-1078.md) |
-| PR-1079 | F | planned | [Search index schema extension](PR-1079.md) |
-| PR-1080 | F | planned | [On-save reindex trigger generalization](PR-1080.md) |
-| PR-1081 | F | planned | [CSV import/export final consistency pass](PR-1081.md) |
-| PR-1082 | F | planned | [GraphQL read parity](PR-1082.md) |
-| PR-1083 | F | planned | [RUNBOOK.md + admin GUI consolidation pass](PR-1083.md) |
+| PR-1068 | D | done | [`RequiresLinkedParent` purchasability gate](PR-1068.md) |
+| PR-1069 | D | done | [`ProductAssignment` instance domain](PR-1069.md) |
+| PR-1070 | D | done | [Assignment flow: cart-time + post-purchase](PR-1070.md) |
+| PR-1071 | D | done | [Admin API for assignment](PR-1071.md) |
+| PR-1072 | D | done | [Returns integration for assigned children](PR-1072.md) |
+| PR-1073 | D | done | [CSV import/export + admin GUI](PR-1073.md) |
+| PR-1074 | E | done | [`Downloadable` type + file asset attachment](PR-1074.md) |
+| PR-1075 | E | done | [`DownloadGrant` domain](PR-1075.md) |
+| PR-1076 | E | done | [Tax class seam + digital rate-table wiring](PR-1076.md) |
+| PR-1077 | E | done | [Storefront download delivery endpoint](PR-1077.md) |
+| PR-1078 | E | done | [Admin API + CSV + GUI for downloadable management](PR-1078.md) |
+| PR-1079 | F | done | [Search index schema extension](PR-1079.md) |
+| PR-1080 | F | done | [On-save reindex trigger generalization](PR-1080.md) |
+| PR-1081 | F | done | [CSV visibility columns + Phase 12 consistency tests](PR-1081.md) |
+| PR-1082 | F | done | [GraphQL read parity](PR-1082.md) |
+| PR-1083 | F | done | [RUNBOOK.md + admin GUI consolidation pass](PR-1083.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

@@ -114,6 +114,20 @@ type memOrderRepo struct {
 func (r *memOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
 	return r.order, nil
 }
+
+func (r *memOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (r *memOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }
@@ -667,6 +681,9 @@ type returnsCaptureTxConn struct{}
 func (returnsCaptureTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (returnsCaptureTxConn) Close() error                        { return nil }
 func (returnsCaptureTxConn) Begin() (driver.Tx, error)           { return returnsCaptureTx{}, nil }
+func (returnsCaptureTxConn) Exec(string, []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
 
 type returnsCaptureTx struct{}
 
@@ -693,6 +710,9 @@ type returnsFakeTxConn struct{}
 func (returnsFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
 func (returnsFakeTxConn) Close() error                        { return nil }
 func (returnsFakeTxConn) Begin() (driver.Tx, error)           { return returnsFakeTx{}, nil }
+func (returnsFakeTxConn) Exec(string, []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
 
 type returnsFakeTx struct{}
 

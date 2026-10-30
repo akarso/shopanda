@@ -22,6 +22,20 @@ type ossReportOrderRepo struct {
 }
 
 func (m *ossReportOrderRepo) FindByID(context.Context, string) (*order.Order, error) { return nil, nil }
+
+func (m *ossReportOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := m.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (m *ossReportOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }

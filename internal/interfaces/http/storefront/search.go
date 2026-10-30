@@ -35,10 +35,13 @@ func (h *SearchHandler) WithAdvancedSearchAttributes(lister AdvancedSearchAttrib
 	return h
 }
 
-// WithVisibilityFacts enables query-time VisibleInSearch filtering (PR-1057)
-// until the search index carries visibility fields (PR-1079).
-func (h *SearchHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *SearchHandler {
+// WithVisibilityFacts enables index filters + fail-closed post-filter when
+// enforce is on (facts non-nil). Passes the same VisibleInSearch filter
+// Search uses into Suggest only when facts are wired — engines do not bake
+// visibility into Suggest semantics (PR-1079 review).
+func (h *SearchHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *SearchHandler {
 	h.visibilityFacts = facts
+	h.visibilityOpts = opts
 	return h
 }
 
@@ -88,15 +91,23 @@ func (h *SearchHandler) Search() http.HandlerFunc {
 			searchApplyAttributeFilters(&query, q, allowed)
 		}
 
+		if h.visibilityFacts != nil {
+			search.ApplyVisibilityAxisFilter(&query, search.VisibilityFilterSearch)
+		}
+
 		result, err := h.engine.Search(r.Context(), query)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
-		result, err = filterSearchHitsByVisibility(r, result, catalog.VisibilitySurfaceSearch, h.visibilityFacts, h.visibilityOpts)
-		if err != nil {
-			httpshared.JSONError(w, err)
-			return
+		// Fail-closed post-filter when enforce is on: facts!=nil is not proof
+		// the engine honored new filter keys (stale Meili schema / ignored keys).
+		if h.visibilityFacts != nil {
+			result, err = filterSearchHitsByVisibility(r, result, catalog.VisibilitySurfaceSearch, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
 		}
 
 		httpshared.JSON(w, http.StatusOK, searchResponse(result))
@@ -131,15 +142,22 @@ func (h *SearchHandler) Suggest() http.HandlerFunc {
 			limit = n
 		}
 
-		suggestions, err := h.engine.Suggest(r.Context(), prefix, limit)
+		sq := search.SuggestQuery{Prefix: prefix, Limit: limit}
+		if h.visibilityFacts != nil {
+			search.ApplySuggestVisibilityAxisFilter(&sq, search.VisibilityFilterSearch)
+		}
+
+		suggestions, err := h.engine.Suggest(r.Context(), sq)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
-		suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
-		if err != nil {
-			httpshared.JSONError(w, err)
-			return
+		if h.visibilityFacts != nil {
+			suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
 		}
 
 		items := make([]map[string]interface{}, len(suggestions))

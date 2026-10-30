@@ -183,6 +183,20 @@ func (r *storefrontAccountOrderRepoStub) FindByID(_ context.Context, id string) 
 	return r.byID[id], nil
 }
 
+func (r *storefrontAccountOrderRepoStub) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
+
 func (r *storefrontAccountOrderRepoStub) FindByCustomerID(_ context.Context, customerID string) ([]order.Order, error) {
 	return r.byCustomer[customerID], nil
 }

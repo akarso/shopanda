@@ -11,6 +11,8 @@ func TestHasPermission_Admin(t *testing.T) {
 	// Admin has every permission.
 	for _, perm := range []rbac.Permission{
 		rbac.ProductsRead, rbac.ProductsWrite,
+		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
@@ -33,6 +35,8 @@ func TestHasPermission_Manager(t *testing.T) {
 	// Manager has a subset — no settings.write, no customers.write.
 	allowed := []rbac.Permission{
 		rbac.ProductsRead, rbac.ProductsWrite,
+		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.CustomersRead,
@@ -68,6 +72,8 @@ func TestHasPermission_Editor(t *testing.T) {
 		rbac.ContentRead, rbac.ContentWrite,
 	}
 	denied := []rbac.Permission{
+		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.InvoicesRead,
@@ -90,6 +96,8 @@ func TestHasPermission_Editor(t *testing.T) {
 func TestHasPermission_Support(t *testing.T) {
 	allowed := []rbac.Permission{
 		rbac.ProductsRead,
+		rbac.AssignmentsRead, rbac.AssignmentsWrite,
+		rbac.DownloadsRead, rbac.DownloadsWrite,
 		rbac.OrdersRead,
 		rbac.CustomersRead,
 		rbac.InvoicesRead,
@@ -140,10 +148,10 @@ func TestHasPermission_Unknown(t *testing.T) {
 
 func TestPermissionsForRole_Admin(t *testing.T) {
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
-	// Core admin grants in role_permissions.go (products/orders/categories/customers/
-	// store_credit/invoices/media/content/settings/shipping/audit/extensions*/jobs*/
-	// search.reindex/cache*).
-	const wantCoreAdmin = 29
+	// Core admin grants in role_permissions.go (products/assignments/orders/categories/
+	// customers/store_credit/invoices/media/content/settings/shipping/audit/extensions*/
+	// jobs/search.reindex/cache*).
+	const wantCoreAdmin = 33
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}

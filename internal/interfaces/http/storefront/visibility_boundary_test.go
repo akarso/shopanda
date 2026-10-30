@@ -53,6 +53,10 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 		{Method: "GET", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
 		{Method: "POST", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
 		{Method: "GET", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
+		{Method: "GQL", Path: "product", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1082"},
+		{Method: "GQL", Path: "productBySlug", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1082"},
+		{Method: "GQL", Path: "products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1082"},
+		{Method: "GQL", Path: "categoryProducts", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1082"},
 	}
 
 	got := storefront.PublicProductVisibilityRoutes()
@@ -87,9 +91,9 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 			t.Errorf("%s unknown surface %q", key, r.Surface)
 		}
 		switch r.EnforceIn {
-		case "PR-1057", "PR-1058", "out-of-scope":
+		case "PR-1057", "PR-1058", "PR-1082", "out-of-scope":
 		default:
-			t.Errorf("%s EnforceIn = %q, want PR-1057, PR-1058, or out-of-scope", key, r.EnforceIn)
+			t.Errorf("%s EnforceIn = %q, want PR-1057, PR-1058, PR-1082, or out-of-scope", key, r.EnforceIn)
 		}
 		if r.Note == "" {
 			t.Errorf("%s missing Note", key)
@@ -149,6 +153,15 @@ func TestPublicProductVisibilityRoutes_SyncWithWireRoutes(t *testing.T) {
 	}
 
 	for key := range audited {
+		method, _, ok := strings.Cut(key, " ")
+		if !ok {
+			t.Fatalf("bad audited key %q", key)
+		}
+		// GraphQL operations are plugin-registered (POST /api/v1/graphql), not
+		// listed as HTTP patterns in wire_routes.go.
+		if method == "GQL" {
+			continue
+		}
 		if _, ok := registered[key]; !ok {
 			t.Errorf("PublicProductVisibilityRoutes has %s but wire_routes.go does not register it", key)
 		}

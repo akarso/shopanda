@@ -68,6 +68,9 @@ func normalizeAndValidate(cfg *Config) error {
 	if err := validateSearch(&cfg.Search); err != nil {
 		return err
 	}
+	if err := validateCatalogDownloadable(&cfg.Catalog.Downloadable); err != nil {
+		return err
+	}
 
 	if cfg.Media.Storage == "" {
 		cfg.Media.Storage = "local"
@@ -190,6 +193,31 @@ func validateSearch(s *SearchConfig) error {
 	}
 	if s.ReindexFullScanThreshold < 0 || s.ReindexFullScanThreshold > 1 {
 		return fmt.Errorf("config: search.reindex_full_scan_threshold=%v must be between 0 and 1", s.ReindexFullScanThreshold)
+	}
+	return nil
+}
+
+// validateCatalogDownloadable checks global DownloadGrant defaults (PR-1075).
+// Explicit 0 for default_download_limit is rejected (not coerced to 5).
+// DefaultConfig / empty yaml leave the compiled default of 5.
+func validateCatalogDownloadable(d *CatalogDownloadableConfig) error {
+	if strings.TrimSpace(d.DefaultExpiry) == "" {
+		d.DefaultExpiry = DefaultCatalogDownloadableExpiry
+	}
+	exp, err := time.ParseDuration(d.DefaultExpiry)
+	if err != nil {
+		return fmt.Errorf("config: catalog.downloadable.default_expiry=%q: %w", d.DefaultExpiry, err)
+	}
+	if exp <= 0 {
+		return fmt.Errorf("config: catalog.downloadable.default_expiry must be positive")
+	}
+	// Cap matches domain/download.MaxExpiryDays (3650).
+	const maxExpiry = 3650 * 24 * time.Hour
+	if exp > maxExpiry {
+		return fmt.Errorf("config: catalog.downloadable.default_expiry must not exceed 3650 days")
+	}
+	if d.DefaultDownloadLimit < 1 || d.DefaultDownloadLimit > 10000 {
+		return fmt.Errorf("config: catalog.downloadable.default_download_limit=%d must be between 1 and 10000", d.DefaultDownloadLimit)
 	}
 	return nil
 }

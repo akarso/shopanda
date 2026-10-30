@@ -120,13 +120,13 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1067 | `LinkedProduct` catalog eligibility | **done.** Child-declared eligibility, not composition: `linked_eligible_parents` (explicit parent-product allowlist) and `linked_eligible_categories` (any product assigned to that category via `product_categories`). `IsEligible` and `HasRules` are join-table predicates (no status check); `IsEligible` is OR across both; an empty rule set is false. Both product FKs and the category FK are `ON DELETE CASCADE`. No type restriction. `LinkedEligibilityService` locks products on add (draft needs operator scope); `Remove*` do not lock. Eligibility does not change `Purchasable` or visibility. PR-1068 uses an explicit `RequiresLinkedParent` flag, not `HasRules`. No admin HTTP (PR-1073). See [`prs/PR-1067.md`](prs/PR-1067.md). |
-| PR-1068 | `RequiresLinkedParent` purchasability gate | Explicit `RequiresLinkedParent` product flag (do **not** derive it from `HasRules`). After the product is already in scope, `IsEligible` only answers “does this parent match a rule.” `Purchasable = false` until an assignment context makes it eligible — reuses Track B's `HookCartAddItemBefore`/`HookCartValidate` seam (PR-1058). Eligibility ≠ purchasable ≠ assignable; still check active/visible on both sides. |
-| PR-1069 | `ProductAssignment` instance domain | New domain: binds one purchased/issued child unit (an order item, or a serialized unit for a digital "smart card in a phone" case) to one purchased parent unit. State machine: `unassigned → assigned → revoked` (revoke, not delete — keeps an audit trail; a revoked ticket can be reassigned). This is the piece with no existing analog anywhere in the codebase — closest precedent in shape (not in domain) is the store-credit ledger's append-only entry model. |
-| PR-1070 | Assignment flow: cart-time + post-purchase | Both paths supported, per the actual use case (many buyers already own a card and buy tickets for it later; some buy card+ticket together): cart-time assignment (customer selects which of their existing card instances a ticket is being purchased for, if any) is optional; if not chosen at cart time, the ticket is purchasable but the resulting order item is `unassigned` until a post-purchase assignment step (self-service account page or admin action) completes it — a `RequiresLinkedParent` item stays non-purchasable at the *product* level (PR-1068) but an already-purchased-and-unassigned unit is a different state, tracked by PR-1069. |
-| PR-1071 | Admin API for assignment | List/create/revoke assignments; "this card's assigned tickets" and "this ticket's current card" views. |
-| PR-1072 | Returns integration for assigned children | Return a single assigned ticket without touching the card's order line — extends Returns/RMA (Phase 6) the same way PR-1064 did for bundle components, at assignment granularity instead of bundle-component granularity. |
-| PR-1073 | CSV import/export + admin GUI | Bulk eligibility-rule import/export; card detail page showing assigned tickets, ticket detail showing its current card (if any), assign/revoke actions. |
+| PR-1067 | `LinkedProduct` catalog eligibility | **done.** Child-declared eligibility, not composition: `linked_eligible_parents` (explicit parent-product allowlist) and `linked_eligible_categories` (any product assigned to that category via `product_categories`). `IsEligible` and `HasRules` are join-table predicates (no status check); `IsEligible` is OR across both; an empty rule set is false. Both product FKs and the category FK are `ON DELETE CASCADE`. No type restriction. `LinkedEligibilityService` locks products on add (draft needs operator scope); `Remove*` do not lock. Eligibility does not change `Purchasable` or visibility. PR-1068 uses an explicit `RequiresLinkedParent` flag, not `HasRules`. Admin HTTP / CSV / GUI landed in PR-1073. See [`prs/PR-1067.md`](prs/PR-1067.md). |
+| PR-1068 | `RequiresLinkedParent` purchasability gate | **done.** Explicit `requires_linked_parent` flag (not `HasRules`). Empty assignment context forces the purchasable axis false, including when mode is `visible`. Display axes are unchanged. Cart and checkout enforce it even when visibility is bypassed or facts are nil. Guest claim drops the line. Admin create/update accepts the bool. Assignment context writers are PR-1070. See [`prs/PR-1068.md`](prs/PR-1068.md). |
+| PR-1069 | `ProductAssignment` instance domain | **done.** `assignment.ProductAssignment` binds one purchased/issued child unit to one purchased parent unit. State machine: `unassigned → assigned → revoked`, or `unassigned → revoked` with a null parent so a never-assigned unit can be released. Revoke, not delete. Reassignment inserts a new `assigned` record. Parent is written only on insert-assigned or `unassigned → assigned`. Unit ids are opaque TEXT (not FKs — `order_items` has no unique id; a serialized digital unit is not an order line). At most one current row per child. `ProductAssignmentService` is CreateUnassigned / CreateAssigned / Assign / Revoke / Get / CurrentByChild / ListByChild. No eligibility or purchasability checks (PR-1070). No admin HTTP (PR-1071). See [`prs/PR-1069.md`](prs/PR-1069.md). |
+| PR-1070 | Assignment flow: cart-time + post-purchase | **done.** HTTP writers stamp `AssignmentContext` (parent product, parent unit `orderID/variantID`, or deferred). `IsEligible` and ownership run when a parent is present. Ownership is payment completed or payable 0. Checkout failure after `create_order` fails a still-pending unpaid order and revokes; an accepted pending Stripe charge is left for the webhook. Decline / provider error also revoke. One `payment.failed` handler fails the pending order, restores store credit without the issuance cap, then revokes (`payment.failed` publish errors return 500). `Flow.RecordPurchase` fails closed unless order + assignment share one transaction. Exploded linked leaves are the units and collapse when two bundles share a leaf. Post-purchase self-service: `POST /api/v1/account/assignments`. Unassigned is not “not purchasable.” Admin API is PR-1071. See [`prs/PR-1070.md`](prs/PR-1070.md). |
+| PR-1071 | Admin API for assignment | **done.** List and current use `assignments.read`. Create and revoke use `assignments.write` (Admin, Manager, Support; not Editor). The card list defaults to `status=assigned`, limit 100 in SQL, and returns `has_more`. List, current, and revoke include live order facts (`OrderRepository.FindByIDs`, keyed by `CanonicalUnitID`). A fact-read failure returns those rows with empty fact fields. `AdminAssign` requires a linked parent for a new row and refuses cancelled, failed, or unpaid orders unless `force` and a `reason` (max 500 characters, enforced on write; migration `103` checks `char_length`) are set. Force is stored (`forced_at` / `forced_reason`) only when a side is not bindable and returned as `reason`. `force` on an already-bindable pair is 422. Revoke is idempotent and does not audit a second time. See [`prs/PR-1071.md`](prs/PR-1071.md). |
+| PR-1072 | Returns integration for assigned children | **done.** A ticket order line stays independently returnable; approve (and refund idempotently) revokes the current `ProductAssignment` for that child unit, including never-assigned `unassigned`. Returning a parent card that still has live assigned children is allowed when those children are included on the same RMA; otherwise revoke or return those children first. Cascade-revoke was rejected. See [`prs/PR-1072.md`](prs/PR-1072.md). |
+| PR-1073 | CSV import/export + admin GUI | **done.** Bulk eligibility CSV + admin HTTP; product form `linked` section; Assignments page for unit lookup/assign/revoke; `requires_linked_parent` product CSV; category FK maps to "category not found". See [`prs/PR-1073.md`](prs/PR-1073.md). |
 
 ---
 
@@ -136,11 +136,11 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1074 | `Downloadable` type + file asset attachment | Reuses the existing Media domain/storage (local or S3-compatible, per the existing `media.Storage` port) for the underlying file — this PR is the product-to-asset attachment and the `Type = downloadable` behavior (no shipping, per PR-1050), not a new storage mechanism. |
-| PR-1075 | `DownloadGrant` domain | Created when an order containing a downloadable item is paid. Carries an expiry (configurable window from grant creation) and a download-count limit. Not tied to `ProductAssignment` (Track D) — a separate, simpler grant model since downloadable delivery has no "assign to a parent" step. |
-| PR-1076 | Digital-goods VAT/tax category | EU digital goods have different VAT treatment (reverse charge / OSS) than physical goods — extends the existing EU compliance module (Omnibus/OSS groundwork, `docs/phase-5-maturity/specs/COMPLIANCE_EU.md`) rather than adding a parallel tax path. Consumes PR-1050's `RequiresPhysicalShipping` derivation to decide which tax category applies. |
-| PR-1077 | Storefront download delivery endpoint | Auth-gated, signed/token URL (not a permanent public link) that checks the requesting customer's `DownloadGrant` state (not expired, under the count limit) before streaming/redirecting to the underlying asset. |
-| PR-1078 | Admin API + CSV + GUI for downloadable management | File attach/replace, grant list/revoke per customer, admin GUI section (wired via PR-1053's section-visibility switch). |
+| PR-1074 | `Downloadable` type + file asset attachment | **done.** `downloadable_files` joins a product to `assets` (`ON DELETE RESTRICT` on asset). `DownloadableFileService` List/Remove are type-agnostic; Attach is type-gated and locks product+asset. Soft-write re-reads status under lock. Hard validation: becoming Active requires ≥1 file; last-file remove on active downloadable rejected. `media.Service.Delete` is row-then-blob (blob failure after row delete → log + event + nil). `MissingDownloadableFile` forces Purchasable false. Shipping already false via PR-1050. Admin HTTP / CSV / GUI are PR-1078. See [`prs/PR-1074.md`](prs/PR-1074.md). |
+| PR-1075 | `DownloadGrant` domain | **done.** `download_grants` + `downloadable_grant_settings`; `download.DownloadGrant` issued on `order.paid` (event bus, not payment-capture inline). Global `catalog.downloadable` defaults with per-product override rows. Not tied to `ProductAssignment`. Delivery is PR-1077; admin grant HTTP is PR-1078. See [`prs/PR-1075.md`](prs/PR-1075.md). |
+| PR-1076 | Tax class seam + digital rate-table wiring | **done (engineering seam — not EU digital VAT complete).** `downloadable` → `digital`, `virtual` → `standard` via `catalog.TaxClassCode`; shared `EnsureTaxClasses`; missing / zero-bps digital rate **fails closed** (no 0% VAT); migration `108` + optional seed backfill non-zero standard → digital. Place-of-supply at checkout stays address country. Track E VAT/compliance requirement still needs **tax-domain sign-off**. See [`prs/PR-1076.md`](prs/PR-1076.md). |
+| PR-1077 | Storefront download delivery endpoint | **done.** Auth-gated `POST /api/v1/account/downloads/{grantID}`: ownership + `CanDownload`, then local stream (`ReadableStorage`) or short-lived S3 signed redirect (`SignedURLStorage`). Permanent `storage.URL()` never used for grants. Expired/exhausted → clear 422. See [`prs/PR-1077.md`](prs/PR-1077.md). |
+| PR-1078 | Admin API + CSV + GUI for downloadable management | **done.** File attach/replace/remove + grant settings HTTP; grant list/revoke/re-issue (`downloads.*`); CSV `downloadable-files`; product form section + order/customer grant panels. See [`prs/PR-1078.md`](prs/PR-1078.md). |
 
 ---
 
@@ -152,11 +152,11 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1079 | Search index schema extension | Add `Type` and the visibility axes to what Phase 11's indexer writes; filter search/catalog results on `Purchasable`/`VisibleInSearch`/`VisibleInCatalog` so an unassigned linked-child (Track D) or a hidden product (Track B) never appears in results. |
-| PR-1080 | On-save reindex trigger generalization | Extend Phase 11 PR-1036's on-save reindex subscriber list to also fire on visibility-affecting changes introduced by this phase: a linked child getting assigned/revoked, a bundle's rollup stock crossing zero, a downloadable grant issued (if grant state ever affects catalog visibility — confirm during implementation; likely not, since `DownloadGrant` is post-purchase, not catalog-facing). |
-| PR-1081 | CSV import/export final consistency pass | One pass across every existing import/export pipeline (products/variants/prices/stock/attributes/categories) confirming every field this phase added (type, visibility axes + override mode, bundle/grouped components, linked eligibility, assignments) round-trips correctly and consistently, not just within its own track's PR. |
-| PR-1082 | GraphQL read parity | Extend `plugins/core/graphql`'s existing product schema (`schema.go`'s `productType`/`products`/`productBySlug` resolvers) with `Type`, the visibility axes, and bundle/grouped/linked-child relationships — matches Phase 7 Track E's established "same operation via admin REST, GraphQL, and plugin registration" parity precedent. Read-only, matching what the GraphQL surface already is today. |
-| PR-1083 | RUNBOOK.md + admin GUI consolidation pass | Symptom → check → fix RUNBOOK.md entries ("why can't I add this to cart," "why is this product not visible," "why isn't my ticket sellable"), same style as Phase 10's incident-response section. Final admin GUI pass folding all of this phase's sections into the existing product edit screen tabs, confirming nothing was left as an API-only feature with no GUI path. |
+| PR-1079 | Search index schema extension | **done.** Add `Type`/`Status` and storefront-effective visibility axes to what Phase 11's indexer writes; filter search/catalog results on indexed `VisibleInSearch`/`VisibleInCatalog` when enforce is on (Purchasable denormalized but not forced on search — unassigned Track D tickets are not removed from search by display axes). See [`prs/PR-1079.md`](prs/PR-1079.md). |
+| PR-1080 | On-save reindex trigger generalization | **done.** `IndexUpdateSubscriber` fans leaf stock/price events out to parent bundles; bundle component add/remove and downloadable file attach/replace/remove publish `EventProductUpdated`. Assignment and DownloadGrant confirmed non-triggers (empty index-time Assignment; grants not catalog-facing). See [`prs/PR-1080.md`](prs/PR-1080.md). |
+| PR-1081 | CSV visibility columns + Phase 12 consistency tests | **done** for visibility/`status` create-only columns + targeted in-memory consistency tests on named Phase 12 CSV surfaces; full empty-catalog DB diff deferred. Assignment + grant settings remain non-CSV. See [`prs/PR-1081.md`](prs/PR-1081.md). |
+| PR-1082 | GraphQL read parity | **done.** Extended `plugins/core/graphql` with `type` / `visibilityModes` / `requiresLinkedParent`, public bundle/grouped children (gated), and `ProductConnection` listing meta; linked allowlists stay admin-only; wired `AllowWithFacts` / `ListVisiblePage` when enforce is on; audited `GQL` roots in `PublicProductVisibilityRoutes`. See [`prs/PR-1082.md`](prs/PR-1082.md). |
+| PR-1083 | RUNBOOK.md + admin GUI consolidation pass | **done (docs).** Symptom → check → fix RUNBOOK incidents; code-backed 6×5 type×section matrix test; phase status engineering-complete **with caveats** (VAT / configurable / assignment CSV / default-theme linked-parent). See [`prs/PR-1083.md`](prs/PR-1083.md). |
 
 ---
 
@@ -190,7 +190,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | B | 1.5–2 weeks | PR-1055's default-visibility rule and PR-1056's API-surface split are the judgment-heavy parts — get the four-axis default rule reviewed carefully, it's the thing every later track depends on being right. |
 | C | 2–2.5 weeks | PR-1062–1065 (pricing/stock rollup, order-line explosion, catalog Omnibus history) are individually small but each touches a different existing subsystem — expect more cross-team review than lines-of-code would suggest. Per-line VAT is PR-1076, not PR-1065. |
 | D | 2.5–3 weeks | Highest-judgment track in this phase — PR-1069's instance-assignment state model and PR-1070's dual assignment-timing flow have no existing precedent in the codebase to lean on, unlike C's tracks which extend pricing/stock/tax systems that already exist. |
-| E | 1.5–2 weeks | PR-1076 (digital-goods VAT) is the part most likely to need real tax-domain review, not just engineering review. |
+| E | 1.5–2 weeks | PR-1076 ships the tax class seam; EU digital VAT / Track E compliance still needs real tax-domain review, not just engineering review. |
 | F | 1–1.5 weeks | Mechanical once A–E are done, gated on Phase 11 Track B shipping first. |
 
 **Total:** ~11–14 weeks. Tracks C, D, and E can run in parallel once A and B ship, so wall-clock can compress meaningfully with more than one engineer — D is the long pole if only one engineer is available.
@@ -218,9 +218,22 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1065 | C | done |
 | 1066 | C | done |
 | 1067 | D | done |
-| 1068–1073 | D | planned |
-| 1074–1078 | E | planned |
-| 1079–1083 | F | planned |
+| 1068 | D | done |
+| 1069 | D | done |
+| 1070 | D | done |
+| 1071 | D | done |
+| 1072 | D | done |
+| 1073 | D | done |
+| 1074 | E | done |
+| 1075 | E | done |
+| 1076 | E | done |
+| 1077 | E | done |
+| 1078 | E | done |
+| 1079 | F | done |
+| 1080 | F | done |
+| 1081 | F | done |
+| 1082 | F | done |
+| 1083 | F | done |
 
 PR specs: [`prs/`](prs/).
 
@@ -232,4 +245,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1067 done — Track D started, eligibility relation only; next PR-1068; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **Engineering complete (with caveats)** — PR-1083 docs done; PR list closed; Track F original goal not fully met without gaps (VAT sign-off, configurable storefront/admin, assignment/grant settings CSV, default theme cannot sell `requires_linked_parent`); numbering collides with Phase 11 — disambiguate by phase folder |

@@ -88,7 +88,7 @@ Developers should still extend via plugins without core overrides. Optional infr
 
 Recommended order: **D (530, then 535)** early for EU merchants already on Shopanda, **A (500–503)** in parallel for operational maturity, then **B**, **C**, **E**.
 
-Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
+Full compliance overview: [`docs/guides/COMPLIANCE_EU.md`](../guides/COMPLIANCE_EU.md).
 
 ---
 
@@ -156,7 +156,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 **Already in core (Phase 1–4):** cookie consent, GDPR export/delete, tax modes, credit notes domain, price history recording.
 
-See [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md) for directive mapping and non-goals.
+See [`docs/guides/COMPLIANCE_EU.md`](../guides/COMPLIANCE_EU.md) for directive mapping and non-goals.
 
 ---
 

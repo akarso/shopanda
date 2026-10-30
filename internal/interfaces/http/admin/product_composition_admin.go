@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // ProductCompositionAdminHandler lists and edits bundle components and grouped
@@ -24,6 +25,7 @@ type ProductCompositionAdminHandler struct {
 	bundles  *catalogApp.BundleService
 	grouped  *catalogApp.GroupedService
 	auditor  *admin.Auditor
+	bus      *event.Bus // optional; PR-1080 on-save search reindex
 }
 
 // NewProductCompositionAdminHandler creates a handler over the existing
@@ -53,6 +55,16 @@ func NewProductCompositionAdminHandler(
 		grouped:  grouped,
 		auditor:  auditor,
 	}
+}
+
+// SetBus enables publishing catalog.EventProductUpdated after a successful
+// bundle component add/remove (PR-1080). A dynamic bundle's indexed
+// HasPrice / QuantityPositive depend on its component set; without this
+// event the search index stays stale until a product field edit or a
+// full reindex. Grouped membership is display-only and does not publish.
+// Left unset (nil), Add/Remove work exactly as before.
+func (h *ProductCompositionAdminHandler) SetBus(bus *event.Bus) {
+	h.bus = bus
 }
 
 type bundleComponentDTO struct {
@@ -146,6 +158,7 @@ func (h *ProductCompositionAdminHandler) AddBundleComponent() http.HandlerFunc {
 			"quantity":             dto.Quantity,
 			"required":             dto.Required,
 		}, nil)
+		h.publishBundleParentUpdated(r.Context(), parentID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"component": dto})
 	}
 }
@@ -164,6 +177,7 @@ func (h *ProductCompositionAdminHandler) RemoveBundleComponent() http.HandlerFun
 			return
 		}
 		h.audit(r, admin.AuditBundleComponentRemove, parentID, details, nil)
+		h.publishBundleParentUpdated(r.Context(), parentID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"removed": true})
 	}
 }
@@ -330,6 +344,35 @@ func (h *ProductCompositionAdminHandler) productsByID(ctx context.Context, ids [
 		out[id] = product
 	}
 	return out, nil
+}
+
+// publishBundleParentUpdated notifies search (and cache) that the parent
+// bundle's indexed visibility may have changed. Publish-then-PublishAsync
+// fallback matches category assignment (PR-1036 Round 4): a sync
+// rewrite.Subscriber failure must not skip the async reindex/cache path.
+// Composition does not change slug. A missing product or empty slug must
+// not go through sync Publish — rewrite.Subscriber writes "/"+Slug and
+// would claim "/" when that path is unclaimed. Async-only still refreshes
+// search and cache from ProductID.
+func (h *ProductCompositionAdminHandler) publishBundleParentUpdated(ctx context.Context, parentID string) {
+	if h.bus == nil || parentID == "" {
+		return
+	}
+	data := catalog.ProductUpdatedData{ProductID: parentID}
+	opCtx := catalog.WithOperatorProductReadScope(ctx)
+	if p, err := h.products.FindByID(opCtx, parentID); err == nil && p != nil {
+		data.Name = p.Name
+		data.Slug = p.Slug
+		data.Status = p.Status
+	}
+	evt := event.New(catalog.EventProductUpdated, "bundle.composition", data)
+	if strings.TrimSpace(data.Slug) == "" {
+		h.bus.PublishAsync(evt)
+		return
+	}
+	if err := h.bus.Publish(ctx, evt); err != nil {
+		h.bus.PublishAsync(evt)
+	}
 }
 
 func (h *ProductCompositionAdminHandler) audit(r *http.Request, action admin.AuditAction, parentID string, details map[string]interface{}, err error) {

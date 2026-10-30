@@ -11,6 +11,7 @@ import (
 // StatusService applies domain-valid order status transitions for inbound integrations and admin flows.
 type StatusService struct {
 	orders domainOrder.OrderRepository
+	bus    paidEventBus
 }
 
 // NewStatusService returns a StatusService backed by orders.
@@ -19,6 +20,16 @@ func NewStatusService(orders domainOrder.OrderRepository) *StatusService {
 		panic("order: status service repository must not be nil")
 	}
 	return &StatusService{orders: orders}
+}
+
+// WithEventBus publishes order.paid after a successful transition to paid
+// (integration ApplyStatus path). Nil skips publish.
+func (s *StatusService) WithEventBus(bus paidEventBus) *StatusService {
+	if s == nil {
+		return nil
+	}
+	s.bus = bus
+	return s
 }
 
 // ApplyStatus loads an order and transitions it to next when allowed.
@@ -40,6 +51,11 @@ func (s *StatusService) ApplyStatus(ctx context.Context, orderID string, next do
 	}
 	previous := o.Status()
 	if previous == next {
+		// Already-paid heal: republish so a prior publish failure can still
+		// issue grants (IssueIdempotent is a no-op on existing rows).
+		if next == domainOrder.OrderStatusPaid {
+			_ = PublishPaid(ctx, s.bus, "order.status_service", o.ID, string(previous), string(next))
+		}
 		return o, previous, false, nil
 	}
 	if err := ApplyStatusTransition(o, next); err != nil {
@@ -47,6 +63,11 @@ func (s *StatusService) ApplyStatus(ctx context.Context, orderID string, next do
 	}
 	if err := s.orders.UpdateStatus(ctx, o); err != nil {
 		return nil, previous, false, err
+	}
+	if next == domainOrder.OrderStatusPaid {
+		// Persist already succeeded — do not fail the caller on publish.
+		// Already-paid retries still republish above.
+		_ = PublishPaid(ctx, s.bus, "order.status_service", o.ID, string(previous), string(next))
 	}
 	return o, previous, true, nil
 }

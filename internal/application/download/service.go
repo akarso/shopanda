@@ -1,0 +1,687 @@
+package download
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	domain "github.com/akarso/shopanda/internal/domain/download"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/id"
+)
+
+// eventBus is the subset of *event.Bus used for grant observability.
+type eventBus interface {
+	Publish(ctx context.Context, evt event.Event) error
+}
+
+// productExistsChecker verifies a product id exists (settings GET 404).
+type productExistsChecker interface {
+	ProductExists(ctx context.Context, productID string) (bool, error)
+}
+
+// ProductExistsFunc adapts a function to productExistsChecker.
+type ProductExistsFunc func(ctx context.Context, productID string) (bool, error)
+
+// ProductExists implements productExistsChecker.
+func (f ProductExistsFunc) ProductExists(ctx context.Context, productID string) (bool, error) {
+	return f(ctx, productID)
+}
+
+// Service manages DownloadGrant rows: issue (manual), read, prepare
+// delivery, record download, extend, revoke, reset, and admin re-issue
+// (PR-1078). Order-paid issuance lives on Issuer (HandleOrderPaid).
+// Storefront delivery HTTP is PR-1077.
+type Service struct {
+	grants    domain.Repository
+	settings  domain.SettingsRepository // optional; product override editor (PR-1078)
+	products  productExistsChecker      // optional; settings GET product 404
+	txStarter txStarter                 // optional; required for Reissue TX in production
+	bus       eventBus
+	now       func() time.Time
+}
+
+// NewService creates a DownloadGrant service. bus may be nil (no events).
+func NewService(grants domain.Repository, bus eventBus) *Service {
+	if grants == nil {
+		panic("download.NewService: nil grants repository")
+	}
+	return &Service{
+		grants: grants,
+		bus:    bus,
+		now:    func() time.Time { return time.Now().UTC() },
+	}
+}
+
+// WithSettings wires the optional per-product grant override repository
+// used by admin GET/PUT/DELETE settings (PR-1078).
+func (s *Service) WithSettings(settings domain.SettingsRepository) *Service {
+	if s == nil {
+		return nil
+	}
+	s.settings = settings
+	return s
+}
+
+// WithProductExists wires product existence checks for settings GET.
+func (s *Service) WithProductExists(check productExistsChecker) *Service {
+	if s == nil {
+		return nil
+	}
+	s.products = check
+	return s
+}
+
+// WithTxStarter wraps Reissue in a single DB transaction (lock → update →
+// CAS reset). Required when the grant repo supports WithTx (fail closed).
+// Production wiring passes *sql.DB.
+func (s *Service) WithTxStarter(starter txStarter) *Service {
+	if s == nil {
+		return nil
+	}
+	s.txStarter = starter
+	return s
+}
+
+// withRepo returns a shallow copy bound to a different repository (tx).
+func (s *Service) withRepo(grants domain.Repository) *Service {
+	if s == nil {
+		return nil
+	}
+	return &Service{
+		grants:    grants,
+		settings:  s.settings,
+		products:  s.products,
+		txStarter: s.txStarter,
+		bus:       s.bus,
+		now:       s.now,
+	}
+}
+
+// WithTx returns a service bound to the grant repo's transaction when the
+// underlying postgres adapter supports WithTx. Used by returns revoke.
+func (s *Service) WithTx(tx *sql.Tx) *Service {
+	if s == nil {
+		return nil
+	}
+	if binder, ok := s.grants.(interface {
+		WithTx(tx *sql.Tx) domain.Repository
+	}); ok {
+		return s.withRepo(binder.WithTx(tx))
+	}
+	return s
+}
+
+// BindsTx reports whether the grant repository supports WithTx.
+func (s *Service) BindsTx() bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.grants.(interface {
+		WithTx(tx *sql.Tx) domain.Repository
+	})
+	return ok
+}
+
+// WithTxRepository returns the grant repository bound to tx when the adapter
+// supports WithTx. Used by media.Delete so purge + live count + asset row
+// delete share one transaction.
+func (s *Service) WithTxRepository(tx *sql.Tx) domain.Repository {
+	bound := s.WithTx(tx)
+	if bound == nil {
+		return nil
+	}
+	return bound.grants
+}
+
+// Issue inserts a new grant. A duplicate (order_item_id, asset_id) is a
+// conflict — callers that need idempotent create should use IssueIdempotent.
+func (s *Service) Issue(ctx context.Context, orderItemID, customerID, assetID string, expiresAt time.Time, downloadLimit int) (*domain.DownloadGrant, error) {
+	orderItemID = strings.TrimSpace(orderItemID)
+	if canon, ok := domain.CanonicalOrderItemID(orderItemID); ok {
+		orderItemID = canon
+	}
+	g, err := domain.NewDownloadGrant(id.New(), orderItemID, customerID, assetID, expiresAt, downloadLimit)
+	if err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Insert(ctx, g); err != nil {
+		return nil, mapWriteError("issue", err)
+	}
+	s.publishIssued(ctx, g, "")
+	return g, nil
+}
+
+// IssueIdempotent inserts a grant or returns the existing row when
+// (order_item_id, asset_id) already exists. Used by order.paid issuance.
+//
+// On conflict/hit the existing row is returned unchanged (existed=true) —
+// including expired/revoked grants. Paid redelivery must not resurrect a
+// revoked entitlement. Support re-issue (Extend + ResetCount) is PR-1078.
+func (s *Service) IssueIdempotent(ctx context.Context, orderItemID, customerID, assetID string, expiresAt time.Time, downloadLimit int) (*domain.DownloadGrant, bool, error) {
+	orderItemID = strings.TrimSpace(orderItemID)
+	if canon, ok := domain.CanonicalOrderItemID(orderItemID); ok {
+		orderItemID = canon
+	}
+	assetID = strings.TrimSpace(assetID)
+	existing, err := s.grants.FindByOrderItemAndAsset(ctx, orderItemID, assetID)
+	if err != nil {
+		return nil, false, fmt.Errorf("download: find existing: %w", err)
+	}
+	if existing != nil {
+		return existing, true, nil
+	}
+	g, err := domain.NewDownloadGrant(id.New(), orderItemID, customerID, assetID, expiresAt, downloadLimit)
+	if err != nil {
+		return nil, false, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Insert(ctx, g); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			existing, findErr := s.grants.FindByOrderItemAndAsset(ctx, orderItemID, assetID)
+			if findErr != nil {
+				return nil, false, fmt.Errorf("download: reload after conflict: %w", findErr)
+			}
+			if existing != nil {
+				return existing, true, nil
+			}
+		}
+		return nil, false, mapWriteError("issue", err)
+	}
+	// Caller (Issuer / Issue) publishes EventDownloadGrantIssued so order_id
+	// can be attached when known. IssueIdempotent itself stays quiet.
+	return g, false, nil
+}
+
+// Get returns the grant by id.
+func (s *Service) Get(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return nil, apperror.Validation("download grant id must not be empty")
+	}
+	if !id.IsUUID(grantID) {
+		return nil, apperror.Validation("invalid download grant id")
+	}
+	g, err := s.grants.FindByID(ctx, grantID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("download: get: %w", err)
+	}
+	if g == nil {
+		return nil, apperror.NotFound("download grant not found")
+	}
+	return g, nil
+}
+
+// ListByCustomer returns grants for the customer, newest first.
+// Empty customerID is rejected — list guests by order item (ListByOrderItem)
+// until guest rebind lands.
+func (s *Service) ListByCustomer(ctx context.Context, customerID string) ([]domain.DownloadGrant, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return nil, apperror.Validation("download: customer id must not be empty")
+	}
+	rows, err := s.grants.ListByCustomerID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("download: list by customer: %w", err)
+	}
+	if rows == nil {
+		rows = []domain.DownloadGrant{}
+	}
+	return rows, nil
+}
+
+// ListByOrderItem returns grants for the order line, newest first.
+func (s *Service) ListByOrderItem(ctx context.Context, orderItemID string) ([]domain.DownloadGrant, error) {
+	orderItemID = strings.TrimSpace(orderItemID)
+	if canon, ok := domain.CanonicalOrderItemID(orderItemID); ok {
+		orderItemID = canon
+	}
+	if orderItemID == "" {
+		return nil, apperror.Validation("order item id must not be empty")
+	}
+	rows, err := s.grants.ListByOrderItemID(ctx, orderItemID)
+	if err != nil {
+		return nil, fmt.Errorf("download: list by order item: %w", err)
+	}
+	if rows == nil {
+		rows = []domain.DownloadGrant{}
+	}
+	return rows, nil
+}
+
+// PrepareDelivery loads a grant for storefront delivery (PR-1077).
+// It verifies the authenticated customer owns the grant and that
+// CanDownload succeeds, but does not increment download_count — the
+// HTTP handler claims only after storage Head/Read (and presign) succeed.
+//
+// Guest grants (empty CustomerID) are refused until guest rebind lands.
+// ErrExpired / ErrExhausted remain detectable via errors.Is.
+func (s *Service) PrepareDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	return s.authorizeDelivery(ctx, customerID, grantID)
+}
+
+func (s *Service) authorizeDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return nil, apperror.Unauthorized("authentication required")
+	}
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(g.CustomerID) == "" {
+		return nil, apperror.Forbidden("download grant is not linked to a customer account")
+	}
+	if g.CustomerID != customerID {
+		return nil, apperror.Forbidden("download grant does not belong to this account")
+	}
+	if err := g.CanDownload(s.now()); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, err.Error(), err)
+	}
+	return g, nil
+}
+
+// ClaimDelivery is the single ownership-checked mutation for storefront
+// delivery (PR-1077). It re-checks ownership gates then atomically increments
+// download_count (ClaimDownload). Call only after the storage backend has
+// proven the object exists and a signed URL / stream bytes are ready — a
+// missing blob must not burn a slot.
+//
+// ErrExpired / ErrExhausted / ErrCountConflict remain detectable via errors.Is.
+func (s *Service) ClaimDelivery(ctx context.Context, customerID, grantID string) (*domain.DownloadGrant, error) {
+	g, err := s.authorizeDelivery(ctx, customerID, grantID)
+	if err != nil {
+		return nil, err
+	}
+	claimed, err := s.grants.ClaimDownload(ctx, g.ID, customerID)
+	if err == nil {
+		return claimed, nil
+	}
+	if !errors.Is(err, domain.ErrCountConflict) {
+		return nil, mapWriteError("claim download", err)
+	}
+	// Race: another delivery claimed the last slot, or expiry flipped.
+	latest, getErr := s.Get(ctx, grantID)
+	if getErr != nil {
+		return nil, getErr
+	}
+	if latest.CustomerID != customerID {
+		return nil, apperror.Forbidden("download grant does not belong to this account")
+	}
+	if err := latest.CanDownload(s.now()); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, err.Error(), err)
+	}
+	return nil, apperror.Wrap(apperror.CodeConflict, "download grant count conflict", domain.ErrCountConflict)
+}
+
+// RecordDownload is retained for support/admin paths that already verified
+// entitlement out-of-band. Storefront delivery must use ClaimDelivery so
+// ownership is always enforced with the atomic increment.
+func (s *Service) RecordDownload(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	customerID := strings.TrimSpace(g.CustomerID)
+	if customerID == "" {
+		return nil, apperror.Forbidden("download grant is not linked to a customer account")
+	}
+	return s.ClaimDelivery(ctx, customerID, grantID)
+}
+
+// Extend updates expires_at (support re-issue path for PR-1078).
+func (s *Service) Extend(ctx context.Context, grantID string, expiresAt time.Time) (*domain.DownloadGrant, error) {
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Extend(expiresAt); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Update(ctx, g); err != nil {
+		return nil, mapWriteError("extend", err)
+	}
+	return g, nil
+}
+
+// Revoke ends the grant immediately (expires_at = now). Idempotent when
+// already expired. Publishes download.grant.revoked. Admin HTTP remains PR-1078.
+func (s *Service) Revoke(ctx context.Context, grantID, reason string) (*domain.DownloadGrant, bool, error) {
+	g, idempotent, err := s.revoke(ctx, grantID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !idempotent {
+		s.publishRevoked(ctx, g, reason)
+	}
+	return g, idempotent, nil
+}
+
+func (s *Service) revoke(ctx context.Context, grantID string) (*domain.DownloadGrant, bool, error) {
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, false, err
+	}
+	now := s.now()
+	if g.Expired(now) {
+		return g, true, nil
+	}
+	if err := g.Revoke(now); err != nil {
+		return nil, false, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Update(ctx, g); err != nil {
+		return nil, false, mapWriteError("revoke", err)
+	}
+	return g, false, nil
+}
+
+// RevokeForOrderItem revokes every grant on the order line (returns / refund).
+// Does not publish — the caller (returns.Service) publishes after commit.
+// Missing lines are a no-op. Returns the rows that were newly revoked.
+func (s *Service) RevokeForOrderItem(ctx context.Context, orderItemID, reason string) ([]*domain.DownloadGrant, error) {
+	_ = reason // caller publishes; kept for audit context parity with assignments
+	rows, err := s.ListByOrderItem(ctx, orderItemID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.DownloadGrant, 0, len(rows))
+	for i := range rows {
+		g, idempotent, err := s.revoke(ctx, rows[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		if !idempotent && g != nil {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+// ResetCount clears download_count for a support re-issue via UpdateCount
+// (Update does not write download_count). The grant must still be live
+// (expires_at > now) — call Extend first when re-issuing an expired row.
+func (s *Service) ResetCount(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
+	g, err := s.Get(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	expected := g.DownloadCount
+	if err := g.ResetCount(); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	if err := s.grants.UpdateCount(ctx, g.ID, g.DownloadCount, expected); err != nil {
+		return nil, mapWriteError("reset count", err)
+	}
+	return g, nil
+}
+
+// Reissue extends expiry (required), optionally updates download_limit, and
+// by default resets download_count — all in one transaction when a TxStarter
+// and WithTx-capable repo are wired. expiresAt must be strictly after now.
+// When reset_count=true and the new limit is below the current count, count
+// is reset before (or with) the lower limit so Validate never sees
+// download_count > download_limit. Support path for PR-1078.
+func (s *Service) Reissue(ctx context.Context, grantID string, expiresAt time.Time, downloadLimit *int, resetCount bool, reason string) (*domain.DownloadGrant, error) {
+	expiresAt = expiresAt.UTC()
+	now := s.now()
+	if expiresAt.IsZero() || !expiresAt.After(now) {
+		return nil, apperror.Validation("expires_at must be strictly after now")
+	}
+
+	run := func(svc *Service) (*domain.DownloadGrant, error) {
+		return svc.reissueLocked(ctx, grantID, expiresAt, downloadLimit, resetCount)
+	}
+
+	var g *domain.DownloadGrant
+	var err error
+	if binder, ok := s.grants.(interface {
+		WithTx(tx *sql.Tx) domain.Repository
+	}); ok {
+		if s.txStarter == nil {
+			return nil, apperror.Internal("download: transaction starter is required for grant reissue")
+		}
+		tx, beginErr := s.txStarter.BeginTx(ctx, nil)
+		if beginErr != nil {
+			return nil, fmt.Errorf("download: reissue begin tx: %w", beginErr)
+		}
+		defer tx.Rollback()
+		g, err = run(s.withRepo(binder.WithTx(tx)))
+		if err != nil {
+			return nil, err
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return nil, fmt.Errorf("download: reissue commit: %w", commitErr)
+		}
+		s.publishReissued(ctx, g, resetCount, reason)
+		return g, nil
+	}
+
+	g, err = run(s)
+	if err != nil {
+		return nil, err
+	}
+	s.publishReissued(ctx, g, resetCount, reason)
+	return g, nil
+}
+
+func (s *Service) reissueLocked(ctx context.Context, grantID string, expiresAt time.Time, downloadLimit *int, resetCount bool) (*domain.DownloadGrant, error) {
+	g, err := s.lockGrant(ctx, grantID)
+	if err != nil {
+		return nil, err
+	}
+	expectedCount := g.DownloadCount
+	newLimit := g.DownloadLimit
+	if downloadLimit != nil {
+		newLimit = *downloadLimit
+	}
+	if newLimit < 1 {
+		return nil, apperror.Validation("download grant: download_limit must be at least 1")
+	}
+	if newLimit > domain.MaxDownloadLimit {
+		return nil, apperror.Validation(fmt.Sprintf("download grant: download_limit must not exceed %d", domain.MaxDownloadLimit))
+	}
+	if !resetCount && expectedCount > newLimit {
+		return nil, apperror.Validation("download grant: download_count must not exceed download_limit (set reset_count=true to clear count first)")
+	}
+
+	// Bring the row live first. When resetting and the new limit is below the
+	// current count, keep the old limit for this Update so Validate passes;
+	// apply the lower limit after count is 0.
+	limitForUpdate := newLimit
+	if resetCount && expectedCount > newLimit {
+		limitForUpdate = g.DownloadLimit
+	}
+	g.DownloadLimit = limitForUpdate
+	if err := g.Extend(expiresAt); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	if err := s.grants.Update(ctx, g); err != nil {
+		return nil, mapWriteError("reissue extend", err)
+	}
+
+	if resetCount {
+		if err := g.ResetCount(); err != nil {
+			return nil, apperror.Validation(err.Error())
+		}
+		if err := s.grants.UpdateCount(ctx, g.ID, g.DownloadCount, expectedCount); err != nil {
+			return nil, mapWriteError("reissue reset count", err)
+		}
+		if g.DownloadLimit != newLimit {
+			g.DownloadLimit = newLimit
+			if err := s.grants.Update(ctx, g); err != nil {
+				return nil, mapWriteError("reissue apply limit", err)
+			}
+		}
+	}
+
+	latest, err := s.grants.FindByID(ctx, g.ID)
+	if err != nil {
+		return nil, fmt.Errorf("download: reissue reload: %w", err)
+	}
+	if latest == nil {
+		return nil, apperror.NotFound("download grant not found")
+	}
+	return latest, nil
+}
+
+func (s *Service) lockGrant(ctx context.Context, grantID string) (*domain.DownloadGrant, error) {
+	if locker, ok := s.grants.(interface {
+		LockForUpdate(ctx context.Context, id string) (*domain.DownloadGrant, error)
+	}); ok {
+		g, err := locker.LockForUpdate(ctx, grantID)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("download: lock grant: %w", err)
+		}
+		if g == nil {
+			return nil, apperror.NotFound("download grant not found")
+		}
+		return g, nil
+	}
+	return s.Get(ctx, grantID)
+}
+
+// GetSettings returns the per-product override row, or (nil, nil) when none.
+// 404 when the product id does not exist (when a product checker is wired).
+func (s *Service) GetSettings(ctx context.Context, productID string) (*domain.GrantSettings, error) {
+	if s.settings == nil {
+		return nil, apperror.Internal("download: grant settings repository is not configured")
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return nil, apperror.Validation("product id must not be empty")
+	}
+	if s.products != nil {
+		ok, err := s.products.ProductExists(ctx, productID)
+		if err != nil {
+			return nil, fmt.Errorf("download: get settings product: %w", err)
+		}
+		if !ok {
+			return nil, apperror.NotFound("product not found")
+		}
+	}
+	row, err := s.settings.FindByProductID(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("download: get settings: %w", err)
+	}
+	return row, nil
+}
+
+// UpsertSettings writes a per-product override. Empty overrides (both nil)
+// still persist a row so operators can clear columns intentionally later.
+func (s *Service) UpsertSettings(ctx context.Context, settings *domain.GrantSettings) error {
+	if s.settings == nil {
+		return apperror.Internal("download: grant settings repository is not configured")
+	}
+	if settings == nil {
+		return apperror.Validation("download grant settings must not be nil")
+	}
+	if err := settings.Validate(); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	if err := s.settings.Upsert(ctx, settings); err != nil {
+		return mapWriteError("upsert settings", err)
+	}
+	return nil
+}
+
+// ClearSettings removes the per-product override row. Missing override is
+// idempotent success so GUI "Clear" works when fields are already empty.
+func (s *Service) ClearSettings(ctx context.Context, productID string) error {
+	if s.settings == nil {
+		return apperror.Internal("download: grant settings repository is not configured")
+	}
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return apperror.Validation("product id must not be empty")
+	}
+	if err := s.settings.Remove(ctx, productID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return mapWriteError("clear settings", err)
+	}
+	return nil
+}
+
+// CountByAssetID reports how many live grants reference the asset (media delete).
+func (s *Service) CountByAssetID(ctx context.Context, assetID string) (int, error) {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return 0, apperror.Validation("asset id must not be empty")
+	}
+	return s.grants.CountByAssetID(ctx, assetID)
+}
+
+// DeleteExpiredOrRevokedByAssetID removes non-live grant rows so media.Delete
+// is not blocked by ON DELETE RESTRICT after the live-only count check.
+func (s *Service) DeleteExpiredOrRevokedByAssetID(ctx context.Context, assetID string) (int, error) {
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return 0, apperror.Validation("asset id must not be empty")
+	}
+	return s.grants.DeleteExpiredOrRevokedByAssetID(ctx, assetID)
+}
+
+func (s *Service) publishIssued(ctx context.Context, g *domain.DownloadGrant, orderID string) {
+	if s == nil || s.bus == nil || g == nil {
+		return
+	}
+	_ = s.bus.Publish(ctx, event.New(domain.EventDownloadGrantIssued, "download.service", domain.GrantIssuedData{
+		GrantID:     g.ID,
+		OrderItemID: g.OrderItemID,
+		CustomerID:  g.CustomerID,
+		AssetID:     g.AssetID,
+		OrderID:     orderID,
+	}))
+}
+
+func (s *Service) publishRevoked(ctx context.Context, g *domain.DownloadGrant, reason string) {
+	if s == nil || s.bus == nil || g == nil {
+		return
+	}
+	_ = s.bus.Publish(ctx, event.New(domain.EventDownloadGrantRevoked, "download.service", domain.GrantRevokedData{
+		GrantID:     g.ID,
+		OrderItemID: g.OrderItemID,
+		CustomerID:  g.CustomerID,
+		AssetID:     g.AssetID,
+		Reason:      strings.TrimSpace(reason),
+	}))
+}
+
+func (s *Service) publishReissued(ctx context.Context, g *domain.DownloadGrant, resetCount bool, reason string) {
+	if s == nil || s.bus == nil || g == nil {
+		return
+	}
+	_ = s.bus.Publish(ctx, event.New(domain.EventDownloadGrantReissued, "download.service", domain.GrantReissuedData{
+		GrantID:       g.ID,
+		OrderItemID:   g.OrderItemID,
+		CustomerID:    g.CustomerID,
+		AssetID:       g.AssetID,
+		ExpiresAt:     g.ExpiresAt.UTC().Format(time.RFC3339),
+		DownloadLimit: g.DownloadLimit,
+		ResetCount:    resetCount,
+		Reason:        strings.TrimSpace(reason),
+	}))
+}
+
+func mapWriteError(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, domain.ErrCountConflict) {
+		return apperror.Wrap(apperror.CodeConflict, "download grant count conflict", err)
+	}
+	if apperror.Is(err, apperror.CodeConflict) || apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+		return err
+	}
+	return fmt.Errorf("download: %s: %w", op, err)
+}

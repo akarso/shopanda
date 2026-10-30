@@ -194,6 +194,7 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | 1009–1012 | C | done |
 | 1013–1019 | D | done |
 | 1020–1026 | E | done — all A+ exit-criteria pillars addressed. **Phase 10 overall is not done: PR-1003 above is still open.** |
+| PR-DOCS-SPLIT | process | done — product docs vs working history (`scripts/promote-dev-to-main.sh`) |
 
 PR specs: [`prs/`](prs/).
 

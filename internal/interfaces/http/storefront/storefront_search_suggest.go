@@ -41,7 +41,11 @@ func (h *StorefrontHandler) SearchSuggestFragment() http.HandlerFunc {
 		prefix := strings.TrimSpace(r.URL.Query().Get("q"))
 		data := storefrontSearchSuggestData{HasQuery: prefix != ""}
 		if prefix != "" {
-			suggestions, err := h.search.Suggest(r.Context(), prefix, search.DefaultSuggestLimit)
+			sq := search.SuggestQuery{Prefix: prefix, Limit: search.DefaultSuggestLimit}
+			if h.visibilityFacts != nil {
+				search.ApplySuggestVisibilityAxisFilter(&sq, search.VisibilityFilterSearch)
+			}
+			suggestions, err := h.search.Suggest(r.Context(), sq)
 			if err != nil {
 				h.log.Warn("storefront.search_suggest.failed", map[string]interface{}{
 					"path":  r.URL.Path,
@@ -50,10 +54,12 @@ func (h *StorefrontHandler) SearchSuggestFragment() http.HandlerFunc {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
-			suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
-			if err != nil {
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
+			if h.visibilityFacts != nil {
+				suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
+				if err != nil {
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					return
+				}
 			}
 			data.Suggestions = make([]storefrontSearchSuggestionItem, 0, len(suggestions))
 			for _, item := range suggestions {

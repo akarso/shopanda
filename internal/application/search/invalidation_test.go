@@ -435,3 +435,175 @@ func TestIndexUpdateSubscriber_HandleCategoryCreated_WrongEventDataType_ReturnsE
 		t.Fatal("expected an error for unexpected event data type")
 	}
 }
+
+// fakeBundleParents is a catalog.BundleParentLookup for fan-out tests (PR-1080).
+type fakeBundleParents struct {
+	byComponent map[string][]string
+	err         error
+}
+
+func (f *fakeBundleParents) ListBundleIDsByComponentID(_ context.Context, componentProductID string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.byComponent == nil {
+		return []string{}, nil
+	}
+	out := append([]string(nil), f.byComponent[componentProductID]...)
+	return out, nil
+}
+
+func (f *fakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
+// enqueuedProductIDs collects ScopeProducts IDs from each enqueued job
+// payload (one product per on-save Trigger).
+func enqueuedProductIDs(t *testing.T, queue *fakeQueue) []string {
+	t.Helper()
+	var ids []string
+	for i, job := range queue.enqueued {
+		got, ok := job.Payload["product_ids"].([]string)
+		if !ok {
+			t.Fatalf("job[%d] product_ids type = %T, want []string", i, job.Payload["product_ids"])
+		}
+		ids = append(ids, got...)
+	}
+	return ids
+}
+
+func requireEnqueuedIDs(t *testing.T, queue *fakeQueue, want ...string) {
+	t.Helper()
+	got := enqueuedProductIDs(t, queue)
+	if len(got) != len(want) {
+		t.Fatalf("enqueued ids = %v, want %v", got, want)
+	}
+	gotSet := make(map[string]int, len(got))
+	for _, id := range got {
+		gotSet[id]++
+	}
+	for _, id := range want {
+		if gotSet[id] == 0 {
+			t.Fatalf("enqueued ids = %v, missing %s", got, id)
+		}
+		gotSet[id]--
+	}
+}
+
+// TestIndexUpdateSubscriber_HandleStockUpdated_FansOutToBundleParents pins
+// PR-1080: a leaf stock event also schedules reindex for every parent
+// bundle that includes that leaf, so dynamic rollup visibility stays fresh.
+func TestIndexUpdateSubscriber_HandleStockUpdated_FansOutToBundleParents(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	parentA := id.New()
+	parentB := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentA, parentB},
+	}})
+	evt := event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{
+		ProductID: leafID, VariantID: "v1", SKU: "sku-1", Delta: inventory.Qty(-1),
+	})
+	if err := sub.HandleStockUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleStockUpdated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID, parentA, parentB)
+}
+
+// TestIndexUpdateSubscriber_HandlePriceUpserted_FansOutToBundleParents pins
+// the same fan-out for price changes (dynamic bundle HasPrice).
+func TestIndexUpdateSubscriber_HandlePriceUpserted_FansOutToBundleParents(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	parentID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}})
+	evt := event.New(pricing.EventPriceUpserted, "test", pricing.PriceUpsertedData{ProductID: leafID, VariantID: "v1"})
+	if err := sub.HandlePriceUpserted(context.Background(), evt); err != nil {
+		t.Fatalf("HandlePriceUpserted: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID, parentID)
+}
+
+// TestIndexUpdateSubscriber_HandleProductUpdated_FansOutToBundleParents pins
+// leaf status/type changes also reindexing parent kits.
+func TestIndexUpdateSubscriber_HandleProductUpdated_FansOutToBundleParents(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	parentID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}})
+	evt := event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{
+		ProductID: leafID, Name: "Leaf", Slug: "leaf", Status: catalog.StatusArchived,
+	})
+	if err := sub.HandleProductUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleProductUpdated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID, parentID)
+}
+
+// TestIndexUpdateSubscriber_HandleVariantCreated_FansOutToBundleParents pins
+// second-variant creation flipping kit availability for parent bundles.
+func TestIndexUpdateSubscriber_HandleVariantCreated_FansOutToBundleParents(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	parentID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}})
+	evt := event.New(catalog.EventVariantCreated, "test", catalog.VariantCreatedData{
+		VariantID: id.New(), ProductID: leafID, SKU: "sku-2",
+	})
+	if err := sub.HandleVariantCreated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleVariantCreated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID, parentID)
+}
+
+// TestIndexUpdateSubscriber_HandleVariantUpdated_FansOutToBundleParents pins
+// variant updates (e.g. collapse path) also fan out.
+func TestIndexUpdateSubscriber_HandleVariantUpdated_FansOutToBundleParents(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	parentID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}})
+	evt := event.New(catalog.EventVariantUpdated, "test", catalog.VariantUpdatedData{
+		VariantID: id.New(), ProductID: leafID, SKU: "sku-1",
+	})
+	if err := sub.HandleVariantUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleVariantUpdated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID, parentID)
+}
+
+// TestIndexUpdateSubscriber_BundleParentsSkipsSelfParent pins that a
+// lookup returning the leaf's own ID does not double-enqueue.
+func TestIndexUpdateSubscriber_BundleParentsSkipsSelfParent(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+		leafID: {leafID},
+	}})
+	evt := event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{ProductID: leafID, VariantID: "v1"})
+	if err := sub.HandleStockUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleStockUpdated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID)
+}
+
+// TestIndexUpdateSubscriber_BundleParentsLookupError_StillReindexesLeaf pins
+// that a parent lookup failure does not abort the leaf reindex.
+func TestIndexUpdateSubscriber_BundleParentsLookupError_StillReindexesLeaf(t *testing.T) {
+	sub, queue := newIndexUpdateSubscriber(t)
+	leafID := id.New()
+	sub.WithBundleParents(&fakeBundleParents{err: errors.New("db down")})
+	evt := event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{ProductID: leafID, VariantID: "v1"})
+	if err := sub.HandleStockUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleStockUpdated: %v", err)
+	}
+	requireEnqueuedIDs(t, queue, leafID)
+}

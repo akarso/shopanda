@@ -251,7 +251,7 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		productType, pricingMode, _, _, err := locker.LockTypeAndModes(r.Context(), pid)
+		productType, pricingMode, _, _, _, err := locker.LockTypeAndModes(r.Context(), pid)
 		if err != nil {
 			if apperror.Is(err, apperror.CodeNotFound) {
 				h.audit(r, admin.AuditPriceUpdate, vid, nil, err)

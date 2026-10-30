@@ -15,9 +15,11 @@ import (
 )
 
 // CompositionResult is the summary of an additive composition import.
-// Omitted rows are not deletes.
+// Omitted rows are not deletes. Updated counts upserts of existing links
+// (downloadable-files); other importers may leave Updated at 0.
 type CompositionResult struct {
 	Added   int
+	Updated int
 	Skipped int
 	Errors  []string
 }

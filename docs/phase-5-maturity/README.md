@@ -13,7 +13,7 @@ Phase 5 closed operational, compliance, and platform gaps on top of the Phase 4 
 
 | Document | Topic |
 | --- | --- |
-| [COMPLIANCE_EU.md](specs/COMPLIANCE_EU.md) | Omnibus, WEEE, EPR, GPSR, OSS/IOSS |
+| [COMPLIANCE_EU.md](../../guides/COMPLIANCE_EU.md) | Omnibus, WEEE, EPR, GPSR, OSS/IOSS |
 | [DYNAMIC_PLUGIN_LOADING.md](specs/DYNAMIC_PLUGIN_LOADING.md) | PR-544 — why `.so` loading stays deferred |
 
 ## What shipped (high level)

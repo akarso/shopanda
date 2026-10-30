@@ -140,13 +140,13 @@ type Plugin interface {
 }
 ```
 
-Extension mechanisms (events, pricing/checkout/composition pipelines, permissions, plugin CLI, public HTTP routes) are wired through `PluginRegistry` at startup. Plugins register at **compile time** via `register_plugins.go` — there is no runtime `.so` discovery. See [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) (PR-544) for why `.so` loading stays deferred.
+Extension mechanisms (events, pricing/checkout/composition pipelines, permissions, plugin CLI, public HTTP routes) are wired through `PluginRegistry` at startup. Plugins register at **compile time** via `register_plugins.go` — there is no runtime `.so` discovery. See [PLUGINS.md](PLUGINS.md#deferred-capabilities) for why `.so` loading stays deferred.
 
 See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
-**Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
+**Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
 
-Phases 1–11 are shipped. Active development: [Phase 12 — Product Types & Composition](docs/phase-12-product-composition/ROADMAP.md). Site-ready plugin work (owned schema + on-demand jobs) is planned as [Phase 13](docs/phase-13-plugin-runtime/ROADMAP.md) and should finish before a real merchant site. See [Development history](#development-history) below for the full phase-by-phase breakdown.
+Phases 1–12 and 14 are shipped (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). Phase 13 (plugin-owned schema + on-demand jobs) remains the **site-ready gate** before a real merchant site. Working notes live on the `dev` branch under `docs/phase-*` — see [docs/README.md](docs/README.md).
 
 ## Default stack
 
@@ -170,7 +170,7 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Project status
 
-Shopanda has shipped **11 completed development phases** and is working through Phase 12 (catalog types and composition). Phase 13 (plugin-owned schema + on-demand jobs) is the planned site-ready gate before a real merchant site. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), merchant discovery (navigation, advanced search), and operator surfaces for jobs, search, and cache are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
+Shopanda has shipped **11 completed development phases**. Phase 12 (catalog types and composition) is **Engineering complete (with caveats)** — PR list closed through PR-1083; VAT sign-off for PR-1076 still open; configurable storefront/admin incomplete; assignment/grant settings have no CSV; default storefront cannot sell `requires_linked_parent`. Phase 14 (storefront authoring) is shipped. Phase 13 (plugin-owned schema + on-demand jobs) remains the planned **site-ready gate** before a real merchant site. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), merchant discovery (navigation, advanced search), and operator surfaces for jobs, search, and cache are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
 
 | Phase | Focus | Status |
 | --- | --- | --- |
@@ -185,8 +185,8 @@ Shopanda has shipped **11 completed development phases** and is working through 
 | 9 | Integrator backlog cleanup + merchant discovery (navigation, advanced search) | Shipped |
 | 10 | Platform excellence (CI, security hardening, ops, architecture refactor) | Shipped — one integration-test item open, gated on CI running against real Postgres |
 | 11 | Jobs, search & cache admin reachability + full-page cache | Shipped |
-| 12 | Product types & composition | **In progress** — types and visibility shipped; bundle/grouped through pricing, stock, order lines, and Omnibus |
-| 13 | Plugin runtime (owned schema + on-demand sync jobs) | Planned — do before a real site |
+| 12 | Product types & composition | **Engineering complete (with caveats)** — PR list closed (PR-1048–1083); VAT sign-off open; configurable/CSV/default-theme assignment gaps remain |
+| 13 | Plugin runtime (owned schema + on-demand sync jobs) | Planned — **site-ready gate** before a real site |
 
 Full breakdown with PR-level detail: [Development history](#development-history).
 
@@ -235,6 +235,12 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:bundle-components <file.csv>` | Export bundle component links to CSV |
 | `import:grouped-members <file.csv>` | Add grouped member links (`parent_slug,member_slug`) |
 | `export:grouped-members <file.csv>` | Export grouped member links to CSV |
+| `import:linked-eligible-parents <file.csv>` | Add linked eligibility parent allowlist (`child_slug,parent_slug`) |
+| `export:linked-eligible-parents <file.csv>` | Export linked eligibility parent allowlist to CSV |
+| `import:linked-eligible-categories <file.csv>` | Add linked eligibility category rules (`child_slug,category_slug`) |
+| `export:linked-eligible-categories <file.csv>` | Export linked eligibility category rules to CSV |
+| `import:downloadable-files <file.csv>` | Add downloadable file attachment metadata (`product_slug,asset_id,position,label`) |
+| `export:downloadable-files <file.csv>` | Export downloadable file attachment metadata to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |
@@ -264,13 +270,16 @@ Run `./app help` for the live command list from the current binary.
 
 ## Documentation
 
-Current guides live in [`docs/guides/`](docs/guides/):
+Index: [`docs/README.md`](docs/README.md). Product guides live in [`docs/guides/`](docs/guides/). Working history (phase roadmaps, PR specs) lives on the `dev` branch under `docs/phase-*`.
 
 ### Guides
 
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, GHCR releases (`sha-<commit>` / digest pins), bare metal, TLS, backups, and monitoring
 - [Developer Guide](docs/guides/DEVELOPER.md) — three-tier plugin model, extension points, events, pipelines, and API integration
+- [Runtime Modes](docs/guides/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
+- [EU Compliance](docs/guides/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping
+- [Integrator Platform](docs/guides/INTEGRATOR_PLATFORM.md) — ports, CSV/ERP seams, precedence
 - [Theme author guide](docs/guides/THEME_SLOTS.md) — child themes, slots, `theme:init`
 - [Headless storefront](docs/guides/HEADLESS.md) — REST client notes + [`examples/headless-vanilla`](examples/headless-vanilla)
 - [Extension Points](docs/guides/EXTENSION_POINTS.md) — which mechanism to use (events, hooks, pipelines, workflows, registries)
@@ -278,42 +287,17 @@ Current guides live in [`docs/guides/`](docs/guides/):
 - [Plugin Authoring Guide](PLUGINS.md) — core vs external boundaries, extension mechanisms, deferred capabilities
 - [Runbook](RUNBOOK.md) — incident response, probes, and operator troubleshooting
 
-### Planning & Reference
+### Reference
 
 - [Commercial Licensing](docs/COMMERCIAL.md) — open core (GPL) vs paid B2B module
-- [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping
-- [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
 - [C4 Context Diagram](docs/diagrams/c4-context.md) — system context
 - [C4 Container Diagram](docs/diagrams/c4-container.md) — runtime containers
 - [C4 Component Diagram](docs/diagrams/c4-component.md) — major component boundaries
 - [C4 Code Diagram](docs/diagrams/c4-code.md) — code-level structure
 
-### Development history
+### Working history
 
-Shopanda has been built in numbered phases, each with its own roadmap and per-PR implementation notes under `docs/phase-N-*/prs/`:
-
-| Phase | Roadmap | Status |
-| --- | --- | --- |
-| 1 — Core engine | [phase-1-core/ROADMAP.md](docs/phase-1-core/ROADMAP.md) | Shipped |
-| 2 — Merchant-ready | [phase-2-merchant-ready/ROADMAP.md](docs/phase-2-merchant-ready/ROADMAP.md) | Shipped |
-| 3 — Hardening & guest checkout | [phase-3-testing/ROADMAP.md](docs/phase-3-testing/ROADMAP.md) | Shipped |
-| 4 — Product-complete | [phase-4-refactoring/ROADMAP.md](docs/phase-4-refactoring/ROADMAP.md) | Shipped |
-| 5 — Mature commerce | [phase-5-maturity/ROADMAP.md](docs/phase-5-maturity/ROADMAP.md) | Shipped |
-| 6 — Merchant-complete admin | [phase-6-merchant-complete/ROADMAP.md](docs/phase-6-merchant-complete/ROADMAP.md) | Shipped |
-| 7 — Customization platform | [phase-7-customization-platform/ROADMAP.md](docs/phase-7-customization-platform/ROADMAP.md) | Shipped |
-| 8 — Integrator platform | [phase-8-integrator-platform/ROADMAP.md](docs/phase-8-integrator-platform/ROADMAP.md) | Shipped |
-| 9 — Integrator backlog + merchant discovery | [phase-9-merchant-discovery/README.md](docs/phase-9-merchant-discovery/README.md) | Shipped |
-| 10 — Platform excellence | [phase-10-platform-excellence/README.md](docs/phase-10-platform-excellence/README.md) | Shipped (one open integration-test item) |
-| 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | Shipped |
-| 12 — Product types & composition | [phase-12-product-composition/README.md](docs/phase-12-product-composition/README.md) | **In progress** |
-| 13 — Plugin runtime (schema + on-demand jobs) | [phase-13-plugin-runtime/README.md](docs/phase-13-plugin-runtime/README.md) | Planned (do before a real site) |
-| 14 — Storefront authoring | [phase-14-storefront-authoring/README.md](docs/phase-14-storefront-authoring/README.md) | Shipped (theme packaging + headless gaps; Track C storefront JS cart add/update/remove) |
-
-Additional historical specs:
-
-- [Phase 5 — Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict (`.so` deferred)
-- [`docs/phase-1-core/specs/`](docs/phase-1-core/specs/) — core design specs
-- [`docs/phase-2-merchant-ready/specs/`](docs/phase-2-merchant-ready/specs/) — merchant-ready specs
+Phase roadmaps, PR specs, and historical design dumps stay on the `dev` branch under `docs/phase-*`. They are stripped when promoting to `main`; old `main` bookmarks under that prefix 404 by design.
 
 ## License
 
