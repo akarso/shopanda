@@ -169,6 +169,48 @@ func (r *BundleComponentRepo) ListBundleIDsByComponentID(ctx context.Context, co
 	return out, nil
 }
 
+// ListBundleIDsByComponentIDs returns distinct parent bundle product IDs for
+// each requested component (PR-1080 bulk stock expand). Keyed by component
+// product ID. Missing components are omitted.
+func (r *BundleComponentRepo) ListBundleIDsByComponentIDs(ctx context.Context, componentProductIDs []string) (map[string][]string, error) {
+	unique := make([]string, 0, len(componentProductIDs))
+	seen := make(map[string]struct{}, len(componentProductIDs))
+	for _, id := range componentProductIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	out := make(map[string][]string, len(unique))
+	if len(unique) == 0 {
+		return out, nil
+	}
+	const q = `SELECT DISTINCT component_product_id, bundle_product_id
+		FROM bundle_components
+		WHERE component_product_id = ANY($1)
+		ORDER BY component_product_id ASC, bundle_product_id ASC`
+	rows, err := r.queryer().QueryContext(ctx, q, unique)
+	if err != nil {
+		return nil, fmt.Errorf("bundle_component_repo: list bundle ids by components: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var componentID, bundleID string
+		if err := rows.Scan(&componentID, &bundleID); err != nil {
+			return nil, fmt.Errorf("bundle_component_repo: list bundle ids by components: scan: %w", err)
+		}
+		out[componentID] = append(out[componentID], bundleID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("bundle_component_repo: list bundle ids by components: rows: %w", err)
+	}
+	return out, nil
+}
+
 // Upsert inserts or updates quantity and required for the composite key.
 func (r *BundleComponentRepo) Upsert(ctx context.Context, c *catalog.BundleComponent) error {
 	if c == nil {

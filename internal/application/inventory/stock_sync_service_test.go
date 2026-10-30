@@ -554,6 +554,10 @@ func (f *stockSyncFakeBundleParents) ListBundleIDsByComponentID(_ context.Contex
 	return append([]string(nil), f.byComponent[componentProductID]...), nil
 }
 
+func (f *stockSyncFakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
 // TestStockSyncService_UpsertBySKU_ReindexExpandsBundleParents pins PR-1080
 // bulk ERP stock Trigger expansion through BundleParentLookup.
 func TestStockSyncService_UpsertBySKU_ReindexExpandsBundleParents(t *testing.T) {

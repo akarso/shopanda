@@ -207,6 +207,10 @@ func (f *fakeBundleParents) ListBundleIDsByComponentID(_ context.Context, compon
 	return append([]string(nil), f.byComponent[componentProductID]...), nil
 }
 
+func (f *fakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
 // TestInvalidation_ProductUpdated_FansOutToBundleParents pins PR-1080:
 // leaf product updates also clear parent kit product-cache prefixes.
 func TestInvalidation_ProductUpdated_FansOutToBundleParents(t *testing.T) {

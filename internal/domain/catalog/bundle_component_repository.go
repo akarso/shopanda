@@ -34,4 +34,10 @@ type BundleParentLookup interface {
 	// a non-nil slice (possibly empty). Empty componentProductID returns
 	// an empty slice without error.
 	ListBundleIDsByComponentID(ctx context.Context, componentProductID string) ([]string, error)
+
+	// ListBundleIDsByComponentIDs returns distinct parent bundle product IDs
+	// for each requested component, keyed by component product ID. Missing
+	// components are omitted. Always returns a non-nil map. Empty or
+	// all-blank input returns an empty map without error.
+	ListBundleIDsByComponentIDs(ctx context.Context, componentProductIDs []string) (map[string][]string, error)
 }

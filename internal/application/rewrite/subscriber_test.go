@@ -108,6 +108,21 @@ func TestHandleProductUpdated(t *testing.T) {
 	}
 }
 
+func TestHandleProductUpdated_EmptySlugDoesNotClaimRoot(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{
+		ProductID: "prod-empty",
+	})
+	if err := sub.HandleProductUpdated(context.Background(), evt); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Fatalf("saved = %d, want 0 (empty slug must not write /)", len(repo.saved))
+	}
+}
+
 func TestHandleCategoryCreated(t *testing.T) {
 	repo := &fakeRewriteRepo{}
 	sub := rewrite.NewSubscriber(repo, &fakeLog{})

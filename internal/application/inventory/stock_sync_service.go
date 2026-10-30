@@ -20,7 +20,15 @@ const stockSyncChunkSize = 100
 // reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
 // so it does not inherit a canceled operation context (worker shutdown or
 // a deadline that already expired after earlier chunks committed).
+// Expansion uses its own timeout of the same length so a large parent
+// lookup cannot expire the enqueue context.
 const reindexTriggerTimeout = 30 * time.Second
+
+// stockReindexExpandMaxIDs is the largest touched set we expand to parent
+// bundles. At or above this, ReindexService.Trigger already substitutes a
+// full scan for a scoped ID list (maxScopedReindexProductIDs), so
+// expansion is wasted work and would compete with the enqueue timeout.
+const stockReindexExpandMaxIDs = 10_000
 
 // stockSyncProducts is the product read UpsertBySKU uses to reject dynamic
 // bundles. ListByIDs is optional; postgres implements it.
@@ -364,21 +372,35 @@ func (s *StockSyncService) productsByID(ctx context.Context, ids []string) (map[
 // triggerReindex fires a single scoped reindex covering every product this
 // sync run actually committed — see SetReindexService's own doc comment
 // for why this is one batched call, not one per row. When SetBundleParents
-// is wired, parent kit IDs are merged in (PR-1080). A Trigger failure is
-// returned to the caller (via UpsertBySKU's named result) so a queue,
-// scope-resolution, or database error is actionable rather than leaving
-// search silently stale.
+// is wired, parent kit IDs are merged in (PR-1080). Expansion and Trigger
+// each get their own timeout so a large parent lookup cannot starve
+// enqueue. A set at or above stockReindexExpandMaxIDs skips expansion
+// and Triggers a full scan. A Trigger failure is returned to the caller
+// (via UpsertBySKU's named result) so a queue, scope-resolution, or
+// database error is actionable rather than leaving search silently stale.
 func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if s.reindex == nil || len(touchedProductIDs) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
-	defer cancel()
-	expandErr := expandTouchedWithBundleParents(ctx, s.bundleParents, touchedProductIDs)
+	if len(touchedProductIDs) >= stockReindexExpandMaxIDs {
+		ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+		defer cancel()
+		if _, err := s.reindex.Trigger(ctx, searchApp.ScopeAll{}); err != nil {
+			return fmt.Errorf("stock sync: reindex: %w", err)
+		}
+		return nil
+	}
+
+	expandCtx, expandCancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	expandErr := catalog.ExpandTouchedWithBundleParents(expandCtx, s.bundleParents, touchedProductIDs)
+	expandCancel()
+
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	defer cancel()
 	if _, err := s.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
 		return fmt.Errorf("stock sync: reindex: %w", err)
 	}
@@ -386,38 +408,4 @@ func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{})
 		return fmt.Errorf("stock sync: expand bundle parents: %w", expandErr)
 	}
 	return nil
-}
-
-// expandTouchedWithBundleParents merges parent bundle IDs for every key
-// already in touched into the same map. Lookup failures for one leaf do
-// not abort expansion of the others; the first error is returned after
-// the pass so Trigger can still cover whatever was collected.
-func expandTouchedWithBundleParents(ctx context.Context, lookup catalog.BundleParentLookup, touched map[string]struct{}) error {
-	if lookup == nil || len(touched) == 0 {
-		return nil
-	}
-	leaves := make([]string, 0, len(touched))
-	for id := range touched {
-		leaves = append(leaves, id)
-	}
-	var firstErr error
-	for _, leafID := range leaves {
-		if leafID == "" {
-			continue
-		}
-		parents, err := lookup.ListBundleIDsByComponentID(ctx, leafID)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		for _, parentID := range parents {
-			if parentID == "" || parentID == leafID {
-				continue
-			}
-			touched[parentID] = struct{}{}
-		}
-	}
-	return firstErr
 }
