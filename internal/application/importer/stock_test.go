@@ -601,6 +601,7 @@ func TestStockImport_TxStarterRequired(t *testing.T) {
 
 type stockImportFakeBundleParents struct {
 	byComponent map[string][]string
+	batchCalls  int
 }
 
 func (f *stockImportFakeBundleParents) ListBundleIDsByComponentID(_ context.Context, componentProductID string) ([]string, error) {
@@ -608,6 +609,11 @@ func (f *stockImportFakeBundleParents) ListBundleIDsByComponentID(_ context.Cont
 		return []string{}, nil
 	}
 	return append([]string(nil), f.byComponent[componentProductID]...), nil
+}
+
+func (f *stockImportFakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	f.batchCalls++
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
 }
 
 // TestStockImport_ReindexExpandsBundleParents pins PR-1080: bulk stock
@@ -621,15 +627,19 @@ func TestStockImport_ReindexExpandsBundleParents(t *testing.T) {
 	}
 	stockRepo := newMockStockRepo()
 	queue := &stockImportFakeQueue{}
+	parents := &stockImportFakeBundleParents{byComponent: map[string][]string{
+		leafID: {parentID},
+	}}
 	imp := writingStockImporter(varRepo, stockRepo).
 		WithReindex(newTestReindexService(t, queue)).
-		WithBundleParents(&stockImportFakeBundleParents{byComponent: map[string][]string{
-			leafID: {parentID},
-		}})
+		WithBundleParents(parents)
 
 	csv := "sku,quantity\nSKU-001,10\n"
 	if _, err := imp.Import(context.Background(), strings.NewReader(csv)); err != nil {
 		t.Fatalf("Import: %v", err)
+	}
+	if parents.batchCalls != 1 {
+		t.Fatalf("batch parent lookups = %d, want 1", parents.batchCalls)
 	}
 	if len(queue.enqueued) != 1 {
 		t.Fatalf("enqueued %d jobs, want 1", len(queue.enqueued))

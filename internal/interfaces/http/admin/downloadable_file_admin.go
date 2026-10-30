@@ -71,7 +71,8 @@ func (h *DownloadableFileAdminHandler) SetBus(bus *event.Bus) {
 
 // SetProducts enables loading name/slug/status into ProductUpdatedData
 // (same enrich as ProductCompositionAdminHandler). Left unset, publish
-// still fires with ProductID alone.
+// is async-only (ProductID alone) so rewrite.Subscriber never sees an
+// empty slug.
 func (h *DownloadableFileAdminHandler) SetProducts(products catalog.ProductRepository) {
 	h.products = products
 }
@@ -358,8 +359,10 @@ func (h *DownloadableFileAdminHandler) fileDTOFrom(ctx context.Context, row cata
 // have flipped. Loads name/slug/status like composition when products is
 // wired. Publish-then-PublishAsync fallback matches category assignment
 // (PR-1036 Round 4): a sync rewrite.Subscriber failure must not skip the
-// async reindex/cache path. File attach does not change slug, so rewrite
-// has nothing useful to do, but the fallback keeps side-effects reliable.
+// async reindex/cache path. File attach does not change slug. A missing
+// product or empty slug must not go through sync Publish —
+// rewrite.Subscriber writes "/"+Slug and would claim "/" when that path
+// is unclaimed. Async-only still refreshes search and cache from ProductID.
 func (h *DownloadableFileAdminHandler) publishProductUpdated(ctx context.Context, productID string) {
 	if h.bus == nil || productID == "" {
 		return
@@ -374,6 +377,10 @@ func (h *DownloadableFileAdminHandler) publishProductUpdated(ctx context.Context
 		}
 	}
 	evt := event.New(catalog.EventProductUpdated, "downloadable.file", data)
+	if strings.TrimSpace(data.Slug) == "" {
+		h.bus.PublishAsync(evt)
+		return
+	}
 	if err := h.bus.Publish(ctx, evt); err != nil {
 		h.bus.PublishAsync(evt)
 	}

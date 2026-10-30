@@ -453,6 +453,10 @@ func (f *fakeBundleParents) ListBundleIDsByComponentID(_ context.Context, compon
 	return out, nil
 }
 
+func (f *fakeBundleParents) ListBundleIDsByComponentIDs(ctx context.Context, ids []string) (map[string][]string, error) {
+	return catalog.CollectBundleIDsByComponentIDs(ctx, f, ids)
+}
+
 // enqueuedProductIDs collects ScopeProducts IDs from each enqueued job
 // payload (one product per on-save Trigger).
 func enqueuedProductIDs(t *testing.T, queue *fakeQueue) []string {

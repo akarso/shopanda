@@ -454,6 +454,62 @@ func TestDownloadableFileAdmin_Attach_EmitsProductUpdatedEvent(t *testing.T) {
 	}
 }
 
+// TestDownloadableFileAdmin_Attach_MissingProductRead_SkipsSyncPublish
+// pins that a failed/unwired product read must not Publish an empty Slug
+// synchronously (rewrite.Subscriber would save "/"). Async still fires.
+func TestDownloadableFileAdmin_Attach_MissingProductRead_SkipsSyncPublish(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft, Name: "Guide", Slug: "guide"},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Filename: "a.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a1/a.pdf"},
+	}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB())
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	syncPublished := false
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		syncPublished = true
+		return nil
+	})
+	asyncRan := make(chan catalog.ProductUpdatedData, 1)
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if ok {
+			asyncRan <- data
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products/p1/downloadable-files", bytes.NewReader([]byte(`{"asset_id":"a1"}`)))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.AttachFile().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if syncPublished {
+		t.Fatal("empty slug must not Publish synchronously")
+	}
+	select {
+	case data := <-asyncRan:
+		if data.ProductID != "p1" || data.Slug != "" {
+			t.Fatalf("async data = %+v, want ProductID p1 and empty Slug", data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated after missing product enrich")
+	}
+}
+
 // TestDownloadableFileAdmin_Remove_EmitsProductUpdatedEvent is Attach's
 // counterpart for last-file remove (Purchasable may flip false).
 func TestDownloadableFileAdmin_Remove_EmitsProductUpdatedEvent(t *testing.T) {

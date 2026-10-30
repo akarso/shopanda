@@ -350,9 +350,10 @@ func (h *ProductCompositionAdminHandler) productsByID(ctx context.Context, ids [
 // bundle's indexed visibility may have changed. Publish-then-PublishAsync
 // fallback matches category assignment (PR-1036 Round 4): a sync
 // rewrite.Subscriber failure must not skip the async reindex/cache path.
-// Composition does not change slug, so rewrite has nothing useful to do,
-// but the fallback keeps side-effects reliable. Best-effort: a missing
-// product still publishes ProductID alone.
+// Composition does not change slug. A missing product or empty slug must
+// not go through sync Publish — rewrite.Subscriber writes "/"+Slug and
+// would claim "/" when that path is unclaimed. Async-only still refreshes
+// search and cache from ProductID.
 func (h *ProductCompositionAdminHandler) publishBundleParentUpdated(ctx context.Context, parentID string) {
 	if h.bus == nil || parentID == "" {
 		return
@@ -365,6 +366,10 @@ func (h *ProductCompositionAdminHandler) publishBundleParentUpdated(ctx context.
 		data.Status = p.Status
 	}
 	evt := event.New(catalog.EventProductUpdated, "bundle.composition", data)
+	if strings.TrimSpace(data.Slug) == "" {
+		h.bus.PublishAsync(evt)
+		return
+	}
 	if err := h.bus.Publish(ctx, evt); err != nil {
 		h.bus.PublishAsync(evt)
 	}

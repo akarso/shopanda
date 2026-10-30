@@ -891,6 +891,60 @@ func TestProductCompositionAdmin_RemoveBundleComponent_EmitsProductUpdatedEvent(
 	}
 }
 
+// TestProductCompositionAdmin_AddBundleComponent_FailedProductRead_SkipsSyncPublish
+// pins that a post-write FindByID failure must not Publish an empty Slug
+// synchronously (rewrite.Subscriber would save "/"). Async still fires
+// so search/cache refresh from ProductID.
+func TestProductCompositionAdmin_AddBundleComponent_FailedProductRead_SkipsSyncPublish(t *testing.T) {
+	byID := map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive, Name: "Kit", Slug: "kit"},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive, Name: "Leaf", Slug: "leaf"},
+	}
+	products := &mockAdminProductRepo{
+		findByIDFn: func(ctx context.Context, id string) (*catalog.Product, error) {
+			if catalog.IncludeNonActiveProducts(ctx) {
+				return nil, errors.New("product read failed")
+			}
+			return byID[id], nil
+		},
+	}
+	h := newCompositionHandler(products, &compBundleRepo{}, nil)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	syncPublished := false
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		syncPublished = true
+		return nil
+	})
+	asyncRan := make(chan catalog.ProductUpdatedData, 1)
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if ok {
+			asyncRan <- data
+		}
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	h.AddBundleComponent().ServeHTTP(rec, compositionRequest(http.MethodPost, "/x", map[string]any{
+		"component_product_id": "c1",
+		"quantity":             1,
+	}, map[string]string{"id": "b1"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if syncPublished {
+		t.Fatal("empty slug must not Publish synchronously")
+	}
+	select {
+	case data := <-asyncRan:
+		if data.ProductID != "b1" || data.Slug != "" {
+			t.Fatalf("async data = %+v, want ProductID b1 and empty Slug", data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated after failed product read")
+	}
+}
+
 // TestProductCompositionAdmin_AddBundleComponent_NoBusStillSucceeds pins
 // that SetBus is optional — nil bus must not break composition writes.
 func TestProductCompositionAdmin_AddBundleComponent_NoBusStillSucceeds(t *testing.T) {

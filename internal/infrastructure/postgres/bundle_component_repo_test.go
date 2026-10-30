@@ -508,4 +508,20 @@ func TestBundleComponentRepo_ListBundleIDsByComponentID(t *testing.T) {
 	if err != nil || len(none) != 0 {
 		t.Fatalf("unknown component = %v, %v", none, err)
 	}
+
+	byLeaf, err := repo.ListBundleIDsByComponentIDs(ctx, []string{leaf.ID, "", leaf.ID, id.New()})
+	if err != nil {
+		t.Fatalf("ListBundleIDsByComponentIDs: %v", err)
+	}
+	if len(byLeaf) != 1 {
+		t.Fatalf("byLeaf = %v, want 1 key", byLeaf)
+	}
+	got := byLeaf[leaf.ID]
+	if len(got) != 2 || got[0] != bundleLow || got[1] != bundleHigh {
+		t.Fatalf("byLeaf[%s] = %v, want ascending [%s, %s]", leaf.ID, got, bundleLow, bundleHigh)
+	}
+	emptyMap, err := repo.ListBundleIDsByComponentIDs(ctx, nil)
+	if err != nil || len(emptyMap) != 0 {
+		t.Fatalf("empty batch = %v, %v", emptyMap, err)
+	}
 }
