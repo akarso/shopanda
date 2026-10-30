@@ -640,7 +640,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			createdProductIDs[product.ID] = struct{}{}
 			imp.publishProductCreated(ctx, product)
 		} else if existing == nil {
-			// No txStarter: direct writes (tests / non-transactional mode)
+			// No txStarter: direct writes (tests / non-transactional mode).
+			// Publish after variants so sync listeners (and async races) see
+			// saved variants — same ordering as the transactional branch.
 			if err := imp.products.Create(ctx, product); err != nil {
 				for _, pv := range pvs {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
@@ -650,7 +652,6 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			result.Products++
 			createdProductIDs[product.ID] = struct{}{}
-			imp.publishProductCreated(ctx, product)
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", pvs[i].lineNum, err))
@@ -659,6 +660,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				result.Variants++
 			}
+			imp.publishProductCreated(ctx, product)
 		} else if imp.txStarter != nil {
 			// Existing product + txStarter: add variants in a transaction
 			tx, err := imp.txStarter.BeginTx(ctx, nil)

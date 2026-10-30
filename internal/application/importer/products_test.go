@@ -1995,6 +1995,18 @@ func TestImport_PublishesEventProductCreated(t *testing.T) {
 			t.Errorf("unexpected data type %T", evt.Data)
 			return nil
 		}
+		// Non-tx create must publish after variants are saved so sync
+		// listeners do not observe an empty variant set.
+		found := false
+		for _, v := range varRepo.variants {
+			if v != nil && v.ProductID == d.ProductID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("EventProductCreated for product %q fired before any variant was saved", d.ProductID)
+		}
 		got = append(got, d)
 		return nil
 	})
