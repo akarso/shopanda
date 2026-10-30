@@ -6,11 +6,13 @@
 # that prefix abort and restore the previous branch.
 #
 # A merge that never starts (untracked overwrite, unrelated histories) is not
-# a successful promote. After `git merge ... || true`, MERGE_HEAD must exist
-# unless SOURCE is already an ancestor of HEAD.
+# a successful promote. After `git merge ... || true`, MERGE_HEAD must exist.
+# If SOURCE is already an ancestor of TARGET, print a no-op and do not create
+# a promote branch. That path is not a recovery tool for a raw dev→main merge.
 #
 # Usage:
 #   bash scripts/promote-dev-to-main.sh
+#   SOURCE=docs/split-product-from-working-history TARGET=origin/main bash scripts/promote-dev-to-main.sh
 #   SOURCE=dev TARGET=main SKIP_FETCH=1 PROMOTE_BRANCH=promote/t bash scripts/promote-dev-to-main.sh
 #
 # Does not push. Never raw-merge dev into main.
@@ -35,12 +37,17 @@ Promote SOURCE onto TARGET, then force-remove every docs/phase-* path
 (including unmerged entries) so working history does not land on main.
 
 Environment:
-  SOURCE          git ref to merge (default: origin/dev)
+  SOURCE          git ref to merge (default: origin/dev). May be a local branch.
   TARGET          git ref to branch from (default: origin/main)
   PROMOTE_BRANCH  local branch name (default: promote/YYYY-MM-DD)
   PROMOTE_FORCE   set to 1 to reset an existing promote branch
   SKIP_FETCH      set to 1 to skip git fetch (offline / fixture)
   PROMOTE_ROOT    repository root (default: parent of scripts/)
+
+Fetch updates origin/dev and origin/main only. SOURCE is resolved locally
+after that, so a topic branch that is not on origin still works. This script
+does not heal a raw dev→main merge: if SOURCE is already in TARGET and
+docs/phase-* is still tracked, it dies.
 
 Does not push. Review the branch, then push and open a PR targeting main.
 EOF
@@ -130,12 +137,16 @@ trap on_exit EXIT
 
 resolve_ref() {
   local ref="$1"
-  if git rev-parse --verify "${ref}" >/dev/null 2>&1; then
+  if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
     printf '%s\n' "${ref}"
     return
   fi
-  if git rev-parse --verify "origin/${ref}" >/dev/null 2>&1; then
-    printf 'origin/%s\n' "${ref}"
+  if git rev-parse --verify --quiet "refs/heads/${ref}^{commit}" >/dev/null; then
+    printf '%s\n' "refs/heads/${ref}"
+    return
+  fi
+  if git rev-parse --verify --quiet "origin/${ref}^{commit}" >/dev/null; then
+    printf '%s\n' "origin/${ref}"
     return
   fi
   die "unknown ref ${ref}"
@@ -143,14 +154,24 @@ resolve_ref() {
 
 if [[ "${SKIP_FETCH:-}" != "1" ]]; then
   if git remote get-url origin >/dev/null 2>&1; then
-    src_fetch="${SOURCE#origin/}"
-    tgt_fetch="${TARGET#origin/}"
-    git fetch origin "${src_fetch}" "${tgt_fetch}"
+    git fetch origin dev main
   fi
 fi
 
 SOURCE="$(resolve_ref "${SOURCE}")"
 TARGET="$(resolve_ref "${TARGET}")"
+
+if git merge-base --is-ancestor "${SOURCE}" "${TARGET}"; then
+  leftover="$(git ls-tree -r --name-only "${TARGET}" -- docs | grep '^docs/phase-' || true)"
+  if [[ -n "${leftover}" ]]; then
+    printf '%s\n' "${leftover}" >&2
+    die "SOURCE already contained in ${TARGET} but docs/phase-* is still tracked. This script is not a recovery tool for a raw dev→main merge."
+  fi
+  echo "SOURCE already contained in ${TARGET}; nothing to promote."
+  FINISHED=1
+  trap - EXIT
+  exit 0
+fi
 
 if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
   if [[ "${PROMOTE_FORCE:-}" != "1" ]]; then
@@ -164,23 +185,10 @@ else
 fi
 
 # Merge may fail on docs/phase-* modify/delete. Continue; strip those paths.
-# A merge that never starts is not success — see MERGE_HEAD / ancestor check.
+# A merge that never starts is not success — MERGE_HEAD must exist.
 git merge --no-ff --no-commit "${SOURCE}" || true
 
 if [[ ! -f "$(git rev-parse --git-path MERGE_HEAD)" ]]; then
-  if git merge-base --is-ancestor "${SOURCE}" HEAD; then
-    leftover="$(git ls-files -- 'docs/phase-*')"
-    if [[ -n "${leftover}" ]]; then
-      printf '%s\n' "${leftover}" >&2
-      die "SOURCE already contained in ${BRANCH} but docs/phase-* is still tracked"
-    fi
-    echo "SOURCE already contained in ${BRANCH}; nothing to promote."
-    FINISHED=1
-    trap - EXIT
-    echo "Promote branch: ${BRANCH} (SOURCE=${SOURCE} TARGET=${TARGET})"
-    echo "Review, then push and open a PR targeting main. Do not raw-merge dev into main."
-    exit 0
-  fi
   die "merge did not start (untracked overwrite, unrelated histories, or similar). Not promoting."
 fi
 

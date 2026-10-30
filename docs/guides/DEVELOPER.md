@@ -816,7 +816,7 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 | **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
-| **`CI / docs-policy`** | Product docs have no relative `docs/phase-*` links; `scripts/promote-dev-to-main_test.sh` (first promote, modify/delete second promote, conflict abort) |
+| **`CI / docs-policy`** | Product docs have no relative `docs/phase-*` links; `scripts/promote-dev-to-main_test.sh` (second promote, untracked overwrite, FORCE restore, two-parent merge) |
 | **`CI / docs-main`** | `main` / PRs to `main` / merge queue to `main` only — fails if `docs/phase-*` is tracked. Promote with `scripts/promote-dev-to-main.sh`. |
 
 The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, **`CI / govuln`**, and **`CI / docs-policy`** on `main` and `dev`, and **`CI / docs-main`** on `main` only (Settings → Rules / Branch protection → required status checks). Do **not** require `docs-main` on `dev`: the job is skipped there, and a skipped required check blocks merges.

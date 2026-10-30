@@ -22,7 +22,7 @@ Phase folders, PR specs, in-progress roadmaps, and historical design dumps live 
 
 PRs targeting `dev` still write a PR spec and update the phase index/roadmap. PRs targeting `main` (hotfixes and promotes) update product docs only — they must not add `docs/phase-*`.
 
-`dev` → `main` is never a raw merge. Use `scripts/promote-dev-to-main.sh`. The script force-removes every `docs/phase-*` path, including modify/delete conflicts from later promotes. `CI / docs-policy` replays that. `CI / docs-main` fails if those paths are tracked on `main`. Require `docs-main` on `main` only — not on `dev`.
+`dev` → `main` is never a raw merge. Use `scripts/promote-dev-to-main.sh`. The script force-removes every `docs/phase-*` path, including modify/delete conflicts from later promotes. If `dev` is already in `main` and those paths are still tracked, it dies — it is not a recovery tool; do not raw-merge and then re-run. `CI / docs-policy` replays the promote. `CI / docs-main` fails if those paths are tracked on `main`. Require `docs-main` on `main` only — not on `dev`.
 
 ## Guides
 

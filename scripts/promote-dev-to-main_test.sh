@@ -90,11 +90,40 @@ assert_two_parents
 test -f app.go
 test -f docs/guides/HELLO.md
 
-# Already-up-to-date: SOURCE is an ancestor; no MERGE_HEAD is success here.
+# Already-up-to-date: SOURCE is an ancestor. Do not create a promote branch.
+git checkout -q promote/2
 run_promote promote/1 promote/2 promote/noop
-git checkout -q promote/noop
-if [[ "$(git rev-parse HEAD)" != "$(git rev-parse promote/2)" ]]; then
-  echo "FAIL: already-up-to-date promote changed HEAD" >&2
+current="$(git symbolic-ref --short HEAD)"
+if [[ "${current}" != "promote/2" ]]; then
+  echo "FAIL: no-op promote moved HEAD to ${current}" >&2
+  exit 1
+fi
+if git show-ref --verify --quiet refs/heads/promote/noop; then
+  echo "FAIL: no-op promote created promote/noop" >&2
+  exit 1
+fi
+
+# Not a recovery tool: SOURCE already in TARGET and phase files still tracked.
+if ! git show-ref --verify --quiet refs/heads/dev; then
+  echo "FAIL: dest branch missing before recovery-refuse" >&2
+  git show-ref >&2
+  exit 1
+fi
+set +e
+heal_out="$(run_promote main dev promote/heal 2>&1)"
+heal_ec=$?
+set -e
+if [[ "${heal_ec}" -eq 0 ]]; then
+  echo "FAIL: expected refuse when TARGET still has docs/phase-*" >&2
+  exit 1
+fi
+if ! grep -q "not a recovery tool" <<<"${heal_out}"; then
+  echo "FAIL: expected recovery-tool message, got:" >&2
+  printf '%s\n' "${heal_out}" >&2
+  exit 1
+fi
+if git show-ref --verify --quiet refs/heads/promote/heal; then
+  echo "FAIL: recovery-refuse created promote/heal" >&2
   exit 1
 fi
 
@@ -152,6 +181,31 @@ if [[ "$(git rev-parse refs/heads/promote/force)" != "${force_prev}" ]]; then
 fi
 rm -f docs/guides/NEW.md
 git branch -D promote/force >/dev/null
+
+# PROMOTE_FORCE=1 while already on that branch must reset --hard the old tip.
+git checkout -q promote/2
+git checkout -qb promote/force-on
+echo "on" >force-on.txt
+git add force-on.txt
+git commit -qm "prior promote review (already on branch)"
+force_on_prev="$(git rev-parse HEAD)"
+echo "local dirt" >docs/guides/NEW.md
+if PROMOTE_ROOT="${REPO}" SOURCE=dev TARGET=promote/2 PROMOTE_BRANCH=promote/force-on PROMOTE_FORCE=1 SKIP_FETCH=1 bash "${SCRIPT}"; then
+  echo "FAIL: expected PROMOTE_FORCE (already on branch) to abort" >&2
+  exit 1
+fi
+if [[ "$(git symbolic-ref --short HEAD)" != "promote/force-on" ]]; then
+  echo "FAIL: expected stay on promote/force-on after FORCE abort" >&2
+  exit 1
+fi
+if [[ "$(git rev-parse HEAD)" != "${force_on_prev}" ]]; then
+  echo "FAIL: PROMOTE_FORCE abort on current branch did not restore tip" >&2
+  exit 1
+fi
+test -f force-on.txt
+rm -f docs/guides/NEW.md
+git checkout -q promote/2
+git branch -D promote/force-on >/dev/null
 
 # Non-phase conflict must abort and restore the branch we started on.
 git checkout -q promote/2

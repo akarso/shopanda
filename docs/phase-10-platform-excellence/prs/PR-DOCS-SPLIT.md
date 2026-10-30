@@ -42,8 +42,9 @@ test -f docs/GOVULN_BASELINE.md
 go test ./internal/domain/scheduler/ ./internal/platform/plugin/ ./internal/platform/config/ ./cmd/api/ -count=1
 ```
 
-- Fixture covers: first promote, second promote after a phase-file edit (modify/delete), two-parent merge commits, a tracked `docs/phase-notes.md` file (not only directories), untracked overwrite (merge never starts → non-zero, restore, no leftover promote branch), `PROMOTE_FORCE` abort restores the old tip, non-phase conflict abort + restore, refuse `PROMOTE_BRANCH=main`.
-- After `git merge ... || true`, the script requires `MERGE_HEAD` or `SOURCE` already an ancestor of `HEAD`; otherwise it dies.
+- Fixture covers: first promote, second promote after a phase-file edit (modify/delete), two-parent merge commits, a tracked `docs/phase-notes.md` file (not only directories), untracked overwrite (merge never starts → non-zero, restore, no leftover promote branch), ancestor no-op does not create a branch, refuse when SOURCE is already in TARGET and `docs/phase-*` is still tracked (not a raw-merge recovery tool), `PROMOTE_FORCE` abort restores the old tip (including when already on that branch), non-phase conflict abort + restore, refuse `PROMOTE_BRANCH=main`.
+- Fetch updates `origin/dev` and `origin/main` only; SOURCE is resolved locally afterward.
+- After `git merge ... || true`, the script requires `MERGE_HEAD`; otherwise it dies. Ancestor no-op is decided before `checkout -b`.
 - `docs-main` uses `leftover="$(git ls-files -- 'docs/phase-*')"` with no `|| true` (fail-closed).
 - Product surfaces contain no relative `docs/phase-*` hrefs and no hardcoded `blob/dev` / `tree/dev` working-history URLs (`docs/GOVULN_BASELINE.md` is in the scan set).
 - Comment-only Go changes in scheduler, plugin registry, config, and `wire_routes.go`.

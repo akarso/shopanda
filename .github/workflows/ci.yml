@@ -185,7 +185,7 @@ jobs:
       - name: Product docs must not relative-link into docs/phase-*
         run: bash .github/scripts/check-product-docs-links.sh
 
-      - name: Promote script replays (modify/delete second run)
+      - name: Promote script replays (second run, overwrite, FORCE, two-parent merge)
         run: bash scripts/promote-dev-to-main_test.sh
 
   docs-main:
