@@ -37,7 +37,7 @@ These capabilities are part of the free, self-hosted product:
 
 ## What requires a B2B license
 
-The commercial module adds business-buyer workflows. Planned features live in `plugins/b2b/` and are tagged `[b2b]` in the [Phase 5 roadmap](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/ROADMAP.md) (`dev` working notes):
+The commercial module adds business-buyer workflows. Planned features live in `plugins/b2b/` (tagged `[b2b]` on the `dev` branch under `docs/phase-5-maturity/ROADMAP.md`):
 
 | Feature | Phase 5 PR | Notes |
 | --- | --- | --- |
@@ -136,7 +136,7 @@ Not defined in this document. A future hosted offering may bundle license + oper
 
 ## Related docs
 
-- [Phase 5 Roadmap — OSS vs B2B tags](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/ROADMAP.md) (`dev` working notes)
 - [B2B plugin README](../plugins/b2b/README.md)
 - [Plugin authoring (three tiers)](guides/DEVELOPER.md#three-tier-extension-model)
 - [EU compliance (OSS track)](guides/COMPLIANCE_EU.md)
+- B2B PR tags: `docs/phase-5-maturity/ROADMAP.md` on the `dev` branch (not on `main`)

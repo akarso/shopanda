@@ -12,6 +12,8 @@ Related:
 - [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) — combining multiple plugin renderers
 - Reference plugin: [plugins/slotsdemo](../../plugins/slotsdemo/README.md)
 
+SSR theme architecture notes from the original v0 dump live on the `dev` branch under `docs/phase-1-core/specs/THEME_SYSTEM.md` (not on `main`).
+
 ---
 
 ## Core rule

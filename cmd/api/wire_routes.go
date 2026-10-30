@@ -567,7 +567,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// category/page create/update/delete) and, on a match, returns the
 	// resolved entity type + ID as JSON — callers (frontend, API composers)
 	// decide how to render or redirect from there, per the original design
-	// in docs/phase-1-core/specs/ROUTING.md and PR-089. On no match, 404.
+	// in PR-089 (storefront rewrite resolver). On no match, 404.
 	router.Handle("GET /{path...}", shophttp.ResolverMiddleware(rt.repos.rewriteRepo, log)(storefront.NewRewriteHandler().Resolve()))
 
 	// Probes skip the store/auth stack (hung DB must not block liveness).

@@ -787,33 +787,11 @@ All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the 
 
 **Fragments vs slots:** slots inject plugin HTML at render time into the (possibly cached) page; fragments are always-live per-request holes. See [THEME_SLOTS.md](THEME_SLOTS.md).
 
-## Integrator Platform (Phase 8)
+## Integrator Platform
 
 **Audience:** agencies and integrators connecting ERP, warehouse, PIM, or custom price/cart rules.
 
-Phase 8 adds first-class seams for **commerce behavior** (positioned pricing steps, cart hooks) and **external systems** (CSV import transforms, inbound REST, outbound sync jobs) — without core forks or Magento-style override folders.
-
-| Resource | Purpose |
-| --- | --- |
-| [Integrator Platform spec](INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
-
-**Available today (core + Phase 8):**
-
-- Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
-  - `search.SearchEngine` (PR-1037): `search.Product.CategoryIDs []string` replaces the old single `CategoryID string` — a product can belong to more than one category, and the index must represent all of them, not just the first. `SearchEngine` also gained `IndexCategory(ctx, search.Category) error` / `RemoveCategory(ctx, categoryID string) error` for indexing category documents (name/slug/description/parent/product count) as their own searchable entity, alongside products. A custom `SearchEngine` implementation must implement both new methods.
-  - `cache.Cache` (PR-1039/PR-1042): `SetWithTags` / `DeleteByTag` for many-to-many invalidation; `Stats(ctx) (Stats, error)` / `FlushAll(ctx) (int64, error)` for the cache admin API. Redis `FlushAll` must scan-and-delete under a non-empty store prefix, never `FLUSHDB`, and return value-key deletions only. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
-- Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
-- Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
-- HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
-- CSV import: CLI `import:*` with row hooks via `app.Import().RegisterRowHook` (PR-820–823)
-- CSV export: CLI `export:*` with row hooks via `app.Export().RegisterRowHook` (PR-856–858)
-- Outbound sync: `app.Integration(slug).RegisterSyncJob` + `pkg/integrationsdk` (PR-840–841)
-- Registration report: `./app plugins report` (PR-851)
-- Async: events + optional queue drivers
-
-**Reference plugins** (opt-in via config): `cartdemo`, `importdemo`, `exportdemo`, `integrationdemo`, `warehousedemo`, `pimdemo`, `taxdemo`, `maildemo`, `promodemo` — copy patterns; do not import from production plugins.
-
-When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
+The living spec is [INTEGRATOR_PLATFORM.md](INTEGRATOR_PLATFORM.md) (ports, CSV/ERP seams, precedence). For ordering when several plugins share a seam, start with [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md). `./app plugins report` prints live registrations.
 
 ## Roadmap and Future Work
 
@@ -825,7 +803,7 @@ Phases 1–12 and 14 are **shipped** (Phase 12 still has VAT / configurable / as
 | Product types, visibility, bundle/grouped, linked, downloadable | Shipped with caveats |
 | Plugin-owned migrations + on-demand sync enqueue | Planned (site-ready gate) |
 
-See [Integrator Platform spec](INTEGRATOR_PLATFORM.md) and [EU Compliance](COMPLIANCE_EU.md). Phase roadmaps and PR specs: [`dev` docs](https://github.com/akarso/shopanda/tree/dev/docs).
+See [Integrator Platform spec](INTEGRATOR_PLATFORM.md) and [EU Compliance](COMPLIANCE_EU.md). Phase roadmaps and PR specs live on the `dev` branch under `docs/phase-*` (not on `main`).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
@@ -838,9 +816,10 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 | **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
-| **`CI / docs-main`** | PRs and pushes to `main` only — fails if `docs/phase-*` is present. Promote with `scripts/promote-dev-to-main.sh`. |
+| **`CI / docs-policy`** | Product docs have no relative `docs/phase-*` links; `scripts/promote-dev-to-main_test.sh` (first promote, modify/delete second promote, conflict abort) |
+| **`CI / docs-main`** | `main` / PRs to `main` / merge queue to `main` only — fails if `docs/phase-*` is tracked. Promote with `scripts/promote-dev-to-main.sh`. |
 
-The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev`, and **`CI / docs-main`** on `main` (Settings → Rules / Branch protection → required status checks).
+The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, **`CI / govuln`**, and **`CI / docs-policy`** on `main` and `dev`, and **`CI / docs-main`** on `main` only (Settings → Rules / Branch protection → required status checks). Do **not** require `docs-main` on `dev`: the job is skipped there, and a skipped required check blocks merges.
 
 Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
 
@@ -1178,7 +1157,7 @@ Admin price PUT (`ProductPriceAdminHandler.Update`) requires `WithHistory`. The 
 
 Listing `HasPrice` for a dynamic bundle is true only when the required count is between 1 and 50 and every required component is an active leaf with exactly one variant and a global price row (`store_id` empty; amount 0 counts). The flag is currency-agnostic: a global USD row counts for PLP, a store-only row does not. It does not match `ResolveUnitPrice` on currency. AddItem resolves the dynamic bundle in the cart currency, so a global EUR component price cannot be added to a USD cart. PDP Add is shown when a variant exists and does not consult that currency. PLP cards have no Add control. A follow-up should hide Add when `ResolveUnitPrice` fails for the request currency, because a later button keyed off `HasPrice` / `Purchasable` can show for the wrong currency. A grouped parent is never `HasPrice`. A fixed product still needs its own price row. AutoBasis only sees that bool.
 
-`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. Register type-specific panels with `application/admin.RegisterProductFormSection` (validates `Types` against `catalog.Type`) or `Registry.RegisterFormSection("product.form", …)` for opaque tokens.
+`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. Register type-specific panels with `application/admin.RegisterProductFormSection` (validates `Types` against `catalog.Type`) or `Registry.RegisterFormSection("product.form", …)` for opaque tokens. The v0 admin schema dump lives on the `dev` branch under `docs/phase-1-core/specs/ADMIN_SCHEMA.md` (not on `main`).
 
 **Exception: the `visibility` section (PR-1059).** Registered with `Types: nil` (type-agnostic — applies to every product type, unlike bundle/grouped/linked/downloadable panels). Unlike every other section, its four mode selects **are** picked up by `collectProductPayload` (merged into the payload as `visibility_modes`), because `VisibilityModes` is a core `Product` field saved through the same `POST`/`PUT` as `name`/`slug`/`type` — not auxiliary section data with its own save endpoint. `admin.js`'s `setupProductVisibilitySection` renders the section body from `product_visibility_section.js` helpers and reads the GET response's `visibility` payload (above) for the computed badge/failures on load.
 

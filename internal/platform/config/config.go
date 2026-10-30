@@ -484,10 +484,9 @@ type SearchConfig struct {
 	Meilisearch MeilisearchConfig `yaml:"meilisearch"`
 	// ReindexFullScanThreshold is the fraction (0.0-1.0) of the catalog a
 	// partial reindex scope (products/categories/since) may resolve to
-	// before ReindexService.Trigger substitutes a full scan instead — see
-	// docs/phase-11-jobs-search-cache/prs/PR-1034.md's "Why": past this
-	// fraction, N individual index writes cost more than one full-scan
-	// pass, so a naive partial reindex could end up slower than
+	// before ReindexService.Trigger substitutes a full scan instead.
+	// Past this fraction, N individual index writes cost more than one
+	// full-scan pass, so a naive partial reindex could end up slower than
 	// reindexing everything. See DefaultSearchReindexFullScanThreshold.
 	ReindexFullScanThreshold float64 `yaml:"reindex_full_scan_threshold"`
 }

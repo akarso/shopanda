@@ -1,6 +1,6 @@
 # Documentation
 
-Shopanda splits **product docs** from **working history**. Git will not keep a folder on `dev` only unless promotion strips it — see `scripts/promote-dev-to-main.sh`.
+Shopanda splits **product docs** from **working history**. Git will not keep a folder on `dev` only unless promotion strips it — see `scripts/promote-dev-to-main.sh`. After a promote, `docs/phase-*` does not exist on `main`; old bookmarks under that prefix 404 by design.
 
 ## Product docs (ship on `main`)
 
@@ -18,13 +18,11 @@ Do **not** nest living operator or CI artifacts under `docs/phase-*`.
 
 ## Working history (`dev` only)
 
-Phase folders, PR specs, in-progress roadmaps, and historical design dumps live under `docs/phase-*` on the [`dev` branch](https://github.com/akarso/shopanda/tree/dev/docs).
+Phase folders, PR specs, in-progress roadmaps, and historical design dumps live under `docs/phase-*` on the `dev` branch. Check out `dev` to read them. Product guides name those paths in prose; they are not markdown links, because the href would 404 on `main`.
 
-Browse current notes: [`tree/dev/docs`](https://github.com/akarso/shopanda/tree/dev/docs).
+PRs targeting `dev` still write a PR spec and update the phase index/roadmap. PRs targeting `main` (hotfixes and promotes) update product docs only — they must not add `docs/phase-*`.
 
-PRs targeting `dev` still write a PR spec and update the phase index/roadmap. PRs targeting `main` (hotfixes and promotes) update product docs only — they must not add `docs/phase-*`. CI fails if those paths are present on `main`.
-
-`dev` → `main` is never a raw merge. Use `scripts/promote-dev-to-main.sh` so working history is stripped before the promote PR.
+`dev` → `main` is never a raw merge. Use `scripts/promote-dev-to-main.sh`. The script force-removes every `docs/phase-*` path, including modify/delete conflicts from later promotes. `CI / docs-policy` replays that. `CI / docs-main` fails if those paths are tracked on `main`. Require `docs-main` on `main` only — not on `dev`.
 
 ## Guides
 

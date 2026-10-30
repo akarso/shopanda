@@ -159,6 +159,5 @@ EU electronically supplied services / digital goods generally use the **customer
 ## Related Docs
 
 - [Merchant Guide — current limitations](MERCHANT.md#roadmap-and-known-gaps)
-- [Phase 5 Roadmap](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/ROADMAP.md) (`dev` working notes)
-- [Phase 1 — GDPR / consent PR](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/prs/PR-098.md) (`dev` working notes)
-- [Pricing pipeline — price history](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/PRICING_PIPELINE.md) (`dev` working notes)
+
+Phase 5 roadmap, GDPR PR notes, and the original pricing-pipeline dump live on the `dev` branch under `docs/phase-5-maturity/` and `docs/phase-1-core/`. Those paths are not on `main`.

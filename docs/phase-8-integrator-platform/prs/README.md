@@ -31,7 +31,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-854 | — | [oss] | done | [Checkout step positioning](PR-854.md) |
 | PR-855 | — | [oss] | done | [Phase 8 closure (docs)](PR-855.md) |
 
-Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR_PLATFORM.md`](../specs/INTEGRATOR_PLATFORM.md) · Upstream: [Phase 7](../../phase-7-customization-platform/ROADMAP.md)
+Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../../guides/INTEGRATOR_PLATFORM.md`](../../guides/INTEGRATOR_PLATFORM.md) · Upstream: [Phase 7](../../phase-7-customization-platform/ROADMAP.md)
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 

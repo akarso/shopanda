@@ -239,7 +239,7 @@ See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 ## Planning
 
-Product docs: [docs/README.md](docs/README.md). Phase roadmaps and PR specs stay on [`dev`](https://github.com/akarso/shopanda/tree/dev/docs).
+Product docs: [docs/README.md](docs/README.md). Phase roadmaps and PR specs stay on the `dev` branch under `docs/phase-*`.
 
 ## Plugin extension (operators & integrators)
 

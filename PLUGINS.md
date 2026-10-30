@@ -2,7 +2,7 @@
 
 Shopanda extends through **in-process Go plugins** — no separate services, no dynamic discovery in v1.
 
-This document describes the **three-tier model**, extension boundaries, and what authors can do today. For step-by-step integration, see [Developer Guide](docs/guides/DEVELOPER.md). The original Phase 1 design dump is working history on [`dev`](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/PLUGINS.md).
+This document describes the **three-tier model**, extension boundaries, and what authors can do today. For step-by-step integration, see [Developer Guide](docs/guides/DEVELOPER.md). The original Phase 1 authoring dump lives on the `dev` branch under `docs/phase-1-core/specs/PLUGINS.md`.
 
 ---
 
@@ -248,7 +248,7 @@ Honest list of gaps for external authors:
 
 Not implemented; do not assume these exist:
 
-- Go plugin `.so` dynamic loading — **deferred**. The Go plugin ABI is fragile across compiler versions, and Shopanda plugins need domain ports at process start. Use compile-time `register_plugins.go`. Full research (PR-544) is on [`dev`](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+- Go plugin `.so` dynamic loading — **deferred**. The Go plugin ABI is fragile across compiler versions, and Shopanda plugins need domain ports at process start. Use compile-time `register_plugins.go`. Full research (PR-544) lives on the `dev` branch under `docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md`.
 - Plugin marketplace or version resolver
 - Hot reload
 
@@ -265,7 +265,7 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)
 - [C4 component diagram](docs/diagrams/c4-component.md) — registry wiring
-- Working history (phase roadmaps, PR-544 research, historical specs): [`dev` docs](https://github.com/akarso/shopanda/tree/dev/docs)
+- Working history (phase roadmaps, PR-544 research, historical specs): the `dev` branch under `docs/phase-*` (those paths are not on `main`)
 
 ---
 

@@ -5,9 +5,12 @@ alwaysApply: true
 
 # PR completion — documentation checklist
 
-Product docs (guides, current C4, runbook) ship on **`main`**. Working history (`docs/phase-*`) lives on **`dev` only**. See `docs/README.md`. Never raw-merge `dev` into `main`; use `scripts/promote-dev-to-main.sh`.
+**First: which branch does this PR target?**
 
-When implementing or finishing a PR, **docs are part of the deliverable**.
+- **`main` (hotfix or promote):** product docs only (guides, C4, runbook, README, PLUGINS.md). Do **not** create or edit `docs/phase-*`. Stop here for working-history files. Never raw-merge `dev` into `main`; use `scripts/promote-dev-to-main.sh`.
+- **`dev` (default for features):** PR spec + phase index/roadmap + product docs as applicable. See below.
+
+Product docs (guides, current C4, runbook) ship on **`main`**. Working history (`docs/phase-*`) lives on **`dev` only**. See `docs/README.md`.
 
 ## PRs targeting `dev`
 
@@ -32,7 +35,7 @@ Living operator/CI artifacts belong in `docs/guides/`, `docs/diagrams/`, or `doc
 
 ## PRs targeting `main`
 
-Update **product docs only** (guides, C4, runbook, README, PLUGINS.md). Do **not** add `docs/phase-*`. CI `docs-main` fails if those paths are present.
+Update **product docs only**. Do **not** add `docs/phase-*`. `CI / docs-main` fails if those paths are present (required on `main` only).
 
 ## Quality bar
 

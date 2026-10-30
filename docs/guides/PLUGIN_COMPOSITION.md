@@ -13,6 +13,8 @@ Related:
 - [Integrator Platform spec](INTEGRATOR_PLATFORM.md) — architecture, port catalog, acceptance criteria
 - [Extension API policy](EXTENSION_API.md)
 
+The Phase 6/7 customization-platform design dump lives on the `dev` branch under `docs/phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md` (not on `main`).
+
 ---
 
 ## Core rule

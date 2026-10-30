@@ -1,6 +1,7 @@
 # Integrator Platform — Extension Strategy & External Systems
 
-Status: **published** (Phase 8 complete — PR-800–854)  
+How integrators extend cart, pricing, CSV import, and ERP seams without forking core.
+
 Audience: core maintainers, integrators, plugin authors
 
 Related:
@@ -8,9 +9,8 @@ Related:
 - [Plugin Authoring Guide](../../PLUGINS.md)
 - [Developer Extension Guide](DEVELOPER.md)
 - [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md)
-- [Phase 8 ROADMAP](https://github.com/akarso/shopanda/blob/dev/docs/phase-8-integrator-platform/ROADMAP.md) (`dev` working notes)
-- [PRICING_PIPELINE.md](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/PRICING_PIPELINE.md) (`dev` working notes)
-- [FOUNDATION.md](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/FOUNDATION.md) (`dev` working notes) §2.7 — extensibility without chaos
+
+Historical design dumps (pricing pipeline, foundation, checkout workflow, Phase 8 roadmap) live on the `dev` branch under `docs/phase-1-core/specs/` and `docs/phase-8-integrator-platform/`. Those paths are not on `main`.
 
 ---
 
@@ -140,7 +140,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 ### 4.3 Checkout
 
-`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **shipped** (PR-854); see [CHECKOUT_WORKFLOW.md](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/CHECKOUT_WORKFLOW.md) (`dev` working notes).
+`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **shipped** (PR-854). Checkout step design history: `docs/phase-1-core/specs/CHECKOUT_WORKFLOW.md` on the `dev` branch.
 
 ---
 

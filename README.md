@@ -146,7 +146,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
 
-Phases 1–12 and 14 are shipped (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). Phase 13 (plugin-owned schema + on-demand jobs) remains the **site-ready gate** before a real merchant site. Working notes live on the [`dev` branch](https://github.com/akarso/shopanda/tree/dev/docs) — see [docs/README.md](docs/README.md).
+Phases 1–12 and 14 are shipped (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). Phase 13 (plugin-owned schema + on-demand jobs) remains the **site-ready gate** before a real merchant site. Working notes live on the `dev` branch under `docs/phase-*` — see [docs/README.md](docs/README.md).
 
 ## Default stack
 
@@ -270,7 +270,7 @@ Run `./app help` for the live command list from the current binary.
 
 ## Documentation
 
-Index: [`docs/README.md`](docs/README.md). Product guides live in [`docs/guides/`](docs/guides/). Working history (phase roadmaps, PR specs) lives on [`dev`](https://github.com/akarso/shopanda/tree/dev/docs).
+Index: [`docs/README.md`](docs/README.md). Product guides live in [`docs/guides/`](docs/guides/). Working history (phase roadmaps, PR specs) lives on the `dev` branch under `docs/phase-*`.
 
 ### Guides
 
@@ -297,7 +297,7 @@ Index: [`docs/README.md`](docs/README.md). Product guides live in [`docs/guides/
 
 ### Working history
 
-Phase roadmaps, PR specs, and historical design dumps stay on [`dev`](https://github.com/akarso/shopanda/tree/dev/docs). They are stripped when promoting to `main`.
+Phase roadmaps, PR specs, and historical design dumps stay on the `dev` branch under `docs/phase-*`. They are stripped when promoting to `main`; old `main` bookmarks under that prefix 404 by design.
 
 ## License
 

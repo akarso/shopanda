@@ -9,7 +9,7 @@ Phase 7 delivered extension fields, hooks/slots, and storefront DX. Phase 8 deli
 ## Roadmap
 
 - [**ROADMAP.md**](ROADMAP.md) — tracks A–F, PR index, validation targets
-- [**Integrator Platform spec**](specs/INTEGRATOR_PLATFORM.md) — design position, port catalog, integration patterns
+- [**Integrator Platform spec**](../guides/INTEGRATOR_PLATFORM.md) — design position, port catalog, integration patterns
 - [**PR specs**](prs/README.md) — per-PR implementation notes (PR-800–855)
 
 ## Upstream

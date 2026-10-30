@@ -199,6 +199,11 @@ Additional documents:
 
 ## Documentation
 
+**First: which branch does this PR target?**
+
+- **`main` (hotfix or promote):** product docs only. Do **not** create or edit `docs/phase-*`.
+- **`dev` (default for features):** PR spec + phase index/roadmap + product docs as applicable.
+
 Product docs (guides, current C4, runbook, `docs/README.md`) ship on **`main`**. Working history (`docs/phase-*` — PR specs, phase roadmaps, historical specs) lives on **`dev` only**. See [docs/README.md](docs/README.md). Never raw-merge `dev` into `main`; use `scripts/promote-dev-to-main.sh`.
 
 Every **finished PR** must ship code **and** updated docs in the same change set.
@@ -234,7 +239,7 @@ Rules:
 
 ### PRs targeting `main`
 
-Hotfixes and promote PRs update **product docs only** (guides, C4, runbook, README, PLUGINS.md, `docs/README.md`). They must **not** add `docs/phase-*`. CI job `docs-main` fails if those paths are present.
+Hotfixes and promote PRs update **product docs only** (guides, C4, runbook, README, PLUGINS.md, `docs/README.md`). They must **not** add `docs/phase-*`. `CI / docs-main` fails if those paths are present; require that check on `main` only, never on `dev`.
 
 ---
 
