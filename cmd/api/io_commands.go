@@ -11,10 +11,24 @@ import (
 	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/application/importer"
+	"github.com/akarso/shopanda/internal/application/rewrite"
+	"github.com/akarso/shopanda/internal/domain/routing"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
+
+// registerImportProductsBusListeners wires sync create-path listeners on the
+// short-lived import:products bus. rewrite.Subscriber must run here so
+// EventProductCreated writes url_rewrites — otherwise /<slug> 404s even when
+// search reindex (WithReindex batch Trigger) succeeds. FPC / product-cache
+// listeners are omitted: a brand-new product has no cached PDP, and listing
+// shells refresh via TTL; IndexUpdateSubscriber is not registered (CLI uses
+// batch Trigger instead of a long-lived async subscriber).
+func registerImportProductsBusListeners(bus *event.Bus, rewrites routing.RewriteRepository, log logger.Logger) {
+	rewrite.NewSubscriber(rewrites, log).Register(bus)
+}
 
 func runImportProducts(cfg *config.Config, log logger.Logger) error {
 	path, err := requireIOPath("import:products")
@@ -37,13 +51,37 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("variant repo: %w", err)
 		}
-		result, err := importer.NewProductImporter(productRepo, variantRepo, conn).
-			WithRowHooks(regs.Import).
-			Import(ctx, f)
+		// PR-1081: publish EventProductCreated per create. Register rewrite
+		// on this bus (sync) so /<slug> resolves; search is batch-Triggered
+		// below (CLI has no long-lived IndexUpdateSubscriber — same pattern
+		// as import:stock).
+		bus := event.NewBus(log)
+		rewriteRepo, err := postgres.NewRewriteRepo(conn)
 		if err != nil {
-			return nil, fmt.Errorf("import: %w", err)
+			return nil, fmt.Errorf("rewrite repo: %w", err)
 		}
-		return &ioOutcome{
+		registerImportProductsBusListeners(bus, rewriteRepo, log)
+		imp := importer.NewProductImporter(productRepo, variantRepo, conn).
+			WithRowHooks(regs.Import).
+			WithBus(bus)
+		if reindexSvc, _, reindexConn, err := newSearchReindexService(cfg, log); err == nil {
+			defer reindexConn.Close()
+			imp = imp.WithReindex(reindexSvc)
+		} else {
+			log.Warn("import.products.reindex_service_unavailable", map[string]interface{}{"error": err.Error()})
+		}
+		result, err := imp.Import(ctx, f)
+		if result != nil {
+			bus.BeginShutdown()
+			bus.Drain(10 * time.Second)
+		}
+		if result == nil {
+			if err != nil {
+				return nil, fmt.Errorf("import: %w", err)
+			}
+			return &ioOutcome{}, nil
+		}
+		outcome := &ioOutcome{
 			Fields: map[string]interface{}{
 				"products": result.Products,
 				"variants": result.Variants,
@@ -51,7 +89,12 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 				"errors":   len(result.Errors),
 			},
 			Errors: result.Errors,
-		}, nil
+		}
+		if err != nil {
+			// Preserve summary (e.g. reindex failure after successful writes).
+			return outcome, fmt.Errorf("import: %w", err)
+		}
+		return outcome, nil
 	})
 }
 
@@ -144,17 +187,25 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 			log.Warn("import.stock.reindex_service_unavailable", map[string]interface{}{"error": err.Error()})
 		}
 		result, err := imp.Import(ctx, f)
-		if err != nil {
-			return nil, fmt.Errorf("import stock: %w", err)
+		if result == nil {
+			if err != nil {
+				return nil, fmt.Errorf("import stock: %w", err)
+			}
+			return &ioOutcome{}, nil
 		}
-		return &ioOutcome{
+		outcome := &ioOutcome{
 			Fields: map[string]interface{}{
 				"updated": result.Updated,
 				"skipped": result.Skipped,
 				"errors":  len(result.Errors),
 			},
 			Errors: result.Errors,
-		}, nil
+		}
+		if err != nil {
+			// Preserve summary (e.g. reindex failure after successful writes).
+			return outcome, fmt.Errorf("import stock: %w", err)
+		}
+		return outcome, nil
 	})
 }
 

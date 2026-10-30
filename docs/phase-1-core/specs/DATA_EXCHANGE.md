@@ -53,6 +53,8 @@ sku,name,price,color
 SKU1,Shirt,19.99,red
 ```
 
+Product CSV (current): required `name,slug,sku`; optional create-only `type`, `status` (`draft|active|archived`), bundle mode columns, `requires_linked_parent`, and visibility axes `visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable` (`auto|visible|hidden`). Downloadable + `active` on create is rejected — import as draft, attach files via `import:downloadable-files`, activate in admin.
+
 ---
 
 ---

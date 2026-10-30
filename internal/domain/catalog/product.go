@@ -24,6 +24,11 @@ func (s Status) IsValid() bool {
 	return false
 }
 
+// InvalidStatusMessage is the canonical validation text for an unknown status.
+func InvalidStatusMessage(s Status) string {
+	return fmt.Sprintf("invalid product status %q", s)
+}
+
 // Type is the product taxonomy (simple, virtual, bundle, …).
 // It is a typed string for package separation, not compile-time enum
 // exhaustiveness — callers must reject unknown values via IsValid /
@@ -195,12 +200,13 @@ func (p Product) RequiresPhysicalShipping() bool {
 
 // Validate checks fields that must be valid before persist.
 // Currently nil, Type, PricingMode, StockMode, ExplodeOrderLines, and
-// VisibilityModes (not Status/Name/Slug — those stay at NewProduct / admin
-// request validation). dynamic is allowed only when Type is bundle.
-// ExplodeOrderLines may be true only for a bundle with both modes dynamic.
-// Adapter-agnostic: call from handlers and every ProductRepository. Admin
-// create/update set Type, PricingMode, StockMode, and ExplodeOrderLines
-// from the request before Validate.
+// VisibilityModes. It does not check Status/Name/Slug: NewProduct defaults
+// Status to draft; admin request validation and product-CSV import consensus
+// reject unknown status tokens before create. dynamic is allowed only when
+// Type is bundle. ExplodeOrderLines may be true only for a bundle with both
+// modes dynamic. Adapter-agnostic: call from handlers and every
+// ProductRepository. Admin create/update set Type, PricingMode, StockMode,
+// and ExplodeOrderLines from the request before Validate.
 func (p *Product) Validate() error {
 	if p == nil {
 		return errors.New("product must not be nil")

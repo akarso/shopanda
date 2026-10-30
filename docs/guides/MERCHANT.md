@@ -92,7 +92,7 @@ Use the **Store / Language / Currency** switcher in the admin header when a scre
 
 The product form is schema-driven, so the exact fields can vary by deployment. Use the fields your store exposes rather than assuming every catalog uses the same product structure.
 
-**Bulk composition CSV (optional):** operators with shell access can import and export the same links. Import adds or updates rows. A row missing from the file is not deleted. Product CSV does not change `pricing_mode`, `stock_mode`, or `explode_order_lines` on a product that already exists; empty cells on create mean fixed / fixed / false.
+**Bulk composition CSV (optional):** operators with shell access can import and export the same links. Import adds or updates rows. A row missing from the file is not deleted. Product CSV does not change `pricing_mode`, `stock_mode`, `explode_order_lines`, `status`, or the four visibility mode columns (`visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable`) on a product that already exists — a mismatch skips the slug (and any new SKUs for that slug). Empty cells on create mean fixed / fixed / false / draft / auto×4. New exports always carry those tokens; older files without the columns still import. Tokens are lowercase and case-sensitive (`HIDDEN` / `ACTIVE` are rejected). Downloadable cannot be created as `active` via product CSV — import as draft, `import:downloadable-files`, then activate in admin. Assignment units and downloadable grant settings have no CSV — use Sales → Assignments and the product form’s downloadable settings.
 
 ```bash
 app export:bundle-components bundle-components.csv
@@ -185,6 +185,8 @@ app export:prices prices.csv
 app import:categories categories.csv
 app export:categories categories.csv
 ```
+
+Product CSV includes create-only `status` (`draft|active|archived`) and visibility columns `visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable` (`auto|visible|hidden`). Empty cells on create mean draft / auto×4. Those fields are not updated on an existing product — a mismatch skips the whole slug. **Downloadable products** cannot be created as `active` via CSV (same rule as admin: at least one file must be attached first). Import them as `draft`, attach files with `import:downloadable-files`, then activate in the admin product form.
 
 Use these when:
 
@@ -481,5 +483,5 @@ EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIAN
 - On any product edit form, the **Linked eligibility** section (type-agnostic) lists which parent products and/or categories a child may later be assigned to. Use the **Requires linked parent** checkbox on create/update to gate purchasability. Rules are additive; removing a row does not delete products.
 - Bulk rules: CLI `import:linked-eligible-parents` / `export:linked-eligible-parents` (`child_slug,parent_slug`) and `import:linked-eligible-categories` / `export:linked-eligible-categories` (`child_slug,category_slug`).
 - Instance assignment (which purchased ticket sits on which purchased card) is on **Sales → Assignments**. Enter a parent unit id (`orderID/variantID`) to list assigned tickets, or a child unit id to see the current card. Assign/revoke requires `assignments.write` (Admin, Manager, Support).
-- Product CSV can set `requires_linked_parent` on create only.
+- Product CSV can set `requires_linked_parent`, `status` (`draft|active|archived`; empty → draft), and `visibility_catalog` / `visibility_search` / `visibility_individually` / `visibility_purchasable` on create only (`auto|visible|hidden`; empty → auto; case-sensitive). Downloadable + `active` on create is rejected — import as draft → `import:downloadable-files` → activate in admin.
 

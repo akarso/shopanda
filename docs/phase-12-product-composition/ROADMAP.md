@@ -154,7 +154,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | --- | --- | --- |
 | PR-1079 | Search index schema extension | **done.** Add `Type`/`Status` and storefront-effective visibility axes to what Phase 11's indexer writes; filter search/catalog results on indexed `VisibleInSearch`/`VisibleInCatalog` when enforce is on (Purchasable denormalized but not forced on search — unassigned Track D tickets are not removed from search by display axes). See [`prs/PR-1079.md`](prs/PR-1079.md). |
 | PR-1080 | On-save reindex trigger generalization | **done.** `IndexUpdateSubscriber` fans leaf stock/price events out to parent bundles; bundle component add/remove and downloadable file attach/replace/remove publish `EventProductUpdated`. Assignment and DownloadGrant confirmed non-triggers (empty index-time Assignment; grants not catalog-facing). See [`prs/PR-1080.md`](prs/PR-1080.md). |
-| PR-1081 | CSV import/export final consistency pass | One pass across every existing import/export pipeline (products/variants/prices/stock/attributes/categories) confirming every field this phase added (type, visibility axes + override mode, bundle/grouped components, linked eligibility, assignments) round-trips correctly and consistently, not just within its own track's PR. |
+| PR-1081 | CSV visibility columns + Phase 12 consistency tests | **done** for visibility/`status` create-only columns + targeted in-memory consistency tests on named Phase 12 CSV surfaces; full empty-catalog DB diff deferred. Assignment + grant settings remain non-CSV. See [`prs/PR-1081.md`](prs/PR-1081.md). |
 | PR-1082 | GraphQL read parity | Extend `plugins/core/graphql`'s existing product schema (`schema.go`'s `productType`/`products`/`productBySlug` resolvers) with `Type`, the visibility axes, and bundle/grouped/linked-child relationships — matches Phase 7 Track E's established "same operation via admin REST, GraphQL, and plugin registration" parity precedent. Read-only, matching what the GraphQL surface already is today. |
 | PR-1083 | RUNBOOK.md + admin GUI consolidation pass | Symptom → check → fix RUNBOOK.md entries ("why can't I add this to cart," "why is this product not visible," "why isn't my ticket sellable"), same style as Phase 10's incident-response section. Final admin GUI pass folding all of this phase's sections into the existing product edit screen tabs, confirming nothing was left as an API-only feature with no GUI path. |
 
@@ -231,7 +231,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1078 | E | done |
 | 1079 | F | done |
 | 1080 | F | done |
-| 1081–1083 | F | planned |
+| 1081 | F | done |
+| 1082–1083 | F | planned |
 
 PR specs: [`prs/`](prs/).
 
@@ -243,4 +244,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1080 engineering done — Track F; next PR-1081; VAT sign-off open; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1081 engineering done — Track F; next PR-1082; VAT sign-off open; numbering collides with Phase 11 — disambiguate by phase folder) |

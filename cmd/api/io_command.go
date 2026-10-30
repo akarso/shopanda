@@ -74,6 +74,10 @@ type ioCommandOpts struct {
 // ioHook runs entity-specific import/export work. Returned errors must already
 // include a command-specific prefix (e.g. "export stock: %w"); the runner
 // returns them as-is after optional atomic-export cleanup.
+//
+// A non-nil *ioOutcome with a non-nil error is valid for imports that finished
+// CSV work but hit a fatal post-step (e.g. reindex): runIOCommand still logs
+// completion fields and row errors, then returns the hook error.
 type ioHook func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error)
 
 func requireIOPath(cmd string) (string, error) {
@@ -176,7 +180,7 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 	}
 	log.Info(opts.StartEvent, startFields)
 
-	outcome, err := hook(context.Background(), conn, f, regs)
+	outcome, hookErr := hook(context.Background(), conn, f, regs)
 	if opts.Kind == ioExport && opts.AtomicExport {
 		if syncErr := f.Sync(); syncErr != nil {
 			_ = f.Close()
@@ -184,10 +188,10 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 			return fmt.Errorf("sync temp file: %w", syncErr)
 		}
 		closeErr := f.Close()
-		if err != nil {
+		if hookErr != nil {
 			os.Remove(tmpPath)
 			// Hook errors are expected to carry their own command prefix.
-			return err
+			return hookErr
 		}
 		if closeErr != nil {
 			os.Remove(tmpPath)
@@ -200,14 +204,17 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 	} else if directExport {
 		closeErr := f.Close()
 		f = nil // defer must not double-close
-		if err != nil {
-			return err
+		if hookErr != nil {
+			return hookErr
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close csv: %w", closeErr)
 		}
-	} else if err != nil {
-		return err
+	} else if hookErr != nil && outcome == nil {
+		// Fatal with no summary (e.g. open/header failures). A non-nil
+		// outcome + error (reindex after a successful CSV write) falls
+		// through so completion stats and row errors are still reported.
+		return hookErr
 	}
 	if outcome == nil {
 		outcome = &ioOutcome{}
@@ -237,11 +244,14 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 			log.Error(opts.RowErrorEvent, errors.New(e), map[string]interface{}{})
 		}
 	}
-	if len(outcome.Errors) > 0 {
+	hasRowErrors := len(outcome.Errors) > 0
+	if hasRowErrors && hookErr == nil {
 		return fmt.Errorf(opts.FailMessage, len(outcome.Errors))
 	}
 
-	if outcome.AfterOK != nil {
+	// AfterOK is success-path only; skip when the hook already failed
+	// (e.g. post-import reindex) or row errors would have failed the run.
+	if outcome.AfterOK != nil && hookErr == nil && !hasRowErrors {
 		if err := outcome.AfterOK(); err != nil {
 			return err
 		}
@@ -249,6 +259,9 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 
 	if opts.CompleteAfterErrors {
 		log.Info(opts.CompleteEvent, fields)
+	}
+	if hookErr != nil {
+		return hookErr
 	}
 	return nil
 }
