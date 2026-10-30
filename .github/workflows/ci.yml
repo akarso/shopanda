@@ -183,9 +183,10 @@ jobs:
       - name: Forbid working-history docs on main
         run: |
           set -euo pipefail
-          if find docs -mindepth 1 -maxdepth 1 -type d -name 'phase-*' | grep -q .; then
+          leftover="$(git ls-files -- 'docs/phase-*' || true)"
+          if [[ -n "${leftover}" ]]; then
             echo "ERROR: docs/phase-* must not exist on main (working history stays on dev)." >&2
             echo "Promote with scripts/promote-dev-to-main.sh; do not raw-merge dev." >&2
-            find docs -mindepth 1 -maxdepth 1 -type d -name 'phase-*' >&2
+            printf '%s\n' "${leftover}" >&2
             exit 1
           fi

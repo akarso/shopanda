@@ -66,7 +66,11 @@ git merge --no-ff --no-edit -m "Merge ${SOURCE} into ${BRANCH} for main promotio
 
 stripped=0
 for dir in docs/phase-*; do
-  if [[ -d "${dir}" ]]; then
+  if [[ ! -d "${dir}" ]]; then
+    continue
+  fi
+  # Skip untracked working-tree dirs (e.g. a local phase folder not on SOURCE).
+  if git ls-files -- "${dir}" | grep -q .; then
     git rm -r "${dir}"
     stripped=1
   fi
