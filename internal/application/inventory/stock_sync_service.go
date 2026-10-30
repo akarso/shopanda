@@ -67,6 +67,8 @@ type StockSyncService struct {
 
 	// reindex is optional — see SetReindexService.
 	reindex *searchApp.ReindexService
+	// bundleParents is optional — see SetBundleParents.
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewStockSyncService returns a StockSyncService backed by variants and stock repos.
@@ -110,6 +112,14 @@ func (s *StockSyncService) WithTxStarter(starter stockSyncTxStarter) *StockSyncS
 // matching InventoryAdminHandler.SetBus's own optional-wiring convention.
 func (s *StockSyncService) SetReindexService(reindex *searchApp.ReindexService) {
 	s.reindex = reindex
+}
+
+// SetBundleParents expands the post-sync reindex set with parent bundles
+// that include each touched leaf (PR-1080). Bulk ERP sync publishes no
+// per-row EventStockUpdated, so IndexUpdateSubscriber cannot fan out —
+// expand here before Trigger. Nil clears the lookup.
+func (s *StockSyncService) SetBundleParents(lookup catalog.BundleParentLookup) {
+	s.bundleParents = lookup
 }
 
 // UpsertBySKU sets absolute stock quantities for known variant SKUs.
@@ -353,7 +363,8 @@ func (s *StockSyncService) productsByID(ctx context.Context, ids []string) (map[
 
 // triggerReindex fires a single scoped reindex covering every product this
 // sync run actually committed — see SetReindexService's own doc comment
-// for why this is one batched call, not one per row. A Trigger failure is
+// for why this is one batched call, not one per row. When SetBundleParents
+// is wired, parent kit IDs are merged in (PR-1080). A Trigger failure is
 // returned to the caller (via UpsertBySKU's named result) so a queue,
 // scope-resolution, or database error is actionable rather than leaving
 // search silently stale.
@@ -361,14 +372,52 @@ func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{})
 	if s.reindex == nil || len(touchedProductIDs) == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	defer cancel()
+	expandErr := expandTouchedWithBundleParents(ctx, s.bundleParents, touchedProductIDs)
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
-	defer cancel()
 	if _, err := s.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
 		return fmt.Errorf("stock sync: reindex: %w", err)
 	}
+	if expandErr != nil {
+		return fmt.Errorf("stock sync: expand bundle parents: %w", expandErr)
+	}
 	return nil
+}
+
+// expandTouchedWithBundleParents merges parent bundle IDs for every key
+// already in touched into the same map. Lookup failures for one leaf do
+// not abort expansion of the others; the first error is returned after
+// the pass so Trigger can still cover whatever was collected.
+func expandTouchedWithBundleParents(ctx context.Context, lookup catalog.BundleParentLookup, touched map[string]struct{}) error {
+	if lookup == nil || len(touched) == 0 {
+		return nil
+	}
+	leaves := make([]string, 0, len(touched))
+	for id := range touched {
+		leaves = append(leaves, id)
+	}
+	var firstErr error
+	for _, leafID := range leaves {
+		if leafID == "" {
+			continue
+		}
+		parents, err := lookup.ListBundleIDsByComponentID(ctx, leafID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, parentID := range parents {
+			if parentID == "" || parentID == leafID {
+				continue
+			}
+			touched[parentID] = struct{}{}
+		}
+	}
+	return firstErr
 }

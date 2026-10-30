@@ -34,7 +34,7 @@
 | PR-1077 | E | done | [Storefront download delivery endpoint](PR-1077.md) |
 | PR-1078 | E | done | [Admin API + CSV + GUI for downloadable management](PR-1078.md) |
 | PR-1079 | F | done | [Search index schema extension](PR-1079.md) |
-| PR-1080 | F | planned | [On-save reindex trigger generalization](PR-1080.md) |
+| PR-1080 | F | done | [On-save reindex trigger generalization](PR-1080.md) |
 | PR-1081 | F | planned | [CSV import/export final consistency pass](PR-1081.md) |
 | PR-1082 | F | planned | [GraphQL read parity](PR-1082.md) |
 | PR-1083 | F | planned | [RUNBOOK.md + admin GUI consolidation pass](PR-1083.md) |

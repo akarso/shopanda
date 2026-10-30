@@ -446,3 +446,66 @@ func TestBundleComponentRepo_ListOrderingByCreatedAt(t *testing.T) {
 			list[0].ComponentProductID, list[1].ComponentProductID)
 	}
 }
+
+func TestBundleComponentRepo_ListBundleIDsByComponentID(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM bundle_components")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM bundle_components") })
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	repo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	leaf := mustNewProduct(t, "Leaf", "list-parents-leaf")
+	if err := productRepo.Create(ctx, &leaf); err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	bundleLow, bundleHigh := distinctOrderedUUIDs(t)
+	for i, spec := range []struct {
+		id, name, slug string
+	}{
+		{bundleHigh, "Bundle High", "list-parents-b-high"},
+		{bundleLow, "Bundle Low", "list-parents-b-low"},
+	} {
+		b := mustNewProduct(t, spec.name, spec.slug)
+		b.ID = spec.id
+		b.Type = catalog.TypeBundle
+		if err := productRepo.Create(ctx, &b); err != nil {
+			t.Fatalf("create bundle %d: %v", i, err)
+		}
+		link, err := catalog.NewBundleComponent(b.ID, leaf.ID, 1)
+		if err != nil {
+			t.Fatalf("NewBundleComponent: %v", err)
+		}
+		if err := repo.Upsert(ctx, link); err != nil {
+			t.Fatalf("Upsert %s: %v", b.ID, err)
+		}
+	}
+
+	ids, err := repo.ListBundleIDsByComponentID(ctx, leaf.ID)
+	if err != nil {
+		t.Fatalf("ListBundleIDsByComponentID: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("ids = %v, want 2 parents", ids)
+	}
+	if ids[0] != bundleLow || ids[1] != bundleHigh {
+		t.Fatalf("ids = %v, want ascending [%s, %s]", ids, bundleLow, bundleHigh)
+	}
+
+	empty, err := repo.ListBundleIDsByComponentID(ctx, "")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty component id = %v, %v", empty, err)
+	}
+	none, err := repo.ListBundleIDsByComponentID(ctx, id.New())
+	if err != nil || len(none) != 0 {
+		t.Fatalf("unknown component = %v, %v", none, err)
+	}
+}

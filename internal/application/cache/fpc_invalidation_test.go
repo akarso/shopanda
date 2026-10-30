@@ -376,3 +376,28 @@ func TestFPCInvalidation_AfterProductsIndexed(t *testing.T) {
 		t.Fatal("product page must be purged after index")
 	}
 }
+
+// TestFPCInvalidation_ProductUpdated_FansOutToBundleParents pins PR-1080:
+// leaf product updates also purge parent kit PDP tags.
+func TestFPCInvalidation_ProductUpdated_FansOutToBundleParents(t *testing.T) {
+	backend := newTagMemCache()
+	ctx := context.Background()
+	leafPDP := cacheApp.Key(cacheApp.RoutePDP, "/products/leaf", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	parentPDP := cacheApp.Key(cacheApp.RoutePDP, "/products/kit", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, leafPDP, cacheApp.PageEntry{HTML: "leaf"}, time.Minute, cacheApp.ProductTag("leaf"))
+	_ = backend.SetWithTags(ctx, parentPDP, cacheApp.PageEntry{HTML: "kit"}, time.Minute, cacheApp.ProductTag("parent"))
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{}).
+		WithBundleParents(&fakeBundleParents{byComponent: map[string][]string{
+			"leaf": {"parent"},
+		}})
+	if err := sub.HandleProductUpdated(ctx, event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{ProductID: "leaf"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := backend.entries[leafPDP]; ok {
+		t.Fatal("leaf PDP must be purged")
+	}
+	if _, ok := backend.entries[parentPDP]; ok {
+		t.Fatal("parent kit PDP must be purged")
+	}
+}

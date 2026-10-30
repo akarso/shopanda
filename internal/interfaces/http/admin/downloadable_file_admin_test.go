@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
@@ -22,6 +23,7 @@ import (
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -402,5 +404,213 @@ func TestDownloadGrantAdmin_EditorForbiddenOnWrites(t *testing.T) {
 	}
 	if rec := serve(http.MethodPost, "/api/v1/admin/download-grants/"+g.ID+"/reissue", reissueBody, identity.RoleSupport); rec.Code != http.StatusOK {
 		t.Fatalf("support reissue = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDownloadableFileAdmin_Attach_EmitsProductUpdatedEvent pins PR-1080:
+// attaching a downloadable file publishes catalog.EventProductUpdated so
+// MissingDownloadableFile / Purchasable are refreshed in the search index.
+// Payload includes name/slug/status when SetProducts is wired.
+func TestDownloadableFileAdmin_Attach_EmitsProductUpdatedEvent(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft, Name: "Guide", Slug: "guide"},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Filename: "a.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a1/a.pdf"},
+	}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB())
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+	h.SetProducts(products)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	var captured catalog.ProductUpdatedData
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if !ok {
+			t.Errorf("data type %T", evt.Data)
+			return nil
+		}
+		captured = data
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products/p1/downloadable-files", bytes.NewReader([]byte(`{"asset_id":"a1"}`)))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.AttachFile().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.ProductID != "p1" || captured.Name != "Guide" || captured.Slug != "guide" || captured.Status != catalog.StatusDraft {
+		t.Fatalf("captured = %+v", captured)
+	}
+}
+
+// TestDownloadableFileAdmin_Remove_EmitsProductUpdatedEvent is Attach's
+// counterpart for last-file remove (Purchasable may flip false).
+func TestDownloadableFileAdmin_Remove_EmitsProductUpdatedEvent(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{
+		"p1": {{ProductID: "p1", AssetID: "a1", Position: 0}},
+	}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Filename: "a.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a1/a.pdf"},
+	}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB())
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	asyncRan := make(chan struct{})
+	bus.OnAsync(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		close(asyncRan)
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/products/p1/downloadable-files/a1", nil)
+	req.SetPathValue("id", "p1")
+	req.SetPathValue("assetId", "a1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.RemoveFile().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove = %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-asyncRan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async ProductUpdated after remove")
+	}
+}
+
+// TestDownloadableFileAdmin_Replace_EmitsProductUpdatedEvent pins replace
+// also publishes (MissingDownloadableFile unchanged, but purchasable axes
+// stay event-driven consistently with attach/remove).
+func TestDownloadableFileAdmin_Replace_EmitsProductUpdatedEvent(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusActive, Name: "Pack", Slug: "pack"},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{
+		"p1": {{ProductID: "p1", AssetID: "a1", Position: 0}},
+	}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Filename: "a.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a1/a.pdf"},
+		"a2": {ID: "a2", Filename: "b.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a2/b.pdf"},
+	}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB()).
+		WithGrantRetarget(func(_ context.Context, _ *sql.Tx, _, _ string) (catalogapp.GrantRetargetOutcome, error) {
+			return catalogapp.GrantRetargetOutcome{}, nil
+		})
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+	h.SetProducts(products)
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	var captured catalog.ProductUpdatedData
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if ok {
+			captured = data
+		}
+		return nil
+	})
+
+	body := []byte(`{"old_asset_id":"a1","asset_id":"a2"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/products/p1/downloadable-files", bytes.NewReader(body))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.ReplaceFile().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replace = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured.ProductID != "p1" || captured.Slug != "pack" {
+		t.Fatalf("captured = %+v", captured)
+	}
+}
+
+// TestDownloadableFileAdmin_GrantSettings_NoProductUpdatedEvent pins that
+// grant-settings writes do not publish (fulfillment config, not visibility).
+func TestDownloadableFileAdmin_GrantSettings_NoProductUpdatedEvent(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB())
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+	bus := event.NewBus(logger.New("error"))
+	h.SetBus(bus)
+	published := false
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		published = true
+		return nil
+	})
+
+	body := []byte(`{"expiry_days":14}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/products/p1/downloadable-grant-settings", bytes.NewReader(body))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.PutSettings().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put settings = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if published {
+		t.Fatal("grant-settings write must not publish ProductUpdated")
+	}
+}
+
+// TestDownloadableFileAdmin_Attach_NoBusStillSucceeds pins SetBus optional.
+func TestDownloadableFileAdmin_Attach_NoBusStillSucceeds(t *testing.T) {
+	products := &dlAdminProductRepo{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Type: catalog.TypeDownloadable, Status: catalog.StatusDraft},
+	}}
+	files := &dlAdminFileRepo{rows: map[string][]catalog.DownloadableFile{}}
+	assets := &dlAdminAssetRepo{byID: map[string]*media.Asset{
+		"a1": {ID: "a1", Filename: "a.pdf", MimeType: "application/pdf", Path: media.PrivateDownloadsPrefix + "a1/a.pdf"},
+	}}
+	fileSvc := catalogapp.NewDownloadableFileService(products, files, assets, dlAdminTestTxDB())
+	grantSvc := downloadapp.NewService(newGrantAdminMemRepo(), nil).
+		WithSettings(&dlAdminSettingsRepo{byProduct: map[string]*domain.GrantSettings{}}).
+		WithProductExists(downloadapp.ProductExistsFunc(func(_ context.Context, productID string) (bool, error) {
+			return products.byID[productID] != nil, nil
+		}))
+	h := admin.NewDownloadableFileAdminHandler(fileSvc, grantSvc, assets, adminapp.NewAuditor(logger.New("error")))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products/p1/downloadable-files", bytes.NewReader([]byte(`{"asset_id":"a1"}`)))
+	req.SetPathValue("id", "p1")
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	req = testhelper.AuthenticatedRequest(req, "user-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	h.AttachFile().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach = %d body=%s", rec.Code, rec.Body.String())
 	}
 }

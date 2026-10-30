@@ -46,6 +46,8 @@ type StockImporter struct {
 
 	// reindex is optional — see WithReindex.
 	reindex *searchApp.ReindexService
+	// bundleParents is optional — see WithBundleParents.
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewStockImporter creates a StockImporter.
@@ -87,6 +89,15 @@ func (imp *StockImporter) WithRowHooks(registry *importctx.Registry) *StockImpor
 // Import works exactly as before — no reindex triggered, no error.
 func (imp *StockImporter) WithReindex(reindex *searchApp.ReindexService) *StockImporter {
 	imp.reindex = reindex
+	return imp
+}
+
+// WithBundleParents expands the post-import reindex set with parent
+// bundles that include each touched leaf (PR-1080). Bulk stock publishes
+// no per-row EventStockUpdated, so IndexUpdateSubscriber cannot fan out
+// for us — expand here before Trigger. Nil clears the lookup.
+func (imp *StockImporter) WithBundleParents(lookup catalog.BundleParentLookup) *StockImporter {
+	imp.bundleParents = lookup
 	return imp
 }
 
@@ -255,20 +266,60 @@ func (imp *StockImporter) setStockUnderLock(ctx context.Context, productID strin
 // this import run touched (deferred by Import — see its own doc comment
 // on why this can't just be a plain call at the end) — see WithReindex's
 // own doc comment for why this is one batched call, not one per row.
-// A Trigger failure is returned so a queue, scope-resolution, or database
-// error is actionable rather than leaving search silently stale.
+// When WithBundleParents is wired, parent kit IDs are merged in so
+// dynamic-bundle QuantityPositive stays fresh (PR-1080). A Trigger
+// failure is returned so a queue, scope-resolution, or database error is
+// actionable rather than leaving search silently stale.
 func (imp *StockImporter) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if imp.reindex == nil || len(touchedProductIDs) == 0 {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	defer cancel()
+	expandErr := expandTouchedWithBundleParents(ctx, imp.bundleParents, touchedProductIDs)
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
-	defer cancel()
 	if _, err := imp.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
 		return fmt.Errorf("stock import: reindex: %w", err)
 	}
+	if expandErr != nil {
+		return fmt.Errorf("stock import: expand bundle parents: %w", expandErr)
+	}
 	return nil
+}
+
+// expandTouchedWithBundleParents merges parent bundle IDs for every key
+// already in touched into the same map. Lookup failures for one leaf do
+// not abort expansion of the others; the first error is returned after
+// the pass so Trigger can still cover whatever was collected.
+func expandTouchedWithBundleParents(ctx context.Context, lookup catalog.BundleParentLookup, touched map[string]struct{}) error {
+	if lookup == nil || len(touched) == 0 {
+		return nil
+	}
+	leaves := make([]string, 0, len(touched))
+	for id := range touched {
+		leaves = append(leaves, id)
+	}
+	var firstErr error
+	for _, leafID := range leaves {
+		if leafID == "" {
+			continue
+		}
+		parents, err := lookup.ListBundleIDsByComponentID(ctx, leafID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		for _, parentID := range parents {
+			if parentID == "" || parentID == leafID {
+				continue
+			}
+			touched[parentID] = struct{}{}
+		}
+	}
+	return firstErr
 }

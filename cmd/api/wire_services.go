@@ -360,6 +360,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// even constructed. See runWorker's own PR-1049 wiring for the same
 	// two-step reasoning applied to the standalone worker process.
 	stockSyncSvc.SetReindexService(reindexService)
+	stockSyncSvc.SetBundleParents(repos.bundleComponentRepo) // PR-1080: bulk ERP stock → parent kit reindex
 
 	// Job admin introspection/retry/cancel (PR-1028/PR-1029) — Postgres-queue-
 	// only, same constraint as resolveCache's ExpiredDeleter assertion above:
@@ -508,7 +509,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	rewriteSub.Register(bus)
 
 	// Wire product/price changes → cache invalidation.
-	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
+	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log).
+		WithBundleParents(repos.bundleComponentRepo) // PR-1080: leaf → parent kit product-cache
 	cacheInvalidation.Register(bus)
 
 	// Wire product/price/stock/category/CMS changes → full-page cache tag purge (PR-1046).
@@ -516,17 +518,19 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// bus subscriber, storefront, and admin stats share one process mirror (PR-1047).
 	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
 		WithObserver(fpcObs).
-		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce).
+		WithBundleParents(repos.bundleComponentRepo) // PR-1080: leaf → parent kit PDP purge
 	fpcInvalidation.Register(bus)
 
-	// Wire product/price/stock/category-assignment changes → search index
-	// updates (PR-1036), queued and debounced via reindexService.Trigger —
+	// Wire product/price/stock/category-assignment/variant changes → search index
+	// updates (PR-1036 / PR-1080), queued and debounced via reindexService.Trigger —
 	// replaces the previous inline bus.OnAsync(catalog.EventProduct*, ...)
 	// handlers that called searchEngine.IndexProduct directly: those bypassed
 	// the job queue entirely (no retry, no search_index_runs record), and ran
 	// once per event with no debouncing. See PR-1036.md's "Design decisions"
 	// for why this replacement, not an addition alongside the old handlers.
-	indexUpdateSubscriber := searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log)
+	indexUpdateSubscriber := searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).
+		WithBundleParents(repos.bundleComponentRepo) // PR-1080: leaf product/stock/price/variant → parent bundle reindex
 	indexUpdateSubscriber.Register(bus)
 
 	// Base URL for SEO (sitemap, canonical, robots).
@@ -864,8 +868,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVariantStock(repos.stockRepo).
 		WithTxStarter(conn)
 	productCompositionAdmin := admin.NewProductCompositionAdminHandler(repos.productRepo, bundleService, groupedService, sharedAuditor)
+	productCompositionAdmin.SetBus(bus) // PR-1080: bundle component add/remove → search reindex
 	linkedEligibilityAdmin := admin.NewLinkedEligibilityAdminHandler(repos.productRepo, repos.categoryRepo, linkedEligibilityService, sharedAuditor)
 	downloadableFileAdmin := admin.NewDownloadableFileAdminHandler(downloadableFileService, downloadGrantService, repos.assetRepo, sharedAuditor)
+	downloadableFileAdmin.SetProducts(repos.productRepo) // PR-1080: enrich ProductUpdatedData like composition
+	downloadableFileAdmin.SetBus(bus)                    // PR-1080: downloadable file attach/remove → search reindex
 	downloadGrantAdmin := admin.NewDownloadGrantAdminHandler(downloadGrantService, repos.orderRepo, sharedAuditor)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)

@@ -11,8 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Compile-time check that BundleComponentRepo implements catalog.BundleComponentRepository.
+// Compile-time check that BundleComponentRepo implements catalog.BundleComponentRepository
+// and catalog.BundleParentLookup (PR-1080).
 var _ catalog.BundleComponentRepository = (*BundleComponentRepo)(nil)
+var _ catalog.BundleParentLookup = (*BundleComponentRepo)(nil)
 
 // BundleComponentRepo implements catalog.BundleComponentRepository using PostgreSQL.
 type BundleComponentRepo struct {
@@ -137,6 +139,34 @@ func (r *BundleComponentRepo) CountByComponentID(ctx context.Context, componentP
 		return 0, fmt.Errorf("bundle_component_repo: count by component: %w", err)
 	}
 	return n, nil
+}
+
+// ListBundleIDsByComponentID returns distinct parent bundle product IDs that
+// include componentProductID (PR-1080 search fan-out). Ordered ascending.
+func (r *BundleComponentRepo) ListBundleIDsByComponentID(ctx context.Context, componentProductID string) ([]string, error) {
+	if componentProductID == "" {
+		return []string{}, nil
+	}
+	const q = `SELECT DISTINCT bundle_product_id FROM bundle_components
+		WHERE component_product_id = $1
+		ORDER BY bundle_product_id ASC`
+	rows, err := r.queryer().QueryContext(ctx, q, componentProductID)
+	if err != nil {
+		return nil, fmt.Errorf("bundle_component_repo: list bundle ids by component: %w", err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("bundle_component_repo: list bundle ids by component: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("bundle_component_repo: list bundle ids by component: rows: %w", err)
+	}
+	return out, nil
 }
 
 // Upsert inserts or updates quantity and required for the composite key.
