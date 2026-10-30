@@ -12,7 +12,10 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/routing"
 	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -182,6 +185,7 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 	atomicOut := filepath.Join(dir, "out-atomic.csv")
 	atomicFailOut := filepath.Join(dir, "out-atomic-fail.csv")
 	var afterOKRan bool
+	fatalOutcomeLog := &memLogger{}
 
 	tests := []struct {
 		name     string
@@ -229,6 +233,33 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				}
 			},
 			wantErr: "import completed with 1 row-level errors",
+		},
+		{
+			name: "import fatal error still reports outcome",
+			log:  fatalOutcomeLog,
+			opts: ioCommandOpts{
+				Kind:          ioImport,
+				Path:          inPath,
+				StartEvent:    "import.test.start",
+				CompleteEvent: "import.test.complete",
+				RowErrorEvent: "import.test.row_error",
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{
+						Fields: map[string]interface{}{"products": 2, "errors": 1},
+						Errors: []string{"row 3: skipped"},
+					}, errors.New("import: product import: reindex created products: queue down")
+				}
+			},
+			wantErr:  "reindex created products: queue down",
+			wantInfo: []string{"import.test.start", "import.test.complete"},
+			check: func(t *testing.T) {
+				t.Helper()
+				if len(fatalOutcomeLog.err) != 1 || fatalOutcomeLog.err[0] != "import.test.row_error" {
+					t.Fatalf("err events = %v, want [import.test.row_error]", fatalOutcomeLog.err)
+				}
+			},
 		},
 		{
 			name: "export atomic writes destination",
@@ -569,6 +600,54 @@ func TestRunIOCommand_ImportMissingFileDoesNotOpenDB(t *testing.T) {
 		t.Fatalf("err = %v, must not surface database failure for missing import file", err)
 	}
 }
+
+// TestRegisterImportProductsBusListeners pins that import:products registers
+// rewrite.Subscriber on its short-lived bus so EventProductCreated writes
+// url_rewrites (search is covered separately by WithReindex batch Trigger).
+func TestRegisterImportProductsBusListeners(t *testing.T) {
+	log := logger.New("error")
+	bus := event.NewBus(log)
+	repo := &importProductsRewriteRepo{}
+	registerImportProductsBusListeners(bus, repo, log)
+
+	if got := bus.Handlers(catalog.EventProductCreated); got != 1 {
+		t.Fatalf("EventProductCreated handlers = %d, want 1 (rewrite.Subscriber)", got)
+	}
+
+	err := bus.Publish(context.Background(), event.New(catalog.EventProductCreated, "test", catalog.ProductCreatedData{
+		ProductID: "prod-1",
+		Name:      "Widget",
+		Slug:      "widget",
+		Status:    catalog.StatusActive,
+	}))
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if len(repo.saved) != 1 {
+		t.Fatalf("rewrites saved = %d, want 1", len(repo.saved))
+	}
+	if got := repo.saved[0].Path(); got != "/widget" {
+		t.Fatalf("rewrite path = %q, want /widget", got)
+	}
+	if got := repo.saved[0].EntityID(); got != "prod-1" {
+		t.Fatalf("rewrite entity = %q, want prod-1", got)
+	}
+}
+
+type importProductsRewriteRepo struct {
+	saved []*routing.URLRewrite
+}
+
+func (r *importProductsRewriteRepo) FindByPath(context.Context, string) (*routing.URLRewrite, error) {
+	return nil, nil
+}
+
+func (r *importProductsRewriteRepo) Save(_ context.Context, rw *routing.URLRewrite) error {
+	r.saved = append(r.saved, rw)
+	return nil
+}
+
+func (r *importProductsRewriteRepo) Delete(context.Context, string) error { return nil }
 
 // Ensure memLogger implements logger.Logger.
 var _ logger.Logger = (*memLogger)(nil)

@@ -3,6 +3,7 @@ package importer_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
@@ -2034,6 +2035,27 @@ Draft,drafty,SKU-D,simple,draft
 	}
 	if bySlug["drafty"].Status != catalog.StatusDraft {
 		t.Fatalf("drafty event = %#v", bySlug["drafty"])
+	}
+}
+
+// TestImport_ReindexTriggerErrorPreservesResult pins that a post-import
+// ReindexService.Trigger failure returns the populated summary with the
+// fatal error (CLI runIOCommand logs completion/row errors from that result).
+func TestImport_ReindexTriggerErrorPreservesResult(t *testing.T) {
+	queueErr := errors.New("queue down")
+	queue := &stockImportFakeQueue{err: queueErr}
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil).
+		WithReindex(newTestReindexService(t, queue))
+
+	csv := "name,slug,sku\nWidget,widget,SKU-001\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if !errors.Is(err, queueErr) {
+		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
+	}
+	if result == nil || result.Products != 1 || result.Variants != 1 {
+		t.Fatalf("result = %+v, want Products=1 Variants=1 preserved with Trigger error", result)
 	}
 }
 

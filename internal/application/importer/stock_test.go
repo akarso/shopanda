@@ -547,9 +547,12 @@ func TestStockImport_TriggerErrorIsReturned(t *testing.T) {
 	imp := writingStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
 
 	csv := "sku,quantity\nSKU-001,10\n"
-	_, err := imp.Import(context.Background(), strings.NewReader(csv))
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if !errors.Is(err, queueErr) {
 		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
+	}
+	if result == nil || result.Updated != 1 {
+		t.Fatalf("result = %+v, want Updated=1 preserved with Trigger error", result)
 	}
 }
 
