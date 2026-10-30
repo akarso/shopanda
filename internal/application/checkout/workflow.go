@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -22,6 +27,7 @@ const (
 	EventStepCompleted     = "checkout.step.completed"
 	EventCheckoutFailed    = "checkout.failed"
 	EventCheckoutCompleted = "checkout.completed"
+	EventUnpaidFailed      = "checkout.unpaid_failed"
 )
 
 // StepStartedData is the event payload for step lifecycle events.
@@ -49,13 +55,33 @@ type CheckoutCompletedData struct {
 	OrderID string
 }
 
+// UnpaidFailedData is published after an unpaid checkout order is
+// marked failed so a later republish can finish store-credit restore.
+type UnpaidFailedData struct {
+	CartID  string
+	OrderID string
+}
+
+type unpaidOrderWriter interface {
+	FindByID(ctx context.Context, id string) (*order.Order, error)
+	FailIfPending(ctx context.Context, orderID string) (bool, error)
+}
+
+type storeCreditIssuer interface {
+	Restore(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error
+}
+
 // Workflow executes a sequence of Steps against a Context.
 type Workflow struct {
-	steps   []Step
-	bus     *event.Bus
-	log     logger.Logger
-	metrics metrics.Recorder
-	tracer  trace.Tracer
+	steps       []Step
+	bus         *event.Bus
+	log         logger.Logger
+	metrics     metrics.Recorder
+	tracer      trace.Tracer
+	orders      unpaidOrderWriter
+	assignments *assignmentapp.Flow
+	payments    assignmentapp.PaymentLookup
+	credits     storeCreditIssuer
 }
 
 // NewWorkflow creates a Workflow with the given steps.
@@ -98,6 +124,29 @@ func (w *Workflow) WithMetrics(m metrics.Recorder) *Workflow {
 	if m != nil {
 		w.metrics = m
 	}
+	return w
+}
+
+// WithUnpaidOrderCompensation fails a still-pending order (WHERE status
+// is pending) and revokes its current assignments when checkout fails
+// after create_order and no charge has been accepted. A completed
+// payment and an accepted pending payment are left for the webhook.
+// Payable 0, a decline, and a provider error before accept still
+// compensate. Store credit on a failed unpaid order is restored once
+// with an order-id key, including when the order is already failed.
+func (w *Workflow) WithUnpaidOrderCompensation(
+	orders unpaidOrderWriter,
+	assignments *assignmentapp.Flow,
+	payments assignmentapp.PaymentLookup,
+	credits storeCreditIssuer,
+) *Workflow {
+	if w == nil {
+		return nil
+	}
+	w.orders = orders
+	w.assignments = assignments
+	w.payments = payments
+	w.credits = credits
 	return w
 }
 
@@ -151,6 +200,14 @@ func (w *Workflow) publishEvent(ctx context.Context, name, source string, data i
 // Execute runs every step in sequence. It stops on the first error
 // and emits lifecycle events for observability.
 func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
+	defer func() {
+		if err == nil || cctx == nil {
+			return
+		}
+		if compErr := w.compensateUnpaidOrder(ctx, cctx); compErr != nil {
+			err = fmt.Errorf("%w (compensate: %v)", err, compErr)
+		}
+	}()
 	// succeededEventFailed is set only when every step succeeded and the
 	// sole remaining error is the final EventCheckoutCompleted publish —
 	// distinct from a real checkout failure for metrics purposes (see
@@ -332,6 +389,118 @@ func spanSafeError(err error) error {
 		return fmt.Errorf("%s", appErr.Code)
 	}
 	return errors.New("error")
+}
+
+func (w *Workflow) compensateUnpaidOrder(ctx context.Context, cctx *Context) error {
+	if w == nil || w.orders == nil || cctx == nil {
+		return nil
+	}
+	raw, ok := cctx.GetMeta("created_order_id")
+	if !ok {
+		return nil
+	}
+	orderID, _ := raw.(string)
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return nil
+	}
+	skip, err := w.skipUnpaidCompensation(ctx, cctx, orderID)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
+	defer persistCancel()
+	if _, err := w.orders.FailIfPending(persistCtx, orderID); err != nil {
+		return fmt.Errorf("checkout: compensate persist order: %w", err)
+	}
+	o, err := w.orders.FindByID(persistCtx, orderID)
+	if err != nil {
+		return fmt.Errorf("checkout: compensate lookup order: %w", err)
+	}
+	if o == nil {
+		return nil
+	}
+	cctx.Order = o
+	if o.Status() != order.OrderStatusFailed {
+		return nil
+	}
+	if pubErr := w.publishEvent(persistCtx, EventUnpaidFailed, "checkout.workflow", UnpaidFailedData{
+		CartID:  cctx.CartID,
+		OrderID: orderID,
+	}); pubErr != nil {
+		return pubErr
+	}
+	creditErr := w.refundCompensatedCredit(persistCtx, cctx, o)
+	var revokeErr error
+	if w.assignments != nil {
+		revokeErr = w.assignments.RevokeForOrder(persistCtx, orderID)
+	}
+	if creditErr != nil && revokeErr != nil {
+		return fmt.Errorf("checkout: compensate store credit: %w (revoke: %v)", creditErr, revokeErr)
+	}
+	if creditErr != nil {
+		return fmt.Errorf("checkout: compensate store credit: %w", creditErr)
+	}
+	return revokeErr
+}
+
+func (w *Workflow) refundCompensatedCredit(ctx context.Context, cctx *Context, o *order.Order) error {
+	if w == nil || w.credits == nil || o == nil {
+		return nil
+	}
+	applied := o.StoreCreditApplied
+	if applied.Amount() <= 0 {
+		return nil
+	}
+	customerID := strings.TrimSpace(cctx.CustomerID)
+	if customerID == "" {
+		customerID = strings.TrimSpace(o.CustomerID)
+	}
+	if customerID == "" {
+		return fmt.Errorf("checkout: compensate store credit: customer id is empty")
+	}
+	return issueFailedPaymentCredit(ctx, w.credits, customerID, o.ID, applied)
+}
+
+func (w *Workflow) skipUnpaidCompensation(ctx context.Context, cctx *Context, orderID string) (bool, error) {
+	if py := paymentFromContext(cctx); paymentBlocksCompensation(py) {
+		return true, nil
+	}
+	if w.payments == nil {
+		return false, nil
+	}
+	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
+	defer persistCancel()
+	py, err := w.payments.FindByOrderID(persistCtx, orderID)
+	if err != nil {
+		return false, fmt.Errorf("checkout: compensate lookup payment: %w", err)
+	}
+	return paymentBlocksCompensation(py), nil
+}
+
+func paymentFromContext(cctx *Context) *payment.Payment {
+	if cctx == nil {
+		return nil
+	}
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		return nil
+	}
+	py, _ := raw.(*payment.Payment)
+	return py
+}
+
+func paymentBlocksCompensation(py *payment.Payment) bool {
+	if py == nil {
+		return false
+	}
+	if py.Status() == payment.StatusCompleted {
+		return true
+	}
+	return py.Status() == payment.StatusPending && strings.TrimSpace(py.ProviderRef) != ""
 }
 
 // Steps returns the number of registered steps.

@@ -54,6 +54,9 @@ func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant
 		return nil, nil
 	}
 	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid variant id"); mapped != nil {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("variant_repo: find by id: %w", err)
 	}
 	return v, nil
@@ -81,6 +84,46 @@ func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Varia
 		return nil, fmt.Errorf("variant_repo: find by sku: %w", err)
 	}
 	return v, nil
+}
+
+// FindByIDs returns variants keyed by ID. Missing ids are omitted.
+func (r *VariantRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*catalog.Variant, error) {
+	if len(ids) == 0 {
+		return map[string]*catalog.Variant{}, nil
+	}
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
+		FROM variants WHERE id = ANY($1)`
+
+	var querier interface {
+		QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+	}
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+
+	rows, err := querier.QueryContext(ctx, q, ids)
+	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid variant id"); mapped != nil {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("variant_repo: find by ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*catalog.Variant, len(ids))
+	for rows.Next() {
+		v, err := r.scanVariant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("variant_repo: find by ids: %w", err)
+		}
+		out[v.ID] = v
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("variant_repo: find by ids: %w", err)
+	}
+	return out, nil
 }
 
 // FindBySKUs returns variants keyed by SKU for the given SKUs.

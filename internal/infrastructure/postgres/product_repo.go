@@ -18,10 +18,12 @@ const maxListLimit = 100
 
 // productSelectColumns is the column list for product scans (keep in sync with scanProduct).
 const productSelectColumns = `id, name, slug, description, status, type, pricing_mode, stock_mode, explode_order_lines,
+		requires_linked_parent,
 		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
 		attributes, created_at, updated_at`
 
 const productSelectColumnsPrefixed = `p.id, p.name, p.slug, p.description, p.status, p.type, p.pricing_mode, p.stock_mode, p.explode_order_lines,
+		p.requires_linked_parent,
 		p.visibility_catalog_mode, p.visibility_search_mode, p.visibility_individually_mode, p.visibility_purchasable_mode,
 		p.attributes, p.created_at, p.updated_at`
 
@@ -53,29 +55,50 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 // on status, so draft and archived products lock the same way as active ones.
 // Returns NotFound when no row exists.
 func (r *ProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
-	typ, _, _, _, err := r.LockTypeAndModes(ctx, id)
+	typ, _, _, _, _, err := r.LockTypeAndModes(ctx, id)
 	return typ, err
 }
 
 // LockTypeAndModes locks the product row and returns the type, pricing_mode,
-// stock_mode, and explode_order_lines stored on that row. Type-change updates
-// must read modes and the explode flag here before applying an omitted-field
-// default, so a stale FindByID cannot keep or drop dynamic or the flag.
-func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+// stock_mode, explode_order_lines, and status stored on that row. Type-change
+// updates must read modes, the explode flag, and status here before applying
+// an omitted-field default, so a stale FindByID cannot keep or drop dynamic,
+// the flag, or Active (soft-write / omitted status).
+func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, catalog.Status, error) {
 	if r.tx == nil {
-		return "", "", "", false, fmt.Errorf("product_repo: lock for update: transaction required")
+		return "", "", "", false, "", fmt.Errorf("product_repo: lock for update: transaction required")
 	}
-	const q = `SELECT type, pricing_mode, stock_mode, explode_order_lines FROM products WHERE id = $1 FOR UPDATE`
-	var rawType, rawPricing, rawStock string
+	const q = `SELECT type, pricing_mode, stock_mode, explode_order_lines, status FROM products WHERE id = $1 FOR UPDATE`
+	var rawType, rawPricing, rawStock, rawStatus string
 	var explode bool
-	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawPricing, &rawStock, &explode)
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawPricing, &rawStock, &explode, &rawStatus)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", false, apperror.NotFound("product not found")
+		return "", "", "", false, "", apperror.NotFound("product not found")
 	}
 	if err != nil {
-		return "", "", "", false, fmt.Errorf("product_repo: lock for update: %w", err)
+		return "", "", "", false, "", fmt.Errorf("product_repo: lock for update: %w", err)
 	}
-	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), explode, nil
+	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), explode, catalog.Status(rawStatus), nil
+}
+
+// RequiresLinkedParentForUpdate reads requires_linked_parent on the current
+// transaction. The repo must be bound via WithTx. Product admin calls it
+// after LockTypeAndModes when an update omits the flag, so the write uses
+// the locked row instead of the earlier FindByID snapshot.
+func (r *ProductRepo) RequiresLinkedParentForUpdate(ctx context.Context, id string) (bool, error) {
+	if r.tx == nil {
+		return false, fmt.Errorf("product_repo: requires_linked_parent lock read: transaction required")
+	}
+	const q = `SELECT requires_linked_parent FROM products WHERE id = $1 FOR UPDATE`
+	var flag bool
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&flag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, apperror.NotFound("product not found")
+	}
+	if err != nil {
+		return false, fmt.Errorf("product_repo: requires_linked_parent lock read: %w", err)
+	}
+	return flag, nil
 }
 
 func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter) bool {
@@ -273,9 +296,10 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 
 	const q = `INSERT INTO products (
 		id, name, slug, description, status, type, pricing_mode, stock_mode, explode_order_lines,
+		requires_linked_parent,
 		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
 		attributes, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -287,6 +311,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 	}
 	_, err = execer.ExecContext(ctx, q,
 		p.ID, p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode), string(p.StockMode), p.ExplodeOrderLines,
+		p.RequiresLinkedParent,
 		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
 		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, p.CreatedAt, p.UpdatedAt,
@@ -327,10 +352,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	const q = `UPDATE products
 		SET name = $1, slug = $2, description = $3, status = $4, type = $5, pricing_mode = $6, stock_mode = $7,
 			explode_order_lines = $8,
-			visibility_catalog_mode = $9, visibility_search_mode = $10,
-			visibility_individually_mode = $11, visibility_purchasable_mode = $12,
-			attributes = $13, updated_at = $14
-		WHERE id = $15`
+			requires_linked_parent = $9,
+			visibility_catalog_mode = $10, visibility_search_mode = $11,
+			visibility_individually_mode = $12, visibility_purchasable_mode = $13,
+			attributes = $14, updated_at = $15
+		WHERE id = $16`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -342,6 +368,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	}
 	result, err := execer.ExecContext(ctx, q,
 		p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode), string(p.StockMode), p.ExplodeOrderLines,
+		p.RequiresLinkedParent,
 		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
 		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, updatedAt, p.ID,
@@ -406,12 +433,14 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	var pricingMode string
 	var stockMode string
 	var explodeOrderLines bool
+	var requiresLinkedParent bool
 	var catalogMode, searchMode, individuallyMode, purchasableMode string
 	var attrsJSON []byte
 
 	err := s.Scan(
 		&p.ID, &p.Name, &p.Slug, &p.Description,
 		&status, &productType, &pricingMode, &stockMode, &explodeOrderLines,
+		&requiresLinkedParent,
 		&catalogMode, &searchMode, &individuallyMode, &purchasableMode,
 		&attrsJSON, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -424,6 +453,7 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	p.PricingMode = catalog.PricingMode(pricingMode)
 	p.StockMode = catalog.StockMode(stockMode)
 	p.ExplodeOrderLines = explodeOrderLines
+	p.RequiresLinkedParent = requiresLinkedParent
 	p.VisibilityModes = catalog.VisibilityAxes{
 		Catalog:      catalog.VisibilityMode(catalogMode),
 		Search:       catalog.VisibilityMode(searchMode),

@@ -126,6 +126,18 @@ func run() error {
 			return runImportGroupedMembers(cfg, log)
 		case "export:grouped-members":
 			return runExportGroupedMembers(cfg, log)
+		case "import:linked-eligible-parents":
+			return runImportLinkedEligibleParents(cfg, log)
+		case "export:linked-eligible-parents":
+			return runExportLinkedEligibleParents(cfg, log)
+		case "import:linked-eligible-categories":
+			return runImportLinkedEligibleCategories(cfg, log)
+		case "export:linked-eligible-categories":
+			return runExportLinkedEligibleCategories(cfg, log)
+		case "import:downloadable-files":
+			return runImportDownloadableFiles(cfg, log)
+		case "export:downloadable-files":
+			return runExportDownloadableFiles(cfg, log)
 		case "import:stock":
 			return runImportStock(cfg, log)
 		case "export:stock":
@@ -724,6 +736,12 @@ Commands:
   export:bundle-components <f>  Export bundle component links to a CSV file
   import:grouped-members <f>  Import grouped member links from a CSV file
   export:grouped-members <f>  Export grouped member links to a CSV file
+  import:linked-eligible-parents <f>  Import linked eligibility parent allowlist CSV
+  export:linked-eligible-parents <f>  Export linked eligibility parent allowlist CSV
+  import:linked-eligible-categories <f>  Import linked eligibility category rules CSV
+  export:linked-eligible-categories <f>  Export linked eligibility category rules CSV
+  import:downloadable-files <f>  Import downloadable file attachment metadata CSV
+  export:downloadable-files <f>  Export downloadable file attachment metadata CSV
   import:stock <f>     Import stock from a CSV file
   export:stock <f>     Export stock to a CSV file
   import:customers <f> Import customers from a CSV file
@@ -896,6 +914,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	// PR-1079: resolve visibility axes at index time (same as serve wiring).
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	searchProductSource.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	fpcObs := cacheApp.NewFPCObserver(metricsRecorder)
 	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
 		WithObserver(fpcObs).
@@ -1018,14 +1042,24 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// FPCInvalidationSubscriber likewise must live on this bus (PR-1046):
 	// stock restores would otherwise leave tagged full-page entries stale
 	// until TTL while only serve's bus ran DeleteByTag.
-	cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+	bundleParentsForWorker, bundleParentsErr := postgres.NewBundleComponentRepo(conn)
+	if bundleParentsErr != nil {
+		log.Warn("worker.bundle_parents_unavailable", map[string]interface{}{"error": bundleParentsErr.Error()})
+	}
+	fpcSub := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
 		WithObserver(fpcObs).
-		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce).
-		Register(bus)
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
+	if bundleParentsForWorker != nil {
+		fpcSub = fpcSub.WithBundleParents(bundleParentsForWorker) // PR-1080: leaf → parent kit PDP purge
+	}
+	fpcSub.Register(bus)
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {
 		stockSyncSvc.SetReindexService(reindexService)
+		if bundleParentsForWorker != nil {
+			stockSyncSvc.SetBundleParents(bundleParentsForWorker) // PR-1080: bulk ERP stock → parent kit reindex
+		}
 		if err := registerWorkerIndexUpdateSubscriber(conn, cfg, log, pluginApp, bus, reindexService); err != nil {
 			log.Warn("worker.index_update_subscriber_unavailable", map[string]interface{}{"error": err.Error()})
 		}
@@ -1127,6 +1161,12 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("search product source: %w", err)
 	}
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("visibility facts: %w", err)
+	}
+	products.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	svc, err = searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		conn.Close()
@@ -1153,7 +1193,13 @@ func registerWorkerIndexUpdateSubscriber(conn *sql.DB, cfg *config.Config, log l
 	if err != nil {
 		return fmt.Errorf("category lock: %w", err)
 	}
-	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).Register(bus)
+	bundleParents, err := postgres.NewBundleComponentRepo(conn)
+	if err != nil {
+		return fmt.Errorf("bundle component repo: %w", err)
+	}
+	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).
+		WithBundleParents(bundleParents). // PR-1080: leaf product/stock/price/variant → parent bundle reindex
+		Register(bus)
 	return nil
 }
 
@@ -1171,6 +1217,11 @@ func newWorkerReindexService(conn *sql.DB, cfg *config.Config, log logger.Logger
 	if err != nil {
 		return nil, fmt.Errorf("search product source: %w", err)
 	}
+	searchFactsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("visibility facts: %w", err)
+	}
+	products.WithVisibility(searchFactsRepo, catalogVisibilityOptions(cfg))
 	svc, err := searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("reindex service: %w", err)

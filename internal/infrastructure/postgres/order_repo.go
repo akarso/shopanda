@@ -19,8 +19,16 @@ const orderSelectColumns = `id, customer_id, contact_email, status, currency,
 	total_amount, total_currency, destination_country, tax_amount, store_credit_amount, created_at, updated_at`
 
 // OrderRepo implements order.OrderRepository using PostgreSQL.
+// WithTx is adapter-only so checkout can save the order and write
+// ProductAssignment rows on the same transaction (PR-1070).
 type OrderRepo struct {
 	db *sql.DB
+	tx *sql.Tx
+}
+
+type orderExecer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 }
 
 // NewOrderRepo returns a new OrderRepo backed by db.
@@ -29,6 +37,12 @@ func NewOrderRepo(db *sql.DB) (*OrderRepo, error) {
 		return nil, fmt.Errorf("NewOrderRepo: nil *sql.DB")
 	}
 	return &OrderRepo{db: db}, nil
+}
+
+// WithTx returns a repo bound to the given transaction.
+// This method is postgres-only; callers type-assert the concrete adapter.
+func (r *OrderRepo) WithTx(tx *sql.Tx) order.OrderRepository {
+	return &OrderRepo{db: r.db, tx: tx}
 }
 
 // orderScanner abstracts *sql.Row and *sql.Rows for shared hydration logic.
@@ -95,6 +109,9 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 		return nil, nil
 	}
 	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid order id"); mapped != nil {
+			return nil, mapped
+		}
 		return nil, fmt.Errorf("order_repo: find by id: %w", err)
 	}
 	items, err := r.loadItems(ctx, o.ID)
@@ -105,6 +122,64 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 		return nil, fmt.Errorf("order_repo: set items: %w", err)
 	}
 	return o, nil
+}
+
+// FindByIDs returns orders with their items keyed by ID. Missing ids are
+// omitted. An empty ids slice returns an empty map and does not query.
+func (r *OrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return map[string]*order.Order{}, nil
+	}
+	const q = `SELECT ` + orderSelectColumns + `
+		FROM orders WHERE id = ANY($1)`
+	rows, err := r.db.QueryContext(ctx, q, unique)
+	if err != nil {
+		if mapped := invalidUUIDError(err, "invalid order id"); mapped != nil {
+			return nil, mapped
+		}
+		return nil, fmt.Errorf("order_repo: find by ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*order.Order, len(unique))
+	loaded := make([]string, 0, len(unique))
+	for rows.Next() {
+		o, err := r.hydrateOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: find by ids scan: %w", err)
+		}
+		out[o.ID] = o
+		loaded = append(loaded, o.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: find by ids rows: %w", err)
+	}
+	if len(loaded) == 0 {
+		return out, nil
+	}
+	itemMap, err := r.loadItemsBatch(ctx, loaded)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range loaded {
+		if err := out[id].SetItemsFromDB(itemMap[id]); err != nil {
+			return nil, fmt.Errorf("order_repo: set items: %w", err)
+		}
+	}
+	return out, nil
 }
 
 // FindByCustomerID returns all orders for a customer, newest first.
@@ -280,13 +355,25 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	if o == nil {
 		return fmt.Errorf("order_repo: save: order must not be nil")
 	}
+	if r.tx != nil {
+		return r.saveOn(ctx, r.tx, o)
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("order_repo: begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	if err := r.saveOn(ctx, tx, o); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("order_repo: commit: %w", err)
+	}
+	return nil
+}
 
+func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order) error {
 	const insertOrder = `INSERT INTO orders (id, customer_id, contact_email, status, currency,
 		total_amount, total_currency, destination_country, tax_amount, store_credit_amount, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
@@ -298,7 +385,7 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	if strings.TrimSpace(o.DestinationCountry) != "" {
 		taxAmount = o.TaxAmount.Amount()
 	}
-	_, err = tx.ExecContext(ctx, insertOrder,
+	_, err := exec.ExecContext(ctx, insertOrder,
 		o.ID, o.CustomerID, strings.TrimSpace(o.ContactEmail), string(o.Status()), o.Currency,
 		o.TotalAmount.Amount(), o.TotalAmount.Currency(),
 		destinationCountry, taxAmount, o.StoreCreditApplied.Amount(),
@@ -309,34 +396,50 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	}
 
 	items := o.Items()
-	if len(items) > 0 {
-		const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-		stmt, err := tx.PrepareContext(ctx, insertItem)
-		if err != nil {
-			return fmt.Errorf("order_repo: prepare item insert: %w", err)
-		}
-		defer stmt.Close()
-		for i := range items {
-			item := &items[i]
-			_, err = stmt.ExecContext(ctx,
-				o.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
-				item.UnitPrice.Amount(), item.UnitPrice.Currency(), item.Restockable,
-				item.CreatedAt,
-			)
-			if err != nil {
-				return fmt.Errorf("order_repo: insert item %q: %w", item.VariantID, err)
-			}
-		}
+	if len(items) == 0 {
+		return nil
 	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("order_repo: commit: %w", err)
+	const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	stmt, err := exec.PrepareContext(ctx, insertItem)
+	if err != nil {
+		return fmt.Errorf("order_repo: prepare item insert: %w", err)
+	}
+	defer stmt.Close()
+	for i := range items {
+		item := &items[i]
+		_, err = stmt.ExecContext(ctx,
+			o.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
+			item.UnitPrice.Amount(), item.UnitPrice.Currency(), item.Restockable,
+			item.CreatedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("order_repo: insert item %q: %w", item.VariantID, err)
+		}
 	}
 	return nil
 }
 
 // UpdateStatus updates only the status and updated_at of an existing order.
+// FailIfPending sets status to failed only when the stored row is still
+// pending. Returns true when this call made the transition.
+func (r *OrderRepo) FailIfPending(ctx context.Context, orderID string) (bool, error) {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return false, fmt.Errorf("order_repo: fail if pending: order id must not be empty")
+	}
+	const q = `UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4`
+	res, err := r.db.ExecContext(ctx, q, string(order.OrderStatusFailed), time.Now().UTC(), orderID, string(order.OrderStatusPending))
+	if err != nil {
+		return false, fmt.Errorf("order_repo: fail if pending: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("order_repo: fail if pending rows affected: %w", err)
+	}
+	return n == 1, nil
+}
+
 func (r *OrderRepo) UpdateStatus(ctx context.Context, o *order.Order) error {
 	if o == nil {
 		return fmt.Errorf("order_repo: update status: order must not be nil")

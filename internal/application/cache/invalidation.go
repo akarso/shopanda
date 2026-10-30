@@ -18,6 +18,9 @@ import (
 type InvalidationSubscriber struct {
 	cache cache.Cache
 	log   Logger
+	// bundleParents, when set, also invalidates parent kit product-cache
+	// entries when a leaf product/price changes (PR-1080).
+	bundleParents catalog.BundleParentLookup
 }
 
 // NewInvalidationSubscriber creates an InvalidationSubscriber.
@@ -29,6 +32,14 @@ func NewInvalidationSubscriber(c cache.Cache, log Logger) *InvalidationSubscribe
 		panic("cache.NewInvalidationSubscriber: nil logger")
 	}
 	return &InvalidationSubscriber{cache: c, log: log}
+}
+
+// WithBundleParents enables product-cache fan-out to parent bundles that
+// include the changed leaf (PR-1080). Nil clears the lookup. Returns s
+// for chaining at wire sites.
+func (s *InvalidationSubscriber) WithBundleParents(lookup catalog.BundleParentLookup) *InvalidationSubscriber {
+	s.bundleParents = lookup
+	return s
 }
 
 // Register wires event handlers on the given bus.
@@ -52,26 +63,53 @@ func ProductKeyPrefix(productID string) string {
 	return "product:" + productID + ":"
 }
 
-// HandleProductUpdated invalidates cache entries for the updated product.
+// HandleProductUpdated invalidates cache entries for the updated product
+// and parent bundles that include it (PR-1080).
 func (s *InvalidationSubscriber) HandleProductUpdated(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(catalog.ProductUpdatedData)
 	if !ok {
 		return fmt.Errorf("cache.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.invalidateProduct(ctx, data.ProductID)
+	return s.invalidateProductWithBundleParents(ctx, data.ProductID)
 }
 
 // HandlePriceUpserted invalidates cache entries for the product whose
-// price changed.
+// price changed and parent bundles that include it (PR-1080).
 func (s *InvalidationSubscriber) HandlePriceUpserted(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(pricing.PriceUpsertedData)
 	if !ok {
 		return fmt.Errorf("cache.invalidation: unexpected event data type %T", evt.Data)
 	}
-	return s.invalidateProduct(ctx, data.ProductID)
+	return s.invalidateProductWithBundleParents(ctx, data.ProductID)
+}
+
+func (s *InvalidationSubscriber) invalidateProductWithBundleParents(ctx context.Context, productID string) error {
+	err := s.invalidateProduct(ctx, productID)
+	if s.bundleParents == nil || productID == "" {
+		return err
+	}
+	parents, lookupErr := s.bundleParents.ListBundleIDsByComponentID(ctx, productID)
+	if lookupErr != nil {
+		s.log.Error("cache.invalidation.bundle_parents_lookup_failed", lookupErr, map[string]interface{}{
+			"product_id": productID,
+		})
+		return err
+	}
+	for _, parentID := range parents {
+		if parentID == "" || parentID == productID {
+			continue
+		}
+		if parentErr := s.invalidateProduct(ctx, parentID); parentErr != nil && err == nil {
+			err = parentErr
+		}
+	}
+	return err
 }
 
 func (s *InvalidationSubscriber) invalidateProduct(ctx context.Context, productID string) error {
+	if productID == "" {
+		return nil
+	}
 	prefix := ProductKeyPrefix(productID)
 	if err := s.cache.DeleteByPrefix(ctx, prefix); err != nil {
 		s.log.Error("cache.invalidation.error", err, map[string]interface{}{

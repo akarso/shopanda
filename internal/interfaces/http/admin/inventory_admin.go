@@ -144,7 +144,7 @@ func (h *InventoryAdminHandler) adjustStock(ctx context.Context, variant *catalo
 	if !ok {
 		return 0, fmt.Errorf("inventory admin: product repository does not support row locks")
 	}
-	productType, _, stockMode, _, err := locker.LockTypeAndModes(ctx, variant.ProductID)
+	productType, _, stockMode, _, _, err := locker.LockTypeAndModes(ctx, variant.ProductID)
 	if err != nil {
 		return 0, err
 	}

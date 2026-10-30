@@ -20,3 +20,24 @@ type BundleComponentRepository interface {
 	// Remove deletes one bundle-component link. NotFound when the row did not exist.
 	Remove(ctx context.Context, bundleProductID, componentProductID string) error
 }
+
+// BundleParentLookup lists parent bundle product IDs that include a given
+// component leaf. Narrower than BundleComponentRepository — used by search
+// on-save indexing, FPC/product-cache invalidation, and bulk stock reindex
+// (PR-1080) when a leaf's status, type, stock, price, or variant set
+// changes. Postgres BundleComponentRepo implements this; it is
+// intentionally not on BundleComponentRepository so every test stub does
+// not need a no-op method.
+type BundleParentLookup interface {
+	// ListBundleIDsByComponentID returns distinct parent bundle product IDs
+	// that reference componentProductID, ordered ascending. Always returns
+	// a non-nil slice (possibly empty). Empty componentProductID returns
+	// an empty slice without error.
+	ListBundleIDsByComponentID(ctx context.Context, componentProductID string) ([]string, error)
+
+	// ListBundleIDsByComponentIDs returns distinct parent bundle product IDs
+	// for each requested component, keyed by component product ID. Missing
+	// components are omitted. Always returns a non-nil map. Empty or
+	// all-blank input returns an empty map without error.
+	ListBundleIDsByComponentIDs(ctx context.Context, componentProductIDs []string) (map[string][]string, error)
+}

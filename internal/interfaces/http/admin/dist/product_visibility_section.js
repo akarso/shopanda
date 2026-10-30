@@ -53,7 +53,9 @@
         no_stock: "no variant in stock",
         no_price: "no price set",
         no_store_assignment: "no store assignment",
-        no_category: "no category assignment"
+        no_category: "no category assignment",
+        requires_linked_parent: "requires a linked parent",
+        no_downloadable_file: "downloadable product has no attached file"
     };
 
     function failureLabel(code) {
@@ -148,6 +150,8 @@
                 inputFailureCodes: inputFailureCodes,
                 autoBasis: deriveAutoBasis(status, inputFailureCodes),
                 failureCodes: deriveFailureCodes(status, inputFailureCodes),
+                requiresLinkedParent: !!payload.requires_linked_parent,
+                missingDownloadableFile: !!payload.missing_downloadable_file,
                 axes: axes
             };
         }
@@ -187,8 +191,11 @@
     // Computed client-side on every mode change (and on status change — see
     // bindStatusChange) so the badge reflects the candidate mode/status pair,
     // not whatever happened to be persisted when the page loaded.
-    function effectiveForMode(mode, autoBasis, status) {
+    function effectiveForMode(mode, autoBasis, status, axisKey, requiresLinkedParent, missingDownloadableFile) {
         if (status !== "active") {
+            return false;
+        }
+        if (axisKey === "purchasable" && (requiresLinkedParent || missingDownloadableFile)) {
             return false;
         }
         if (mode === "auto") {
@@ -206,14 +213,16 @@
     // badgeText describes the storefront-facing outcome for mode given state.
     // No per-badge "Would be ..." prefix; see renderSectionCaptionsHTML for
     // the section-level "Enforcement off — preview" caption.
-    function badgeText(mode, state) {
+    function badgeText(mode, state, axisKey) {
         if (!state) {
             return capitalize(mode) + " — computed after save";
         }
         if (isError(state)) {
             return ERROR_BADGE_TEXT;
         }
-        var effective = effectiveForMode(mode, state.autoBasis, state.status);
+        var requires = !!(state.requiresLinkedParent && axisKey === "purchasable");
+        var missingFile = !!(state.missingDownloadableFile && axisKey === "purchasable");
+        var effective = effectiveForMode(mode, state.autoBasis, state.status, axisKey, state.requiresLinkedParent, state.missingDownloadableFile);
         if (mode === "auto") {
             return "Auto — " + (effective ? "visible" : "hidden");
         }
@@ -221,20 +230,54 @@
             return "Forced hidden";
         }
         if (mode === "visible") {
-            return effective ? "Forced visible" : "Forced visible — not live (product inactive)";
+            if (effective) {
+                return "Forced visible";
+            }
+            if (requires || missingFile) {
+                var reasons = [];
+                if (requires) {
+                    reasons.push("requires linked parent");
+                }
+                if (missingFile) {
+                    reasons.push("no downloadable file");
+                }
+                return "Forced visible — not purchasable (" + reasons.join("; ") + ")";
+            }
+            return "Forced visible — not live (product inactive)";
         }
         return capitalize(mode);
     }
 
-    // "why hidden" only applies to a live axis that is auto and currently
-    // failing AutoBasis; forced axes, a pending/create state, and an error
-    // state have nothing to explain.
-    function showFailures(mode, state) {
+    // "why hidden" applies to a live auto axis failing AutoBasis, and to
+    // the purchasable axis when RequiresLinkedParent is set (empty admin
+    // assignment context).
+    function showFailures(mode, state, axisKey) {
+        if (isLive(state) && axisKey === "purchasable" && (state.requiresLinkedParent || state.missingDownloadableFile)) {
+            return true;
+        }
         return isLive(state) && mode === "auto" && !state.autoBasis;
     }
 
-    function failureCodesFor(state) {
-        return (isLive(state) && state.failureCodes) || [];
+    function failureCodesFor(state, axisKey) {
+        var codes = (isLive(state) && state.failureCodes) || [];
+        if (axisKey !== "purchasable" || !isLive(state)) {
+            return codes;
+        }
+        var out = codes.slice();
+        function ensure(code, flag) {
+            if (!flag) {
+                return;
+            }
+            for (var i = 0; i < out.length; i++) {
+                if (out[i] === code) {
+                    return;
+                }
+            }
+            out.push(code);
+        }
+        ensure("requires_linked_parent", state.requiresLinkedParent);
+        ensure("no_downloadable_file", state.missingDownloadableFile);
+        return out;
     }
 
     function escapeHTML(str) {
@@ -274,14 +317,14 @@
 
     // state: result of stateFromVisibilityPayload (live / error / null).
     function renderRowHTML(axis, mode, state) {
-        var visible = showFailures(mode, state);
+        var visible = showFailures(mode, state, axis.key);
         return '<div class="product-visibility-row" data-visibility-axis="' + axis.key + '">' +
             '<label for="' + selectID(axis.key) + '">' + escapeHTML(axis.label) + "</label>" +
             '<select id="' + selectID(axis.key) + '" name="visibility_mode_' + axis.key + '" data-visibility-mode="' + axis.key + '">' +
             renderOptionsHTML(mode) +
             "</select>" +
-            '<span id="' + badgeID(axis.key) + '" class="product-visibility-badge">' + escapeHTML(badgeText(mode, state)) + "</span>" +
-            renderFailuresHTML(axis.key, failureCodesFor(state), visible) +
+            '<span id="' + badgeID(axis.key) + '" class="product-visibility-badge">' + escapeHTML(badgeText(mode, state, axis.key)) + "</span>" +
+            renderFailuresHTML(axis.key, failureCodesFor(state, axis.key), visible) +
             "</div>";
     }
 
@@ -332,12 +375,12 @@
     function updateRowFromMode(doc, axis, mode, state) {
         var badge = doc.getElementById(badgeID(axis.key));
         if (badge) {
-            badge.textContent = badgeText(mode, state);
+            badge.textContent = badgeText(mode, state, axis.key);
         }
         var list = doc.getElementById(failuresID(axis.key));
         if (list) {
-            list.style.display = showFailures(mode, state) ? "" : "none";
-            list.innerHTML = renderFailureItemsHTML(failureCodesFor(state));
+            list.style.display = showFailures(mode, state, axis.key) ? "" : "none";
+            list.innerHTML = renderFailureItemsHTML(failureCodesFor(state, axis.key));
         }
     }
 
@@ -361,10 +404,23 @@
         }
     }
 
+    // applySavedVisibilityFacts copies purchasable-gate flags from a GET
+    // "visibility" payload (or equivalent facts) onto live state. Used after
+    // product save so missing_downloadable_file / requires_linked_parent match
+    // the persisted row without a full page reload. No-ops for non-live state.
+    function applySavedVisibilityFacts(state, visibilityPayload) {
+        if (!isLive(state) || !visibilityPayload) {
+            return;
+        }
+        state.requiresLinkedParent = !!visibilityPayload.requires_linked_parent;
+        state.missingDownloadableFile = !!visibilityPayload.missing_downloadable_file;
+    }
+
     // refreshLivePreview recomputes autoBasis/failureCodes from fresh
-    // inputFailureCodes and the form's current status (when present), then
-    // re-renders every axis badge/failure list without changing mode selects.
-    // Only meaningful for live state — pending/create and error states no-op.
+    // inputFailureCodes and the form's current status / requires_linked_parent
+    // (when present), then re-renders every axis badge/failure list without
+    // changing mode selects. Only meaningful for live state — pending/create
+    // and error states no-op.
     function refreshLivePreview(doc, form, state, inputFailureCodes) {
         if (!doc || !isLive(state)) {
             return;
@@ -372,6 +428,9 @@
         var status = state.status;
         if (form && form.elements && form.elements.status) {
             status = String(form.elements.status.value || "");
+        }
+        if (form && form.elements && form.elements.requires_linked_parent) {
+            state.requiresLinkedParent = !!form.elements.requires_linked_parent.checked;
         }
         state.inputFailureCodes = (inputFailureCodes || []).slice();
         state.status = status;
@@ -404,6 +463,23 @@
         });
     }
 
+    // bindRequiresLinkedParentChange mirrors bindStatusChange for the core
+    // "requires_linked_parent" checkbox so the purchasable badge previews the
+    // selected (possibly unsaved) gate without a page reload.
+    function bindRequiresLinkedParentChange(doc, form, state) {
+        if (!doc || !form || !form.elements || !isLive(state)) {
+            return;
+        }
+        var el = form.elements.requires_linked_parent;
+        if (!el || el.getAttribute("data-visibility-requires-linked-bound")) {
+            return;
+        }
+        el.setAttribute("data-visibility-requires-linked-bound", "1");
+        el.addEventListener("change", function () {
+            refreshLivePreview(doc, form, state, state.inputFailureCodes);
+        });
+    }
+
     var api = {
         AXES: AXES,
         MODES: MODES,
@@ -431,8 +507,11 @@
         collectModes: collectModes,
         bindAxisChange: bindAxisChange,
         bindStatusChange: bindStatusChange,
+        bindRequiresLinkedParentChange: bindRequiresLinkedParentChange,
+        applySavedVisibilityFacts: applySavedVisibilityFacts,
         refreshLivePreview: refreshLivePreview,
-        updateRowFromMode: updateRowFromMode
+        updateRowFromMode: updateRowFromMode,
+        failureCodesFor: failureCodesFor
     };
 
     root.ShopandaProductVisibilitySection = api;

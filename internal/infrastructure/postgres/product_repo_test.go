@@ -59,6 +59,7 @@ func deleteAllProducts(t *testing.T, db *sql.DB) {
 	mustExec(t, db, "DELETE FROM grouped_members")
 	mustExec(t, db, "DELETE FROM linked_eligible_parents")
 	mustExec(t, db, "DELETE FROM linked_eligible_categories")
+	mustExec(t, db, "DELETE FROM downloadable_files")
 	mustExec(t, db, "DELETE FROM products")
 }
 
@@ -69,6 +70,7 @@ func deleteProductByID(t *testing.T, db *sql.DB, productID string) {
 	mustExec(t, db, "DELETE FROM grouped_members WHERE group_product_id = $1 OR member_product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM linked_eligible_parents WHERE child_product_id = $1 OR parent_product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM linked_eligible_categories WHERE child_product_id = $1", productID)
+	mustExec(t, db, "DELETE FROM downloadable_files WHERE product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM products WHERE id = $1", productID)
 }
 
@@ -140,12 +142,12 @@ func TestProductRepo_LockForUpdate(t *testing.T) {
 	if got != catalog.TypeVirtual {
 		t.Fatalf("type = %q, want virtual", got)
 	}
-	gotType, gotMode, gotStock, gotExplode, err := bound.LockTypeAndModes(ctx, p.ID)
+	gotType, gotMode, gotStock, gotExplode, gotStatus, err := bound.LockTypeAndModes(ctx, p.ID)
 	if err != nil {
 		t.Fatalf("LockTypeAndModes: %v", err)
 	}
-	if gotType != catalog.TypeVirtual || gotMode != catalog.PricingModeFixed || gotStock != catalog.StockModeFixed || gotExplode {
-		t.Fatalf("locked type/pricing/stock/explode = %q/%q/%q/%v, want virtual/fixed/fixed/false", gotType, gotMode, gotStock, gotExplode)
+	if gotType != catalog.TypeVirtual || gotMode != catalog.PricingModeFixed || gotStock != catalog.StockModeFixed || gotExplode || gotStatus != catalog.StatusDraft {
+		t.Fatalf("locked type/pricing/stock/explode/status = %q/%q/%q/%v/%q, want virtual/fixed/fixed/false/draft", gotType, gotMode, gotStock, gotExplode, gotStatus)
 	}
 	_, err = bound.LockForUpdate(ctx, id.New())
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -830,5 +832,39 @@ func TestProductRepo_Update_InvalidVisibilityMode(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), `"nope"`) {
 		t.Fatalf("Update invalid mode error = %v, want quoted value", err)
+	}
+}
+
+func TestProductRepo_RequiresLinkedParentRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	p := mustNewProduct(t, "Linked Ticket", "linked-ticket")
+	if p.RequiresLinkedParent {
+		t.Fatal("NewProduct flag = true, want false")
+	}
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.FindByID(ctx, p.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID: got=%v err=%v", got, err)
+	}
+	if got.RequiresLinkedParent {
+		t.Fatal("stored flag = true, want false when omitted")
+	}
+
+	p.RequiresLinkedParent = true
+	if err := repo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got, err = repo.FindByID(ctx, p.ID)
+	if err != nil || got == nil || !got.RequiresLinkedParent {
+		t.Fatalf("after update = %+v err=%v, want flag true", got, err)
 	}
 }

@@ -27,10 +27,10 @@ func NewReturnRepo(db *sql.DB) (*ReturnRepo, error) {
 	return &ReturnRepo{db: db}, nil
 }
 
-// WithTx returns a repo whose Update, LockForRestock, and UpdateIfUnrestocked
-// run on tx. LockForRestock also loads return items on that same tx. Save
-// still opens its own transaction on the pool. Receive binds this so the
-// return row lock, MarkReceived, restock, and RestockedAt commit together.
+// WithTx returns a repo whose Save, Update, LockForRestock, and
+// UpdateIfUnrestocked run on tx. LockForRestock also loads return items
+// on that same tx. Receive and RequestReturn bind this so the return
+// write and any assignment locks commit together.
 func (r *ReturnRepo) WithTx(tx *sql.Tx) domainReturns.Repository {
 	return &ReturnRepo{db: r.db, tx: tx}
 }
@@ -96,21 +96,39 @@ func hydrateReturn(s returnScanner) (*domainReturns.Return, error) {
 	return &ret, nil
 }
 
-// Save inserts a new return and its items.
+// Save inserts a new return and its items. When bound via WithTx, writes
+// use the outer transaction and do not commit; otherwise Save opens and
+// commits its own transaction on the pool.
 func (r *ReturnRepo) Save(ctx context.Context, ret *domainReturns.Return) error {
 	if ret == nil {
 		return fmt.Errorf("return_repo: save: return must not be nil")
+	}
+	if r.tx != nil {
+		return r.saveOn(ctx, r.tx, ret)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("return_repo: save begin: %w", err)
 	}
 	defer tx.Rollback()
+	if err := r.saveOn(ctx, tx, ret); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("return_repo: save commit: %w", err)
+	}
+	return nil
+}
 
+type returnExecer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+func (r *ReturnRepo) saveOn(ctx context.Context, exec returnExecer, ret *domainReturns.Return) error {
 	const headerQ = `INSERT INTO order_returns
 		(id, order_id, customer_id, reason, status, currency, restocked_at, refunded_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	_, err = tx.ExecContext(ctx, headerQ,
+	_, err := exec.ExecContext(ctx, headerQ,
 		ret.ID, ret.OrderID, ret.CustomerID, ret.Reason, string(ret.Status()), ret.Currency,
 		nullTime(ret.RestockedAt), nullTime(ret.RefundedAt), ret.CreatedAt, ret.UpdatedAt,
 	)
@@ -122,17 +140,13 @@ func (r *ReturnRepo) Save(ctx context.Context, ret *domainReturns.Return) error 
 		(return_id, variant_id, sku, name, quantity, unit_price, currency, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	for _, item := range ret.Items() {
-		_, err = tx.ExecContext(ctx, itemQ,
+		_, err = exec.ExecContext(ctx, itemQ,
 			ret.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
 			item.UnitPrice.Amount(), item.UnitPrice.Currency(), item.CreatedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("return_repo: save item: %w", err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("return_repo: save commit: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 )
@@ -18,6 +19,9 @@ var SupportedEvents = []string{
 	payment.EventPaymentCompleted,
 	payment.EventPaymentFailed,
 	payment.EventPaymentRefunded,
+	download.EventDownloadGrantIssued,
+	download.EventDownloadGrantRevoked,
+	download.EventDownloadGrantReissued,
 }
 
 // SupportedEventSet returns supported events as a lookup set.

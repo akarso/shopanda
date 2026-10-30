@@ -19,9 +19,12 @@ import (
 )
 
 type storefrontCartJSONAddRequest struct {
-	VariantID  string                   `json:"variant_id"`
-	Quantity   storefrontJSONQuantity   `json:"quantity"`
-	Extensions []cartItemExtensionInput `json:"extensions"`
+	VariantID                 string                   `json:"variant_id"`
+	Quantity                  storefrontJSONQuantity   `json:"quantity"`
+	AssignmentParentProductID string                   `json:"assignment_parent_product_id"`
+	AssignmentParentUnitID    string                   `json:"assignment_parent_unit_id"`
+	AssignmentDeferred        bool                     `json:"assignment_deferred"`
+	Extensions                []cartItemExtensionInput `json:"extensions"`
 }
 
 type storefrontCartJSONUpdateRequest struct {
@@ -114,6 +117,9 @@ func (h *StorefrontHandler) AddToStorefrontCartJSON() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.Internal("failed to load cart"))
 			return
 		}
+		r = withRequestAssignment(r, assignmentContextFromFields(
+			req.AssignmentParentProductID, req.AssignmentParentUnitID, req.AssignmentDeferred,
+		))
 		customerID := storefrontCustomerID(r)
 		updated, err := h.addLineToStorefrontCart(r, currentCart, customerID, variantID, quantity, extensionInputsFromRequest(req.Extensions))
 		if err != nil {

@@ -78,6 +78,50 @@ func TestMediaHandler_Upload(t *testing.T) {
 	}
 }
 
+func TestMediaHandler_Upload_PrivateDownload(t *testing.T) {
+	handler := admin.NewMediaHandler(newTestMediaService())
+
+	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="guide.jpg"`)
+	h.Set("Content-Type", "image/jpeg")
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(jpegHeader); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("private_download", "1"); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/media/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	handler.Upload().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Path string `json:"path"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v; body = %s", err, rec.Body.String())
+	}
+	if !domainMedia.IsPrivateDownloadsPath(envelope.Data.Path) {
+		t.Fatalf("path = %q, want under %s (private_download=1 → UploadInput.PrivateDownload)", envelope.Data.Path, domainMedia.PrivateDownloadsPrefix)
+	}
+}
+
 func TestMediaHandler_Upload_MissingFile(t *testing.T) {
 	handler := admin.NewMediaHandler(newTestMediaService())
 
@@ -263,6 +307,23 @@ func (r *hListAssetRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+
+type hMockAssetAttachments struct {
+	count int
+}
+
+func (m hMockAssetAttachments) CountByAssetID(context.Context, string) (int, error) {
+	return m.count, nil
+}
+
+type hMockAssetGrants struct {
+	count int
+}
+
+func (m hMockAssetGrants) CountByAssetID(context.Context, string) (int, error) {
+	return m.count, nil
+}
+
 func TestMediaHandler_List(t *testing.T) {
 	bus := event.NewBus(hMockLogger{})
 	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
@@ -288,7 +349,10 @@ func TestMediaHandler_Delete(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
-	handler := admin.NewMediaHandler(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}))
+	svc := mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}).
+		WithAssetAttachments(hMockAssetAttachments{count: 0}).
+		WithAssetGrants(hMockAssetGrants{count: 0})
+	handler := admin.NewMediaHandler(svc)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)
@@ -385,7 +449,10 @@ func TestMediaHandler_Delete_AuditsScope(t *testing.T) {
 	}
 	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
 	rec0 := &recordingAuditLogger{}
-	handler := admin.NewMediaHandlerWithAuditor(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}), adminapp.NewAuditor(rec0))
+	svc := mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}).
+		WithAssetAttachments(hMockAssetAttachments{count: 0}).
+		WithAssetGrants(hMockAssetGrants{count: 0})
+	handler := admin.NewMediaHandlerWithAuditor(svc, adminapp.NewAuditor(rec0))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)

@@ -10,9 +10,10 @@ Related:
 - [Extension Points](EXTENSION_POINTS.md) — pick a mechanism first (events vs hooks vs pricing pipeline vs checkout workflow vs composition steps); this guide covers coordinating *multiple* plugins on the same seam
 - [Plugin Authoring Guide](../../PLUGINS.md)
 - [Developer Extension Guide](DEVELOPER.md)
-- [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — architecture, port catalog, acceptance criteria
-- [Customization Platform spec](../phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md)
+- [Integrator Platform spec](INTEGRATOR_PLATFORM.md) — architecture, port catalog, acceptance criteria
 - [Extension API policy](EXTENSION_API.md)
+
+The Phase 6/7 customization-platform design dump lives on the `dev` branch under `docs/phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md` (not on `main`).
 
 ---
 
@@ -106,7 +107,7 @@ Checkout and pricing contexts support cross-step data via `Meta` maps — the B2
 
 ## Integrator task → mechanism
 
-Use this table before writing code. Full design rationale: [Integrator Platform spec §2–§7](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md).
+Use this table before writing code. Full design rationale: [Integrator Platform spec §2–§7](INTEGRATOR_PLATFORM.md).
 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |

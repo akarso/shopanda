@@ -97,6 +97,20 @@ type returnHTTPOrderRepo struct {
 func (r *returnHTTPOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
 	return r.order, nil
 }
+
+func (r *returnHTTPOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (r *returnHTTPOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }

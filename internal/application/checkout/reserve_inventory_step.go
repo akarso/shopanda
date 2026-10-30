@@ -288,7 +288,7 @@ func (s *ReserveInventoryStep) reserveTargets(ctx context.Context, cctx *Context
 		}
 	}
 	if product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic {
-		return s.dynamicBundleTargets(ctx, product.ID, item.Quantity)
+		return s.dynamicBundleTargets(linePurchaseContext(ctx, item), product.ID, item.Quantity)
 	}
 	return []reserveTarget{{variantID: item.VariantID, quantity: item.Quantity}}, nil
 }

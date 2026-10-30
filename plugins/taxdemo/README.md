@@ -25,4 +25,6 @@ SHOPANDA_PLUGINS_TAXDEMO_FLAT_RATE_BPS=1900
 
 When enabled, the plugin registers a flat-rate `tax.Calculator` and replaces the core `tax` pricing step with `taxdemo.flat_tax`. Tax still uses the standard `PricingContext.Meta` keys (`tax_country`, `tax_mode`); the configured basis-points rate applies to every line instead of the rate table.
 
+**Operator trap:** `taxdemo` (and most flat/external calculators) **ignore** `Meta["tax_classes"]`. Downloadable → `digital` wiring from PR-1076 only affects the core rate-table calculator. Enabling `taxdemo` means digital vs standard class Meta has no effect on the charged rate.
+
 Use this plugin as a template for external VAT/ERP tax services — copy patterns, do not import this package from production plugins.

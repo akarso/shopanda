@@ -100,7 +100,9 @@
         });
     }
 
-    function uploadAsset(file, onProgress) {
+    // uploadAsset posts multipart media. opts.privateDownload appends
+    // private_download=1 so objects land under private/downloads/ (grant targets).
+    function uploadAsset(file, onProgress, opts) {
         return new Promise(function (resolve, reject) {
             var xhr = new XMLHttpRequest();
             xhr.open("POST", API_BASE + "/admin/media", true);
@@ -148,6 +150,9 @@
             };
             var formData = new FormData();
             formData.append("file", file);
+            if (opts && opts.privateDownload) {
+                formData.append("private_download", "1");
+            }
             xhr.send(formData);
         });
     }
@@ -161,6 +166,7 @@
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/sales/returns": { title: "Returns", render: renderReturnsGrid, auth: true },
         "/admin/sales/transactions": { title: "Transactions", render: renderTransactionsGrid, auth: true },
+        "/admin/sales/assignments": { title: "Assignments", render: renderAssignmentsPage, auth: true },
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
@@ -1313,6 +1319,8 @@
                 typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
                 setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
                 setupProductCompositionSections(typeSectionsHost, product, productID, form);
+                setupProductLinkedSection(typeSectionsHost, product, productID, form);
+                setupProductDownloadableSection(typeSectionsHost, product, productID, form);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1344,6 +1352,24 @@
                     // list route rejects the type that was actually saved.
                     var savedType = payload && payload.type ? String(payload.type) : "simple";
                     bindCompositionPicker(typeSectionsHost, productID, savedType);
+                    // Refresh purchasable badge from the saved requires_linked_parent
+                    // value (form checkbox matches the payload just persisted) and
+                    // clear/update missingDownloadableFile for the saved type so a
+                    // downloadable→simple save does not keep "no downloadable file".
+                    // Then re-fetch visibility facts so missing_downloadable_file
+                    // matches the DB (type + join count) without a full reload.
+                    var visibilityAPI = productVisibilitySectionAPI();
+                    var visState = typeSectionsHost && typeSectionsHost._shopandaVisibilityState;
+                    if (visibilityAPI && visState && form) {
+                        if (visState.kind === "live") {
+                            visState.requiresLinkedParent = !!(payload && payload.requires_linked_parent);
+                            if (savedType !== "downloadable") {
+                                visState.missingDownloadableFile = false;
+                            }
+                        }
+                        visibilityAPI.refreshLivePreview(document, form, visState, visState.inputFailureCodes || []);
+                        refreshProductVisibilityFactsAfterSave(productID, form, typeSectionsHost, visState);
+                    }
                     saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {
                     msg.innerHTML = '<p role="alert">Save failed.</p>';
@@ -1449,8 +1475,11 @@
         // form's *selected* status (not the persisted one) whenever it
         // changes, so a merchant previewing a status change before saving
         // sees the correct outcome immediately.
+        // requires_linked_parent (PR-1068/PR-1073): same live preview for the
+        // purchasable gate checkbox on the core product form.
         if (form) {
             api.bindStatusChange(document, form, state);
+            api.bindRequiresLinkedParentChange(document, form, state);
         }
         typeSectionsHost._shopandaVisibilityState = state;
     }
@@ -1526,6 +1555,648 @@
         }
     }
 
+    function productLinkedSectionAPI() {
+        return (typeof ShopandaProductLinkedSection !== "undefined") ? ShopandaProductLinkedSection : null;
+    }
+
+    function productDownloadableSectionAPI() {
+        return (typeof ShopandaProductDownloadableSection !== "undefined") ? ShopandaProductDownloadableSection : null;
+    }
+
+    function setupProductDownloadableSection(typeSectionsHost, product, productID, form) {
+        var sectionAPI = productDownloadableSectionAPI();
+        if (!sectionAPI || !typeSectionsHost) {
+            return;
+        }
+        var body = typeSectionsHost.querySelector('[data-product-type-section-body="downloadable"]');
+        if (!body) {
+            return;
+        }
+        body.innerHTML = sectionAPI.renderDownloadableSectionHTML(!!productID);
+        if (productID) {
+            bindDownloadableSection(body, productID);
+        }
+        if (form) {
+            form._shopandaDownloadableBound = true;
+        }
+    }
+
+    function bindDownloadableSection(host, productID) {
+        var sectionAPI = productDownloadableSectionAPI();
+        if (!sectionAPI || !host || !productID) {
+            return;
+        }
+        var filesBox = host.querySelector("[data-downloadable-files]");
+        var settingsBox = host.querySelector("[data-downloadable-settings]");
+        var canWrite = userHasPermission("products.write");
+
+        function setBusy(busy) {
+            host.setAttribute("aria-busy", busy ? "true" : "false");
+        }
+
+        function load() {
+            setBusy(true);
+            Promise.all([
+                api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files"),
+                api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings")
+            ]).then(function (results) {
+                setBusy(false);
+                var filesBody = results[0] || {};
+                var settingsBody = results[1] || {};
+                if (filesBody.error) {
+                    if (filesBox) {
+                        filesBox.innerHTML = '<p role="alert">' + esc((filesBody.error && filesBody.error.message) || "Failed to load files.") + "</p>";
+                    }
+                } else if (filesBox) {
+                    var files = (filesBody.data && filesBody.data.files) || [];
+                    filesBox.innerHTML = sectionAPI.filesTableHTML(files);
+                    if (!canWrite) {
+                        var af = filesBox.querySelector("[data-attach-file-form]");
+                        if (af) { af.style.display = "none"; }
+                        var uf = filesBox.querySelector("[data-private-upload-form]");
+                        if (uf) { uf.style.display = "none"; }
+                        filesBox.querySelectorAll("[data-remove-file],[data-replace-file]").forEach(function (btn) { btn.disabled = true; });
+                    }
+                }
+                if (settingsBody.error) {
+                    if (settingsBox) {
+                        settingsBox.innerHTML = '<p role="alert">' + esc((settingsBody.error && settingsBody.error.message) || "Failed to load settings.") + "</p>";
+                    }
+                } else if (settingsBox) {
+                    var settings = (settingsBody.data && settingsBody.data.settings) || {};
+                    settingsBox.innerHTML = sectionAPI.settingsFormHTML(settings);
+                    if (!canWrite) {
+                        settingsBox.querySelectorAll("input,button").forEach(function (el) { el.disabled = true; });
+                    }
+                }
+                bindActions();
+            }).catch(function () {
+                setBusy(false);
+                if (filesBox) { filesBox.innerHTML = '<p role="alert">Failed to load files.</p>'; }
+                if (settingsBox) { settingsBox.innerHTML = '<p role="alert">Failed to load settings.</p>'; }
+            });
+        }
+
+        function bindActions() {
+            if (!canWrite) {
+                return;
+            }
+            var attachForm = host.querySelector("[data-attach-file-form]");
+            if (attachForm && !attachForm.getAttribute("data-bound")) {
+                attachForm.setAttribute("data-bound", "1");
+                attachForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var assetID = (attachForm.elements.asset_id.value || "").trim();
+                    var position = parseInt(attachForm.elements.position.value || "0", 10);
+                    var label = (attachForm.elements.label.value || "").trim();
+                    if (!assetID) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                        method: "POST",
+                        body: JSON.stringify({ asset_id: assetID, position: position, label: label })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to attach file");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to attach file");
+                    });
+                });
+            }
+            var uploadForm = host.querySelector("[data-private-upload-form]");
+            if (uploadForm && !uploadForm.getAttribute("data-bound")) {
+                uploadForm.setAttribute("data-bound", "1");
+                uploadForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var fileInput = uploadForm.elements.file;
+                    if (!fileInput || !fileInput.files || !fileInput.files[0]) { return; }
+                    var file = fileInput.files[0];
+                    var doUpload = (typeof uploadAsset === "function")
+                        ? uploadAsset(file, null, { privateDownload: true })
+                        : Promise.reject(new Error("uploadAsset unavailable"));
+                    doUpload.then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Upload failed");
+                            return;
+                        }
+                        var asset = (body && body.data && (body.data.asset || body.data)) || body.asset || body || {};
+                        var assetID = asset.id || asset.asset_id || "";
+                        if (!assetID) {
+                            window.alert("Upload succeeded but asset id was missing");
+                            return;
+                        }
+                        return api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                            method: "POST",
+                            body: JSON.stringify({ asset_id: assetID, position: 0, label: asset.filename || file.name || "" })
+                        }).then(function (attachBody) {
+                            if (attachBody && attachBody.error) {
+                                window.alert(attachBody.error.message || "Uploaded but attach failed");
+                                return;
+                            }
+                            load();
+                        });
+                    }).catch(function () {
+                        window.alert("Upload failed");
+                    });
+                });
+            }
+            host.querySelectorAll("[data-remove-file]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var assetID = btn.getAttribute("data-remove-file") || "";
+                    if (!assetID || !window.confirm("Remove this file attachment?")) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files/" + encodeURIComponent(assetID), {
+                        method: "DELETE"
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove");
+                    });
+                });
+            });
+            host.querySelectorAll("[data-replace-file]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var oldID = btn.getAttribute("data-replace-file") || "";
+                    var row = btn.closest("tr");
+                    var position = row ? parseInt(row.getAttribute("data-position") || "0", 10) : 0;
+                    var label = row ? (row.getAttribute("data-label") || "") : "";
+                    var newID = window.prompt(
+                        "New private asset id to replace " + oldID +
+                        ". Grants retarget by asset id (not this product only). Shared assets refuse unless you allow global retarget next:",
+                        ""
+                    );
+                    if (!newID) { return; }
+                    var globalRetarget = window.confirm(
+                        "Allow global_retarget? Required when other products still attach this asset. " +
+                        "OK moves every download grant on this blob to the new asset. " +
+                        "Cancel sends without the flag (422 if the asset is shared)."
+                    );
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-files", {
+                        method: "PUT",
+                        body: JSON.stringify({
+                            old_asset_id: oldID,
+                            asset_id: newID.trim(),
+                            position: position,
+                            label: label,
+                            global_retarget: globalRetarget
+                        })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to replace");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to replace");
+                    });
+                });
+            });
+            var settingsForm = host.querySelector("[data-grant-settings-form]");
+            if (settingsForm && !settingsForm.getAttribute("data-bound")) {
+                settingsForm.setAttribute("data-bound", "1");
+                settingsForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var payload = {};
+                    var expiryRaw = (settingsForm.elements.expiry_days.value || "").trim();
+                    var limitRaw = (settingsForm.elements.download_limit.value || "").trim();
+                    if (expiryRaw !== "") { payload.expiry_days = parseInt(expiryRaw, 10); }
+                    if (limitRaw !== "") { payload.download_limit = parseInt(limitRaw, 10); }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings", {
+                        method: "PUT",
+                        body: JSON.stringify(payload)
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to save settings");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to save settings");
+                    });
+                });
+            }
+            var clearBtn = host.querySelector("[data-clear-grant-settings]");
+            if (clearBtn && !clearBtn.getAttribute("data-bound")) {
+                clearBtn.setAttribute("data-bound", "1");
+                clearBtn.addEventListener("click", function () {
+                    if (!window.confirm("Clear product grant overrides (use global defaults)?")) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/downloadable-grant-settings", {
+                        method: "DELETE"
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to clear settings");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to clear settings");
+                    });
+                });
+            }
+        }
+
+        load();
+    }
+
+    function setupProductLinkedSection(typeSectionsHost, product, productID, form) {
+        var sectionAPI = productLinkedSectionAPI();
+        if (!sectionAPI || !typeSectionsHost) {
+            return;
+        }
+        var linkedBody = typeSectionsHost.querySelector('[data-product-type-section-body="linked"]');
+        if (!linkedBody) {
+            return;
+        }
+        var requiresLinked = !!(product && product.requires_linked_parent);
+        linkedBody.innerHTML = sectionAPI.renderLinkedSectionHTML(!!productID, requiresLinked);
+        if (productID) {
+            bindLinkedEligibility(linkedBody, productID);
+        }
+        if (form) {
+            form._shopandaLinkedBound = true;
+        }
+    }
+
+    function bindLinkedEligibility(host, productID) {
+        var sectionAPI = productLinkedSectionAPI();
+        if (!sectionAPI || !host || !productID) {
+            return;
+        }
+        var parentsBox = host.querySelector("[data-linked-parents]");
+        var categoriesBox = host.querySelector("[data-linked-categories]");
+        var canWrite = userHasPermission("products.write");
+        var categoryOptions = [];
+
+        function setBusy(busy) {
+            host.setAttribute("aria-busy", busy ? "true" : "false");
+        }
+
+        function load() {
+            setBusy(true);
+            Promise.all([
+                api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents"),
+                api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories"),
+                api("/admin/categories")
+            ]).then(function (results) {
+                setBusy(false);
+                var parentsBody = results[0] || {};
+                var catsBody = results[1] || {};
+                var allCatsBody = results[2] || {};
+                if (parentsBody.error || catsBody.error) {
+                    var err = (parentsBody.error || catsBody.error);
+                    var msg = '<p role="alert">' + esc((err && err.message) || "Failed to load linked eligibility.") + "</p>";
+                    if (parentsBox) { parentsBox.innerHTML = msg; }
+                    if (categoriesBox) { categoriesBox.innerHTML = msg; }
+                    return;
+                }
+                var parents = (parentsBody.data && parentsBody.data.parents) || [];
+                var categories = (catsBody.data && catsBody.data.categories) || [];
+                if (allCatsBody.error) {
+                    categoryOptions = [];
+                } else {
+                    categoryOptions = flattenCategories((allCatsBody.data && allCatsBody.data.categories) || []);
+                }
+                if (parentsBox) {
+                    parentsBox.innerHTML = sectionAPI.parentsTableHTML(parents);
+                    if (!canWrite) {
+                        var pf = parentsBox.querySelector("[data-add-parent-form]");
+                        if (pf) { pf.style.display = "none"; }
+                        var picker = parentsBox.querySelector("[data-linked-parent-picker]");
+                        if (picker) { picker.style.display = "none"; }
+                        parentsBox.querySelectorAll("[data-remove-parent]").forEach(function (btn) { btn.disabled = true; });
+                    } else if (sectionAPI.bindLinkedParentPicker) {
+                        sectionAPI.bindLinkedParentPicker(parentsBox, {
+                            productID: productID,
+                            api: api
+                        });
+                    }
+                }
+                if (categoriesBox) {
+                    categoriesBox.innerHTML = sectionAPI.categoriesTableHTML(categories, categoryOptions);
+                    if (allCatsBody.error) {
+                        categoriesBox.insertAdjacentHTML("beforeend",
+                            '<p role="alert" class="settings-scope-note">Category tree failed to load; paste a category id is unavailable — retry later.</p>');
+                    }
+                    if (!canWrite) {
+                        var cf = categoriesBox.querySelector("[data-add-category-form]");
+                        if (cf) { cf.style.display = "none"; }
+                        categoriesBox.querySelectorAll("[data-remove-category]").forEach(function (btn) { btn.disabled = true; });
+                    }
+                }
+                bindActions();
+            }).catch(function () {
+                setBusy(false);
+                var fail = '<p role="alert">Failed to load linked eligibility.</p>';
+                if (parentsBox) { parentsBox.innerHTML = fail; }
+                if (categoriesBox) { categoriesBox.innerHTML = fail; }
+            });
+        }
+
+        function flattenCategories(nodes, out) {
+            out = out || [];
+            if (!Array.isArray(nodes)) {
+                return out;
+            }
+            for (var i = 0; i < nodes.length; i++) {
+                var n = nodes[i] || {};
+                out.push({ id: n.id || "", name: n.name || "", slug: n.slug || "" });
+                if (n.children) {
+                    flattenCategories(n.children, out);
+                }
+            }
+            return out;
+        }
+
+        function bindActions() {
+            if (!canWrite) {
+                return;
+            }
+            var addParent = host.querySelector("[data-add-parent-form]");
+            if (addParent && !addParent.getAttribute("data-bound")) {
+                addParent.setAttribute("data-bound", "1");
+                addParent.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var id = (addParent.elements.parent_product_id.value || "").trim();
+                    if (!id) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents", {
+                        method: "POST",
+                        body: JSON.stringify({ parent_product_id: id })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to add parent");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to add parent");
+                    });
+                });
+            }
+            var addCategory = host.querySelector("[data-add-category-form]");
+            if (addCategory && !addCategory.getAttribute("data-bound")) {
+                addCategory.setAttribute("data-bound", "1");
+                addCategory.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var id = (addCategory.elements.category_id.value || "").trim();
+                    if (!id) { return; }
+                    api("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories", {
+                        method: "POST",
+                        body: JSON.stringify({ category_id: id })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to add category");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to add category");
+                    });
+                });
+            }
+            host.querySelectorAll("[data-remove-parent]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var parentID = btn.getAttribute("data-remove-parent");
+                    apiDelete("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-parents/" + encodeURIComponent(parentID)).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove parent");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove parent");
+                    });
+                });
+            });
+            host.querySelectorAll("[data-remove-category]").forEach(function (btn) {
+                if (btn.getAttribute("data-bound")) { return; }
+                btn.setAttribute("data-bound", "1");
+                btn.addEventListener("click", function () {
+                    var categoryID = btn.getAttribute("data-remove-category");
+                    apiDelete("/admin/products/" + encodeURIComponent(productID) + "/linked-eligible-categories/" + encodeURIComponent(categoryID)).then(function (body) {
+                        if (body && body.error) {
+                            window.alert(body.error.message || "Failed to remove category");
+                            return;
+                        }
+                        load();
+                    }).catch(function () {
+                        window.alert("Failed to remove category");
+                    });
+                });
+            });
+        }
+
+        load();
+    }
+
+    function renderAssignmentsPage(container) {
+        if (!userHasPermission("assignments.read")) {
+            container.innerHTML = '<h2>Assignments</h2><p role="alert">Your account does not have assignments access.</p>';
+            return;
+        }
+        var ui = window.ShopandaAssignmentAdminUI;
+        if (!ui) {
+            container.innerHTML = '<h2>Assignments</h2><p role="alert">Assignment admin UI failed to load.</p>';
+            return;
+        }
+        var canWrite = userHasPermission("assignments.write");
+        container.innerHTML = ui.pageHTML();
+        var msg = document.getElementById("assignment-admin-msg");
+        var parentResults = document.getElementById("assignment-parent-results");
+        var childResults = document.getElementById("assignment-child-results");
+        var parentForm = document.getElementById("assignment-parent-form");
+        var childForm = document.getElementById("assignment-child-form");
+        var assignForm = document.getElementById("assignment-assign-form");
+        var lastParentQuery = null;
+        var parentLookupSeq = 0;
+        var lastChildUnit = null;
+        var childLookupSeq = 0;
+
+        function setMsg(text, isError) {
+            msg.innerHTML = text ? ('<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>') : '';
+        }
+
+        function refreshLookups() {
+            if (lastParentQuery) {
+                loadParentList(lastParentQuery.unit, lastParentQuery.status, 0, false);
+            }
+            if (lastChildUnit) {
+                loadChildCurrent(lastChildUnit);
+            }
+        }
+
+        function bindRevoke(root) {
+            if (!canWrite || !root) { return; }
+            root.querySelectorAll("[data-revoke-id]").forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    var id = btn.getAttribute("data-revoke-id");
+                    if (!window.confirm("Revoke this assignment?")) {
+                        return;
+                    }
+                    api("/admin/assignments/" + encodeURIComponent(id) + "/revoke", { method: "POST", body: "{}" }).then(function (body) {
+                        if (body && body.error) {
+                            setMsg(body.error.message || "Revoke failed", true);
+                            return;
+                        }
+                        setMsg("Assignment revoked.");
+                        refreshLookups();
+                    }).catch(function () {
+                        setMsg("Revoke failed", true);
+                    });
+                });
+            });
+        }
+
+        function bindLoadMore(root) {
+            if (!root) { return; }
+            var btn = root.querySelector("[data-assignment-load-more]");
+            var query = root._assignmentQuery;
+            if (!btn || !query) { return; }
+            btn.addEventListener("click", function () {
+                if (!parentQueryMatches(query)) {
+                    return;
+                }
+                var offset = parseInt(btn.getAttribute("data-offset") || "0", 10) || 0;
+                loadParentList(query.unit, query.status, offset, true);
+            });
+        }
+
+        function parentQueryMatches(query) {
+            return !!(lastParentQuery && query &&
+                lastParentQuery.unit === query.unit &&
+                lastParentQuery.status === query.status);
+        }
+
+        function loadParentList(unit, status, offset, append) {
+            var query = { unit: unit, status: status || "assigned" };
+            lastParentQuery = query;
+            var seq = ++parentLookupSeq;
+            if (!append) {
+                parentResults.innerHTML = "<p>Loading…</p>";
+            }
+            var q = "parent_unit_id=" + encodeURIComponent(query.unit) +
+                "&status=" + encodeURIComponent(query.status) +
+                "&offset=" + encodeURIComponent(String(offset || 0));
+            api("/admin/assignments?" + q).then(function (body) {
+                if (seq !== parentLookupSeq || !parentQueryMatches(query)) {
+                    return;
+                }
+                if (body && body.error) {
+                    parentResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
+                    return;
+                }
+                var rows = (body.data && body.data.assignments) || [];
+                var hasMore = !!(body.data && body.data.has_more);
+                var nextOffset = (offset || 0) + rows.length;
+                if (append) {
+                    var prev = parentResults._assignmentRows || [];
+                    rows = prev.concat(rows);
+                }
+                parentResults._assignmentRows = rows;
+                parentResults._assignmentQuery = query;
+                parentResults.innerHTML = ui.assignmentTableHTML(rows, {
+                    canWrite: canWrite,
+                    hasMore: hasMore,
+                    nextOffset: nextOffset
+                });
+                bindRevoke(parentResults);
+                bindLoadMore(parentResults);
+            }).catch(function () {
+                if (seq !== parentLookupSeq || !parentQueryMatches(query)) {
+                    return;
+                }
+                parentResults.innerHTML = '<p role="alert">Failed to load assignments.</p>';
+            });
+        }
+
+        function loadChildCurrent(unit) {
+            lastChildUnit = unit;
+            var seq = ++childLookupSeq;
+            childResults.innerHTML = "<p>Loading…</p>";
+            api("/admin/assignments/current?child_unit_id=" + encodeURIComponent(unit)).then(function (body) {
+                if (seq !== childLookupSeq || lastChildUnit !== unit) {
+                    return;
+                }
+                if (body && body.error) {
+                    childResults.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to load") + "</p>";
+                    return;
+                }
+                var assignment = body.data && body.data.assignment;
+                childResults.innerHTML = ui.currentHTML(assignment, { canWrite: canWrite });
+                bindRevoke(childResults);
+            }).catch(function () {
+                if (seq !== childLookupSeq || lastChildUnit !== unit) {
+                    return;
+                }
+                childResults.innerHTML = '<p role="alert">Failed to load current assignment.</p>';
+            });
+        }
+
+        if (parentForm) {
+            parentForm.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var unit = (parentForm.elements.parent_unit_id.value || "").trim();
+                if (!unit) { return; }
+                var status = (parentForm.elements.status && parentForm.elements.status.value) || "assigned";
+                loadParentList(unit, status, 0, false);
+            });
+        }
+
+        if (childForm) {
+            childForm.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var unit = (childForm.elements.child_unit_id.value || "").trim();
+                if (!unit) { return; }
+                loadChildCurrent(unit);
+            });
+        }
+
+        if (assignForm) {
+            if (!canWrite) {
+                assignForm.style.display = "none";
+            } else {
+                assignForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var force = !!assignForm.elements.force.checked;
+                    if (force && !window.confirm("Force assign even when order/eligibility checks would refuse?")) {
+                        return;
+                    }
+                    var payload = {
+                        child_unit_id: (assignForm.elements.child_unit_id.value || "").trim(),
+                        parent_unit_id: (assignForm.elements.parent_unit_id.value || "").trim(),
+                        force: force,
+                        reason: (assignForm.elements.reason.value || "").trim()
+                    };
+                    api("/admin/assignments", { method: "POST", body: JSON.stringify(payload) }).then(function (body) {
+                        if (body && body.error) {
+                            setMsg(body.error.message || "Assign failed", true);
+                            return;
+                        }
+                        setMsg("Assignment saved.");
+                        if (!lastParentQuery && payload.parent_unit_id) {
+                            lastParentQuery = { unit: payload.parent_unit_id, status: "assigned" };
+                        }
+                        if (!lastChildUnit && payload.child_unit_id) {
+                            lastChildUnit = payload.child_unit_id;
+                        }
+                        refreshLookups();
+                    }).catch(function () {
+                        setMsg("Assign failed", true);
+                    });
+                });
+            }
+        }
+    }
+
     // Guard async visibility refresh after variant price save: an in-flight GET for
     // product A must not update the form if the merchant navigated to product B.
     function productEditPathID() {
@@ -1571,6 +2242,11 @@
             var codes = data.visibility.input_failure_codes;
             if (!Array.isArray(codes)) {
                 codes = [];
+            }
+            if (visibilityAPI.applySavedVisibilityFacts) {
+                visibilityAPI.applySavedVisibilityFacts(state, data.visibility);
+            } else if (state.kind === "live") {
+                state.missingDownloadableFile = !!data.visibility.missing_downloadable_file;
             }
             visibilityAPI.refreshLivePreview(document, form, state, codes);
         }).catch(function () {
@@ -2555,6 +3231,7 @@
             pricingMode: pick(raw, "pricing_mode", "PricingMode") || "fixed",
             stockMode: pick(raw, "stock_mode", "StockMode") || "fixed",
             explodeOrderLines: !!(pick(raw, "explode_order_lines", "ExplodeOrderLines")),
+            requires_linked_parent: !!(pick(raw, "requires_linked_parent", "RequiresLinkedParent")),
             attributes: pick(raw, "attributes", "Attributes") || {},
             visibilityModes: pick(raw, "visibility_modes", "VisibilityModes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),
@@ -4086,6 +4763,7 @@
                             refreshJobsNavVisibility();
                             refreshSearchNavVisibility();
                             refreshCacheNavVisibility();
+                            refreshAssignmentsNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
@@ -4404,6 +5082,15 @@
     function refreshCacheNavVisibility() {
         var visible = userHasPermission("cache.read");
         var link = document.querySelector('.admin-sidebar a[href="/admin/operations/cache"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
+        }
+    }
+
+    // refreshAssignmentsNavVisibility hides Sales → Assignments without assignments.read.
+    function refreshAssignmentsNavVisibility() {
+        var visible = userHasPermission("assignments.read");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/sales/assignments"]');
         if (link && link.parentElement) {
             link.parentElement.style.display = visible ? "" : "none";
         }
@@ -8087,9 +8774,11 @@
                 '<p><strong>Customer ID:</strong> ' + esc(customer.id || '') + '</p>' +
                 '</div>' +
                 '<section style="margin-top:2rem"><h3>Customer Group</h3><div id="customer-group-panel"></div></section>' +
-                '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>';
+                '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>' +
+                '<div id="customer-download-grants-panel"></div>';
             mountCustomerGroupPanel(document.getElementById("customer-group-panel"), customerID);
             mountCustomerStoreCreditPanel(document.getElementById("customer-store-credit"), customerID);
+            mountCustomerDownloadGrantsPanel(document.getElementById("customer-download-grants-panel"), customerID);
         }).catch(function (err) {
             bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customer.')) + '</p>';
         });
@@ -8101,6 +8790,7 @@
             '<h2>Media Library</h2>' +
             '<input type="file" id="media-upload-input" accept="image/*" multiple>' +
             '</div>' +
+            '<label class="media-private-download"><input type="checkbox" id="media-private-download"> Private download (store under private/downloads/ for downloadable products)</label>' +
             '<div id="media-msg"></div>' +
             '<div id="media-dropzone" class="media-dropzone">Drop images here or use the file picker.</div>' +
             '<progress id="media-upload-progress" value="0" max="100" style="display:none"></progress>' +
@@ -8111,7 +8801,8 @@
             gridID: "media-grid",
             fileInputID: "media-upload-input",
             dropzoneID: "media-dropzone",
-            progressID: "media-upload-progress"
+            progressID: "media-upload-progress",
+            privateDownloadCheckboxID: "media-private-download"
         });
     }
 
@@ -9702,9 +10393,16 @@
                     showMessage(queue.length + ' file(s) uploaded.', false);
                     return;
                 }
+                var privateDownload = false;
+                if (options.privateDownload) {
+                    privateDownload = true;
+                } else if (options.privateDownloadCheckboxID) {
+                    var box = document.getElementById(options.privateDownloadCheckboxID);
+                    privateDownload = !!(box && box.checked);
+                }
                 uploadAsset(queue[index], function (percent) {
                     progress.value = percent;
-                }).then(function () {
+                }, { privateDownload: privateDownload }).then(function () {
                     next(index + 1);
                 }).catch(function (err) {
                     progress.style.display = "none";
@@ -9978,6 +10676,130 @@
                     onError(err);
                 }
             });
+    }
+
+    function downloadGrantAdminUI() {
+        return (typeof ShopandaDownloadGrantAdminUI !== "undefined") ? ShopandaDownloadGrantAdminUI : null;
+    }
+
+    function bindDownloadGrantActions(host, reload) {
+        var canWrite = userHasPermission("downloads.write");
+        if (!canWrite || !host) {
+            return;
+        }
+        host.querySelectorAll("[data-revoke-grant]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-revoke-grant") || "";
+                var reason = window.prompt("Reason for revoke:", "");
+                if (!id || reason == null || !String(reason).trim()) { return; }
+                api("/admin/download-grants/" + encodeURIComponent(id) + "/revoke", {
+                    method: "POST",
+                    body: JSON.stringify({ reason: String(reason).trim() })
+                }).then(function (body) {
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to revoke");
+                        return;
+                    }
+                    reload();
+                }).catch(function () {
+                    window.alert("Failed to revoke");
+                });
+            });
+        });
+        host.querySelectorAll("[data-reissue-grant]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-reissue-grant") || "";
+                var daysRaw = window.prompt("Extend by how many days?", "30");
+                if (!id || daysRaw == null) { return; }
+                var days = parseInt(String(daysRaw).trim(), 10);
+                if (!(days >= 1)) {
+                    window.alert("expiry_days must be at least 1");
+                    return;
+                }
+                var reason = window.prompt("Reason for re-issue:", "");
+                if (reason == null || !String(reason).trim()) { return; }
+                api("/admin/download-grants/" + encodeURIComponent(id) + "/reissue", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        expiry_days: days,
+                        reset_count: true,
+                        reason: String(reason).trim()
+                    })
+                }).then(function (body) {
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to re-issue");
+                        return;
+                    }
+                    reload();
+                }).catch(function () {
+                    window.alert("Failed to re-issue");
+                });
+            });
+        });
+    }
+
+    function mountOrderDownloadGrantsPanel(mountEl, orderID) {
+        if (!mountEl) { return; }
+        var ui = downloadGrantAdminUI();
+        if (!userHasPermission("downloads.read")) {
+            mountEl.innerHTML = "";
+            return;
+        }
+        if (!ui) {
+            mountEl.innerHTML = '<section style="margin-top:2rem"><h3>Download grants</h3><p role="alert">Download grant UI failed to load.</p></section>';
+            return;
+        }
+        mountEl.innerHTML = ui.panelHTML("Download grants");
+        var body = mountEl.querySelector("[data-download-grants-body]");
+        var msg = mountEl.querySelector("[data-download-grants-msg]");
+        function load() {
+            api("/admin/orders/" + encodeURIComponent(orderID) + "/download-grants").then(function (res) {
+                if (res && res.error) {
+                    body.innerHTML = '<p role="alert">' + esc((res.error && res.error.message) || "Failed to load grants.") + "</p>";
+                    return;
+                }
+                var grants = (res && res.data && res.data.grants) || [];
+                body.innerHTML = ui.grantsTableHTML(grants, userHasPermission("downloads.write"));
+                bindDownloadGrantActions(body, load);
+                if (msg) { msg.innerHTML = ""; }
+            }).catch(function () {
+                body.innerHTML = '<p role="alert">Failed to load grants.</p>';
+            });
+        }
+        load();
+    }
+
+    function mountCustomerDownloadGrantsPanel(mountEl, customerID) {
+        if (!mountEl) { return; }
+        var ui = downloadGrantAdminUI();
+        if (!userHasPermission("downloads.read")) {
+            mountEl.innerHTML = "";
+            return;
+        }
+        if (!ui) {
+            mountEl.innerHTML = '<section style="margin-top:2rem"><h3>Download grants</h3><p role="alert">Download grant UI failed to load.</p></section>';
+            return;
+        }
+        mountEl.innerHTML = ui.panelHTML("Download grants");
+        var body = mountEl.querySelector("[data-download-grants-body]");
+        function load() {
+            api("/admin/download-grants?customer_id=" + encodeURIComponent(customerID)).then(function (res) {
+                if (res && res.error) {
+                    body.innerHTML = '<p role="alert">' + esc((res.error && res.error.message) || "Failed to load grants.") + "</p>";
+                    return;
+                }
+                var grants = (res && res.data && res.data.grants) || [];
+                body.innerHTML = ui.grantsTableHTML(grants, userHasPermission("downloads.write"));
+                bindDownloadGrantActions(body, load);
+            }).catch(function () {
+                body.innerHTML = '<p role="alert">Failed to load grants.</p>';
+            });
+        }
+        load();
     }
 
     function mountOrderInvoicesPanel(mountEl, orderID) {
@@ -10280,10 +11102,12 @@
                     '<div id="order-refund-panel"></div>' +
                     '<h3>Invoices</h3>' +
                     '<div id="order-invoices-panel"></div>' +
+                    '<div id="order-download-grants-panel"></div>' +
                     '</article>';
 
                 mountOrderRefundPanel(document.getElementById("order-refund-panel"), order);
                 mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
+                mountOrderDownloadGrantsPanel(document.getElementById("order-download-grants-panel"), order.id);
 
                 var form = document.getElementById("order-status-form");
                 if (form) {
@@ -11306,6 +12130,7 @@
             refreshJobsNavVisibility();
             refreshSearchNavVisibility();
             refreshCacheNavVisibility();
+            refreshAssignmentsNavVisibility();
             handleRoute();
         });
     }

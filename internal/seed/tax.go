@@ -6,15 +6,17 @@ import (
 	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
-const (
-	defaultTaxClass        = "standard"
-	defaultTaxRateBasisPts = 2300
-)
+const defaultTaxRateBasisPts = 2300
 
-// TaxSeeder creates a baseline standard tax rate so pricing works on first boot
-// without overwriting existing operator-configured rates.
+// TaxSeeder creates baseline standard tax rates and backfills a matching
+// digital rate for every existing non-zero standard row (same country/store/bps,
+// CreateIfNotExists — never clobbers an operator-tuned digital row).
+// Migration 108 performs the same backfill on shopanda migrate; seed is a
+// second idempotent pass for environments that seed after migrate.
+// Uses tax.RateRepository (ListByClass + CreateIfNotExists) — not a postgres-only API.
 type TaxSeeder struct{}
 
 func (s *TaxSeeder) Name() string { return "default-tax" }
@@ -28,6 +30,7 @@ func (s *TaxSeeder) Seed(ctx context.Context, deps Deps) error {
 	if err != nil {
 		return err
 	}
+	var rates tax.RateRepository = rateRepo
 
 	country := defaultStoreCountry
 	st, err := storeRepo.FindDefault(ctx)
@@ -49,26 +52,73 @@ func (s *TaxSeeder) Seed(ctx context.Context, deps Deps) error {
 		deps.Logger.Warn("seed.tax.fallback", ctxFields)
 	}
 
-	rate, err := tax.NewTaxRate(id.New(), country, defaultTaxClass, "", defaultTaxRateBasisPts)
+	// Ensure at least one standard rate for the default-store country.
+	std, err := tax.NewTaxRate(id.New(), country, tax.TaxClassStandard, "", defaultTaxRateBasisPts)
 	if err != nil {
 		return err
 	}
-	created, err := rateRepo.CreateIfNotExists(ctx, &rate)
+	created, err := rates.CreateIfNotExists(ctx, &std)
 	if err != nil {
 		return err
 	}
-	if !created {
+	if created {
+		deps.Logger.Info("seed.tax.created", map[string]interface{}{
+			"country": country,
+			"class":   tax.TaxClassStandard,
+			"rate":    defaultTaxRateBasisPts,
+		})
+	} else {
 		deps.Logger.Info("seed.tax.skip", map[string]interface{}{
 			"country": country,
-			"class":   defaultTaxClass,
+			"class":   tax.TaxClassStandard,
 		})
-		return nil
 	}
 
-	deps.Logger.Info("seed.tax.created", map[string]interface{}{
-		"country": country,
-		"class":   defaultTaxClass,
-		"rate":    defaultTaxRateBasisPts,
-	})
+	return backfillDigitalFromStandard(ctx, rates, deps.Logger)
+}
+
+// backfillDigitalFromStandard CreateIfNotExists a digital row for every
+// non-zero standard rate (any country/store), copying basis points. Existing
+// digital rows are left untouched. Zero-bps standard is skipped — intentional
+// 0% VAT uses class "zero"; digital Rate==0 is refused by the calculator.
+// This is a second idempotent pass after migration 108.
+func backfillDigitalFromStandard(ctx context.Context, rates tax.RateRepository, log logger.Logger) error {
+	standards, err := rates.ListByClass(ctx, tax.TaxClassStandard)
+	if err != nil {
+		return err
+	}
+	for _, std := range standards {
+		if std.Rate == 0 {
+			log.Info("seed.tax.skip", map[string]interface{}{
+				"country":  std.Country,
+				"class":    tax.TaxClassDigital,
+				"store_id": std.StoreID,
+				"reason":   "zero_bps_standard",
+			})
+			continue
+		}
+		digital, err := tax.NewTaxRate(id.New(), std.Country, tax.TaxClassDigital, std.StoreID, std.Rate)
+		if err != nil {
+			return err
+		}
+		created, err := rates.CreateIfNotExists(ctx, &digital)
+		if err != nil {
+			return err
+		}
+		if created {
+			log.Info("seed.tax.created", map[string]interface{}{
+				"country":  std.Country,
+				"class":    tax.TaxClassDigital,
+				"store_id": std.StoreID,
+				"rate":     std.Rate,
+			})
+			continue
+		}
+		log.Info("seed.tax.skip", map[string]interface{}{
+			"country":  std.Country,
+			"class":    tax.TaxClassDigital,
+			"store_id": std.StoreID,
+		})
+	}
 	return nil
 }

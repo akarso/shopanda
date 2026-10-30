@@ -2,10 +2,12 @@ package notification
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -13,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -21,6 +24,20 @@ import (
 // JobTypeEmailSend is the job type for email delivery.
 const JobTypeEmailSend = "email.send"
 
+// KindOrderConfirmed is the notification_dedupe kind for paid-order emails.
+const KindOrderConfirmed = "order_confirmed"
+
+// EmailDedupeStore claims one send per (subject_key, kind) so confirmation
+// dedupe does not depend on queue-driver job-id primary-key behavior.
+type EmailDedupeStore interface {
+	// TryInsert records a pending (subjectKey, kind). inserted is true when newly claimed.
+	TryInsert(ctx context.Context, subjectKey, kind string) (inserted bool, err error)
+	// MarkCompleted makes a successful claim permanent (not reclaimable).
+	MarkCompleted(ctx context.Context, subjectKey, kind string) error
+	// Delete removes a claim so a later attempt can retry after enqueue failure.
+	Delete(ctx context.Context, subjectKey, kind string) error
+}
+
 // Service wires order/shipping/customer events to email notifications
 // via the job queue.
 type Service struct {
@@ -28,6 +45,7 @@ type Service struct {
 	customers   customer.CustomerRepository
 	orders      order.OrderRepository
 	queue       jobs.Queue
+	dedupe      EmailDedupeStore
 	log         logger.Logger
 	resetURL    string                    // base URL for password reset links
 	storeURL    string                    // public store URL
@@ -52,6 +70,12 @@ func WithInvoices(repo invoice.InvoiceRepository) Option {
 // WithPDFRenderer sets the PDF renderer for invoice attachments.
 func WithPDFRenderer(r invoice.PDFRenderer) Option {
 	return func(s *Service) { s.pdfRenderer = r }
+}
+
+// WithEmailDedupe sets the persistent send claim store used by
+// enqueueEmailOnce when a subject/kind key is provided (order confirmation).
+func WithEmailDedupe(store EmailDedupeStore) Option {
+	return func(s *Service) { s.dedupe = store }
 }
 
 // New creates a notification Service.
@@ -245,11 +269,22 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return fmt.Errorf("notification: render template: %w", err)
 	}
 
-	return s.enqueueEmail(ctx, msg, "HandleOrderPaid", map[string]interface{}{
+	// Persistent dedupe (notification_dedupe) is primary so SQS/RabbitMQ
+	// order.paid republish cannot double-send; stable job id remains secondary.
+	return s.enqueueEmailOnce(ctx, msg, orderConfirmedJobID(data.OrderID), "HandleOrderPaid", map[string]interface{}{
 		"order_id":    data.OrderID,
 		"customer_id": o.CustomerID,
 		"guest":       recipient.Guest,
-	})
+	}, data.OrderID, KindOrderConfirmed)
+}
+
+// orderConfirmedJobID returns a stable UUID v5-shaped id for one confirmation
+// per order (sha1 of a fixed namespace + order id).
+func orderConfirmedJobID(orderID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.order_confirmed:" + strings.TrimSpace(orderID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
+	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // HandlePasswordReset is an event handler for customer.password_reset.requested.
@@ -632,8 +667,37 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 	})
 }
 
-// enqueueEmail creates and enqueues an email.send job.
+// enqueueEmail creates and enqueues an email.send job with a fresh id.
 func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler string, logFields map[string]interface{}) error {
+	return s.enqueueEmailOnce(ctx, msg, id.New(), handler, logFields, "", "")
+}
+
+// enqueueEmailOnce enqueues with a caller-supplied job id. When subjectKey and
+// kind are set and a dedupe store is wired, the store is claimed first (pending);
+// enqueue runs only on a new claim. After a successful enqueue (or queue Conflict),
+// the claim is marked completed so it is never reclaimed. Enqueue failure deletes
+// the claim so a later HandleOrderPaid can retry. Queue Conflict (duplicate job id)
+// remains a secondary success path for Postgres-backed queues.
+//
+// Claim release uses a detached timeout context so shutdown cancellation of the
+// request ctx cannot leave a pending claim without a job. Stuck pending claims
+// are reclaimable when older than the store stale threshold via TryInsert;
+// completed claims are permanent.
+func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID, handler string, logFields map[string]interface{}, subjectKey, kind string) error {
+	claimed := false
+	if s.dedupe != nil && strings.TrimSpace(subjectKey) != "" && strings.TrimSpace(kind) != "" {
+		inserted, err := s.dedupe.TryInsert(ctx, subjectKey, kind)
+		if err != nil {
+			s.log.Error(handler+".dedupe_claim_failed", err, logFields)
+			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
+		}
+		if !inserted {
+			s.log.Info(handler+".email_already_enqueued", logFields)
+			return nil
+		}
+		claimed = true
+	}
+
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
@@ -651,20 +715,57 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 		payload["attachments"] = atts
 	}
 
-	job, err := jobs.NewJob(id.New(), JobTypeEmailSend, payload)
+	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
 	if err != nil {
+		if claimed {
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
+		}
 		s.log.Error(handler+".job_create_failed", err, logFields)
 		return fmt.Errorf("notification: create job: %w", err)
 	}
 
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		logFields["job_id"] = job.ID
+		if apperror.Is(err, apperror.CodeConflict) {
+			// Job-id secondary dedupe: mark claim completed (already queued).
+			if claimed {
+				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+			}
+			s.log.Info(handler+".email_already_enqueued", logFields)
+			return nil
+		}
+		if claimed {
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
+		}
 		s.log.Error(handler+".enqueue_failed", err, logFields)
 		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
 	}
 
+	if claimed {
+		s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+	}
 	logFields["job_id"] = job.ID
 	logFields["job_type"] = JobTypeEmailSend
 	s.log.Info(handler+".email_enqueued", logFields)
 	return nil
+}
+
+// releaseDedupeClaim deletes a claim using a bounded background context so a
+// cancelled request/shutdown ctx cannot skip cleanup and strand the claim.
+func (s *Service) releaseDedupeClaim(subjectKey, kind, handler string, logFields map[string]interface{}) {
+	delCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if delErr := s.dedupe.Delete(delCtx, subjectKey, kind); delErr != nil {
+		s.log.Error(handler+".dedupe_release_failed", delErr, logFields)
+	}
+}
+
+// completeDedupeClaim marks a claim completed using a bounded background
+// context so shutdown cancellation cannot leave a successful send reclaimable.
+func (s *Service) completeDedupeClaim(subjectKey, kind, handler string, logFields map[string]interface{}) {
+	markCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if markErr := s.dedupe.MarkCompleted(markCtx, subjectKey, kind); markErr != nil {
+		s.log.Error(handler+".dedupe_complete_failed", markErr, logFields)
+	}
 }

@@ -75,7 +75,7 @@ Do **not** commit build outputs (`shopanda`, `api`, or other binaries) to git. S
 
 **Option B — Web wizard (merchants):**
 
-Start the server first (step 5), then open `/setup` in a browser. The wizard runs migrations, seeds defaults, and creates the first admin account. Visiting `/admin` before setup completes redirects to `/setup` ([PR-903](../phase-9-merchant-discovery/prs/PR-903.md)).
+Start the server first (step 5), then open `/setup` in a browser. The wizard runs migrations, seeds defaults, and creates the first admin account. Visiting `/admin` before setup completes redirects to `/setup`.
 
 The setup command / wizard:
 
@@ -856,6 +856,17 @@ Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in
 
 `catalog.visibility.enforce` (env `SHOPANDA_CATALOG_VISIBILITY_ENFORCE`) defaults to **false**. Leaving it off is the safe upgrade path after Phase 12 Track B migrations: existing products stay discoverable under mode=`auto` until you explicitly opt into AutoBasis gates. Enabling it also gates cart add/quantity-increase, guest-cart claim (blocked lines are dropped), and checkout on the `Purchasable` axis (PR-1058), so out-of-stock or unpriced products stop being sellable. See [RUNBOOK — Catalog visibility enforcement](../../RUNBOOK.md#catalog-visibility-enforcement-pr-1057) before flipping it on in production.
 
+### Downloadable grant defaults (PR-1075)
+
+When an order is paid, downloadable lines receive `DownloadGrant` rows. Global defaults:
+
+| YAML | Env | Default |
+| --- | --- | --- |
+| `catalog.downloadable.default_expiry` | `SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_EXPIRY` | `720h` (30 days) |
+| `catalog.downloadable.default_download_limit` | `SHOPANDA_CATALOG_DOWNLOADABLE_DEFAULT_LIMIT` | `5` |
+
+`default_expiry` is a Go duration string. Per-product overrides are rows in `downloadable_grant_settings` (admin editor is PR-1078). Delivery HTTP is PR-1077.
+
 ## Search Index Maintenance
 
 ### Meilisearch: full reindex required after upgrading past PR-1037
@@ -891,6 +902,30 @@ Deployments using `search.engine: meilisearch` must, after upgrading:
    publishes the category event this PR wires up) if you want existing
    categories searchable immediately, rather than waiting for the next
    edit.
+
+### Meilisearch / search visibility schema (PR-1079)
+
+PR-1079 adds denormalized visibility axes (`visible_in_catalog`,
+`visible_in_search`, `visible_individually`, `purchasable`), `type`, and
+`status` to the search index, and storefront Search/Suggest apply
+`visible_in_*` filters **only when** `catalog.visibility.enforce` is on.
+
+**Postgres vs Meili fail-open mismatch (read carefully):**
+
+| Backend | Pre-reindex behavior |
+| --- | --- |
+| **Postgres** | Migration `110` adds `search_visible_*` / `search_purchasable` with `DEFAULT true` — unreindexed rows still match `= true` filters (fail-open). |
+| **Meilisearch** | Existing documents lack the new attributes (visibility bools **and** often `status`). A strict `visible_in_search = true` or `status = "active"` would hide **every** unreindexed hit. Engines therefore filter with `(attr = true OR attr NOT EXISTS)` and `(status = "active" OR status NOT EXISTS)` so missing attrs fail open until reindex writes real values. `status` stays filterable. |
+
+**Ordered deploy (required for Meili + enforce):**
+
+1. **Migrate** — apply `110_add_products_search_visibility.sql` (and restart so Meili index settings pick up new filterables via `meili.New`).
+2. **Full reindex** — `search:reindex` (or admin reindex-all) so every product document has `type`, `status`, and the four visibility bools. Prefer a low-write window.
+3. **Enable filters** — only then set `catalog.visibility.enforce: true` / `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`. Enforce is what attaches `visible_in_search` / `visible_in_catalog` to storefront Search/Suggest/HTML listings.
+
+Do **not** flip enforce on before the Meili reindex completes: post-filter still fail-closes against live facts, but Total/Facets stay wrong until the index is current. Postgres-only deployments still need the reindex so denormalized columns leave the `DEFAULT true` placeholder for hidden products.
+
+**Ongoing reindex (until PR-1080):** An initial deploy reindex is **not** enough. Until PR-1080 adds on-save reindex triggers for visibility-affecting changes, run a **full** `search:reindex` (or admin reindex-all) after any bulk or admin change that alters visibility axes, type, or status. Stale indexed visibility leaves Search/Suggest hits, `total`, and facets incorrect even when storefront post-filters drop bad product rows.
 
 ## Monitor The Deployment
 

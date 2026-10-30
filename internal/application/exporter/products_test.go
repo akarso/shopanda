@@ -135,8 +135,8 @@ func TestExport_BasicCSV(t *testing.T) {
 		t.Fatalf("rows = %d, want 4", len(records))
 	}
 	header := records[0]
-	if strings.Join(header, ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
-		t.Errorf("header = %v, want [name slug sku description type pricing_mode stock_mode explode_order_lines variant_name]", header)
+	if strings.Join(header, ",") != "name,slug,sku,description,type,status,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,visibility_catalog,visibility_search,visibility_individually,visibility_purchasable,variant_name" {
+		t.Errorf("header = %v, want [name slug sku description type status pricing_mode stock_mode explode_order_lines requires_linked_parent visibility_catalog visibility_search visibility_individually visibility_purchasable variant_name]", header)
 	}
 	colIdx := make(map[string]int)
 	for i, h := range header {
@@ -180,7 +180,7 @@ func TestExport_WithAttributes(t *testing.T) {
 	records := parseCSV(t, &buf)
 	header := records[0]
 	// Attribute columns should be sorted: active, color, weight
-	expected := "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name,active,color,weight"
+	expected := "name,slug,sku,description,type,status,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,visibility_catalog,visibility_search,visibility_individually,visibility_purchasable,variant_name,active,color,weight"
 	if strings.Join(header, ",") != expected {
 		t.Errorf("header = %q, want %q", strings.Join(header, ","), expected)
 	}
@@ -218,7 +218,7 @@ func TestExport_EmptyDatabase(t *testing.T) {
 	if len(records) != 1 { // header only
 		t.Errorf("rows = %d, want 1 (header only)", len(records))
 	}
-	if strings.Join(records[0], ",") != "name,slug,sku,description,type,pricing_mode,stock_mode,explode_order_lines,variant_name" {
+	if strings.Join(records[0], ",") != "name,slug,sku,description,type,status,pricing_mode,stock_mode,explode_order_lines,requires_linked_parent,visibility_catalog,visibility_search,visibility_individually,visibility_purchasable,variant_name" {
 		t.Errorf("header = %v, want type column present", records[0])
 	}
 }
@@ -708,5 +708,268 @@ func TestExport_BundleModesStored(t *testing.T) {
 	}
 	if !warned {
 		t.Fatalf("Warnings = %v, want reserved pricing_mode omission", result.Warnings)
+	}
+}
+
+func TestExport_RequiresLinkedParent(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "Ticket", Slug: "ticket", RequiresLinkedParent: true},
+			{ID: "p2", Name: "Card", Slug: "card", RequiresLinkedParent: false},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "SKU-T"}},
+			"p2": {{ID: "v2", ProductID: "p2", SKU: "SKU-C"}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	if _, err := exp.Export(context.Background(), &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[h] = i
+	}
+	if _, ok := colIdx["requires_linked_parent"]; !ok {
+		t.Fatalf("requires_linked_parent missing from header %v", header)
+	}
+	bySKU := map[string][]string{}
+	for _, row := range records[1:] {
+		bySKU[row[colIdx["sku"]]] = row
+	}
+	if bySKU["SKU-T"][colIdx["requires_linked_parent"]] != "true" {
+		t.Errorf("SKU-T requires_linked_parent = %q, want true", bySKU["SKU-T"][colIdx["requires_linked_parent"]])
+	}
+	if bySKU["SKU-C"][colIdx["requires_linked_parent"]] != "false" {
+		t.Errorf("SKU-C requires_linked_parent = %q, want false", bySKU["SKU-C"][colIdx["requires_linked_parent"]])
+	}
+}
+
+func TestExport_VisibilityModes(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{
+				ID: "p1", Name: "Hidden", Slug: "hidden",
+				VisibilityModes: catalog.VisibilityAxes{
+					Catalog:      catalog.VisibilityModeHidden,
+					Search:       catalog.VisibilityModeVisible,
+					Individually: catalog.VisibilityModeAuto,
+					Purchasable:  catalog.VisibilityModeHidden,
+				},
+			},
+			{ID: "p2", Name: "Default", Slug: "default"},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "SKU-H"}},
+			"p2": {{ID: "v2", ProductID: "p2", SKU: "SKU-D"}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	if _, err := exp.Export(context.Background(), &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	colIdx := map[string]int{}
+	for i, h := range records[0] {
+		colIdx[h] = i
+	}
+	for _, col := range []string{"visibility_catalog", "visibility_search", "visibility_individually", "visibility_purchasable"} {
+		if _, ok := colIdx[col]; !ok {
+			t.Fatalf("missing %s in %v", col, records[0])
+		}
+	}
+	bySKU := map[string][]string{}
+	for _, row := range records[1:] {
+		bySKU[row[colIdx["sku"]]] = row
+	}
+	h := bySKU["SKU-H"]
+	if h[colIdx["visibility_catalog"]] != "hidden" || h[colIdx["visibility_search"]] != "visible" ||
+		h[colIdx["visibility_individually"]] != "auto" || h[colIdx["visibility_purchasable"]] != "hidden" {
+		t.Fatalf("SKU-H visibility = %q %q %q %q",
+			h[colIdx["visibility_catalog"]], h[colIdx["visibility_search"]],
+			h[colIdx["visibility_individually"]], h[colIdx["visibility_purchasable"]])
+	}
+	d := bySKU["SKU-D"]
+	if d[colIdx["visibility_catalog"]] != "auto" || d[colIdx["visibility_search"]] != "auto" ||
+		d[colIdx["visibility_individually"]] != "auto" || d[colIdx["visibility_purchasable"]] != "auto" {
+		t.Fatalf("SKU-D empty modes should export as auto, got %q %q %q %q",
+			d[colIdx["visibility_catalog"]], d[colIdx["visibility_search"]],
+			d[colIdx["visibility_individually"]], d[colIdx["visibility_purchasable"]])
+	}
+}
+
+func TestExport_VisibilityModesRoundTrip(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{
+				ID: "p1", Name: "Ticket", Slug: "ticket", Type: catalog.TypeSimple,
+				RequiresLinkedParent: true,
+				VisibilityModes: catalog.VisibilityAxes{
+					Catalog:      catalog.VisibilityModeHidden,
+					Search:       catalog.VisibilityModeHidden,
+					Individually: catalog.VisibilityModeVisible,
+					Purchasable:  catalog.VisibilityModeAuto,
+				},
+			},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "SKU-T", Name: "Default"}},
+		},
+	}
+	var buf bytes.Buffer
+	if _, err := exporter.NewProductExporter(prodRepo, varRepo).Export(context.Background(), &buf); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	importProd := &roundTripProductRepo{}
+	importVar := &roundTripVariantRepo{}
+	impResult, err := importer.NewProductImporter(importProd, importVar, nil).Import(context.Background(), bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if impResult.Products != 1 || len(importProd.products) != 1 {
+		t.Fatalf("import result=%+v", impResult)
+	}
+	got := importProd.products[0]
+	want := catalog.VisibilityAxes{
+		Catalog:      catalog.VisibilityModeHidden,
+		Search:       catalog.VisibilityModeHidden,
+		Individually: catalog.VisibilityModeVisible,
+		Purchasable:  catalog.VisibilityModeAuto,
+	}
+	if got.VisibilityModes != want {
+		t.Fatalf("VisibilityModes = %#v, want %#v", got.VisibilityModes, want)
+	}
+	if !got.RequiresLinkedParent {
+		t.Fatal("RequiresLinkedParent lost on round-trip")
+	}
+	if got.Type != catalog.TypeSimple {
+		t.Fatalf("Type = %q", got.Type)
+	}
+	// Fixture left Status empty; export writes "draft", import creates draft.
+	if got.Status != catalog.StatusDraft {
+		t.Fatalf("Status = %q, want draft (empty stored → draft on export/import)", got.Status)
+	}
+}
+
+func TestExport_AttributeNamedVisibilityCatalogOmitted(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "P", Slug: "p", Type: catalog.TypeSimple},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{
+				ID: "v1", ProductID: "p1", SKU: "SKU-1",
+				Attributes: map[string]interface{}{
+					"visibility_catalog": "attr-should-omit",
+					"Visibility_Catalog": "case-variant-omit",
+					"color":              "red",
+				},
+			}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	colIdx := map[string]int{}
+	for i, h := range records[0] {
+		colIdx[h] = i
+	}
+	if _, ok := colIdx["color"]; !ok {
+		t.Fatal("color attribute column missing")
+	}
+	// Exactly one visibility_catalog column (the reserved product column), never an attribute duplicate.
+	visCount := 0
+	for _, h := range records[0] {
+		if strings.EqualFold(h, "visibility_catalog") {
+			visCount++
+		}
+	}
+	if visCount != 1 {
+		t.Fatalf("visibility_catalog occurrences = %d, want 1; header=%v", visCount, records[0])
+	}
+	if records[1][colIdx["visibility_catalog"]] != "auto" {
+		t.Fatalf("visibility_catalog cell = %q, want auto (attr must not overwrite)", records[1][colIdx["visibility_catalog"]])
+	}
+	if _, ok := colIdx["Visibility_Catalog"]; ok {
+		t.Fatal("Visibility_Catalog must not appear as a separate attribute column")
+	}
+	joined := strings.Join(result.Warnings, "\n")
+	if !strings.Contains(joined, "omitted reserved attribute keys") {
+		t.Fatalf("Warnings = %v, want omission note", result.Warnings)
+	}
+	if !strings.Contains(joined, "visibility_catalog") && !strings.Contains(joined, "Visibility_Catalog") {
+		t.Fatalf("Warnings = %v, want reserved visibility key named", result.Warnings)
+	}
+}
+
+func TestExport_AttributeNamedStatusOmitted(t *testing.T) {
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "P", Slug: "p", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{
+				ID: "v1", ProductID: "p1", SKU: "SKU-1",
+				Attributes: map[string]interface{}{
+					"status": "attr-should-omit",
+					"Status": "case-variant-omit",
+					"color":  "red",
+				},
+			}},
+		},
+	}
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records := parseCSV(t, &buf)
+	colIdx := map[string]int{}
+	for i, h := range records[0] {
+		colIdx[h] = i
+	}
+	if _, ok := colIdx["color"]; !ok {
+		t.Fatal("color attribute column missing")
+	}
+	statusCount := 0
+	for _, h := range records[0] {
+		if strings.EqualFold(h, "status") {
+			statusCount++
+		}
+	}
+	if statusCount != 1 {
+		t.Fatalf("status occurrences = %d, want 1; header=%v", statusCount, records[0])
+	}
+	if records[1][colIdx["status"]] != "active" {
+		t.Fatalf("status cell = %q, want active (attr must not overwrite)", records[1][colIdx["status"]])
+	}
+	if _, ok := colIdx["Status"]; ok {
+		t.Fatal("Status must not appear as a separate attribute column")
+	}
+	joined := strings.Join(result.Warnings, "\n")
+	if !strings.Contains(joined, "omitted reserved attribute keys") {
+		t.Fatalf("Warnings = %v, want omission note", result.Warnings)
+	}
+	if !strings.Contains(joined, "status") && !strings.Contains(joined, "Status") {
+		t.Fatalf("Warnings = %v, want reserved status key named", result.Warnings)
 	}
 }

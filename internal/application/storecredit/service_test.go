@@ -154,6 +154,30 @@ func TestService_Issue_AllowsExactlyMax(t *testing.T) {
 	}
 }
 
+func TestService_Restore_SkipsIssuanceCap(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)})
+	amount, _ := shared.NewMoney(1_000_000, "EUR") // above the 100000 default
+
+	if err := svc.Restore(context.Background(), "cust-1", amount, "return redeemed debit", "checkout:payment-failed:order-1"); err != nil {
+		t.Fatalf("Restore: %v, want success without the issuance cap", err)
+	}
+	if len(repo.issued) != 1 || repo.issued[0].amount.Amount() != 1_000_000 {
+		t.Fatalf("issued = %+v, want the restored debit", repo.issued)
+	}
+	if repo.issued[0].key != "checkout:payment-failed:order-1" {
+		t.Fatalf("key = %q, want checkout:payment-failed:order-1", repo.issued[0].key)
+	}
+
+	err := svc.Issue(context.Background(), "cust-1", amount, "note", "")
+	if err == nil {
+		t.Fatal("expected Issue to still apply the issuance cap")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Issue err = %v, want validation", err)
+	}
+}
+
 func TestService_Issue_ZeroMaxDisablesCap(t *testing.T) {
 	repo := &fakeCreditRepo{}
 	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(0)

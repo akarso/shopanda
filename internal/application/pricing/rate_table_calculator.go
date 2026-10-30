@@ -6,6 +6,7 @@ import (
 
 	domain "github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/tax"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // RateTableCalculator applies per-item tax using country/class rate tables.
@@ -19,10 +20,16 @@ import (
 // Optional Meta keys:
 //
 //	"store_id"    (string): store scope for rate lookup (empty = global)
-//	"tax_classes" (map[string]string): variant ID → tax class override
+//	"tax_classes" (map[string]string): variant ID → tax class (e.g. "standard", "digital")
 //
 // When both tax meta keys are absent, Calculate is a no-op. When one key is
 // present without the other, Calculate returns an error.
+//
+// Missing / unusable rates: class "digital" fails closed via
+// tax.MissingRateFailsClosed when the row is nil or Rate == 0 — never
+// silently 0% VAT (use class "zero" for intentional zero). Other classes
+// (including default "standard") may still skip when no row exists or
+// Rate == 0 (legacy).
 type RateTableCalculator struct {
 	rates        tax.RateRepository
 	defaultClass string
@@ -59,7 +66,10 @@ func (c *RateTableCalculator) Calculate(ctx context.Context, pctx *domain.Pricin
 		return fmt.Errorf("tax calculator: %w", err)
 	}
 
-	classes, _ := pctx.Meta["tax_classes"].(map[string]string)
+	classes, err := coerceTaxClasses(pctx.Meta["tax_classes"])
+	if err != nil {
+		return fmt.Errorf("tax calculator: %w", err)
+	}
 
 	for i := range pctx.Items {
 		item := &pctx.Items[i]
@@ -80,6 +90,18 @@ func (c *RateTableCalculator) Calculate(ctx context.Context, pctx *domain.Pricin
 			if err != nil {
 				return fmt.Errorf("tax calculator: variant %s (fallback): %w", item.VariantID, err)
 			}
+		}
+		if tax.MissingRateFailsClosed(class, rate) {
+			if rate == nil {
+				return apperror.Validation(fmt.Sprintf(
+					"tax calculator: no %q rate for country %q (variant %s) — refusing 0%% VAT",
+					class, country, item.VariantID,
+				))
+			}
+			return apperror.Validation(fmt.Sprintf(
+				"tax calculator: %q rate for country %q is 0 bps (variant %s) — refusing 0%% VAT; use class %q for intentional zero",
+				class, country, item.VariantID, tax.TaxClassZero,
+			))
 		}
 		if rate == nil || rate.Rate == 0 {
 			continue

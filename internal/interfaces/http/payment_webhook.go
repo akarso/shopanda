@@ -1,11 +1,14 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 
+	orderapp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -107,6 +110,24 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 			return
 		}
 
+		// Idempotent heal: republish side-effects when money already settled
+		// (mirrors payment.failed retry) so grant issuance can catch up.
+		if p.Status() != payment.StatusPending {
+			if !req.Success && p.Status() == payment.StatusFailed {
+				if err := publishPaymentFailed(h.bus, r.Context(), "payment.webhook", p, p.Status()); err != nil {
+					JSONError(w, err)
+					return
+				}
+			}
+			if req.Success && p.Status() == payment.StatusCompleted {
+				_ = publishOrderPaidAfterPayment(h.bus, r.Context(), "payment.webhook", p)
+			}
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"status": "already_processed",
+			})
+			return
+		}
+
 		prevUpdatedAt := p.UpdatedAt
 		oldStatus := p.Status()
 
@@ -131,16 +152,48 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 		if !req.Success {
 			evtName = payment.EventPaymentFailed
 		}
-		_ = h.bus.Publish(r.Context(), event.New(evtName, "payment.webhook", payment.PaymentStatusChangedData{
+		if err := h.bus.Publish(r.Context(), event.New(evtName, "payment.webhook", payment.PaymentStatusChangedData{
 			PaymentID:   p.ID,
 			OrderID:     p.OrderID,
 			OldStatus:   oldStatus,
 			NewStatus:   p.Status(),
 			ProviderRef: p.ProviderRef,
-		}))
+		})); err != nil && evtName == payment.EventPaymentFailed {
+			JSONError(w, err)
+			return
+		}
+		if req.Success {
+			// Persist already succeeded — do not HTTP 500 on publish failure.
+			// Provider retries still republish order.paid via already_processed.
+			_ = publishOrderPaidAfterPayment(h.bus, r.Context(), "payment.webhook", p)
+		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"status": "accepted",
 		})
 	}
+}
+
+func publishPaymentFailed(bus *event.Bus, ctx context.Context, source string, p *payment.Payment, oldStatus payment.PaymentStatus) error {
+	if bus == nil || p == nil {
+		return nil
+	}
+	return bus.Publish(ctx, event.New(payment.EventPaymentFailed, source, payment.PaymentStatusChangedData{
+		PaymentID:   p.ID,
+		OrderID:     p.OrderID,
+		OldStatus:   oldStatus,
+		NewStatus:   p.Status(),
+		ProviderRef: p.ProviderRef,
+	}))
+}
+
+// publishOrderPaidAfterPayment emits order.paid after a completed payment
+// persist so DownloadGrant issuance (and notification) share one subscriber
+// (PR-1075). Does not change order status — ownership is payment-based.
+// OldStatus/NewStatus are order statuses (not payment statuses).
+func publishOrderPaidAfterPayment(bus *event.Bus, ctx context.Context, source string, p *payment.Payment) error {
+	if bus == nil || p == nil {
+		return nil
+	}
+	return orderapp.PublishPaid(ctx, bus, source, p.OrderID, string(order.OrderStatusPending), string(order.OrderStatusPaid))
 }

@@ -24,6 +24,20 @@ type fakeOrderRepo struct {
 func (f *fakeOrderRepo) FindByID(_ context.Context, id string) (*order.Order, error) {
 	return f.orders[id], nil
 }
+
+func (f *fakeOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := f.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (f *fakeOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }

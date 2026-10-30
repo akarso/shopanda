@@ -3,6 +3,7 @@ package rewrite
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
@@ -52,10 +53,16 @@ func (s *Subscriber) HandleProductCreated(ctx context.Context, evt event.Event) 
 }
 
 // HandleProductUpdated saves a URL rewrite for an updated product.
+// An empty slug is skipped: "/"+"" is "/" and would claim the storefront
+// root when that path is unclaimed. Publishers that reuse this event for
+// non-slug changes (composition, downloadable files) must not invent a path.
 func (s *Subscriber) HandleProductUpdated(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(catalog.ProductUpdatedData)
 	if !ok {
 		return fmt.Errorf("rewrite: unexpected event data type %T", evt.Data)
+	}
+	if strings.TrimSpace(data.Slug) == "" {
+		return nil
 	}
 	return s.saveRewrite(ctx, "/"+data.Slug, "product", data.ProductID)
 }

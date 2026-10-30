@@ -27,6 +27,8 @@ SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED=true
 | `maktx2` | `description` |
 | `ext_slug` | `slug` |
 
+Core product CSV also accepts create-only `status` and `visibility_*` columns (PR-1081); remap those from ERP fields the same way if your feed carries them. Downloadable products must import as `draft` (not `active`) until files are attached.
+
 When `slug` is still empty after remap, it is derived from `sku` (lowercased, non-alphanumeric → `-`).
 
 Missing `matnr`/`sku` after remap records structured error `importdemo.missing_sku`.

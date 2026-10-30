@@ -10,8 +10,9 @@ Related:
 - [Plugin Authoring Guide](../../PLUGINS.md) — slot registration from the plugin side
 - [Extension API (Stable v0)](EXTENSION_API.md) — anchor constants in `pkg/extapi`
 - [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) — combining multiple plugin renderers
-- [Theme system spec](../phase-1-core/specs/THEME_SYSTEM.md) — SSR architecture overview
 - Reference plugin: [plugins/slotsdemo](../../plugins/slotsdemo/README.md)
+
+SSR theme architecture notes from the original v0 dump live on the `dev` branch under `docs/phase-1-core/specs/THEME_SYSTEM.md` (not on `main`).
 
 ---
 
@@ -344,4 +345,3 @@ Response includes the standard catalog plus registered handlers per anchor.
 
 - Plugin slot registration: [PLUGINS.md § UI slots](../../PLUGINS.md)
 - Stable v0 contracts: [EXTENSION_API.md](EXTENSION_API.md)
-- Phase 7 Track F roadmap: [ROADMAP.md](../phase-7-customization-platform/ROADMAP.md)

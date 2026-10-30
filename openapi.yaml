@@ -692,6 +692,15 @@ paths:
                 quantity:
                   type: integer
                   minimum: 1
+                assignment_parent_product_id:
+                  type: string
+                  description: Catalog parent product selected at cart time (PR-1070)
+                assignment_parent_unit_id:
+                  type: string
+                  description: Owned parent instance unit id (orderID/variantID)
+                assignment_deferred:
+                  type: boolean
+                  description: Purchase now, assign the instance after purchase
       responses:
         "200":
           description: OK
@@ -989,6 +998,146 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ── Account / GDPR ────────────────────────────────────
+  /api/v1/account/assignment-parents:
+    get:
+      operationId: listAccountAssignmentParents
+      tags: [Account]
+      summary: List owned parent instances eligible for a child product
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: child_product_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/account/assignments:
+    get:
+      operationId: getAccountAssignment
+      tags: [Account]
+      summary: Get the current assignment for an owned child unit
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: child_unit_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: assignAccountAssignment
+      tags: [Account]
+      summary: Assign an unassigned owned child unit to an owned parent unit
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [child_unit_id, parent_unit_id]
+              properties:
+                child_unit_id:
+                  type: string
+                parent_unit_id:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/account/downloads/{grantID}:
+    post:
+      operationId: deliverAccountDownload
+      tags: [Account]
+      summary: Deliver a downloadable file for an owned DownloadGrant
+      description: |
+        Auth-gated, state-changing delivery for a post-purchase DownloadGrant
+        (PR-1077). POST (not GET) so probes/metadata clients do not burn a
+        download slot. Checks ownership, expiry, and download limit; proves
+        the blob exists (S3 HeadObject / local Read) and prepares a short-lived
+        signed URL or stream **before** atomically incrementing download_count.
+        Permanent public media URLs are never returned. Signed redirects set
+        response Cache-Control: private, no-store and Content-Disposition
+        attachment. Expired or exhausted grants return validation (422).
+
+        Auth: same as other `/api/v1/account/*` routes — Bearer token and/or
+        session cookie accepted by RequireAuth (cookie-only browser clients
+        use the storefront session; CSRF is not required on `/api/v1/*`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: grantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: File bytes streamed (local / ReadableStorage backends)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "302":
+          description: Redirect to a short-lived signed object URL (S3)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+            Cache-Control:
+              schema:
+                type: string
+                example: private, no-store
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/account/consent:
     get:
       operationId: getConsent
@@ -1749,6 +1898,754 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  # ── Admin: Product assignments ─────────────────────────
+  /api/v1/admin/products/{id}/linked-eligible-parents:
+    get:
+      operationId: adminListLinkedEligibleParents
+      tags: ["Admin: Products"]
+      summary: List linked-eligible parent products for a child
+      description: >-
+        Explicit parent allowlist rows for the child product (PR-1073).
+        `products.read`. Enrichment of name/slug/type is best-effort.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAddLinkedEligibleParent
+      tags: ["Admin: Products"]
+      summary: Add a linked-eligible parent product
+      description: >-
+        Insert-ignore an allowlist row. `products.write`. Body
+        `{parent_product_id}`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLinkedEligibleParentRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+  /api/v1/admin/products/{id}/linked-eligible-parents/{parentId}:
+    delete:
+      operationId: adminRemoveLinkedEligibleParent
+      tags: ["Admin: Products"]
+      summary: Remove a linked-eligible parent product
+      description: >-
+        `parentId` is the parent product id. 404 when the link does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: parentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/admin/products/{id}/linked-eligible-categories:
+    get:
+      operationId: adminListLinkedEligibleCategories
+      tags: ["Admin: Products"]
+      summary: List linked-eligible categories for a child
+      description: >-
+        Category eligibility rules for the child product (PR-1073).
+        `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAddLinkedEligibleCategory
+      tags: ["Admin: Products"]
+      summary: Add a linked-eligible category
+      description: >-
+        Insert-ignore a category rule. `products.write`. Body `{category_id}`.
+        Concurrent category delete maps FK 23503 to "category not found".
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLinkedEligibleCategoryRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+  /api/v1/admin/products/{id}/linked-eligible-categories/{categoryId}:
+    delete:
+      operationId: adminRemoveLinkedEligibleCategory
+      tags: ["Admin: Products"]
+      summary: Remove a linked-eligible category
+      description: >-
+        `categoryId` is the category id. 404 when the rule does not exist.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: categoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/products/{id}/downloadable-files:
+    get:
+      operationId: adminListDownloadableFiles
+      tags: ["Admin: Products"]
+      summary: List downloadable file attachments
+      description: >-
+        Returns join rows for the product (any type). Asset filename/path are
+        enriched when readable. Requires `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminAttachDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Attach or update a downloadable file
+      description: >-
+        Upserts `(product_id, asset_id)`. Asset path must be under
+        `private/downloads/`. Product type must be downloadable.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachDownloadableFileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    put:
+      operationId: adminReplaceDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Replace a downloadable file attachment
+      description: >-
+        Swaps `old_asset_id` for `asset_id` in one transaction and retargets
+        DownloadGrant rows by asset id (live and expired; not product-scoped).
+        Without `global_retarget`, a shared asset (other products still attach
+        `old_asset_id`) returns 422 — this is not a this-product-only rewrite.
+        With `global_retarget=true`, every grant on the blob moves. UNIQUE
+        conflict revokes the live old grant; expired old rows deleted to free
+        UNIQUE vanish (grant ids are not reissued). Response includes
+        `grants_moved` / `grants_revoked`. Omitted `position`/`label` preserve
+        the old join values. New asset must be under `private/downloads/`.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceDownloadableFileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/downloadable-files/{assetId}:
+    delete:
+      operationId: adminRemoveDownloadableFile
+      tags: ["Admin: Products"]
+      summary: Remove a downloadable file attachment
+      description: >-
+        422 when removing the last file from an Active downloadable product.
+        Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/downloadable-grant-settings:
+    get:
+      operationId: adminGetDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Get per-product download grant overrides
+      description: >-
+        Missing override returns null expiry/limit (global defaults apply).
+        404 when the product does not exist. Requires `products.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: adminPutDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Upsert per-product download grant overrides
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutDownloadableGrantSettingsRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+    delete:
+      operationId: adminDeleteDownloadableGrantSettings
+      tags: ["Admin: Products"]
+      summary: Clear per-product download grant overrides
+      description: >-
+        Idempotent when no override row exists. Requires `products.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/download-grants:
+    get:
+      operationId: adminListDownloadGrants
+      tags: ["Admin: Orders"]
+      summary: List download grants by customer or order item
+      description: >-
+        Require `customer_id` or `order_item_id` (`orderID/variantID`).
+        Requires `downloads.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+        - name: order_item_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/download-grants/{id}/revoke:
+    post:
+      operationId: adminRevokeDownloadGrant
+      tags: ["Admin: Orders"]
+      summary: Revoke a download grant
+      description: >-
+        Sets `expires_at` to now. Idempotent when already expired. `reason`
+        is required for audit. Requires `downloads.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeDownloadGrantRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/download-grants/{id}/reissue:
+    post:
+      operationId: adminReissueDownloadGrant
+      tags: ["Admin: Orders"]
+      summary: Re-issue a download grant
+      description: >-
+        Extends expiry (`expires_at` or `expiry_days` from now), optionally
+        updates `download_limit`, and by default resets `download_count`.
+        `reason` is required. Requires `downloads.write`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReissueDownloadGrantRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/orders/{orderId}/download-grants:
+    get:
+      operationId: adminListOrderDownloadGrants
+      tags: ["Admin: Orders"]
+      summary: List download grants for an order
+      description: >-
+        Walks order lines and returns grants keyed by `orderID/variantID`.
+        Requires `downloads.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/assignments:
+    get:
+      operationId: adminListAssignmentsByParent
+      tags: ["Admin: Products"]
+      summary: List assignments for a parent unit (admin)
+      description: >-
+        Returns one page of assignments whose parent is `parent_unit_id`,
+        newest first. `status`, `limit`, and `offset` are applied in SQL.
+        `status` defaults to `assigned` (the card view). `revoked` and `all`
+        are the other values. Unassigned rows have no parent and are omitted.
+        `limit` defaults to 100 and is capped at 100. `offset` skips matches
+        after the status filter. `has_more` is true when another row exists
+        past this page. Each row includes live parent and child order facts
+        and whether the bind was forced. If that fact read fails, the rows
+        are still returned with empty fact fields. Unit ids are
+        `orderID/variantID` and contain `/`, so the id is a query parameter.
+        The order UUID is matched in lowercase. Requires `assignments.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: parent_unit_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [assigned, revoked, all]
+            default: assigned
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  assignments:
+                    - id: "a1"
+                      parent_order_item_id: "order-1/card-var"
+                      child_order_item_id: "order-2/ticket-var"
+                      status: assigned
+                      created_at: "2026-01-01T00:00:00Z"
+                      forced: false
+                      child_customer_id: "cust-1"
+                      child_order_status: pending
+                      child_payment_status: ""
+                      parent_customer_id: "other"
+                      parent_order_status: pending
+                      parent_payment_status: ""
+                  has_more: false
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+    post:
+      operationId: adminCreateAssignment
+      tags: ["Admin: Products"]
+      summary: Assign a child unit to a parent unit (admin)
+      description: >-
+        Operator assign. The child product must require a linked parent
+        (or a required linked leaf), unless a current unassigned row is
+        being assigned. Catalog eligibility still has to match. A live
+        assigned row is 409. Cancelled, failed, or unpaid parent or child
+        orders are 422 unless `force` is true and `reason` is non-empty.
+        `reason` is at most 500 characters when `force` is true. A longer
+        reason with `force` false is not stored and is not a 422. That
+        override is stored as
+        `forced_at` and `forced_reason` only when a side is not bindable,
+        and returned as `reason` (not a second `forced_reason` field) on
+        this response and on later list, current, and revoke reads.
+        `force` on an already-bindable pair is 422 `force not applicable`.
+        The reason is also written to the audit entry. Customer ids are
+        not an ownership check. Support may force-bind an unpaid or
+        cancelled unit; `assignments.write` includes that override. A new
+        row is 201. Updating an unassigned row is 200. Requires
+        `assignments.write` (Admin, Manager, and Support; not Editor).
+        Audited as `assignment.create`. A failed create audits the
+        attempted child unit id.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [child_unit_id, parent_unit_id]
+              properties:
+                child_unit_id:
+                  type: string
+                parent_unit_id:
+                  type: string
+                force:
+                  type: boolean
+                  default: false
+                reason:
+                  type: string
+                  description: >-
+                    Required when `force` is true. At most 500 characters
+                    when `force` is true; a longer reason with `force`
+                    false is ignored and is not 422. Stored in
+                    `forced_reason` only when a side is not bindable.
+                    Returned as `reason` only when the row was force-bound.
+      responses:
+        "200":
+          description: Existing unassigned row assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "201":
+          description: New assigned row created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/assignments/current:
+    get:
+      operationId: adminGetCurrentAssignment
+      tags: ["Admin: Products"]
+      summary: Get the current assignment for a child unit (admin)
+      description: >-
+        Returns the live unassigned or assigned row for `child_unit_id`,
+        or `assignment: null` when the child has none. The order UUID is
+        matched in lowercase. The body includes live parent and child
+        order facts and whether the bind was forced. If that fact read
+        fails, the assignment is still returned with empty fact fields.
+        Requires `assignments.read`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: child_unit_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  assignment: null
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/assignments/{id}/revoke:
+    post:
+      operationId: adminRevokeAssignment
+      tags: ["Admin: Products"]
+      summary: Revoke an assignment (admin)
+      description: >-
+        Transitions an unassigned or assigned row to revoked. The row is
+        kept, including `forced_at` and `forced_reason` when set. The body
+        includes the same live parent and child order facts as list and
+        current, and `reason` when the row was force-bound. If that fact
+        read fails after the revoke is stored, the response is still 200
+        with the assignment and empty fact fields. An
+        already-revoked row returns 200 with that same body and is not
+        audited again. Requires `assignments.write`. A first revoke is
+        audited as `assignment.revoke`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/Validation"
 
@@ -3181,7 +4078,7 @@ components:
             `catalog.Product`, Go-serialized with no JSON tags — field names
             are the exported Go struct field names verbatim (PascalCase: `ID`,
             `Name`, `Slug`, `Description`, `Status`, `Type`, `PricingMode`,
-            `StockMode`, `ExplodeOrderLines`, `VisibilityModes`, `Attributes`,
+            `StockMode`, `ExplodeOrderLines`, `RequiresLinkedParent`, `VisibilityModes`, `Attributes`,
             `CreatedAt`, `UpdatedAt`), not
             the snake_case used by the rest of this response's `data` keys.
         category_ids:
@@ -3247,6 +4144,14 @@ components:
             `bundle` and both `pricing_mode` and `stock_mode` are `dynamic`.
             Omit to default to false. Sending true for any other combination
             is rejected with 422.
+        requires_linked_parent:
+          type: boolean
+          description: >-
+            When true, the purchasable axis stays false until the request
+            carries a non-empty assignment context (a parent product id, or
+            deferred assignment). Omit to store false. Display axes are
+            unchanged. There is no product-type restriction. Not accepted
+            on product CSV (PR-1073).
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
@@ -3293,6 +4198,11 @@ components:
             false when `type` changes off `bundle`, or when a pricing_mode or
             stock_mode change leaves the bundle ineligible to explode. Sending
             true without both dynamic modes is rejected with 422.
+        requires_linked_parent:
+          type: boolean
+          description: >-
+            Same flag as create. Omit to keep the stored value. There is
+            no product-type restriction. Not accepted on product CSV (PR-1073).
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
@@ -3319,6 +4229,115 @@ components:
       properties:
         member_product_id:
           type: string
+
+    AddLinkedEligibleParentRequest:
+      type: object
+      description: Add an explicit parent allowlist row for a child product (products.write). Duplicate pairs are insert-ignore success.
+      required: [parent_product_id]
+      properties:
+        parent_product_id:
+          type: string
+          description: Parent product UUID (must not equal the child id).
+    AddLinkedEligibleCategoryRequest:
+      type: object
+      description: Add a category eligibility rule for a child product (products.write). Duplicate pairs are insert-ignore success.
+      required: [category_id]
+      properties:
+        category_id:
+          type: string
+          description: Category UUID.
+
+    AttachDownloadableFileRequest:
+      type: object
+      required: [asset_id]
+      properties:
+        asset_id:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        label:
+          type: string
+          maxLength: 200
+
+    ReplaceDownloadableFileRequest:
+      type: object
+      required: [old_asset_id, asset_id]
+      description: >-
+        Omitting position/label preserves the previous join values. Grant
+        retarget is asset-scoped (not this product only). Without
+        global_retarget, shared attachments return 422. With
+        global_retarget=true, every grant on the blob moves to asset_id.
+      properties:
+        old_asset_id:
+          type: string
+        asset_id:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+          maximum: 9999
+        label:
+          type: string
+          maxLength: 200
+        global_retarget:
+          type: boolean
+          description: >-
+            Required when other products still attach old_asset_id. When true,
+            every download_grants row for the old blob is retargeted (or conflict-
+            revoked / deleted per UNIQUE rules).
+
+    PutDownloadableGrantSettingsRequest:
+      type: object
+      properties:
+        expiry_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          nullable: true
+        download_limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          nullable: true
+
+    RevokeDownloadGrantRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    ReissueDownloadGrantRequest:
+      type: object
+      required: [reason]
+      description: >-
+        Exactly one of expires_at or expiry_days is required; expiry must be
+        strictly in the future. Reissue runs in one DB transaction (row lock,
+        extend, optional CAS reset).
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC3339 absolute expiry; must be strictly after now.
+        expiry_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: Days from now when expires_at is omitted.
+        download_limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        reset_count:
+          type: boolean
+          description: Defaults to true. When true, count resets before a lower limit is applied.
+        reason:
+          type: string
+      anyOf:
+        - required: [expires_at]
+        - required: [expiry_days]
 
     CreateVariantRequest:
       type: object
@@ -3458,6 +4477,12 @@ components:
           type: integer
           format: int64
           description: quantity * unit_price
+        assignment_parent_product_id:
+          type: string
+        assignment_parent_unit_id:
+          type: string
+        assignment_deferred:
+          type: boolean
 
   responses:
     Unauthorized:
@@ -3515,6 +4540,17 @@ components:
             error:
               code: conflict
               message: the resource's current status does not allow this action
+    InternalError:
+      description: Unexpected server error (stable client message; details logged server-side)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: internal
+              message: internal server error
     RateLimited:
       description: Rate limit exceeded
       headers:

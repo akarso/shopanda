@@ -2,11 +2,14 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -212,5 +215,80 @@ func TestAssetRepo_Delete_EmptyID(t *testing.T) {
 	err = repo.Delete(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestAssetRepo_LockForUpdate_RequiresTx(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	_, err = repo.LockForUpdate(context.Background(), id.New())
+	if err == nil || !strings.Contains(err.Error(), "transaction required") {
+		t.Fatalf("LockForUpdate = %v, want transaction required", err)
+	}
+}
+
+func TestAssetRepo_LockForUpdate(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM assets")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM assets") })
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	ctx := context.Background()
+	a := mustNewAsset(t, "lock.png")
+	if err := repo.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+
+	bound, ok := repo.WithTx(tx).(*postgres.AssetRepo)
+	if !ok {
+		t.Fatalf("WithTx returned %T", repo.WithTx(tx))
+	}
+	locked, err := bound.LockForUpdate(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("LockForUpdate: %v", err)
+	}
+	if locked == nil || locked.ID != a.ID || locked.Path != a.Path {
+		t.Fatalf("locked = %+v, want id/path from saved asset", locked)
+	}
+	if _, err := bound.LockForUpdate(ctx, id.New()); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("missing lock = %v, want not found", err)
+	}
+
+	tx2, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx second: %v", err)
+	}
+	defer tx2.Rollback()
+	if _, err := tx2.ExecContext(ctx, `SET LOCAL lock_timeout = '300ms'`); err != nil {
+		t.Fatalf("set lock_timeout: %v", err)
+	}
+	start := time.Now()
+	_, err = repo.WithTx(tx2).(*postgres.AssetRepo).LockForUpdate(ctx, a.ID)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("second lock acquired while first transaction holds FOR UPDATE")
+	}
+	if elapsed < 200*time.Millisecond {
+		t.Fatalf("lock returned in %s, want a wait then failure: %v", elapsed, err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "lock") {
+		t.Fatalf("LockForUpdate = %v, want lock timeout", err)
 	}
 }

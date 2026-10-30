@@ -123,7 +123,8 @@ func (s *BundleService) Add(ctx context.Context, c *catalog.BundleComponent) err
 		}
 		locked[id] = typ
 	}
-	if err := requireActiveCompositionProducts(ctx, productRepo, c.BundleProductID, c.ComponentProductID); err != nil {
+	loaded, err := requireActiveCompositionProducts(ctx, productRepo, c.BundleProductID, c.ComponentProductID)
+	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err
 		}
@@ -131,6 +132,9 @@ func (s *BundleService) Add(ctx context.Context, c *catalog.BundleComponent) err
 	}
 	if err := c.ValidateComposition(locked[c.BundleProductID], locked[c.ComponentProductID]); err != nil {
 		return apperror.Validation(err.Error())
+	}
+	if c.Required && catalog.LinkedParentBlocksPurchase(loaded[c.ComponentProductID], catalog.AssignmentContextFrom(ctx)) {
+		return apperror.Validation(catalog.RequiresLinkedParentNotPurchasableMessage)
 	}
 	if err := componentRepo.Upsert(ctx, c); err != nil {
 		return fmt.Errorf("bundle: upsert component: %w", err)
@@ -213,18 +217,18 @@ func (s *BundleService) loadProduct(ctx context.Context, productID string) (*cat
 // catalog.WithOperatorProductReadScope sets for admin and other operator callers.
 // Call it on the transaction-bound product repo after the rows are locked.
 // A hidden product is NotFound, matching List.
-func requireActiveCompositionProducts(ctx context.Context, products catalog.ProductRepository, ids ...string) error {
-	if catalog.IncludeNonActiveProducts(ctx) {
-		return nil
-	}
+func requireActiveCompositionProducts(ctx context.Context, products catalog.ProductRepository, ids ...string) (map[string]*catalog.Product, error) {
+	loaded := make(map[string]*catalog.Product, len(ids))
+	skipActive := catalog.IncludeNonActiveProducts(ctx)
 	for _, id := range ids {
 		p, err := products.FindByID(ctx, id)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if p == nil || p.Status != catalog.StatusActive {
-			return apperror.NotFound("product not found")
+		if !skipActive && (p == nil || p.Status != catalog.StatusActive) {
+			return nil, apperror.NotFound("product not found")
 		}
+		loaded[id] = p
 	}
-	return nil
+	return loaded, nil
 }

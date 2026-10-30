@@ -61,11 +61,23 @@ func (s *Service) Issue(ctx context.Context, customerID string, amount shared.Mo
 	if s.maxIssueAmount > 0 && amount.Amount() > s.maxIssueAmount {
 		return apperror.Validation(fmt.Sprintf("amount exceeds maximum single issuance of %d", s.maxIssueAmount))
 	}
+	return s.credit(ctx, customerID, amount, note, idempotencyKey, "issue")
+}
+
+// Restore returns a previously redeemed debit. It does not apply the
+// admin issuance cap: this is the customer's own money, not a new
+// grant. idempotencyKey is optional; when set, a retried call with the
+// same key is a no-op rather than crediting twice.
+func (s *Service) Restore(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error {
+	return s.credit(ctx, customerID, amount, note, idempotencyKey, "restore")
+}
+
+func (s *Service) credit(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey, op string) error {
 	if err := s.ensureCustomer(ctx, customerID); err != nil {
 		return err
 	}
 	if err := s.credits.Issue(ctx, customerID, amount, note, idempotencyKey); err != nil {
-		return fmt.Errorf("storecredit: issue: %w", err)
+		return fmt.Errorf("storecredit: %s: %w", op, err)
 	}
 	return nil
 }

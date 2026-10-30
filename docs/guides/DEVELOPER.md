@@ -28,7 +28,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Jobs admin API](#jobs-admin-api)
 - [Cache admin API](#cache-admin-api)
 - [Full-page cache](#full-page-cache)
-- [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
+- [Integrator Platform](INTEGRATOR_PLATFORM.md)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
 - [Supply chain (Dependabot + govulncheck)](#supply-chain-dependabot--govulncheck)
@@ -85,11 +85,11 @@ Core (always on)
 - Adding HTTP webhook routes for new payment providers
 - Adding CLI subcommands — core commands in `cmd/api/main.go`; plugin commands via `RegisterCommand` in `Init`
 
-**Deferred (not implemented):** dynamic `.so` loading ([research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
+**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, hot reload. See [PLUGINS.md](../../PLUGINS.md#deferred-capabilities).
 
 Plugin-defined settings can be registered via `RegisterConfig` and edited on the admin Integrations page (`group=plugins` API). Plugin enable/disable remains compile-time + config file.
 
-See also: [PLUGINS.md](../../PLUGINS.md) · [Phase 4 Roadmap](../phase-4-refactoring/ROADMAP.md) · [plugins/example/README.md](../../plugins/example/README.md)
+See also: [PLUGINS.md](../../PLUGINS.md) · [plugins/example/README.md](../../plugins/example/README.md)
 
 ## Enable Core Plugins
 
@@ -102,7 +102,7 @@ Core plugins register through `plugins/core/register.go`, called from `registerP
 | Search | `search.engine` | `postgres` | `meilisearch` |
 | Cache | `cache.driver` | `postgres` | `redis` |
 | Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq`, `kafka`, `sqs` |
-| GraphQL API | `plugins.graphql.enabled` | off | read-only catalog at `POST /api/v1/graphql` |
+| GraphQL API | `plugins.graphql.enabled` | off | public read-only catalog at `POST /api/v1/graphql` (PR-1082: type, visibility modes, bundle/grouped children, ProductConnection listing meta; same axis gates as storefront REST when enforce is on — not admin allowlists) |
 | Storage | `storage.driver` | `local` | `s3` |
 | Stripe payments | `payment.stripe.enabled` | `false` | set `true` + Stripe env vars |
 
@@ -605,9 +605,12 @@ Examples already shipped in the codebase:
 
 For the current full set, inspect `internal/domain/**/events.go` and `internal/application/checkout/workflow.go`.
 
-### Search indexing depends on these events (PR-1036)
+### Search indexing depends on these events (PR-1036, PR-1080)
 
 The search index updates itself automatically when a product, its price, its stock, or its category assignment changes — but only because the core admin handlers publish `catalog.EventProductUpdated`/`catalog.EventProductCreated`, `pricing.EventPriceUpserted`, and `inventory.EventStockUpdated` after every successful write, and `internal/application/search.IndexUpdateSubscriber` listens for them.
+
+**PR-1080 additions:** bundle component add/remove and downloadable file attach/replace/remove publish `catalog.EventProductUpdated` (Publish-then-`PublishAsync` fallback, same as category assignment). Sync Publish requires a non-empty slug — a failed product read (or downloadable `SetProducts` unset) is async-only so `rewrite.Subscriber` cannot save `/`. `IndexUpdateSubscriber.WithBundleParents` fans product/stock/price/**variant** events out to parent bundles (`BundleParentLookup.ListBundleIDsByComponentID`) so leaf deactivate/archive/type change and second-variant create flip kit `HasPrice`/`QuantityPositive`. FPC and product-cache subscribers use the same lookup. Bulk `import:stock` / ERP `StockSyncService` expand touched IDs through `ListBundleIDsByComponentIDs` (chunks of 100) before `Trigger`, on a timeout separate from enqueue; 10,000+ touched IDs skip expansion and full-scan. Do **not** reindex on `download.grant.*` or assignment create/revoke — grants are post-purchase; index-time Resolve uses an empty assignment context. CSV `import:bundle-components` / `import:downloadable-files` do not batch-trigger yet (use `search:reindex`; accepted gap from PR-1080, out of scope for PR-1081). Price CSV relies on per-row `EventPriceUpserted` + subscriber fan-out (no separate parent batch).
+
 
 If a plugin (or any other code path) mutates that data outside those save paths — writing directly to the database, or through a bulk import that doesn't go through the same handlers — it must keep the index fresh in one of two supported ways:
 
@@ -616,7 +619,7 @@ If a plugin (or any other code path) mutates that data outside those save paths 
 
 If neither happens, changes won't reach the search index until the next manual/scheduled `search:reindex`.
 
-`inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber only reads `ProductID`.
+`inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber reads `ProductID` (and parent bundle IDs when fan-out is wired).
 
 ### Example listener
 
@@ -784,46 +787,23 @@ All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the 
 
 **Fragments vs slots:** slots inject plugin HTML at render time into the (possibly cached) page; fragments are always-live per-request holes. See [THEME_SLOTS.md](THEME_SLOTS.md).
 
-## Integrator Platform (Phase 8)
+## Integrator Platform
 
 **Audience:** agencies and integrators connecting ERP, warehouse, PIM, or custom price/cart rules.
 
-Phase 8 adds first-class seams for **commerce behavior** (positioned pricing steps, cart hooks) and **external systems** (CSV import transforms, inbound REST, outbound sync jobs) — without core forks or Magento-style override folders.
-
-| Resource | Purpose |
-| --- | --- |
-| [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
-| [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) | Tracks A–F + post-phase PR-854 (PR-800–855) |
-
-**Available today (core + Phase 8):**
-
-- Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
-  - `search.SearchEngine` (PR-1037): `search.Product.CategoryIDs []string` replaces the old single `CategoryID string` — a product can belong to more than one category, and the index must represent all of them, not just the first. `SearchEngine` also gained `IndexCategory(ctx, search.Category) error` / `RemoveCategory(ctx, categoryID string) error` for indexing category documents (name/slug/description/parent/product count) as their own searchable entity, alongside products. A custom `SearchEngine` implementation must implement both new methods.
-  - `cache.Cache` (PR-1039/PR-1042): `SetWithTags` / `DeleteByTag` for many-to-many invalidation; `Stats(ctx) (Stats, error)` / `FlushAll(ctx) (int64, error)` for the cache admin API. Redis `FlushAll` must scan-and-delete under a non-empty store prefix, never `FLUSHDB`, and return value-key deletions only. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
-- Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
-- Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
-- HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
-- CSV import: CLI `import:*` with row hooks via `app.Import().RegisterRowHook` (PR-820–823)
-- CSV export: CLI `export:*` with row hooks via `app.Export().RegisterRowHook` (PR-856–858)
-- Outbound sync: `app.Integration(slug).RegisterSyncJob` + `pkg/integrationsdk` (PR-840–841)
-- Registration report: `./app plugins report` (PR-851)
-- Async: events + optional queue drivers
-
-**Reference plugins** (opt-in via config): `cartdemo`, `importdemo`, `exportdemo`, `integrationdemo`, `warehousedemo`, `pimdemo`, `taxdemo`, `maildemo`, `promodemo` — copy patterns; do not import from production plugins.
-
-When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
+The living spec is [INTEGRATOR_PLATFORM.md](INTEGRATOR_PLATFORM.md) (ports, CSV/ERP seams, precedence). For ordering when several plugins share a seam, start with [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md). `./app plugins report` prints live registrations.
 
 ## Roadmap and Future Work
 
-Phases 1–11 are **complete**. **Phase 12 — Product Types & Composition** is **in progress** (PR-1048–1065 done; next PR-1066). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is planned and should finish before a real merchant site.
+Phases 1–12 and 14 are **shipped** (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is the site-ready gate before a real merchant site.
 
-| Phase | Focus |
+| Focus | Status |
 | --- | --- |
-| 8–11 (done) | Integrator platform, merchant discovery, platform excellence, jobs/search/cache |
-| 12 (in progress) | Product types, visibility/purchasability, bundle/grouped, linked products, downloadable |
-| 13 (planned) | Plugin-owned migrations + on-demand sync enqueue |
+| Integrator platform, merchant discovery, jobs/search/cache | Shipped |
+| Product types, visibility, bundle/grouped, linked, downloadable | Shipped with caveats |
+| Plugin-owned migrations + on-demand sync enqueue | Planned (site-ready gate) |
 
-Full plans: [Phase 11 Roadmap](../phase-11-jobs-search-cache/ROADMAP.md) · [Phase 12 Roadmap](../phase-12-product-composition/ROADMAP.md) · [Phase 13 Roadmap](../phase-13-plugin-runtime/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+See [Integrator Platform spec](INTEGRATOR_PLATFORM.md) and [EU Compliance](COMPLIANCE_EU.md). Phase roadmaps and PR specs live on the `dev` branch under `docs/phase-*` (not on `main`).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
@@ -836,8 +816,10 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 | **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
+| **`CI / docs-policy`** | Product docs have no relative `docs/phase-*` links; `scripts/promote-dev-to-main_test.sh` (second promote, untracked overwrite, FORCE restore, two-parent merge) |
+| **`CI / docs-main`** | `main` / PRs to `main` / merge queue to `main` only — fails if `docs/phase-*` is tracked. Promote with `scripts/promote-dev-to-main.sh`. |
 
-The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
+The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, **`CI / govuln`**, and **`CI / docs-policy`** on `main` and `dev`, and **`CI / docs-main`** on `main` only (Settings → Rules / Branch protection → required status checks). Do **not** require `docs-main` on `dev`: the job is skipped there, and a skipped required check blocks merges.
 
 Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
 
@@ -892,7 +874,7 @@ CI job **`CI / govuln`** installs a **pinned** `govulncheck` (`GOVULNCHECK_VERSI
 Policy:
 
 - Any vulnerability that affects reachable code fails the job (**fail-closed**).
-- Temporary exceptions live in [`GOVULN_BASELINE.md`](../phase-10-platform-excellence/GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
+- Temporary exceptions live in [`GOVULN_BASELINE.md`](../GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
 - Prefer upgrading Go / dependencies over extending the baseline.
 
 Local:
@@ -934,6 +916,8 @@ All four axes share one `AutoBasis` when in `auto`. To list OOS/unpriced product
 
 Admin product JSON includes `VisibilityModes` and is **writable** (PR-1059): `POST /api/v1/admin/products` / `PUT /api/v1/admin/products/{id}` accept a **partial** `visibility_modes: {catalog, search, individually, purchasable}` (lowercase keys, each `auto|visible|hidden`, every key independently optional). An omitted axis keeps its current/default value — `{"catalog": "hidden"}` alone changes only that axis, on both create and update; `mergeVisibilityModes` applies present fields onto `DefaultVisibilityAxes()` (create) or the product's existing modes (update), then validates. An explicit JSON `null` for an axis (e.g. `{"catalog": null}`) behaves identically to omitting that key — each axis unmarshals into a `*string`, and JSON `null` leaves that pointer `nil` the same as a key that was never sent — so it also keeps the stored/default mode, not an error. Present-but-invalid values 422 via the same `Product.Validate()` path as every other field.
 
+Product CSV (PR-1081) round-trips the four override modes as the exact flat columns `visibility_catalog`, `visibility_search`, `visibility_individually`, `visibility_purchasable` (not a `visibility_*` glob) plus create-only `status` (`draft|active|archived`). Visibility tokens are `auto|visible|hidden`, case-sensitive like `type` / `status`. Empty cells on create are `auto` / `draft`. A non-empty consensus that differs from the stored value on an existing product skips the slug (including new SKUs) — CSV does not update visibility modes or status (admin `PUT` still owns partial merges and lifecycle). Those four visibility headers and `status` are reserved and are not stored as variant attributes; colliding attribute keys are omitted on export. Downloadable + `active` on create is rejected with `DownloadableRequiresFileMessage` (same as admin) — import as draft → `import:downloadable-files` → admin activate. Successful creates publish `catalog.EventProductCreated` (Publish-then-PublishAsync); CLI `import:products` also batch-Triggers created IDs when `ReindexService` is wired.
+
 **Resolved vs. effective.** `ResolveAxis(mode, auto)` is domain-level and ignores product `Status` — a forced-`visible` axis always resolves `true`. That is *not* storefront truth for a non-active product: `LoadMany` (the public gate) is active-only, so a draft/archived product is never served regardless of its forced mode. `catalog.EffectiveAxis(mode, status, auto)` is the public-gate truth (`false` whenever `status != active`); always prefer `Effective` over bare `Resolved` when describing what a merchant will actually see on the storefront.
 
 `GET /api/v1/admin/products/{id}` additionally returns a `visibility` object — informational only, not a gate. `catalog.ExplainAxes(product.VisibilityModes, product.Status, snap.Inputs, opts)` is a **domain** function and returns a struct, `catalog.AxesExplanation{Catalog, Search, Individually, Purchasable AxisExplanation}` (PR-1059 CR — was `map[string]AxisExplanation`); `AxisExplanation` itself has **no JSON tags** (it is a domain type, not an HTTP shape). `snap` comes from `catalog.VisibilityFactsAdminSource.LoadManyAnyStatus` (loads facts regardless of product `Status`, unlike the public `VisibilityFactsSource.LoadMany`, so a draft/archived product's AutoBasis failures can still be explained). `internal/interfaces/http/admin/product_admin.go` owns the wire shape: `newAdminAxisExplanation(exp)` maps each `catalog.AxisExplanation` to an `adminAxisExplanation` DTO with explicit snake_case `json` tags and an always-present `failure_codes` (never `omitempty` — empty is serialized as `[]`, not omitted, so OpenAPI examples and the real wire response match on every axis, forced or auto):
@@ -971,12 +955,12 @@ Public product exposure uses **two gates**, not one:
 
 | Surface | Axis | Typical routes |
 | --- | --- | --- |
-| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs |
+| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs; GraphQL `products` / `categoryProducts` |
 | `search` | `VisibleInSearch` | REST/HTML search + suggest fragments |
-| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed |
+| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed; GraphQL `product` / `productBySlug` |
 | `purchasable` | `Purchasable` | cart add/update + checkout (enforced in PR-1058) |
 
-The full audited map (REST + HTML/SSR + fragments, with `EnforceIn` PR-1057 vs PR-1058) is `storefront.PublicProductVisibilityRoutes()`.
+The full audited map (REST + HTML/SSR + fragments + GraphQL root fields, with `EnforceIn` PR-1057 / PR-1058 / PR-1082) is `storefront.PublicProductVisibilityRoutes()`. GraphQL operations use Method `GQL` and the root field name as Path (plugin-registered, not `wire_routes.go`).
 
 ### Storefront visibility enforcement (PR-1057)
 
@@ -989,13 +973,28 @@ When enforce is on, public reads resolve axes with AutoBasis facts from `catalog
 | `AllowWithFacts` | Single PDP / variant parent / review parent |
 | `FilterWithFacts` | Sitemap batch (individually surface — PDP URLs) |
 | `FilterIDsWithFacts` | Search hits, suggest `ProductID`s, CMS carousel IDs |
-| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=` |
+| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=`. GraphQL `products` / `categoryProducts` reuse the same helper and return a `ProductConnection` (`items`, `truncated`, `hasMore`, `nextAfter`, `depthLimited`) with `after` resume arg (when set, `offset` is ignored) |
 
 Listing responses include `meta.truncated`, `meta.has_more`, `meta.depth_limited`, and `meta.next_after` (when has_more). The cursor encodes DB offset plus any remaining visible skip so budget stops mid-`offset` do not jump pages. When `after` is set, query `offset` is ignored. Resume with `after`, never by bumping visible `offset`. Past 100k repository rows `depth_limited` is true and `next_after` is omitted (classic `offset` is not capped the same way).
 
-Search and suggest apply a **query-time** `VisibleInSearch` filter until PR-1079. HTML listings do **not** overfetch (page-number Offset + enlarged Limit duplicated hits). Short or **empty** HTML pages with live pagination links (index `Total`/`Facets` unchanged) are accepted until 1079. Prefer `ListVisiblePage` over post-LIMIT `FilterProducts` for paginated REST catalog listings.
+Search and suggest (PR-1079) filter via **indexed** visibility fields when `catalog.visibility.enforce` is on: the handler calls `search.ApplyVisibilityAxisFilter` / `ApplySuggestVisibilityAxisFilter` (`visible_in_search` / `visible_in_catalog`) before `SearchEngine.Search` / `Suggest` — engines do **not** bake visibility into Suggest for every caller. A fail-closed post-filter still runs when enforce is on. Meili visibility **and** `status` filters fail open for missing attrs (`(attr = true OR attr NOT EXISTS)` / `(status = "active" OR status NOT EXISTS)`) until reindex; ordered deploy is migrate → reindex → enable enforce (see DEPLOYMENT.md). Prefer `ListVisiblePage` over post-LIMIT `FilterProducts` for paginated REST catalog listings.
 
 Admin REST (`/api/v1/admin` and `/api/v1/admin/…`) and operator paths (import/export/seed) use `catalog.WithOperatorProductReadScope` (include-non-active + bypass axis gates) so shared helpers that call `AllowProduct` stay consistent with the admin UI.
+
+### GraphQL product read parity (PR-1082)
+
+When `plugins.graphql.enabled` is true, `POST /api/v1/graphql` is a **public, unauthenticated** catalog read surface. It overlaps some admin REST *product* fields (type, modes, composition children) but is **not** an admin API: linked-eligibility allowlists (`linkedEligibleParents` / `linkedEligibleCategories`) stay admin-only under ProductsRead. GraphQL keeps product-state `requiresLinkedParent` (bool) only. No composition/assignment mutations.
+
+| Field | Notes |
+| --- | --- |
+| `type` | Domain `Product.Type` (`simple` / `virtual` / `bundle` / `grouped` / `configurable` / `downloadable`) |
+| `visibilityModes { catalog search individually purchasable }` | Persisted modes (`auto` / `visible` / `hidden`) |
+| `requiresLinkedParent` | Bool from the product row (product state; not the admin allowlist) |
+| `bundleComponents` | Empty unless `type = bundle`; children batched via `ListByIDs`, gated with `AllowWithFacts` (`Individually`); hidden/missing children omitted; load/facts errors fail the field |
+| `groupedMembers` | Empty unless `type = grouped`; same child gating as bundles |
+| `products` / `categoryProducts` | `ProductConnection` with `items` + listing meta (`truncated`, `hasMore`, `nextAfter`, `depthLimited`); args `offset`/`limit`/`after` (after supersedes offset) |
+
+Visibility: when `catalog.visibility.enforce` is on, the plugin wires `VisibilityFactsRepo` and gates `product` / `productBySlug` with `AllowWithFacts` (`Individually` → null when denied) and listings with `ListVisiblePage` (`Catalog`). Nil facts / enforce off matches REST (no axis gate). Bundle/grouped list services are attached from DB in plugin Init (reusing the resolver product repo).
 
 ### Product read scope (PR-1054)
 
@@ -1029,16 +1028,124 @@ Grouped products (`catalog.TypeGrouped`) own rows in `grouped_members` (UUID FKs
 
 ### Linked-product eligibility (PR-1067)
 
-A child product declares which parent products it may later be assigned to. This is catalog-time eligibility, not composition and not instance assignment. It does not change `Purchasable` or visibility (PR-1068 / PR-1069). Two scoping mechanisms, OR-combined:
+A child product declares which parent products it may later be assigned to. This is catalog-time eligibility, not composition and not instance assignment. Eligibility rows do not change `Purchasable` or visibility. The purchasable gate is `Product.RequiresLinkedParent` (PR-1068). Two scoping mechanisms, OR-combined:
 
 - Explicit parent allowlist: `linked_eligible_parents(child_product_id, parent_product_id)` (UUID FKs to `products`, both `ON DELETE CASCADE`, self-link CHECK). Build with `catalog.NewLinkedEligibleParent(childID, parentID)`.
 - Category rule: `linked_eligible_categories(child_product_id, category_id)` (`category_id` is TEXT, matching `categories.id`). The child is eligible for any product assigned to that category via `product_categories`. Membership is exact, not an ancestor walk. Build with `catalog.NewLinkedEligibleCategory(childID, categoryID)`.
 
-Domain `Validate` checks non-empty IDs and rejects a self-parent; it does not trim or mutate ids. There is no type restriction: eligibility is not a product type. IDs are trimmed in the `New*` constructors and in `LinkedEligibilityService` `List*` / `Add*` / `Remove*` / `IsEligible` / `HasRules`. `application/catalog.LinkedEligibilityService` `ListParents` / `ListCategories` load the child through `FindByID` (draft is `NotFound` unless `WithOperatorProductReadScope`). `AddParent` locks both product rows (`FOR UPDATE`, sorted id order) and insert-ignores. `AddCategory` locks the child, requires the category to exist, and insert-ignores (`CategoryRepo` has no `WithTx`; the category read is outside the write transaction — FK `23503` is the concurrent-delete backstop; PR-1073 should map `linked_eligible_categories_category_id_fkey` to `"category not found"`). After the lock, a product must be `active` unless the context has `catalog.IncludeNonActiveProducts`. `Remove*` load the child and delete one row (`NotFound` when missing); they do not lock. `IsEligible` and `HasRules` are join-table predicates: they do not consult product status or visibility. Empty IDs are validation; a self pair (`IsEligible`) is false; missing products or an empty rule set are false, not `NotFound`. A draft child with a matching rule is still `IsEligible`/`HasRules` true. Eligibility is not purchasable and not assignable — PR-1068 / PR-1069 must check active/visible on both sides. Postgres: `postgres.LinkedEligibilityRepo` (`WithTx` is adapter-only). No admin HTTP / CSV yet (PR-1073).
+Domain `Validate` checks non-empty IDs and rejects a self-parent; it does not trim or mutate ids. There is no type restriction: eligibility is not a product type. IDs are trimmed in the `New*` constructors and in `LinkedEligibilityService` `List*` / `Add*` / `Remove*` / `IsEligible` / `HasRules`. `application/catalog.LinkedEligibilityService` `ListParents` / `ListCategories` load the child through `FindByID` (draft is `NotFound` unless `WithOperatorProductReadScope`). `AddParent` locks both product rows (`FOR UPDATE`, sorted id order) and insert-ignores. `AddCategory` locks the child, requires the category to exist, and insert-ignores (`CategoryRepo` has no `WithTx`; the category read is outside the write transaction — FK `23503` is the concurrent-delete backstop; PR-1073 maps `linked_eligible_categories_category_id_fkey` to `"category not found"`). After the lock, a product must be `active` unless the context has `catalog.IncludeNonActiveProducts`. `Remove*` load the child and delete one row (`NotFound` when missing); they do not lock. `IsEligible` and `HasRules` are join-table predicates: they do not consult product status or visibility. Empty IDs are validation; a self pair (`IsEligible`) is false; missing products or an empty rule set are false, not `NotFound`. A draft child with a matching rule is still `IsEligible`/`HasRules` true. Eligibility is not purchasable and not assignable. After the product is in scope, `IsEligible` only answers whether a parent matches a rule; active/visible still have to be checked on both sides. Postgres: `postgres.LinkedEligibilityRepo` (`WithTx` is adapter-only). Admin HTTP (PR-1073): `GET`/`POST /api/v1/admin/products/{id}/linked-eligible-parents`, `DELETE .../linked-eligible-parents/{parentId}`, and the category equivalents under `linked-eligible-categories` (`products.read` / `products.write`). Concurrent category-delete insert `23503` on `linked_eligible_categories_category_id_fkey` is `"category not found"`. CSV: `import`/`export:linked-eligible-parents` (`child_slug,parent_slug`) and `import`/`export:linked-eligible-categories` (`child_slug,category_slug`) — additive; export uses `ListAll*SlugRows` (joined slug query, no catalog paging). Duplicate CSV rows are insert-ignore at the DB but still count as `Added` (same as composition CSV). Product form section id `linked` (`Types: nil`, shown on every product edit). Admin product form checkbox `requires_linked_parent` on create/update; product CSV column is create-only (empty → false; existing mismatch skips). Assignment CSV is out of scope; support uses `/admin/sales/assignments` (PR-1071 endpoints).
+
+### Downloadable file attachment (PR-1074)
+
+A `Type=downloadable` product attaches one or more Media domain assets via `downloadable_files(product_id, asset_id, position, label)`. Storage stays on `media.Storage` / `assets`; this table is the product-to-asset join only. Product FK `ON DELETE CASCADE`; asset FK `ON DELETE RESTRICT`. Build with `catalog.NewDownloadableFile(productID, assetID)` (`Position` defaults to 0, empty `Label`). Domain `Validate` checks IDs, position 0–9999, and label length ≤ 200; `ValidateAttachment` requires `TypeDownloadable`.
+
+`application/catalog.DownloadableFileService` `List` loads the product (any type) and returns join rows — it does not reject non-downloadable products. `Attach` locks the product and the asset (`FOR UPDATE`) in the same transaction as the upsert, checks the locked type, and writes the join. Draft products need `WithOperatorProductReadScope` (same as composition). `Remove` deletes the join regardless of product type (404 if the pair is missing); last-file-while-active applies only when type is downloadable and status is active (`DownloadableRequiresFileMessage`). Postgres: `postgres.DownloadableFileRepo` (`WithTx` is adapter-only; `CountByProductID` / `CountByAssetID` support admin guards and media delete). Domain `Validate` trims `Label`.
+
+Admin soft-write (PR-1074): `ProductAdminHandler.WithDownloadableFiles` blocks leaving `downloadable` while rows exist, and rejects Create / Draft→Active / type-change onto Active downloadable when the count is 0. Soft-write takes status from the same `LockTypeAndModes` `FOR UPDATE` as type/pricing/stock/explode so a concurrent Active→Draft is not overwritten from a stale Active FindByID, and the file-check skip uses that locked status — not the pre-lock snapshot. An already-Active file-less downloadable may keep Active for name-only updates; Active→Draft always succeeds. Soft-write on already-Active returns before the nil-guard check; Create / Draft→Active / type-change onto Active with a nil guard still fail closed. Sell path still blocks purchase. `DownloadableFileService.List`/`Remove` are type-agnostic (illicit joins on a non-downloadable are listable/clearable); Attach stays type-gated. Visibility facts set `MissingDownloadableFile` when type is downloadable and the join is empty; after `ResolveAxis` that forces Purchasable false (including `VisibilityModeVisible`). ExplainAxes code `no_downloadable_file` is purchasable-axis only; admin GET exposes `missing_downloadable_file` and the SPA forces purchasable false via `effectiveForMode` / `FAILURE_LABELS.no_downloadable_file` (PR-1068 mirror); forced-visible badge text shows both linked-parent and missing-file reasons when both apply. Cart `WithDownloadableFiles` and checkout `ValidateCartStep.WithDownloadableFiles` reject a zero-file downloadable line and call `RejectRequiredMissingDownloadableFileLeaves` for every bundle (fixed and dynamic) — independent of `catalog.visibility.enforce`, bypass, and a nil facts source. Shared counter shape: `catalogapp.DownloadableFileCounter`. Folding the file-count gate into `RequiredLeafVariants` (so pricing/reserve share one walk) is deferred. `media.Service.Delete` fails closed when the attachment counter is nil, counts as defense-in-depth, deletes the `assets` row first (`RESTRICT` if attached), then the blob; after a successful row delete, blob/thumbnail errors are logged, `EventAssetDeleted` still publishes, and Delete returns nil. `AssetRepo.LockForUpdate` requires a transaction (like `ProductRepo`); `AssetRepo.Delete` maps FK `23503`. Shipping is already false via `Type.RequiresPhysicalShipping` (PR-1050). Admin HTTP / CSV / GUI for attach/replace are PR-1078: `DownloadableFileService` is constructed at serve; routes under `/api/v1/admin/products/{id}/downloadable-files` and `…/downloadable-grant-settings` (`products.read`/`products.write`); CSV `import`/`export:downloadable-files`; form section `downloadable`. `Replace` swaps the join in one TX and retargets `download_grants` by asset id (live+expired; includes bundle-parent units) — not product-scoped. Shared assets (other `downloadable_files` rows for `old_asset_id`) return 422 unless `global_retarget=true` (then every grant on the blob moves). Response surfaces `grants_moved` / `grants_revoked`. Prefer keeping expired rows when UNIQUE allows; expired old rows deleted to free UNIQUE vanish (grant ids gone, no revoke event). Expired new-asset UNIQUE blockers are deleted first; live UNIQUE conflict revokes the old grant and publishes `download.grant.revoked` (notifier required when step 4 revokes — fail closed). Omitted position/label keep the previous join values. Settings GET 404s when the product is missing; settings DELETE is idempotent. Storefront delivery is PR-1077 (below) — still prefer private/non-public ACL for grant blobs so ordinary public media URLs are not a parallel path.
+
+**Tax Meta (PR-1076):** `PricingContext.Meta["tax_classes"]` is `map[string]string` (variantID → class). Cart and checkout call shared `pricing.EnsureTaxClasses` — fill missing keys from `catalog.TaxClassCode` (`downloadable` → `"digital"`; `virtual` and all others including bundle parents → `"standard"`); preserve pre-set keys; reject empty/unknown classes; coerce `map[string]interface{}` string values. Rate-table calculator **fails closed** when class is `digital` and no rate exists for `tax_country`, or when a digital row has `Rate == 0` (`tax.MissingRateFailsClosed`; validation error, not 0% VAT — use class `zero` for intentional zero). Migration `108` (required via `shopanda migrate`) + optional seed backfill non-zero `standard` → `digital` via `tax.RateRepository` (`ListByClass` + `CreateIfNotExists`). Application `Upsert` does **not** mirror digital (no RateService until Tax settings UI). New standard destinations after migrate need a matching digital SQL INSERT (see RUNBOOK). Hook overrides that set a non-digital class on a downloadable skip fail-closed — trusted-VAT risk. Checkout place-of-supply is address country; cart may use store country for preview. Domain constants: `tax.TaxClassStandard`, `tax.TaxClassDigital`. **Operator trap:** a plugin `tax.Calculator` (e.g. `taxdemo` flat rate) typically ignores `tax_classes` — class Meta only affects the core rate-table calculator.
+
+### DownloadGrant (PR-1075)
+
+Post-purchase download entitlements live in `download_grants` (not `ProductAssignment`). Columns: `id`, `order_item_id` (opaque `orderID/variantID` via `assignment.UnitID`), `customer_id` (empty for guest orders), `asset_id` (`ON DELETE RESTRICT`), `expires_at`, `download_limit`, `download_count`, `created_at`. UNIQUE `(order_item_id, asset_id)` makes `order.paid` re-delivery idempotent. Domain package: `internal/domain/download` (`DownloadGrant`, `CanDownload` / `RecordDownload` / `Revoke` / `Extend` / `ResetCount`). Sentinels: `ErrExpired`, `ErrExhausted`, `ErrCountConflict` (use `errors.Is`). Revoke sets `expires_at = now` (no separate `revoked_at` column — deferred).
+
+**`order.paid` publishers** (do not subscribe grants to `checkout.completed` — that would grant before Stripe capture):
+
+| Source | When |
+| --- | --- |
+| `InitiatePaymentStep` | Sync provider success, or `$0` / `payment_skipped` |
+| `payment.completed` webhooks | After payment persist (Stripe + generic) |
+| Admin order status → `paid` | After `UpdateStatus` |
+| Integration `ApplyStatus(paid)` | `StatusService` with event bus |
+
+Pending Stripe initiate does **not** publish `order.paid`.
+
+`application/download.Issuer` is subscribed to `order.EventOrderPaid` (async, alongside notification). It refuses unpaid orders unless payable is 0 and there is no payment row (payment skipped). For each line: `TypeDownloadable` → list files and issue one grant per asset; missing variant/product or zero files **fails the handler** (no warn-and-skip). Non-exploded `TypeBundle` parents walk **required** downloadable leaves (one level, same shape as `RejectRequiredMissingDownloadableFileLeaves`) and issue under the parent `order_item_id`; nil components fail closed. Optional components, nested bundles, and grouped members are out of scope. All inserts for one order share a transaction (`WithTx`); `download.grant.issued` publishes only after Commit. Limit = resolved default × line quantity (× component qty for leaves), capped at 10000. `IssueIdempotent`: existing row (any state, including revoked) → return unchanged (`existed=true`) — paid redelivery must not resurrect. Support re-issue is `Service.Reissue` via admin HTTP `POST …/download-grants/{id}/reissue` (`downloads.write`, PR-1078): one TX with row lock, `expires_at` strictly after now, Extend then CAS `ResetCount` when requested (lower limit applied only after count is 0), publishes `download.grant.reissued`. Webhooks / admin / `ApplyStatus` / `$0` initiate **republish `order.paid`** on already-completed/already-paid retries; publish failure after money persist is logged/swallowed so heal retries work. Order confirmation email dedupe uses `notification_dedupe` UNIQUE `(subject_key, kind)` (kind `order_confirmed`) claimed as `pending` before enqueue and marked `completed` after success so SQS/RabbitMQ cannot double-send on republish; stable job id remains a secondary guard on Postgres queues. Enqueue failure deletes the pending claim so a later paid signal can retry; only stale pending rows are reclaimable. Global defaults: `catalog.downloadable.default_expiry` (≤ 3650d) and `default_download_limit` (1–10000; explicit `0` rejected). `ListByCustomer("")` is validation — list guests by `ListByOrderItem` until guest rebind. Returns approve/refund revokes grants for return lines in the same TX as assignment revoke; partial qty on lines that already have grants is rejected. `media.Service.Delete` counts **live** grants (`expires_at > now`) separately from `downloadable_files` attachments (nil grant counter fails closed). Events: `download.grant.issued`, `download.grant.revoked`, `download.grant.reissued` (all three are in `domain/webhook.SupportedEvents` for outbound webhook subscription). No durable outbox — UNIQUE + republish heal paths are the recovery.
+
+### Storefront download delivery (PR-1077)
+
+Customers download through the grant gate, not through permanent media URLs:
+
+| Method | Path | Auth |
+| --- | --- | --- |
+| POST | `/api/v1/account/downloads/{grantID}` | `RequireAuth` (Bearer and/or session cookie; same as other `/api/v1/account/*`) |
+
+**POST, not GET** — delivery increments `download_count` and must not be triggered by prefetch/probes.
+
+Flow: `PrepareDelivery` (ownership + `CanDownload`, no count change) → load Media asset → prove object exists (`SignedURLStorage.Head` on S3, or `ReadableStorage.Read` locally) → prepare signed URL (`SignURLOptions` with ~60s TTL capped to remaining grant expiry; response overrides `Cache-Control: private, no-store` + `Content-Disposition: attachment`) or hold stream bytes → `ClaimDelivery` (ownership-checked atomic `download_count + 1`) → **302** or stream. Never return `storage.URL()`. Presign/Head failures return **500** with a stable message (cause logged) and **do not** increment. Missing blob → **404**, no increment. Wrong owner / guest → **403**. Missing grant → **404**. Expired / exhausted → **422**. Concurrent last-slot race → **409**.
+
+**Private download prefix:** upload with form field `private_download=true` (or `1`) so the asset lands under `private/downloads/{assetID}/…`. S3 `Save` then sets `Cache-Control: private, no-store` and skips public ACL. Admin SPA media library checkbox sends `private_download=1`. **`DownloadableFileService.Attach` rejects** assets whose path is not under `private/downloads/` so public `uploads/` objects cannot become **new** grant targets.
+
+**Signed Location allowlist:** `s3store.Storage.SignedURLHosts()` lists hosts the SDK actually presigns against — `s3.{region}.amazonaws.com` and `{bucket}.s3.{region}.amazonaws.com` for production AWS (empty Endpoint), or the custom endpoint host for MinIO. CDN `BaseURL` is for public `URL()` only and is not treated as a required/only presign host.
+
+**Residual risk (honest):** product-image uploads still go under `uploads/` with public long-cache headers (by design). New Attach is prefix-gated (cannot re-attach public). Legacy `uploads/` joins remain **deliverable** until re-uploaded under `private/downloads/` and re-linked. Keep `private/downloads/` off public `/media` aliases. Admin grant list/revoke/re-issue is PR-1078 (`downloads.read`/`downloads.write` on order/customer detail and `/api/v1/admin/download-grants`). Replace with `global_retarget=true` moves **every** grant on the shared blob (including other products' order lines) — there is no product-scoped grant rewrite. Guest grant rebind on `LinkToCustomer` remains deferred.
+
+### RequiresLinkedParent purchasability gate (PR-1068)
+
+`catalog.Product.RequiresLinkedParent` is an explicit boolean (migration `097`, default false). It is not derived from `HasRules`. `NewProduct` sets it false. `Validate` does not restrict it by type.
+
+When the flag is true and `catalog.AssignmentContext` is empty, the **purchasable** axis is false after `ResolveAxis`. `VisibilityModeVisible` does not override that. Catalog, search, and individually are unchanged. A non-empty context is a trimmed `ParentProductID` or `Deferred: true`. `AssignmentContextFrom` returns empty when the value is missing. `ResolvePurchaseAssignment` prefers a stored cart-line context, then the request. `LinkedParentBlocksPurchase` is the single predicate used by axis resolve, cart, checkout, required bundle leaves, and `BundleService.Add`.
+
+`Deferred: true`, a non-whitespace parent product id, or a non-whitespace parent unit id leaves the gate. When a parent product or unit is present, cart and checkout call `assignment.Flow.CheckPurchase` (`IsEligible`, and ownership when a unit is named). Storefront must not set `Deferred` on every request or the flag is a no-op.
+
+`VisibilitySnapshot.RequiresLinkedParent` is loaded with the facts row and copied onto inputs at resolve. `AllowWithFacts`, `FilterWithFacts`, `FilterIDsWithFacts`, and `ListVisiblePage` copy `AssignmentContextFrom(ctx)` before that resolve. The code `requires_linked_parent` is attached only to the purchasable axis in `ExplainAxes`. It is not an `AutoBasis` code. The admin purchasable badge reads `visibility.requires_linked_parent` and that axis code.
+
+Cart `ensureVariantPurchasable` and checkout `ValidateCartStep` enforce the same rule after the active check (and, in cart, after the grouped-parent check). They resolve assignment from the line first, then the request. A visibility bypass and a nil facts source do not skip it. Add stamps a non-empty request context onto the line. Guest claim keeps a stamped line and drops an unstamped one. Required bundle leaves are rejected with the same message. The gate does not use `HookCartAddItemBefore`.
+
+Admin `POST` / `PUT /api/v1/admin/products` accept `requires_linked_parent` (`*bool`). Omit on create stores false. Omit on update keeps the stored value. The product JSON field is `RequiresLinkedParent`. Product CSV imports/exports `requires_linked_parent` (create-only; existing mismatch skips). GraphQL exposes `requiresLinkedParent` read-only (PR-1082) and does not mutate it. No config key.
+
+### ProductAssignment instance domain (PR-1069)
+
+`assignment.ProductAssignment` binds one purchased/issued child unit to one purchased parent unit. This is instance-level, not catalog eligibility (PR-1067) and not the purchase-time `catalog.AssignmentContext` hint (PR-1068). An `unassigned` unit is not the same as "not purchasable" — purchasability is still `RequiresLinkedParent` evaluated before purchase.
+
+Table `product_assignments(id, parent_order_item_id, child_order_item_id, status, created_at, revoked_at, forced_at, forced_reason)`. `forced_at` and `forced_reason` are null except when an operator force-binds (migration `102`). Migration `103` checks `char_length(forced_reason) <= 500` when `forced_reason` is not null. Unit ids are opaque TEXT. Cart-time and post-purchase mint `assignment.UnitID(orderID, variantID)` (`orderID + "/" + variantID`) — one unit per order line. They are not FKs — `order_items` has composite PK `(order_id, variant_id)` and no unique id. `CanonicalUnitID` lowercases the order UUID and leaves the variant id as written.
+
+State machine: `unassigned → assigned → revoked`, or `unassigned → revoked` when a never-assigned unit is released (cancel/return before anyone assigns it). Revoke is not a delete. A revoked row stays; reassignment inserts a new `assigned` record, it does not resurrect the revoked one. A revoked never-assigned row keeps a null parent so `CurrentByChild` is not "still live." `NewUnassigned` / `CreateUnassigned` is the post-purchase default (no target yet). `NewAssigned` / `CreateAssigned` is the cart-time path (skips `unassigned`). `Assign` is only `unassigned → assigned`. `Revoke` is `assigned → revoked` or `unassigned → revoked`. At most one current (`unassigned` or `assigned`) row per child (partial unique index). Domain `Validate` does not trim; `New*`, `Assign`, and `application/assignment.Service` trim. `Validate` rejects an empty child, a missing parent on assigned, and a self-bind. `NewAssigned` and `Assign` are the only parent writers; `storedParent` plus `Update` writes `parent_order_item_id` only on `unassigned → assigned`. Any other parent rewrite is validation and is not written. `storedStatus` plus `Update ... WHERE status = storedStatus` is the same optimistic write as returns (`ErrStatusConflict`). `FindByID` rejects a non-UUID as validation. `WithTx` is postgres-only. `application/assignment.Flow` is the PR-1070 path: `CheckPurchase` (eligibility + ownership when a parent is present), `RecordPurchase` on checkout (`CreateAssigned` when a parent unit is selected, otherwise `CreateUnassigned`), and `AssignOwned` for self-service. HTTP writers are cart add (`assignment_parent_product_id`, `assignment_parent_unit_id`, `assignment_deferred`) and `POST /api/v1/account/assignments`. The state-model service still does not load order lines or call `IsEligible`. `ListByParent` reads rows for one parent unit. Admin HTTP is PR-1071 (below).
+
+### Assignment flow (PR-1070)
+
+Cart lines persist parent product, parent unit, and deferred (migration `100`). `AssignmentContext.Empty` is false when any of those is set. A guest may defer or name a parent product; naming a parent unit requires sign-in and ownership of that order line. Ownership is a completed payment or payable 0 (store credit / skipped payment). In-flight pending payments are not listed or bindable. `CreateOrderStep` writes assignments only through `Flow.RecordPurchase` and fails closed unless the order and assignment share one transaction. Checkout failure after the order exists uses `FailIfPending` so a confirmed or cancelled order is not overwritten. A failed unpaid order restores redeemed store credit via `storecredit.Restore` (no issuance cap), including when the order is already failed, and publishes `checkout.unpaid_failed` so that restore can be retried with `checkout:payment-failed:{orderID}`. An accepted pending Stripe payment or a synchronous approve recorded before `UpdateStatus` is not failed or refunded from compensation — the webhook or completed payment settles it. `AssignOwned` and `ListOwnedParents` resolve required linked leaves the same way checkout does. Unit ids are rebuilt with `CanonicalUnitID` before lookup and write. A declined card or a provider error after `Create` also revoke. One `payment.failed` handler fails a still-pending order, restores `StoreCreditApplied` with `checkout:payment-failed:{orderID}` (no issuance cap), then revokes. A publish error returns 500; a retry on an already-failed payment publishes again so fail / credit / revoke can finish. Duplicate exploded leaves collapse to one unit. Exploded bundles record each required leaf that has `RequiresLinkedParent`; a non-exploded bundle is one unit and eligibility still uses those leaf product ids. An `unassigned` purchased unit is not “not purchasable” — that flag is still `RequiresLinkedParent` before purchase. Same-order card+ticket uses deferred at cart time, then post-purchase assign once both units exist.
+
+### Admin assignment API (PR-1071)
+
+Operators list and correct instance assignments without SQL. Unit ids are `orderID/variantID` and contain `/`, so the list and current reads take them as query parameters.
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/v1/admin/assignments?parent_unit_id=` | `assignments.read` |
+| GET | `/api/v1/admin/assignments/current?child_unit_id=` | `assignments.read` |
+| POST | `/api/v1/admin/assignments` | `assignments.write` |
+| POST | `/api/v1/admin/assignments/{id}/revoke` | `assignments.write` |
+
+`assignments.read` and `assignments.write` are on Admin, Manager, and Support. Editor has neither. Support can correct a binding without `products.write`. Migration `101` backfills those rows; compiled defaults alone are not enough after `InitEffectivePermissions`.
+
+`ListByParent` canonicalizes the parent unit id (order UUID lowercased, variant unchanged). The default `status` is `assigned` (the card). `status=revoked` and `status=all` are optional. `limit` defaults to 100 and is capped at 100. `offset` skips matches after that filter. Status, limit, and offset are pushed into the `product_assignments_parent` read. The query fetches `limit+1` and the body returns `has_more`. Unassigned rows have a null parent and are omitted. `CurrentByChild` and `ListByChild` also canonicalize the child unit id. Current is the live row, or null.
+
+`Flow.AdminAssign` rejects a non-UUID order part before the order read and lowercases a UUID order id so it hits the existing row. PostgreSQL `22P02` from an order or variant id lookup is validation on those postgres adapters. The order and the order line must exist. The product id comes from that line's catalog variant. A missing catalog variant is `assignment child catalog variant was not found` (or the parent equivalent), not "unit was not found". A new row requires `RequiresLinkedParent` or a required linked leaf. An existing unassigned row may be assigned without that flag; eligibility then uses the product id on the order line. A live assigned row is 409. Cancelled, failed, and unpaid orders are 422 unless `force` is true and `reason` is non-empty. `reason` is at most 500 characters (`assignment.MaxForcedReasonLen`). HTTP returns 422 for that length only when `force` is true; a long reason with `force` false is not stored and is not a 422. `SetForced` enforces that rune cap. `Validate` does not, so a longer stored reason can still be scanned. Migration `103` checks `char_length(forced_reason) <= 500` when the reason is not null. Customer id is reported and is not an ownership check. A new insert is 201. Unassigned → assigned is 200. A new row with no linked-parent product and no linked leaf is rejected before eligibility. `parentEligibleForLeaves` still returns false for an empty id list. `force: true` writes `forced_at` and `forced_reason` only when the child or the parent is not bindable. `force` on an already-bindable pair is 422 `force not applicable` and does not store the override.
+
+List, current, and revoke JSON include `child_customer_id`, `child_order_status`, `child_payment_status`, `parent_customer_id`, `parent_order_status`, `parent_payment_status`, and `forced`. Those order fields are a live read (`OrderRepository.FindByIDs` when the adapter implements it, otherwise one `FindByID` per order). `FactsForUnits` lowercases a UUID order id before the order lookup and keys its result by `CanonicalUnitID`, so an uppercase order id hits the lowercase `o.ID` and callers look up the canonical unit id. A cancelled or unpaid unit stays visible after the bind. `forced` and `forced_at` come from the row. The stored `forced_reason` is returned as `reason` only when the row was force-bound. The response does not also emit `forced_reason`. If the fact read fails, list, current, and revoke still return 200 with the assignment rows and empty fact fields, and log `admin.assignment.facts_failed` with `route` (`list`, `current`, or `revoke`) and `error`. List logs that once, with `count` set to the row count. `assignment_id` is included when that read is a single row. A failed fact read does not undo a revoke.
+
+Revoke is `Service.Revoke`. An already-revoked id is 200 with the same body, including those live facts, and does not write another `assignment.revoke` audit entry. The row stays, including force columns.
+
+Create uses the same assignment JSON. The request field is `reason`. Create and a first revoke audit `assignment.create` and `assignment.revoke`. A failed create uses the attempted child unit id as the audit resource id. `ListByChild` still returns the full child history with no limit; a page cap is a follow-up if that read is exposed over HTTP.
+
+### Returns and ProductAssignment (PR-1072)
+
+Ticket (child) order lines stay independently returnable through the existing Returns/RMA service — returning a ticket does not add or remove the card's order line. `returns.Service` is wired with `WithAssignmentFlow`; `assignment.Flow` gets `WithOpenReturnChecker(returnService)`.
+
+**Revoke (Approve / Refund).** Domain status transition runs first in memory. Then revoke + return `Update` share one DB transaction (`Flow.WithTx` + returns `WithTx`). Wrong-status calls never revoke. On commit, returns publishes `assignment.revoked` with reason `return_approved` or `return_refunded`. `RequestReturn` does not revoke. Missing assignment rows are skipped; Refund revoke is idempotent.
+
+**Parent gate.** Returning a parent that still has live assigned children **not also on this RMA** is blocked at `RequestReturn`, `Approve`, `Receive`, and `Refund` via `Flow.AssertParentReturnable`. Children that are themselves lines on the current request are skipped (same-order "return card and its tickets"). Message: `cannot return a parent unit that still has assigned children; revoke or return those children first (required: <child unit ids>)`. Cascade-revoke and warn-only were rejected.
+
+**Assign / purchase while RMA open or refunded.** `AssignOwned`, `AdminAssign`, `CheckPurchase`, and `RecordPurchase` call `AssertNotOnOpenReturn` for the parent unit (and the child when it already exists). Checkout stamping a new ticket onto a card that is on an open or refunded RMA is refused the same way as post-purchase assign. `ListOwnedParents` omits those parents so account assign UI does not offer a 422 card. Blocking statuses are `requested` / `approved` / `received` / `refunded` (rejected/cancelled do not block). Message: `cannot assign a unit that is on an open or refunded return`. Assign writes take the same per-unit advisory locks as return create/approve/refund and recheck immediately before Insert/Update in that TX.
+
+**ReturnableLines.** Candidate lines are filtered iteratively: a parent stays only when every live assigned child is also still in the remaining same-order set (same-RMA skip shrinks as blocked children drop). Storefronts that select the card **must** include those ticket lines on the same `RequestReturn`; card-only submit still 422s with the required child unit ids. Cross-order assigned tickets hide the card (and any same-order parent that depended on a blocked mid child).
+
+Nil assignment flow skips the hooks (tests). Admin GUI: `/admin/sales/assignments` (parent-unit list, child-unit current, assign/revoke). Assignment CSV is out of scope.
 
 ### Bundle and grouped pricing (PR-1062)
 
-`catalog.PricingMode` is `fixed` or `dynamic`. `NewProduct` defaults to `fixed`. `dynamic` is valid only when `Type` is `bundle`. Admin create/update accept `pricing_mode`. An explicit `dynamic` token on any other type is 422. Omitting the field coerces a non-bundle to `fixed`, including a type change off bundle; that path locks the row and re-reads `pricing_mode` before applying the default. A payload that omits `type` but sends `pricing_mode` takes the same lock. Unknown tokens are rejected. Setting dynamic while any variant still has a price row is 422 (`remove bundle prices before enabling dynamic pricing`). That check returns 500 when the variant or price repository is unwired. A create with both repositories wired and no variants yet succeeds; an empty product id skips the row scan once the repositories are confirmed. The bundle product-form section sends `pricing_mode`, `stock_mode`, and `explode_order_lines` on create and update when type is bundle, and omits them otherwise. Product CSV has those columns after `type`. Empty cells default to `fixed` / `fixed` / `false` on create. A non-empty value that does not match an existing product is an error and that slug is skipped; CSV does not update modes (the admin PUT still owns the lock and the own-price/own-stock checks). Attribute columns named `pricing_mode`, `stock_mode`, or `explode_order_lines` are reserved and are not stored as variant attributes.
+`catalog.PricingMode` is `fixed` or `dynamic`. `NewProduct` defaults to `fixed`. `dynamic` is valid only when `Type` is `bundle`. Admin create/update accept `pricing_mode`. An explicit `dynamic` token on any other type is 422. Omitting the field coerces a non-bundle to `fixed`, including a type change off bundle; that path locks the row and re-reads `pricing_mode` before applying the default. A payload that omits `type` but sends `pricing_mode` takes the same lock. Unknown tokens are rejected. Setting dynamic while any variant still has a price row is 422 (`remove bundle prices before enabling dynamic pricing`). That check returns 500 when the variant or price repository is unwired. A create with both repositories wired and no variants yet succeeds; an empty product id skips the row scan once the repositories are confirmed. The bundle product-form section sends `pricing_mode`, `stock_mode`, and `explode_order_lines` on create and update when type is bundle, and omits them otherwise. Product CSV has those columns after `type`. Empty cells default to `fixed` / `fixed` / `false` on create. A non-empty value that does not match an existing product is an error and that slug is skipped; CSV does not update modes (the admin PUT still owns the lock and the own-price/own-stock checks). Attribute columns named `pricing_mode`, `stock_mode`, `explode_order_lines`, `requires_linked_parent`, `status`, `visibility_catalog`, `visibility_search`, `visibility_individually`, or `visibility_purchasable` are reserved and are not stored as variant attributes (exact names — not a `visibility_*` glob). Visibility + status ship in product CSV as of PR-1081 (create-only; empty → `auto` / `draft`). Assignment units and `downloadable_grant_settings` remain non-CSV.
 
 `pricing.ResolveUnitPrice` is the only base-price lookup. `BasePriceStep` (step name stays `base`) and `cart.Service` lookup both call it, so a cart add and a later recalculate cannot disagree. `cart.NewService` requires prices, variants, products, and bundle components and panics if any is nil. `cmd/api` passes those same repos to `NewBasePriceStep`. `NewBasePriceStep` panics if any of those is nil. `NewBasePriceStepLegacy` is a stored-row test helper and is not used in production. Cart add memoizes resolver results for the request, keyed by variant, currency, and store. For a dynamic bundle, `ensureVariantPurchasable` calls the resolver with the cart currency after status and visibility; a failed resolve is a validation error.
 
@@ -1050,7 +1157,7 @@ Admin price PUT (`ProductPriceAdminHandler.Update`) requires `WithHistory`. The 
 
 Listing `HasPrice` for a dynamic bundle is true only when the required count is between 1 and 50 and every required component is an active leaf with exactly one variant and a global price row (`store_id` empty; amount 0 counts). The flag is currency-agnostic: a global USD row counts for PLP, a store-only row does not. It does not match `ResolveUnitPrice` on currency. AddItem resolves the dynamic bundle in the cart currency, so a global EUR component price cannot be added to a USD cart. PDP Add is shown when a variant exists and does not consult that currency. PLP cards have no Add control. A follow-up should hide Add when `ResolveUnitPrice` fails for the request currency, because a later button keyed off `HasPrice` / `Purchasable` can show for the wrong currency. A grouped parent is never `HasPrice`. A fixed product still needs its own price row. AutoBasis only sees that bool.
 
-`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. See `docs/phase-1-core/specs/ADMIN_SCHEMA.md`.
+`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. Register type-specific panels with `application/admin.RegisterProductFormSection` (validates `Types` against `catalog.Type`) or `Registry.RegisterFormSection("product.form", …)` for opaque tokens. The v0 admin schema dump lives on the `dev` branch under `docs/phase-1-core/specs/ADMIN_SCHEMA.md` (not on `main`).
 
 **Exception: the `visibility` section (PR-1059).** Registered with `Types: nil` (type-agnostic — applies to every product type, unlike bundle/grouped/linked/downloadable panels). Unlike every other section, its four mode selects **are** picked up by `collectProductPayload` (merged into the payload as `visibility_modes`), because `VisibilityModes` is a core `Product` field saved through the same `POST`/`PUT` as `name`/`slug`/`type` — not auxiliary section data with its own save endpoint. `admin.js`'s `setupProductVisibilitySection` renders the section body from `product_visibility_section.js` helpers and reads the GET response's `visibility` payload (above) for the computed badge/failures on load.
 

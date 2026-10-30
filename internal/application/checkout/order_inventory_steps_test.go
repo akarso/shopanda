@@ -89,6 +89,20 @@ type mockOrderRepo struct {
 func (r *mockOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
 	return nil, nil
 }
+
+func (r *mockOrderRepo) FindByIDs(ctx context.Context, ids []string) (map[string]*order.Order, error) {
+	out := make(map[string]*order.Order, len(ids))
+	for _, id := range ids {
+		o, err := r.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			out[o.ID] = o
+		}
+	}
+	return out, nil
+}
 func (r *mockOrderRepo) FindByCustomerID(_ context.Context, _ string) ([]order.Order, error) {
 	return nil, nil
 }
@@ -105,7 +119,19 @@ func (r *mockOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.saved = o
 	return nil
 }
-func (r *mockOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error   { return nil }
+func (r *mockOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error { return nil }
+func (r *mockOrderRepo) FailIfPending(_ context.Context, orderID string) (bool, error) {
+	if r.saved == nil || strings.TrimSpace(r.saved.ID) != strings.TrimSpace(orderID) {
+		return false, nil
+	}
+	if r.saved.Status() != order.OrderStatusPending {
+		return false, nil
+	}
+	if err := r.saved.Fail(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 func (r *mockOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error { return nil }
 func (r *mockOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
 	return 0, nil
@@ -1180,9 +1206,10 @@ func TestCreateOrderStep_NilContext(t *testing.T) {
 }
 
 type mockStoreCreditService struct {
-	balance  int64
-	redeemed []int64
-	issued   []int64
+	balance    int64
+	redeemed   []int64
+	issued     []int64
+	issuedKeys []string
 }
 
 func (m *mockStoreCreditService) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
@@ -1195,7 +1222,23 @@ func (m *mockStoreCreditService) Redeem(_ context.Context, _, _ string, amount s
 	return nil
 }
 
-func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _, _ string) error {
+func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _, key string) error {
+	return m.recordIssue(amount, key)
+}
+
+func (m *mockStoreCreditService) Restore(_ context.Context, _ string, amount shared.Money, _, key string) error {
+	return m.recordIssue(amount, key)
+}
+
+func (m *mockStoreCreditService) recordIssue(amount shared.Money, key string) error {
+	if key != "" {
+		for _, k := range m.issuedKeys {
+			if k == key {
+				return nil
+			}
+		}
+		m.issuedKeys = append(m.issuedKeys, key)
+	}
 	m.issued = append(m.issued, amount.Amount())
 	m.balance += amount.Amount()
 	return nil

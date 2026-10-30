@@ -175,7 +175,64 @@ test("failureLabel maps known codes and falls back to the raw code", () => {
     assert.equal(ui.failureLabel("no_price"), "no price set");
     assert.equal(ui.failureLabel("no_store_assignment"), "no store assignment");
     assert.equal(ui.failureLabel("no_category"), "no category assignment");
+    assert.equal(ui.failureLabel("requires_linked_parent"), "requires a linked parent");
+    assert.equal(ui.failureLabel("no_downloadable_file"), "downloadable product has no attached file");
     assert.equal(ui.failureLabel("something_new"), "something_new");
+});
+
+test("purchasable axis respects requiresLinkedParent even when mode is visible", () => {
+    const state = makeLiveState({ autoBasis: true, requiresLinkedParent: true });
+    assert.equal(ui.effectiveForMode("visible", true, "active", "purchasable", true), false);
+    assert.equal(ui.effectiveForMode("auto", true, "active", "purchasable", true), false);
+    assert.equal(ui.effectiveForMode("visible", true, "active", "catalog", true), true);
+    assert.equal(ui.showFailures("visible", state, "purchasable"), true);
+    assert.equal(ui.showFailures("visible", state, "catalog"), false);
+    assert.deepEqual(ui.failureCodesFor(state, "purchasable"), ["requires_linked_parent"]);
+    assert.match(ui.badgeText("visible", state, "purchasable"), /requires linked parent/);
+    assert.equal(ui.badgeText("auto", state, "purchasable"), "Auto — hidden");
+});
+
+test("stateFromVisibilityPayload copies requires_linked_parent", () => {
+    const state = ui.stateFromVisibilityPayload({
+        enforced: true, status: "active", auto_basis: true, failure_codes: [],
+        requires_linked_parent: true, axes: {}
+    });
+    assert.equal(state.requiresLinkedParent, true);
+});
+
+test("purchasable axis respects missingDownloadableFile even when mode is visible", () => {
+    const state = makeLiveState({ autoBasis: true, missingDownloadableFile: true });
+    assert.equal(ui.effectiveForMode("visible", true, "active", "purchasable", false, true), false);
+    assert.equal(ui.effectiveForMode("auto", true, "active", "purchasable", false, true), false);
+    assert.equal(ui.effectiveForMode("visible", true, "active", "catalog", false, true), true);
+    assert.equal(ui.showFailures("visible", state, "purchasable"), true);
+    assert.deepEqual(ui.failureCodesFor(state, "purchasable"), ["no_downloadable_file"]);
+    assert.match(ui.badgeText("visible", state, "purchasable"), /no downloadable file/);
+    assert.equal(ui.badgeText("auto", state, "purchasable"), "Auto — hidden");
+});
+
+test("badgeText: forced visible shows both linked-parent and missing-file when both set", () => {
+    const state = makeLiveState({
+        autoBasis: true,
+        requiresLinkedParent: true,
+        missingDownloadableFile: true,
+    });
+    assert.equal(
+        ui.badgeText("visible", state, "purchasable"),
+        "Forced visible — not purchasable (requires linked parent; no downloadable file)"
+    );
+    assert.deepEqual(ui.failureCodesFor(state, "purchasable"), [
+        "requires_linked_parent",
+        "no_downloadable_file",
+    ]);
+});
+
+test("stateFromVisibilityPayload copies missing_downloadable_file", () => {
+    const state = ui.stateFromVisibilityPayload({
+        enforced: true, status: "active", auto_basis: true, failure_codes: [],
+        missing_downloadable_file: true, axes: {}
+    });
+    assert.equal(state.missingDownloadableFile, true);
 });
 
 // FAILURE_LABELS key sync with Go is covered by TestFailureLabelsMatchAutoBasisCodes
@@ -391,19 +448,31 @@ function makeStatusSelect() {
     };
 }
 
-function makeAxisDoc(initialMode) {
+function makeAxisDoc(initialMode, axisKey) {
+    const axis = axisKey || "catalog";
     const badge = { textContent: "" };
-    const list = { style: { display: "" } };
+    const list = { style: { display: "" }, innerHTML: "" };
     const modeSelect = { value: initialMode || "auto" };
     const doc = {
         getElementById: (id) => {
-            if (id === ui.selectID("catalog")) return modeSelect;
-            if (id === ui.badgeID("catalog")) return badge;
-            if (id === ui.failuresID("catalog")) return list;
+            if (id === ui.selectID(axis)) return modeSelect;
+            if (id === ui.badgeID(axis)) return badge;
+            if (id === ui.failuresID(axis)) return list;
             return null;
         }
     };
     return { doc, badge, list, modeSelect };
+}
+
+function makeRequiresLinkedCheckbox(checked) {
+    return {
+        checked: !!checked,
+        attrs: {},
+        handlers: [],
+        getAttribute: function (name) { return this.attrs[name]; },
+        setAttribute: function (name, v) { this.attrs[name] = v; },
+        addEventListener: function (evt, fn) { this.handlers.push(fn); }
+    };
 }
 
 test("bindStatusChange: selecting a different form status recomputes the auto badge", () => {
@@ -515,6 +584,111 @@ test("refreshLivePreview: reads status from form when present", () => {
 
     assert.equal(state.status, "draft");
     assert.equal(badge.textContent, "Forced visible — not live (product inactive)");
+});
+
+test("refreshLivePreview: reads requires_linked_parent from form checkbox", () => {
+    const { doc, badge, list } = makeAxisDoc("visible", "purchasable");
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: { checked: true }
+        }
+    };
+    const state = makeLiveState({
+        status: "active",
+        requiresLinkedParent: false,
+        inputFailureCodes: [],
+        autoBasis: true
+    });
+
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(state.requiresLinkedParent, true);
+    assert.equal(badge.textContent, "Forced visible — not purchasable (requires linked parent)");
+    assert.equal(list.style.display, "");
+    assert.match(list.innerHTML, /requires a linked parent/);
+});
+
+test("applySavedVisibilityFacts: refreshes missingDownloadableFile from visibility payload", () => {
+    const { doc, badge, list } = makeAxisDoc("visible", "purchasable");
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: { checked: false }
+        }
+    };
+    // Stale post-load state: file-less downloadable gate still set after a
+    // type change to simple (mirrors admin.js post-save before facts refresh).
+    const state = makeLiveState({
+        status: "active",
+        requiresLinkedParent: false,
+        missingDownloadableFile: true,
+        inputFailureCodes: [],
+        autoBasis: true
+    });
+
+    ui.applySavedVisibilityFacts(state, {
+        requires_linked_parent: false,
+        missing_downloadable_file: false
+    });
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(state.missingDownloadableFile, false);
+    assert.equal(state.requiresLinkedParent, false);
+    assert.equal(badge.textContent, "Forced visible");
+    assert.equal(list.style.display, "none");
+    assert.doesNotMatch(list.innerHTML, /no downloadable file|downloadable product has no attached file/);
+});
+
+test("applySavedVisibilityFacts: no-ops for null/error state", () => {
+    const errorState = { kind: "error", error: "boom" };
+    ui.applySavedVisibilityFacts(null, { missing_downloadable_file: false });
+    ui.applySavedVisibilityFacts(errorState, { missing_downloadable_file: false });
+    assert.equal(errorState.missingDownloadableFile, undefined);
+});
+
+test("bindRequiresLinkedParentChange: toggling checkbox recomputes purchasable badge", () => {
+    const { doc, badge } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = {
+        elements: {
+            status: { value: "active" },
+            requires_linked_parent: checkbox
+        }
+    };
+    const state = makeLiveState({ status: "active", requiresLinkedParent: false, autoBasis: true });
+
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+    assert.equal(checkbox.handlers.length, 1);
+
+    checkbox.checked = true;
+    checkbox.handlers[0]();
+
+    assert.equal(state.requiresLinkedParent, true);
+    assert.equal(badge.textContent, "Forced visible — not purchasable (requires linked parent)");
+});
+
+test("bindRequiresLinkedParentChange: binds only once even if called twice", () => {
+    const { doc } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = { elements: { requires_linked_parent: checkbox } };
+    const state = makeLiveState();
+
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+    ui.bindRequiresLinkedParentChange(doc, form, state);
+
+    assert.equal(checkbox.handlers.length, 1);
+});
+
+test("bindRequiresLinkedParentChange: no-ops for create/null and error state", () => {
+    const { doc } = makeAxisDoc("visible", "purchasable");
+    const checkbox = makeRequiresLinkedCheckbox(false);
+    const form = { elements: { requires_linked_parent: checkbox } };
+
+    ui.bindRequiresLinkedParentChange(doc, form, null);
+    ui.bindRequiresLinkedParentChange(doc, form, { kind: "error", error: "x" });
+
+    assert.equal(checkbox.handlers.length, 0);
 });
 
 // --- Live status preview via input_failure_codes ---

@@ -199,7 +199,18 @@ Additional documents:
 
 ## Documentation
 
-Every **finished PR** must ship code **and** updated docs in the same change set. Do not mark a PR done until the checklist below is complete (or each item is explicitly N/A and noted in the PR spec).
+**First: which branch does this PR target?**
+
+- **`main` (hotfix or promote):** product docs only. Do **not** create or edit `docs/phase-*`.
+- **`dev` (default for features):** PR spec + phase index/roadmap + product docs as applicable.
+
+Product docs (guides, current C4, runbook, `docs/README.md`) ship on **`main`**. Working history (`docs/phase-*` — PR specs, phase roadmaps, historical specs) lives on **`dev` only**. See [docs/README.md](docs/README.md). Never raw-merge `dev` into `main`; use `scripts/promote-dev-to-main.sh`.
+
+Every **finished PR** must ship code **and** updated docs in the same change set.
+
+### PRs targeting `dev`
+
+Do not mark a PR done until the checklist below is complete (or each item is explicitly N/A and noted in the PR spec).
 
 **Checklist** (see also `.cursor/rules/pr-documentation-checklist.mdc`):
 
@@ -224,6 +235,11 @@ Rules:
 * Update C4 only when architecture changed; say “no C4 change” in the PR spec if unchanged.
 * Config additions need **yaml example**, **env override** (if applicable), and **flatten map** in `internal/platform/config` when the project uses it.
 * Validation section in the PR spec must list **tests run** and **build commands**.
+* Living operator/CI artifacts belong in `docs/guides/`, `docs/diagrams/`, or `docs/GOVULN_BASELINE.md` — never nest them under `docs/phase-*`.
+
+### PRs targeting `main`
+
+Hotfixes and promote PRs update **product docs only** (guides, C4, runbook, README, PLUGINS.md, `docs/README.md`). They must **not** add `docs/phase-*`. `CI / docs-main` fails if those paths are present; require that check on `main` only, never on `dev`.
 
 ---
 

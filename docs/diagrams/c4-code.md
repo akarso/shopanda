@@ -13,6 +13,7 @@ classDiagram
         +string Name
         +string Slug
         +string Status
+        +bool RequiresLinkedParent
         +map Attributes
         +time CreatedAt
         +time UpdatedAt
@@ -89,6 +90,17 @@ classDiagram
         +string Name
         +int Quantity
         +Money UnitPrice
+    }
+
+    class ProductAssignment {
+        +string ID
+        +string ParentOrderItemID
+        +string ChildOrderItemID
+        +Status status
+        +time CreatedAt
+        +time RevokedAt
+        +Assign(parentID) error
+        +Revoke() error
     }
 
     class Customer {
@@ -173,6 +185,11 @@ classDiagram
         +string Name
         +string Slug
         +string Description
+        +string Type
+        +bool VisibleInCatalog
+        +bool VisibleInSearch
+        +bool VisibleIndividually
+        +bool Purchasable
         +map Attributes
     }
 
@@ -276,6 +293,7 @@ classDiagram
     class OrderRepository {
         <<interface>>
         +FindByID(ctx, id) Order
+        +FindByIDs(ctx, ids) map
         +FindByCustomerID(ctx, customerID) []Order
         +List(ctx, offset, limit) []Order
         +Save(ctx, order) error
@@ -322,6 +340,8 @@ classDiagram
     }
 
     class LinkedEligibilityRepository {
+        +ListAllParentSlugRows()
+        +ListAllCategorySlugRows()
         <<interface>>
         +ListParentsByChildID(ctx, childID) []LinkedEligibleParent
         +ListCategoriesByChildID(ctx, childID) []LinkedEligibleCategory
@@ -331,6 +351,16 @@ classDiagram
         +RemoveParent(ctx, childID, parentID) error
         +RemoveCategory(ctx, childID, categoryID) error
         +IsEligible(ctx, childID, parentID) bool
+    }
+
+    class ProductAssignmentRepository {
+        <<interface>>
+        +Insert(ctx, assignment) error
+        +Update(ctx, assignment) error
+        +FindByID(ctx, id) ProductAssignment
+        +FindCurrentByChildID(ctx, childID) ProductAssignment
+        +ListByChildID(ctx, childID) []ProductAssignment
+        +ListByParentID(ctx, parentID, page) []ProductAssignment, hasMore
     }
 
     class PricingStep {
@@ -439,6 +469,11 @@ classDiagram
         -tx *sql.Tx
         +WithTx(tx) LinkedEligibilityRepository
     }
+    class PostgresProductAssignmentRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) ProductAssignmentRepository
+    }
     class ManualPayProvider {
     }
     class FlatRateShipProvider {
@@ -476,9 +511,25 @@ classDiagram
         +Delete(path) error
         +URL(path) string
     }
+    class ReadableStorage {
+        <<interface>>
+        +Read(path) []byte
+    }
+    class SignedURLStorage {
+        <<interface>>
+        +Head(ctx, path) error
+        +SignedURL(ctx, path, opts) string
+    }
     class LocalStorage {
         -basePath string
         -baseURL string
+        +Read(path) []byte
+    }
+    class S3Storage {
+        -bucket string
+        -presigner PresignClient
+        +Head(ctx, path) error
+        +SignedURL(ctx, path, opts) string
     }
     class AssetRepository {
         <<interface>>
@@ -487,6 +538,8 @@ classDiagram
     }
     class PostgresAssetRepo {
         -db *sql.DB
+        -tx *sql.Tx
+        +LockForUpdate(ctx, id) error
     }
     class Cache {
         <<interface>>
@@ -685,12 +738,17 @@ classDiagram
     BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
     GroupedMemberRepository <|.. PostgresGroupedMemberRepo : implements
     LinkedEligibilityRepository <|.. PostgresLinkedEligibilityRepo : implements
+    ProductAssignmentRepository <|.. PostgresProductAssignmentRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
     Mailer <|.. SMTPMailer : implements
     Storage <|.. LocalStorage : implements
+    ReadableStorage <|.. LocalStorage : implements
+    SignedURLStorage <|.. S3Storage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
+    note for SignedURLStorage "PR-1077: Head before claim; presign with private no-store +\nattachment disposition; never permanent Storage.URL for grants"
+
     Cache <|.. PostgresCacheStore : implements
     StoreRepository <|.. PostgresStoreRepo : implements
     StoreAdminHandler --> StoreRepository : uses
@@ -736,6 +794,14 @@ classDiagram
 
 **Product composition admin (PR-1066):** `ProductCompositionAdminHandler` in `internal/interfaces/http/admin/product_composition_admin.go` lists, upserts, and removes bundle components and grouped members. It calls `BundleService` and `GroupedService` only. Child `name` / `slug` / `type` come from `ProductRepository.FindByID`. Routes are registered in `cmd/api/wire_routes.go` with `products.read` / `products.write`. No new port or container.
 
-**Linked-product eligibility (PR-1067):** `LinkedEligibilityRepository` + `postgres.LinkedEligibilityRepo`. A child product declares an explicit parent allowlist (`linked_eligible_parents`) and/or a category rule (`linked_eligible_categories`); `IsEligible` and `HasRules` are join-table predicates (no product-status check). `IsEligible` is OR across the allowlist and `product_categories` membership. `WithTx` is adapter-only. No admin HTTP or CSV (PR-1073). No new container.
+**Linked-product eligibility (PR-1067):** `LinkedEligibilityRepository` + `postgres.LinkedEligibilityRepo`. A child product declares an explicit parent allowlist (`linked_eligible_parents`) and/or a category rule (`linked_eligible_categories`); `IsEligible` and `HasRules` are join-table predicates (no product-status check). `IsEligible` is OR across the allowlist and `product_categories` membership. `WithTx` is adapter-only. Admin HTTP and CSV land in PR-1073 (`LinkedEligibilityAdminHandler`); export uses `ListAll*SlugRows` joined queries. No new container.
+
+**Downloadable file attachment (PR-1074/1078):** `DownloadableFileRepository` + `postgres.DownloadableFileRepo` are wired. A `Type=downloadable` product links to one or more `assets` rows via `downloadable_files` (product FK cascade; asset FK restrict). `DownloadableFileService` (list/attach/replace/remove) is constructed at serve for admin HTTP/CSV/GUI (PR-1078). List/Remove are type-agnostic; Attach/Replace stay type-gated and lock product + asset `FOR UPDATE` (private/downloads/ prefix). Soft-write admin takes status from the same `LockTypeAndModes` `FOR UPDATE` as type/modes/explode. `MissingDownloadableFile` forces Purchasable false; cart/checkout reject zero-file downloadable lines and required file-less downloadable bundle leaves. `media.Service.Delete` is row-then-blob. `ProductAdminHandler.WithDownloadableFiles` guards type changes and StatusActive. Admin grant list/revoke/re-issue is `DownloadGrantAdminHandler` (`downloads.*`). No new container.
+
+**DownloadGrant (PR-1075):** `download.DownloadGrant` + `download.Repository` / `SettingsRepository` + `postgres.DownloadGrantRepo` / `DownloadableGrantSettingsRepo`. `order.paid` is published from sync `InitiatePaymentStep` success, `$0`/`payment_skipped`, `payment.completed` webhooks, and admin/integration `ApplyStatus(paid)` — not from `checkout.completed`. Already-completed webhook / already-paid admin/`ApplyStatus` retries republish `order.paid` (heal). `application/download.Issuer` (async) refuses unpaid orders, fails closed on missing files/variant/product and nil bundle components, walks required downloadable leaves of non-exploded bundles, inserts all grants for an order in one TX, and publishes `grant.issued` only after Commit. `IssueIdempotent` never resurrects revoked rows. UNIQUE `(order_item_id, asset_id)`; `order_item_id` reuses `assignment.UnitID`. Returns approve/refund revokes grants with assignments; partial downloadable qty rejected. `media.Service` counts live grants before asset delete. No delivery HTTP in this PR. No new container.
+
+**Product assignment (PR-1069 / PR-1070 / PR-1071 / PR-1072):** `assignment.ProductAssignment` + `ProductAssignmentRepository` + `postgres.ProductAssignmentRepo`. Binds one purchased/issued child unit to one purchased parent unit. State machine `unassigned → assigned → revoked`, or `unassigned → revoked` with a null parent. Unit ids are minted as `orderID/variantID`. The order UUID is canonicalized to lowercase. `application/assignment.Flow` writes at checkout (`RecordPurchase` on a shared order transaction, otherwise fail closed) and after purchase (`AssignOwned`). Ownership is payment completed or payable 0. Checkout `Workflow.WithUnpaidOrderCompensation` fails a still-pending unpaid order, restores redeemed store credit via `storecredit.Restore` (no issuance cap), and revokes current rows when a later step fails; an accepted pending payment (pending + provider ref) is left for the webhook. `InitiatePaymentStep` revokes on decline and provider error. One `payment.failed` handler fails a still-pending order, restores `StoreCreditApplied` with an order-id idempotency key, then revokes. A `payment.failed` retry on an already-failed payment publishes again. Exploded linked leaves are the units and collapse when two bundles share a leaf. Cart HTTP stamps `AssignmentContext`. Storefront account routes list owned eligible parents and assign. `WithTx` is adapter-only on the assignment and order postgres repos. Admin HTTP is `AssignmentAdminHandler` with `assignments.read` / `assignments.write` (Admin, Manager, Support). `AdminAssign` refuses a new bind that does not require a linked parent, and refuses cancelled, failed, or unpaid orders unless `force` and a reason are set. Force is stored as `forced_at` / `forced_reason` only when a side is not bindable. JSON uses `reason` for that text. A reason over 500 characters is rejected only when `force` is true. List, current, and revoke return live unit facts. `FactsForUnits` loads orders with `OrderRepository.FindByIDs`, lowercases a UUID order id, and keys facts by `CanonicalUnitID`. A fact-read failure on list, current, or revoke is still 200 with empty fact fields. `Validate` does not cap `forced_reason`; writes do, and migration `103` checks `char_length(forced_reason) <= 500`. PR-1072: `returns.Service.WithAssignmentFlow` + `Flow.WithOpenReturnChecker`: parent return blocked unless children are on the same RMA; revoke on Approve/Refund after in-memory transition in one TX; assign blocked on open RMA; `ReturnableLines` hides blocked parents; publishes `assignment.revoked` with `return_approved` / `return_refunded`. Checkout, account, compensation, and returns behavior is in `docs/guides/DEVELOPER.md`. No new container. CSV and the admin GUI are PR-1073.
 
 **OpenTelemetry tracing (PR-1024):** New `internal/platform/tracing` package (`Setup`/`Shutdown`) installs an OTLP/HTTP exporter as the global OTel `TracerProvider` when `tracing.enabled` — otherwise every `otel.Tracer(...)` call anywhere in the process resolves to OTel's own no-op tracer, so instrumentation never needs its own enabled-check or nil-guard (unlike the `metrics.Recorder` interface's `Noop()`, tracing needed no equivalent construct in this codebase). `shared.TracingMiddleware` (new, alongside `MetricsMiddleware` in `internal/interfaces/http/shared`) starts one span per HTTP request and reads the matched route template from the same `*routeMatch` context box `MetricsMiddleware` already reads (see PR-1023's CR-follow-up round) rather than re-deriving it. `checkout.Workflow.Execute` gets a root span plus one child span per step. Both `TracingMiddleware` and `checkout.NewWorkflow` resolve their `Tracer` handle at construction time (once per process, in `cmd/api`'s wiring) rather than caching one in a package variable — OTel's global provider only migrates a pre-existing handle to a newly-installed SDK provider once, so a handle obtained before `tracing.Setup` runs would otherwise never see the real provider. DB query spans are deferred: no shared `*sql.DB` access wrapper exists across the ~40 postgres repo files to hang them on.
+
+`LinkedEligibilityAdminHandler` (PR-1073) exposes linked eligibility list/add/remove over `LinkedEligibilityService` (parents and categories). Assignment support GUI uses the existing `AssignmentAdminHandler` (PR-1071).

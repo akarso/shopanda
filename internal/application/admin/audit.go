@@ -31,6 +31,14 @@ const (
 	AuditGroupedMemberAdd      AuditAction = "product.grouped_member.add"
 	AuditGroupedMemberRemove   AuditAction = "product.grouped_member.remove"
 
+	// Linked-product eligibility (PR-1073)
+	AuditLinkedEligibleParentList     AuditAction = "product.linked_eligible_parent.list"
+	AuditLinkedEligibleParentAdd      AuditAction = "product.linked_eligible_parent.add"
+	AuditLinkedEligibleParentRemove   AuditAction = "product.linked_eligible_parent.remove"
+	AuditLinkedEligibleCategoryList   AuditAction = "product.linked_eligible_category.list"
+	AuditLinkedEligibleCategoryAdd    AuditAction = "product.linked_eligible_category.add"
+	AuditLinkedEligibleCategoryRemove AuditAction = "product.linked_eligible_category.remove"
+
 	// Scoped catalog editing (PR-E catalog slice)
 	AuditProductTranslationRead   AuditAction = "product.translation.read"
 	AuditProductTranslationUpdate AuditAction = "product.translation.update"
@@ -145,6 +153,24 @@ const (
 	AuditLogList   AuditAction = "audit.list"
 	AuditLogExport AuditAction = "audit.export"
 
+	// Product assignment admin operations (PR-1071)
+	AuditAssignmentCreate AuditAction = "assignment.create"
+	AuditAssignmentRevoke AuditAction = "assignment.revoke"
+
+	// Downloadable file attachments (PR-1078)
+	AuditDownloadableFileList    AuditAction = "product.downloadable_file.list"
+	AuditDownloadableFileAttach  AuditAction = "product.downloadable_file.attach"
+	AuditDownloadableFileReplace AuditAction = "product.downloadable_file.replace"
+	AuditDownloadableFileRemove  AuditAction = "product.downloadable_file.remove"
+	AuditDownloadableSettingsGet AuditAction = "product.downloadable_grant_settings.get"
+	AuditDownloadableSettingsPut AuditAction = "product.downloadable_grant_settings.put"
+	AuditDownloadableSettingsDel AuditAction = "product.downloadable_grant_settings.delete"
+
+	// Download grant admin operations (PR-1078)
+	AuditDownloadGrantList    AuditAction = "download_grant.list"
+	AuditDownloadGrantRevoke  AuditAction = "download_grant.revoke"
+	AuditDownloadGrantReissue AuditAction = "download_grant.reissue"
+
 	// Job admin operations (PR-1029)
 	AuditJobList   AuditAction = "job.list"
 	AuditJobRead   AuditAction = "job.read"
@@ -202,6 +228,14 @@ func (a *Auditor) SetAuditLogRepository(repo domainadmin.AuditLogRepository) {
 		return
 	}
 	a.repo = repo
+}
+
+// Warn logs an operational warning. It is not an audit result.
+func (a *Auditor) Warn(event string, fields map[string]interface{}) {
+	if a == nil || a.log == nil || event == "" {
+		return
+	}
+	a.log.Warn(event, fields)
 }
 
 // LogAction records an admin action to the audit log.

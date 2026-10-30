@@ -2,6 +2,7 @@ package cart
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -163,6 +164,25 @@ func (c *Cart) UpdateItemQuantity(variantID string, quantity int) error {
 		}
 	}
 	return errors.New("cart: item not found")
+}
+
+// SetItemAssignment writes the stored assignment on an existing line.
+// A whitespace parent or unit is stored trimmed. Missing variant is a no-op.
+func (c *Cart) SetItemAssignment(variantID, parentProductID, parentUnitID string, deferred bool) {
+	parentProductID = trimAssignmentParent(parentProductID)
+	parentUnitID = trimAssignmentParent(parentUnitID)
+	for i := range c.Items {
+		if c.Items[i].VariantID == variantID {
+			c.Items[i].AssignmentParentProductID = parentProductID
+			c.Items[i].AssignmentParentUnitID = parentUnitID
+			c.Items[i].AssignmentDeferred = deferred
+			return
+		}
+	}
+}
+
+func trimAssignmentParent(parentProductID string) string {
+	return strings.TrimSpace(parentProductID)
 }
 
 // RemoveItem removes an item by variant ID.

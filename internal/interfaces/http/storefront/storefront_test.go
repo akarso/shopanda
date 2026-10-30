@@ -683,6 +683,61 @@ func TestStorefrontHandler_Products_CategoryFilterParam(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_ListingAxes_CatalogVsSearch(t *testing.T) {
+	// PR-1079: HTML PLP uses VisibleInCatalog; HTML search uses VisibleInSearch.
+	modes := catalog.DefaultVisibilityAxes()
+	facts := enforceFacts{"p1": enforceSnap(modes)}
+
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return nil, nil
+	}}
+
+	var sawCatalog, sawSearch bool
+	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
+		if query.Filters[search.FilterVisibleInCatalog] == true {
+			sawCatalog = true
+			if query.Filters[search.FilterVisibleInSearch] == true {
+				t.Fatal("catalog listing must not also force visible_in_search")
+			}
+		}
+		if query.Filters[search.FilterVisibleInSearch] == true {
+			sawSearch = true
+			if query.Filters[search.FilterVisibleInCatalog] == true {
+				t.Fatal("search listing must not also force visible_in_catalog")
+			}
+		}
+		return search.SearchResult{
+			Products: []search.Product{{ID: "p1", Name: "Widget", Slug: "widget", Type: string(catalog.TypeSimple)}},
+			Total:    1,
+			Facets:   map[string][]search.FacetValue{},
+		}, nil
+	}}
+	h := storefront.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	rec := httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, httptest.NewRequest("GET", "/products", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/products status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawCatalog {
+		t.Fatal("/products (catalog axis) did not set visible_in_catalog")
+	}
+
+	rec = httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, httptest.NewRequest("GET", "/search?q=widget", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/search status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !sawSearch {
+		t.Fatal("/search (search axis) did not set visible_in_search")
+	}
+}
+
 func TestStorefrontHandler_Category_InteractiveFacets(t *testing.T) {
 	repo := &mockStorefrontRepo{}
 	parentID := "cat-root"
@@ -738,7 +793,8 @@ func TestStorefrontHandler_SearchSuggestFragment_OK(t *testing.T) {
 		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
 			return search.SearchResult{Facets: map[string][]search.FacetValue{}}, nil
 		},
-		suggestFn: func(_ context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+		suggestFn: func(_ context.Context, q search.SuggestQuery) ([]search.Suggestion, error) {
+			prefix, limit := q.Prefix, q.Limit
 			if prefix != "wid" {
 				t.Fatalf("prefix = %q, want wid", prefix)
 			}
@@ -775,7 +831,7 @@ func TestStorefrontHandler_SearchSuggestFragment_EmptyQuery(t *testing.T) {
 		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
 			return search.SearchResult{Facets: map[string][]search.FacetValue{}}, nil
 		},
-		suggestFn: func(_ context.Context, _ string, _ int) ([]search.Suggestion, error) {
+		suggestFn: func(_ context.Context, _ search.SuggestQuery) ([]search.Suggestion, error) {
 			t.Fatal("Suggest should not be called for empty query")
 			return nil, nil
 		},
