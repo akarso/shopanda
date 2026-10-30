@@ -179,7 +179,7 @@ See [HEADLESS.md](docs/guides/HEADLESS.md).
 
 ### Why can't I add this product to cart
 
-**Symptom:** storefront or API add-to-cart / qty increase returns **422**. Greppable messages operators see (qty **decrease** / **remove** still work on blocked lines):
+**Symptom:** storefront or API add-to-cart / qty increase returns **422**. Greppable messages operators see (qty **decrease** / **remove** skip purchase checks, but pricing or tax errors in the remaining cart can still block them):
 
 | Message | Usual cause |
 | --- | --- |

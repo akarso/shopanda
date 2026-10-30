@@ -2,7 +2,57 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const ui = require("./dist/product_type_sections.js");
+
+// Source of truth for product.form section Types: cmd/api/wire_services.go
+// RegisterProductFormSection calls. Parsed into form-schema section shape so the
+// matrix exercises real registration attrs (not a duplicated Types map).
+function extractBalanced(src, openIdx) {
+    let depth = 0;
+    for (let i = openIdx; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === "{") {
+            depth += 1;
+        } else if (ch === "}") {
+            depth -= 1;
+            if (depth === 0) {
+                return src.slice(openIdx + 1, i);
+            }
+        }
+    }
+    return "";
+}
+
+function loadRegisteredProductFormSections() {
+    const wirePath = path.resolve(__dirname, "../../../../cmd/api/wire_services.go");
+    const src = fs.readFileSync(wirePath, "utf8");
+    const sections = [];
+    const parts = src.split("RegisterProductFormSection(");
+    for (let i = 1; i < parts.length; i++) {
+        const part = parts[i];
+        const marker = "FormSection{";
+        const start = part.indexOf(marker);
+        if (start < 0) {
+            continue;
+        }
+        const body = extractBalanced(part, start + marker.length - 1);
+        const idMatch = /ID:\s*"([^"]+)"/.exec(body);
+        if (!idMatch) {
+            continue;
+        }
+        let types = [];
+        if (!/\bTypes:\s*nil\b/.test(body)) {
+            const typesMatch = /Types:\s*\[\]string\{([^}]*)\}/.exec(body);
+            if (typesMatch) {
+                types = [...typesMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+            }
+        }
+        sections.push({ id: idMatch[1], types });
+    }
+    return sections;
+}
 
 test("sectionTypes trims and drops empties", () => {
     assert.deepEqual(ui.sectionTypes(" bundle , grouped "), ["bundle", "grouped"]);
@@ -21,17 +71,34 @@ test("sectionVisible: match and non-match", () => {
     assert.equal(ui.sectionVisible("bundle", "simple"), false);
 });
 
-// Mirrors cmd/api/wire_services.go RegisterProductFormSection Types:
-// visibility/linked = empty (always shown); bundle/grouped/downloadable = typed.
+test("sectionTypesAttr and sectionAttrsFromForm encode schema Types", () => {
+    assert.equal(ui.sectionTypesAttr(null), "");
+    assert.equal(ui.sectionTypesAttr([]), "");
+    assert.equal(ui.sectionTypesAttr(["bundle"]), "bundle");
+    assert.equal(ui.sectionTypesAttr(["bundle", "grouped"]), "bundle,grouped");
+    assert.deepEqual(
+        ui.sectionAttrsFromForm({
+            sections: [
+                { id: "visibility", types: [] },
+                { id: "bundle", types: ["bundle"] }
+            ]
+        }),
+        { visibility: "", bundle: "bundle" }
+    );
+    assert.deepEqual(ui.sectionAttrsFromForm(null), {});
+});
+
+// Section definitions come from wire_services.go registrations; expected matrix
+// is the oracle for which types should show which sections.
 test("sectionVisible: Phase 12 type×section matrix (6×5)", () => {
     const types = ["simple", "virtual", "bundle", "grouped", "configurable", "downloadable"];
-    const sections = {
-        visibility: "",
-        bundle: "bundle",
-        grouped: "grouped",
-        linked: "",
-        downloadable: "downloadable"
-    };
+    const registered = loadRegisteredProductFormSections();
+    assert.ok(registered.length >= 5, "expected product form sections in wire_services.go");
+    const sections = ui.sectionAttrsFromForm({ sections: registered });
+    assert.deepEqual(
+        Object.keys(sections).sort(),
+        ["bundle", "downloadable", "grouped", "linked", "visibility"]
+    );
     const expected = {
         simple: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: false },
         virtual: { visibility: true, bundle: false, grouped: false, linked: true, downloadable: false },
