@@ -13,7 +13,8 @@ import (
 
 // Plugin registers the optional read-only GraphQL catalog API.
 type Plugin struct {
-	NewResolver func(db *sql.DB, extensionRegistry *extensionapp.Registry) (*Resolver, error)
+	NewResolver              func(db *sql.DB, extensionRegistry *extensionapp.Registry) (*Resolver, error)
+	NewVisibilityFactsSource func(db *sql.DB) (catalog.VisibilityFactsSource, error)
 }
 
 // NewPlugin creates a GraphQL API plugin.
@@ -46,7 +47,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("graphql plugin: resolver: %w", err)
 	}
 
-	if err := attachVisibility(resolver, app); err != nil {
+	if err := attachVisibility(resolver, app, p.NewVisibilityFactsSource); err != nil {
 		return fmt.Errorf("graphql plugin: visibility: %w", err)
 	}
 	if err := attachComposition(resolver, app.Bootstrap.DB); err != nil {
@@ -69,28 +70,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	return nil
 }
 
-// newVisibilityFactsSource builds the facts repo used when enforce is on.
-// Tests may replace it to assert attachVisibility runs without a live DB.
-var newVisibilityFactsSource = func(db *sql.DB) (catalog.VisibilityFactsSource, error) {
-	return postgres.NewVisibilityFactsRepo(db)
-}
-
-// setVisibilityFactsSourceForTest replaces the facts-source factory used by
-// attachVisibility. It returns a restore func for test cleanup. Not part of
-// the public plugin API (see export_test.go for the test-only re-export).
-func setVisibilityFactsSourceForTest(fn func(db *sql.DB) (catalog.VisibilityFactsSource, error)) func() {
-	prev := newVisibilityFactsSource
-	if fn == nil {
-		newVisibilityFactsSource = func(db *sql.DB) (catalog.VisibilityFactsSource, error) {
-			return postgres.NewVisibilityFactsRepo(db)
-		}
-	} else {
-		newVisibilityFactsSource = fn
-	}
-	return func() { newVisibilityFactsSource = prev }
-}
-
-func attachVisibility(resolver *Resolver, app *plugin.App) error {
+func attachVisibility(resolver *Resolver, app *plugin.App, newFacts func(db *sql.DB) (catalog.VisibilityFactsSource, error)) error {
 	if resolver == nil || app == nil || app.Config == nil {
 		return nil
 	}
@@ -102,7 +82,12 @@ func attachVisibility(resolver *Resolver, app *plugin.App) error {
 	if app.Bootstrap == nil || app.Bootstrap.DB == nil {
 		return fmt.Errorf("database bootstrap not configured")
 	}
-	factsRepo, err := newVisibilityFactsSource(app.Bootstrap.DB)
+	if newFacts == nil {
+		newFacts = func(db *sql.DB) (catalog.VisibilityFactsSource, error) {
+			return postgres.NewVisibilityFactsRepo(db)
+		}
+	}
+	factsRepo, err := newFacts(app.Bootstrap.DB)
 	if err != nil {
 		return err
 	}

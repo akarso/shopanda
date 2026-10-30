@@ -109,10 +109,9 @@ func TestPlugin_Init_EnforceAttachesVisibility(t *testing.T) {
 		return resolver, err
 	}
 
-	prev := cgraphql.SetVisibilityFactsSourceForTest(func(_ *sql.DB) (catalog.VisibilityFactsSource, error) {
+	plugin.NewVisibilityFactsSource = func(_ *sql.DB) (catalog.VisibilityFactsSource, error) {
 		return mapVisibilityFacts{product.ID: hiddenIndividuallySnap()}, nil
-	})
-	t.Cleanup(prev)
+	}
 
 	if err := plugin.Init(app); err != nil {
 		t.Fatalf("Init() error: %v", err)
