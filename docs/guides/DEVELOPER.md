@@ -28,7 +28,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Jobs admin API](#jobs-admin-api)
 - [Cache admin API](#cache-admin-api)
 - [Full-page cache](#full-page-cache)
-- [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
+- [Integrator Platform](INTEGRATOR_PLATFORM.md)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
 - [Supply chain (Dependabot + govulncheck)](#supply-chain-dependabot--govulncheck)
@@ -85,11 +85,11 @@ Core (always on)
 - Adding HTTP webhook routes for new payment providers
 - Adding CLI subcommands — core commands in `cmd/api/main.go`; plugin commands via `RegisterCommand` in `Init`
 
-**Deferred (not implemented):** dynamic `.so` loading ([research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
+**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, hot reload. See [PLUGINS.md](../../PLUGINS.md#deferred-capabilities).
 
 Plugin-defined settings can be registered via `RegisterConfig` and edited on the admin Integrations page (`group=plugins` API). Plugin enable/disable remains compile-time + config file.
 
-See also: [PLUGINS.md](../../PLUGINS.md) · [Phase 4 Roadmap](../phase-4-refactoring/ROADMAP.md) · [plugins/example/README.md](../../plugins/example/README.md)
+See also: [PLUGINS.md](../../PLUGINS.md) · [plugins/example/README.md](../../plugins/example/README.md)
 
 ## Enable Core Plugins
 
@@ -795,8 +795,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 | Resource | Purpose |
 | --- | --- |
-| [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
-| [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) | Tracks A–F + post-phase PR-854 (PR-800–855) |
+| [Integrator Platform spec](INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
 
 **Available today (core + Phase 8):**
 
@@ -818,15 +817,15 @@ When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUG
 
 ## Roadmap and Future Work
 
-Phases 1–11 are **complete**. **Phase 12 — Product Types & Composition** is **in progress** (PR-1048–1065 done; next PR-1066). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is planned and should finish before a real merchant site.
+Phases 1–12 and 14 are **shipped** (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). **Phase 13 — Plugin Runtime** (owned schema + on-demand sync jobs) is the site-ready gate before a real merchant site.
 
-| Phase | Focus |
+| Focus | Status |
 | --- | --- |
-| 8–11 (done) | Integrator platform, merchant discovery, platform excellence, jobs/search/cache |
-| 12 (in progress) | Product types, visibility/purchasability, bundle/grouped, linked products, downloadable |
-| 13 (planned) | Plugin-owned migrations + on-demand sync enqueue |
+| Integrator platform, merchant discovery, jobs/search/cache | Shipped |
+| Product types, visibility, bundle/grouped, linked, downloadable | Shipped with caveats |
+| Plugin-owned migrations + on-demand sync enqueue | Planned (site-ready gate) |
 
-Full plans: [Phase 11 Roadmap](../phase-11-jobs-search-cache/ROADMAP.md) · [Phase 12 Roadmap](../phase-12-product-composition/ROADMAP.md) · [Phase 13 Roadmap](../phase-13-plugin-runtime/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+See [Integrator Platform spec](INTEGRATOR_PLATFORM.md) and [EU Compliance](COMPLIANCE_EU.md). Phase roadmaps and PR specs: [`dev` docs](https://github.com/akarso/shopanda/tree/dev/docs).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
@@ -839,8 +838,9 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 | **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
+| **`CI / docs-main`** | PRs and pushes to `main` only — fails if `docs/phase-*` is present. Promote with `scripts/promote-dev-to-main.sh`. |
 
-The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
+The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev`, and **`CI / docs-main`** on `main` (Settings → Rules / Branch protection → required status checks).
 
 Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
 
@@ -895,7 +895,7 @@ CI job **`CI / govuln`** installs a **pinned** `govulncheck` (`GOVULNCHECK_VERSI
 Policy:
 
 - Any vulnerability that affects reachable code fails the job (**fail-closed**).
-- Temporary exceptions live in [`GOVULN_BASELINE.md`](../phase-10-platform-excellence/GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
+- Temporary exceptions live in [`GOVULN_BASELINE.md`](../GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
 - Prefer upgrading Go / dependencies over extending the baseline.
 
 Local:
@@ -1178,7 +1178,7 @@ Admin price PUT (`ProductPriceAdminHandler.Update`) requires `WithHistory`. The 
 
 Listing `HasPrice` for a dynamic bundle is true only when the required count is between 1 and 50 and every required component is an active leaf with exactly one variant and a global price row (`store_id` empty; amount 0 counts). The flag is currency-agnostic: a global USD row counts for PLP, a store-only row does not. It does not match `ResolveUnitPrice` on currency. AddItem resolves the dynamic bundle in the cart currency, so a global EUR component price cannot be added to a USD cart. PDP Add is shown when a variant exists and does not consult that currency. PLP cards have no Add control. A follow-up should hide Add when `ResolveUnitPrice` fails for the request currency, because a later button keyed off `HasPrice` / `Purchasable` can show for the wrong currency. A grouped parent is never `HasPrice`. A fixed product still needs its own price row. AutoBasis only sees that bool.
 
-`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. See `docs/phase-1-core/specs/ADMIN_SCHEMA.md`.
+`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. Register type-specific panels with `application/admin.RegisterProductFormSection` (validates `Types` against `catalog.Type`) or `Registry.RegisterFormSection("product.form", …)` for opaque tokens.
 
 **Exception: the `visibility` section (PR-1059).** Registered with `Types: nil` (type-agnostic — applies to every product type, unlike bundle/grouped/linked/downloadable panels). Unlike every other section, its four mode selects **are** picked up by `collectProductPayload` (merged into the payload as `visibility_modes`), because `VisibilityModes` is a core `Product` field saved through the same `POST`/`PUT` as `name`/`slug`/`type` — not auxiliary section data with its own save endpoint. `admin.js`'s `setupProductVisibilitySection` renders the section body from `product_visibility_section.js` helpers and reads the GET response's `visibility` payload (above) for the computed badge/failures on load.
 

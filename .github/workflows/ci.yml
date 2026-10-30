@@ -4,8 +4,9 @@
 #   - CI / unit
 #   - CI / integration
 #   - CI / govuln
+#   - CI / docs-main (PRs/pushes to main only — forbids docs/phase-*)
 # Merge blocking requires a repo admin to mark those checks required on main/dev
-# (branch protection / ruleset).
+# (branch protection / ruleset). Require CI / docs-main on main.
 name: CI
 
 on:
@@ -166,3 +167,25 @@ jobs:
 
       - name: govulncheck (fail-closed + baseline)
         run: bash .github/scripts/run-govulncheck.sh
+
+  docs-main:
+    name: docs-main
+    # Working history (docs/phase-*) is stripped on promote. Fail closed on main.
+    if: github.base_ref == 'main' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Forbid working-history docs on main
+        run: |
+          set -euo pipefail
+          if find docs -mindepth 1 -maxdepth 1 -type d -name 'phase-*' | grep -q .; then
+            echo "ERROR: docs/phase-* must not exist on main (working history stays on dev)." >&2
+            echo "Promote with scripts/promote-dev-to-main.sh; do not raw-merge dev." >&2
+            find docs -mindepth 1 -maxdepth 1 -type d -name 'phase-*' >&2
+            exit 1
+          fi

@@ -5,15 +5,19 @@ alwaysApply: true
 
 # PR completion — documentation checklist
 
-When implementing or finishing a PR, **docs are part of the deliverable**. Before marking work done:
+Product docs (guides, current C4, runbook) ship on **`main`**. Working history (`docs/phase-*`) lives on **`dev` only**. See `docs/README.md`. Never raw-merge `dev` into `main`; use `scripts/promote-dev-to-main.sh`.
 
-## Always (every PR)
+When implementing or finishing a PR, **docs are part of the deliverable**.
+
+## PRs targeting `dev`
+
+Before marking work done:
 
 1. Write/update **`docs/phase-<n>-<name>/prs/PR-<id>.md`** — status `done`, summary, scope, out of scope, validation commands.
 2. Update **`docs/phase-<n>-<name>/prs/README.md`** — row status + link.
 3. Update **`docs/phase-<n>-<name>/ROADMAP.md`** — PR status / index table if applicable.
 
-## When applicable (do not skip silently — note N/A in PR spec)
+### When applicable (do not skip silently — note N/A in PR spec)
 
 | Change type | Update |
 | --- | --- |
@@ -24,6 +28,12 @@ When implementing or finishing a PR, **docs are part of the deliverable**. Befor
 | New **CLI** or major product surface | root `README.md` |
 | Track or phase milestone | phase `README.md` |
 
+Living operator/CI artifacts belong in `docs/guides/`, `docs/diagrams/`, or `docs/GOVULN_BASELINE.md` — never nest them under `docs/phase-*`.
+
+## PRs targeting `main`
+
+Update **product docs only** (guides, C4, runbook, README, PLUGINS.md). Do **not** add `docs/phase-*`. CI `docs-main` fails if those paths are present.
+
 ## Quality bar
 
 - Validation section lists exact `go test` / `go build` commands that were run.
@@ -31,6 +41,6 @@ When implementing or finishing a PR, **docs are part of the deliverable**. Befor
 - Match existing doc tone: tables, short bullets, runnable commands.
 - Do **not** defer doc updates to a follow-up PR unless the user explicitly asks.
 
-## Example (plugin port PR)
+## Example (plugin port PR targeting `dev`)
 
 PR-862-style: PR spec + phase index/roadmap + `plugins/promodemo/README.md` + config example + `register_plugins` note in PLUGINS.md + C4 component note for `EvaluatorRegistry` / pricing pipeline if architecture changed.

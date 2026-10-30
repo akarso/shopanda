@@ -16,7 +16,7 @@ type CatalogEntry struct {
 // Catalog is a read+admin-write port over the scheduler's registered task
 // state, backed by Postgres rather than any single process's in-memory
 // Scheduler — the scheduler runs as a separate OS process from the API
-// server in production (see docs/phase-4-refactoring/specs/RUNTIME_MODES.md:
+// server in production (see docs/guides/RUNTIME_MODES.md:
 // `serve` only embeds a scheduler in dev/opt-in mode; the standalone
 // `scheduler` command is the norm in production), so introspection and
 // enable/disable have to work regardless of which process is asking — the

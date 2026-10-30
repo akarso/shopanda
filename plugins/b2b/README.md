@@ -78,7 +78,7 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 - Registers admin permissions, HTTP routes, pricing/checkout steps via `plugin.App`
 - Does not modify core schema directly; plugin-owned tables ship via embedded migrations
 
-Feature map: [Phase 5 roadmap — B2B PRs](../../docs/phase-5-maturity/ROADMAP.md).
+Customer groups and group-aware pricing ship in this plugin. Quotes, PO, and approvals remain planned. Working notes: [Phase 5 roadmap](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/ROADMAP.md) (`dev`).
 
 ---
 

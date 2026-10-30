@@ -75,7 +75,7 @@ Do **not** commit build outputs (`shopanda`, `api`, or other binaries) to git. S
 
 **Option B — Web wizard (merchants):**
 
-Start the server first (step 5), then open `/setup` in a browser. The wizard runs migrations, seeds defaults, and creates the first admin account. Visiting `/admin` before setup completes redirects to `/setup` ([PR-903](../phase-9-merchant-discovery/prs/PR-903.md)).
+Start the server first (step 5), then open `/setup` in a browser. The wizard runs migrations, seeds defaults, and creates the first admin account. Visiting `/admin` before setup completes redirects to `/setup`.
 
 The setup command / wizard:
 

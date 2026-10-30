@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-BASELINE_DOC="${ROOT}/docs/phase-10-platform-excellence/GOVULN_BASELINE.md"
+BASELINE_DOC="${ROOT}/docs/GOVULN_BASELINE.md"
 MAX_BASELINE_DAYS=90
 
 if [[ ! -f "${BASELINE_DOC}" ]]; then
@@ -215,7 +215,7 @@ if [[ -n "${unexpected}" ]]; then
   echo >&2
   cat "${TMP}" >&2
   echo >&2
-  echo "See docs/phase-10-platform-excellence/GOVULN_BASELINE.md" >&2
+  echo "See docs/GOVULN_BASELINE.md" >&2
   exit 1
 fi
 

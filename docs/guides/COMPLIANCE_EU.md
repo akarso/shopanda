@@ -1,0 +1,164 @@
+# EU & Compliance Reference (Phase 5)
+
+This document maps **common EU merchant obligations** to Shopanda's current capabilities and planned Phase 5 work. It is **not legal advice** — merchants remain responsible for jurisdiction-specific compliance.
+
+---
+
+## Summary Matrix
+
+| Directive / regulation | What merchants need | Shopanda today | Phase 5 target |
+| --- | --- | --- | --- |
+| **GDPR** | Lawful processing, access, erasure, consent | Cookie consent, `GET/DELETE /account`, data export | Hardening only if gaps found |
+| **Omnibus (Price Indication)** | Show lowest price in prior 30 days when showing a discount | `price_history`, `PriceIndicationStep`, SSR PDP/PLP templates | **Done (PR-530)** — store toggle `legal.omnibus_enabled` |
+| **WEEE** | Register as producer; display symbol + reg. number; take-back info | Product attributes + store config + PDP/footer templates | **Done (PR-531)** — opt-in `legal.weee_enabled`, WEEE attribute group |
+| **EPR (packaging)** | Report packaging placed on market; registration per member state | Product/variant attributes + CSV export | **Done (PR-532)** — opt-in `legal.epr_enabled`, EPR attribute group |
+| **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Product attributes + PDP templates | **Done (PR-533)** — opt-in `legal.gpsr_enabled`, GPSR attribute group |
+| **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | **Done (PR-534)** — opt-in `legal.oss_enabled`, CSV export helpers. **PR-1076** adds a `digital` tax-class seam + fail-closed rate lookup for downloadables — **not** EU digital VAT complete; tax-domain sign-off still required |
+| **E-invoicing (Peppol, etc.)** | Structured invoices in B2G/B2B markets | PDF invoices + credit notes | Future core plugin (out of PR-534 scope) |
+| **Consumer Rights Directive** | Withdrawal period, clear pre-contract info | Order emails, CMS pages (merchant-authored) | Returns workflow (PR-502–503) supports withdrawal handling |
+| **DSA** (marketplaces) | Trader traceability, complaint handling | N/A for single-merchant stores | Marketplace mode explicitly out of scope |
+
+---
+
+## Omnibus Directive (Price Indication)
+
+**Requirement (simplified):** When showing a price reduction, disclose the **lowest price** applied in the **30 days** before the reduction.
+
+**Current implementation:**
+
+- `price_history` records a snapshot when a catalog price changes: CSV price import and admin price PUT (same transaction as the upsert). Checkout does not `Record` at sale time.
+- History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
+- `pricing.PriceHistoryRepository.LowestSince` queries the minimum in a window for that variant, currency, and store
+- `composition.PriceIndicationStep` (PDP) and `ListingPriceIndicationStep` (PLP) add a lowest-prior block when that history is below the current price and `legal.omnibus_enabled` is on
+- A **dynamic kit headline** has no Omnibus block. The displayed sum is not one SKU's prior-30-day price. `explode_order_lines` does not change this.
+- A **fixed kit** PDP/PLP uses the parent variant's history. A **leaf or component** PDP/PLP uses that variant's own history.
+
+**Phase 5 (PR-530):**
+
+- Confirm SSR templates render the indication block on discounted products
+- Store-level enable/disable and styling hooks
+- Admin documentation for merchants (when discounts trigger recording)
+
+**Follow-up (PR-535):** batch variant/price/history reads for PLP composition to avoid per-product N+1 queries.
+
+---
+
+## WEEE Directive
+
+**Requirement (simplified):** Producers of electrical/electronic equipment must register, mark products, and provide take-back/recycling information.
+
+**Typical product data:**
+
+| Field | Purpose |
+| --- | --- |
+| WEEE category | e.g. large household, small IT |
+| Producer registration number | Per-member-state registry ID |
+| Take-back instructions | Customer-facing recycling guidance |
+| WEEE symbol visibility | On PDP/packaging info |
+
+**Phase 5 (PR-531):**
+
+- Optional product attributes (or dedicated compliance group) for WEEE fields
+- Theme helper partial for symbol + registration line
+- No automatic filing to national registries (merchant/export plugin territory)
+
+---
+
+## EPR — Packaging
+
+**Requirement (simplified):** Report quantities of packaging materials placed on market; registration with national schemes.
+
+**Typical data:**
+
+- Material type and weight per SKU or shipment
+- Recyclability / recycled content flags
+- Scheme membership IDs per country
+
+**Phase 5 (PR-532):**
+
+- Structured packaging metadata on product/variant attributes
+- CSV export for merchant EPR reporting tools (`export:epr`, admin download)
+- Keep calculation/reporting external — core stores facts
+
+---
+
+## GPSR (General Product Safety Regulation)
+
+**Requirement (simplified):** Products sold in the EU need traceable manufacturer/importer contact, identifiers, and safety information where applicable.
+
+**Typical data:**
+
+- Manufacturer name and EU contact
+- Product identifier (GTIN, SKU linkage)
+- Warnings, age restrictions, CE/UKCA references where relevant
+
+**Phase 5 (PR-533):**
+
+- Compliance attribute group on catalog (`gpsr`)
+- PDP `gpsr_safety_disclosure` section rendered when fields present and `legal.gpsr_enabled`
+- Admin validation for required combinations — **not in PR-533**; planned as future work via a category-driven plugin (not yet implemented)
+
+---
+
+## GDPR (baseline — already shipped)
+
+Implemented in PR-098 and account flows:
+
+- Consent preferences (`analytics`, `marketing`)
+- Account data export and deletion
+- Cascade delete on customer removal
+
+Phase 5 may add audit-log correlation for admin-initiated customer deletes (already partially logged).
+
+---
+
+## Cross-Border VAT (OSS / IOSS)
+
+Shopanda supports **country-based tax rates** and store scoping. Merchants still use external accounting for OSS return filing.
+
+**Phase 5 stretch (PR-534) — done:**
+
+- Export order tax breakdown by destination country (detail + summary CSV)
+- Opt-in store toggle `legal.oss_enabled`
+- E-invoice generation via Peppol as **core plugin**, not mandatory core (still deferred)
+
+### Digital goods tax class seam (PR-1076)
+
+EU electronically supplied services / digital goods generally use the **customer's location** as place of supply (destination country). At **checkout**, Shopanda sets pricing Meta `tax_country` from the address country. **Cart** recalculate may still use the store country when no destination is present — do not treat cart tax preview as OSS place-of-supply.
+
+**What shipped (engineering seam only):**
+
+- Product type `downloadable` → tax class `digital`; `virtual` → `standard` (ESS virtual needs a future opt-in). Other types (including bundle parents of downloadables) use `standard`.
+- Shared `EnsureTaxClasses` fills Meta `tax_classes` on cart + checkout.
+- Missing `digital` rate for the destination **fails closed** (validation error) — never silent 0% VAT. A `digital` row with `rate = 0` is also refused; intentional 0% uses class `zero`.
+- **Operators must run `shopanda migrate`** (migration `108` inserts `digital` from every non-zero `standard` rate, idempotent). Optional seed is a second idempotent backfill — do not rely on seed alone for fail-closed coverage. Operators still need destination-country coverage for markets they sell into. No Tax settings admin UI yet — adjust via SQL (see RUNBOOK).
+- Hook overrides that set a downloadable line to a non-`digital` class can skip fail-closed — trusted-VAT risk (document in RUNBOOK).
+
+**Explicitly not shipped / not claimed done:**
+
+- “EU digital-goods VAT complete” or Track E VAT requirement closed
+- Reverse charge / B2B VAT ID capture
+- OSS return column changes or filing automation beyond PR-534 CSV helpers
+- Admin UI for per-country digital rates
+- Legal determination that a given `virtual` SKU is EU “electronically supplied”
+
+**Tax-domain sign-off required** before live EU digital sales.
+
+---
+
+## Implementation Principles
+
+1. **Facts in core, filing outside** — Store compliance metadata; do not pretend to submit government returns.
+2. **Opt-in per catalog** — Electronics seller enables WEEE fields; fashion seller ignores them.
+3. **Storefront disclosure via themes** — Templates/partials render when data exists; no hard-coded country branches in domain.
+4. **Plugins for national variants** — Country-specific report formats belong in external or core plugins.
+5. **Test with fixtures** — Each compliance PR includes PDP/order fixture tests for disclosure presence/absence.
+
+---
+
+## Related Docs
+
+- [Merchant Guide — current limitations](MERCHANT.md#roadmap-and-known-gaps)
+- [Phase 5 Roadmap](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/ROADMAP.md) (`dev` working notes)
+- [Phase 1 — GDPR / consent PR](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/prs/PR-098.md) (`dev` working notes)
+- [Pricing pipeline — price history](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/PRICING_PIPELINE.md) (`dev` working notes)

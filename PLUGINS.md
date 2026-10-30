@@ -2,7 +2,7 @@
 
 Shopanda extends through **in-process Go plugins** — no separate services, no dynamic discovery in v1.
 
-This document describes the **three-tier model**, extension boundaries, and what authors can do today. For step-by-step integration, see [Developer Guide](docs/guides/DEVELOPER.md). For the original Phase 1 design spec, see [docs/phase-1-core/specs/PLUGINS.md](docs/phase-1-core/specs/PLUGINS.md).
+This document describes the **three-tier model**, extension boundaries, and what authors can do today. For step-by-step integration, see [Developer Guide](docs/guides/DEVELOPER.md). The original Phase 1 design dump is working history on [`dev`](https://github.com/akarso/shopanda/blob/dev/docs/phase-1-core/specs/PLUGINS.md).
 
 ---
 
@@ -170,7 +170,7 @@ Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explici
 
 For combining multiple plugins (ordering, shared context, cart/import/ERP patterns): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 
-**Integrator / ERP work (Phase 8):** cart rules, CSV import transforms, SAP-style inbound REST, warehouse/PIM sync — see [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) and [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md). Use explicit ports and pipeline hooks; do not fork core importers or patch `main.go` when `RegisterPublicRoute` suffices.
+**Integrator / ERP work:** cart rules, CSV import transforms, SAP-style inbound REST, warehouse/PIM sync — see [Integrator Platform spec](docs/guides/INTEGRATOR_PLATFORM.md). Use explicit ports and pipeline hooks; do not fork core importers or patch `main.go` when `RegisterPublicRoute` suffices.
 
 ---
 
@@ -248,7 +248,7 @@ Honest list of gaps for external authors:
 
 Not implemented; do not assume these exist:
 
-- Go plugin `.so` dynamic loading — **deferred** ([PR-544 research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)); use compile-time `register_plugins.go`
+- Go plugin `.so` dynamic loading — **deferred**. The Go plugin ABI is fragile across compiler versions, and Shopanda plugins need domain ports at process start. Use compile-time `register_plugins.go`. Full research (PR-544) is on [`dev`](https://github.com/akarso/shopanda/blob/dev/docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 - Plugin marketplace or version resolver
 - Hot reload
 
@@ -259,18 +259,13 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 ## Reference links
 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
-- [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration (Phase 8)
-- [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md) — integrator platform PR plan
-- [Phase 13 Roadmap](docs/phase-13-plugin-runtime/ROADMAP.md) — plugin-owned migrations + on-demand sync jobs (planned, site-ready gate)
+- [Integrator Platform spec](docs/guides/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
 - [Promotion rule reference plugin](plugins/promodemo/README.md) — custom catalog promotion JSON rule types (PR-862)
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)
-- [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict
-- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce (complete)
-- [Phase 4 Roadmap — three tiers](docs/phase-4-refactoring/ROADMAP.md#target-architecture-three-tiers)
 - [C4 component diagram](docs/diagrams/c4-component.md) — registry wiring
-- [Phase 1 authoring spec (historical)](docs/phase-1-core/specs/PLUGINS.md)
+- Working history (phase roadmaps, PR-544 research, historical specs): [`dev` docs](https://github.com/akarso/shopanda/tree/dev/docs)
 
 ---
 
