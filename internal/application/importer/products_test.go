@@ -10,6 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // --- mocks ---
@@ -1462,3 +1463,565 @@ Ticket,ticket,SKU-2,simple,false
 		t.Fatalf("Errors = %v", result.Errors)
 	}
 }
+
+func TestImport_VisibilityModesCreate(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,visibility_catalog,visibility_search,visibility_individually,visibility_purchasable
+Hidden,hidden,SKU-H,simple,hidden,visible,auto,hidden
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 1 || len(prodRepo.products) != 1 {
+		t.Fatalf("result=%+v products=%d", result, len(prodRepo.products))
+	}
+	want := catalog.VisibilityAxes{
+		Catalog:      catalog.VisibilityModeHidden,
+		Search:       catalog.VisibilityModeVisible,
+		Individually: catalog.VisibilityModeAuto,
+		Purchasable:  catalog.VisibilityModeHidden,
+	}
+	if prodRepo.products[0].VisibilityModes != want {
+		t.Fatalf("VisibilityModes = %#v, want %#v", prodRepo.products[0].VisibilityModes, want)
+	}
+}
+
+func TestImport_VisibilityModesEmptyDefaultsAuto(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type
+Plain,plain,SKU-P,simple
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 1 || len(prodRepo.products) != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	if prodRepo.products[0].VisibilityModes != catalog.DefaultVisibilityAxes() {
+		t.Fatalf("VisibilityModes = %#v, want defaults", prodRepo.products[0].VisibilityModes)
+	}
+}
+
+func TestImport_VisibilityModesMismatchOnExisting(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,visibility_catalog
+Widget,widget,SKU-1,simple,hidden
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped < 1 {
+		t.Fatalf("Skipped = %d, want >=1; errors=%v", result.Skipped, result.Errors)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "visibility_catalog updates via CSV are not supported") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+	if existing.VisibilityModes.Catalog != catalog.VisibilityModeAuto {
+		t.Fatal("existing visibility must not flip")
+	}
+}
+
+func TestImport_VisibilityModesInvalid(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,visibility_search
+Bad,bad,SKU-B,forced
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 {
+		t.Fatalf("want no create, got %+v", prodRepo.products)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "invalid visibility mode") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+}
+
+func TestImport_VisibilityColumnsAreNotAttributes(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,visibility_catalog,color
+P,p,SKU-1,hidden,red
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 1 || len(varRepo.variants) != 1 {
+		t.Fatalf("result=%+v variants=%d", result, len(varRepo.variants))
+	}
+	if _, ok := varRepo.variants[0].Attributes["visibility_catalog"]; ok {
+		t.Fatal("visibility_catalog must not be stored as attribute")
+	}
+	if varRepo.variants[0].Attributes["color"] != "red" {
+		t.Fatalf("color = %v", varRepo.variants[0].Attributes["color"])
+	}
+	if prodRepo.products[0].VisibilityModes.Catalog != catalog.VisibilityModeHidden {
+		t.Fatalf("catalog mode = %q", prodRepo.products[0].VisibilityModes.Catalog)
+	}
+}
+
+func TestImport_VisibilityModesMismatchSkipsVariants(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,visibility_catalog
+Widget,widget,SKU-NEW,simple,hidden
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want no variants on visibility mismatch, got result=%+v variants=%d", result, len(varRepo.variants))
+	}
+}
+
+func TestImport_VisibilityModesConflictInSlugGroup(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,visibility_catalog
+Widget,widget,SKU-1,hidden
+Widget,widget,SKU-2,visible
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want no create on conflict, products=%d variants=%d", len(prodRepo.products), len(varRepo.variants))
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "conflicting visibility_catalog") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+}
+
+func TestImport_ExistingProductEmptyVisibilityColumnsAddsVariants(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple,
+		VisibilityModes: catalog.VisibilityAxes{
+			Catalog: catalog.VisibilityModeHidden, Search: catalog.VisibilityModeHidden,
+			Individually: catalog.VisibilityModeHidden, Purchasable: catalog.VisibilityModeHidden,
+		},
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	// Column present but empty — all-empty consensus skips mismatch check.
+	csv := `name,slug,sku,type,visibility_catalog
+Widget,widget,SKU-NEW,simple,
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 || len(varRepo.variants) != 1 {
+		t.Fatalf("want variant add with omitted/empty visibility, got result=%+v", result)
+	}
+	if existing.VisibilityModes.Catalog != catalog.VisibilityModeHidden {
+		t.Fatal("stored visibility must not flip when CSV column empty")
+	}
+}
+
+func TestImport_ExistingProductOmittedVisibilityColumnsAddsVariants(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple,
+		VisibilityModes: catalog.VisibilityAxes{
+			Catalog: catalog.VisibilityModeVisible, Search: catalog.VisibilityModeAuto,
+			Individually: catalog.VisibilityModeAuto, Purchasable: catalog.VisibilityModeAuto,
+		},
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type
+Widget,widget,SKU-NEW,simple
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1 (omitted visibility columns must not block)", result.Variants)
+	}
+}
+
+func TestImport_ExistingProductMatchingVisibilityAddsVariant(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple,
+		VisibilityModes: catalog.VisibilityAxes{
+			Catalog: catalog.VisibilityModeHidden, Search: catalog.VisibilityModeAuto,
+			Individually: catalog.VisibilityModeAuto, Purchasable: catalog.VisibilityModeAuto,
+		},
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,visibility_catalog
+Widget,widget,SKU-NEW,simple,hidden
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+}
+
+func TestImport_VisibilityModesCaseSensitiveLikeType(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,visibility_catalog
+Bad,bad,SKU-B,HIDDEN
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 {
+		t.Fatalf("want reject HIDDEN (case-sensitive), got %+v", prodRepo.products)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "invalid visibility mode") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+}
+
+func TestImport_StatusCreate(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status
+Live,live,SKU-L,simple,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 1 || len(prodRepo.products) != 1 {
+		t.Fatalf("result=%+v", result)
+	}
+	if prodRepo.products[0].Status != catalog.StatusActive {
+		t.Fatalf("Status = %q, want active", prodRepo.products[0].Status)
+	}
+}
+
+func TestImport_StatusEmptyDefaultsDraft(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type
+Plain,plain,SKU-P,simple
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 1 || prodRepo.products[0].Status != catalog.StatusDraft {
+		t.Fatalf("Status = %q, want draft; result=%+v", prodRepo.products[0].Status, result)
+	}
+}
+
+func TestImport_StatusMismatchOnExistingSkipsVariants(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple, Status: catalog.StatusDraft,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status
+Widget,widget,SKU-NEW,simple,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want no variants on status mismatch, got %+v", result)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "status updates via CSV are not supported") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+}
+
+func TestImport_ExistingProductEmptyStatusColumnAddsVariants(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple, Status: catalog.StatusActive,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status
+Widget,widget,SKU-NEW,simple,
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+	if existing.Status != catalog.StatusActive {
+		t.Fatalf("stored status mutated to %q", existing.Status)
+	}
+}
+
+func TestImport_StatusInvalid(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,status
+Bad,bad,SKU-B,ACTIVE
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 {
+		t.Fatalf("want reject ACTIVE, got %+v", prodRepo.products)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "invalid product status") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+}
+
+func TestImport_StatusConflictInSlugGroup(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,status
+Widget,widget,SKU-1,draft
+Widget,widget,SKU-2,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "conflicting status") {
+		t.Fatalf("Errors = %v", result.Errors)
+	}
+	if result.Products != 0 || len(prodRepo.products) != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want create nothing on conflict, result=%+v products=%d variants=%d",
+			result, len(prodRepo.products), len(varRepo.variants))
+	}
+}
+
+func TestImport_StatusEmptyPlusActiveConflictInSlugGroup(t *testing.T) {
+	// Empty cells count as draft when any status is set — same as type consensus.
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,status
+Widget,widget,SKU-1,
+Widget,widget,SKU-2,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, "conflicting status") {
+		t.Fatalf("Errors = %v, want empty+active conflict (empty counts as draft)", result.Errors)
+	}
+	if len(prodRepo.products) != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want create nothing on conflict, got products=%d variants=%d", len(prodRepo.products), len(varRepo.variants))
+	}
+}
+
+func TestImport_ExistingProductMatchingStatusAddsVariant(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "prod-1", Name: "Widget", Slug: "widget", Type: catalog.TypeSimple, Status: catalog.StatusActive,
+	}
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug == "widget" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status
+Widget,widget,SKU-NEW,simple,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+	if existing.Status != catalog.StatusActive {
+		t.Fatalf("stored status mutated to %q", existing.Status)
+	}
+}
+
+func TestImport_DownloadableActiveRejectedCreatesNothing(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status
+Ebook,ebook,SKU-DL,downloadable,active
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(prodRepo.products) != 0 || len(varRepo.variants) != 0 {
+		t.Fatalf("want create nothing for downloadable+active, got products=%d variants=%d", len(prodRepo.products), len(varRepo.variants))
+	}
+	joined := strings.Join(result.Errors, "\n")
+	if !strings.Contains(joined, catalog.DownloadableRequiresFileMessage) {
+		t.Fatalf("Errors = %v, want %q", result.Errors, catalog.DownloadableRequiresFileMessage)
+	}
+}
+
+func TestImport_ActiveSimpleVirtualBundleStillCreateActive(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	csv := `name,slug,sku,type,status,pricing_mode,stock_mode
+Card,card,SKU-CARD,simple,active,,
+Ticket,ticket,SKU-TICKET,virtual,active,,
+Kit,kit,SKU-KIT,bundle,active,dynamic,dynamic
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 3 || len(result.Errors) != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	bySlug := map[string]*catalog.Product{}
+	for _, p := range prodRepo.products {
+		bySlug[p.Slug] = p
+	}
+	for _, slug := range []string{"card", "ticket", "kit"} {
+		p := bySlug[slug]
+		if p == nil || p.Status != catalog.StatusActive {
+			t.Fatalf("%s = %#v, want StatusActive", slug, p)
+		}
+	}
+}
+
+func TestImport_PublishesEventProductCreated(t *testing.T) {
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	bus := event.NewBus(&noopLogger{})
+	var got []catalog.ProductCreatedData
+	bus.On(catalog.EventProductCreated, func(_ context.Context, evt event.Event) error {
+		d, ok := evt.Data.(catalog.ProductCreatedData)
+		if !ok {
+			t.Errorf("unexpected data type %T", evt.Data)
+			return nil
+		}
+		got = append(got, d)
+		return nil
+	})
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil).WithBus(bus)
+	csv := `name,slug,sku,type,status
+Live,live,SKU-L,simple,active
+Draft,drafty,SKU-D,simple,draft
+`
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 2 {
+		t.Fatalf("Products = %d, want 2", result.Products)
+	}
+	if len(got) != 2 {
+		t.Fatalf("EventProductCreated count = %d, want 2 (active create must not be silent on the bus)", len(got))
+	}
+	bySlug := map[string]catalog.ProductCreatedData{}
+	for _, d := range got {
+		bySlug[d.Slug] = d
+	}
+	if bySlug["live"].Status != catalog.StatusActive || bySlug["live"].ProductID == "" {
+		t.Fatalf("live event = %#v", bySlug["live"])
+	}
+	if bySlug["drafty"].Status != catalog.StatusDraft {
+		t.Fatalf("drafty event = %#v", bySlug["drafty"])
+	}
+}
+

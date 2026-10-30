@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -37,12 +38,26 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("variant repo: %w", err)
 		}
-		result, err := importer.NewProductImporter(productRepo, variantRepo, conn).
+		// PR-1081: publish EventProductCreated per create (bus) so async
+		// IndexUpdateSubscriber can reindex when present; also batch-Trigger
+		// created IDs when ReindexService wires (CLI has no long-lived
+		// subscriber — same pattern as import:stock).
+		bus := event.NewBus(log)
+		imp := importer.NewProductImporter(productRepo, variantRepo, conn).
 			WithRowHooks(regs.Import).
-			Import(ctx, f)
+			WithBus(bus)
+		if reindexSvc, _, reindexConn, err := newSearchReindexService(cfg, log); err == nil {
+			defer reindexConn.Close()
+			imp = imp.WithReindex(reindexSvc)
+		} else {
+			log.Warn("import.products.reindex_service_unavailable", map[string]interface{}{"error": err.Error()})
+		}
+		result, err := imp.Import(ctx, f)
 		if err != nil {
 			return nil, fmt.Errorf("import: %w", err)
 		}
+		bus.BeginShutdown()
+		bus.Drain(10 * time.Second)
 		return &ioOutcome{
 			Fields: map[string]interface{}{
 				"products": result.Products,
