@@ -84,6 +84,23 @@ func (s *extValueRepoStub) Delete(_ context.Context, target domainext.Target, fi
 	return nil
 }
 
+func (s *extValueRepoStub) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	seen := map[string]struct{}{}
+	var out []string
+	prefixKey := string(targetType) + ":" + idPrefix
+	for key := range s.values {
+		if len(key) >= len(prefixKey) && key[:len(prefixKey)] == prefixKey {
+			id := key[len(string(targetType))+1:]
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func testResolverWithExtensions(t *testing.T) *cgraphql.Resolver {
 	t.Helper()
 	reg := extensionapp.NewRegistry()

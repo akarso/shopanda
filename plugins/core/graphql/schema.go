@@ -15,14 +15,83 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 		return gql.Schema{}, fmt.Errorf("graphql schema: resolver must not be nil")
 	}
 
+	visibilityModesType := gql.NewObject(gql.ObjectConfig{
+		Name: "VisibilityModes",
+		Fields: gql.Fields{
+			"catalog":      &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"search":       &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"individually": &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"purchasable":  &gql.Field{Type: gql.NewNonNull(gql.String)},
+		},
+	})
+
+	bundleComponentType := gql.NewObject(gql.ObjectConfig{
+		Name: "BundleComponent",
+		Fields: gql.Fields{
+			"componentProductId": &gql.Field{Type: gql.NewNonNull(gql.ID)},
+			"quantity":           &gql.Field{Type: gql.NewNonNull(gql.Int)},
+			"required":           &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+			"name":               &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"slug":               &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"type":               &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"createdAt":          &gql.Field{Type: gql.String},
+		},
+	})
+
+	groupedMemberType := gql.NewObject(gql.ObjectConfig{
+		Name: "GroupedMember",
+		Fields: gql.Fields{
+			"memberProductId": &gql.Field{Type: gql.NewNonNull(gql.ID)},
+			"name":            &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"slug":            &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"type":            &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"createdAt":       &gql.Field{Type: gql.String},
+		},
+	})
+
+
 	productType := gql.NewObject(gql.ObjectConfig{
 		Name: "Product",
 		Fields: gql.Fields{
-			"id":          &gql.Field{Type: gql.NewNonNull(gql.ID)},
-			"name":        &gql.Field{Type: gql.NewNonNull(gql.String)},
-			"slug":        &gql.Field{Type: gql.NewNonNull(gql.String)},
-			"description": &gql.Field{Type: gql.String},
-			"status":      &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"id":                   &gql.Field{Type: gql.NewNonNull(gql.ID)},
+			"name":                 &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"slug":                 &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"description":          &gql.Field{Type: gql.String},
+			"status":               &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"type":                 &gql.Field{Type: gql.NewNonNull(gql.String)},
+			"visibilityModes":      &gql.Field{Type: gql.NewNonNull(visibilityModesType)},
+			"requiresLinkedParent": &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+			"bundleComponents": &gql.Field{
+				Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(bundleComponentType))),
+				Resolve: func(p gql.ResolveParams) (interface{}, error) {
+					pg, ok := productFromSource(p.Source)
+					if !ok {
+						return nil, fmt.Errorf("bundleComponents: invalid product source")
+					}
+					return r.bundleComponents(p.Context, pg)
+				},
+			},
+			"groupedMembers": &gql.Field{
+				Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(groupedMemberType))),
+				Resolve: func(p gql.ResolveParams) (interface{}, error) {
+					pg, ok := productFromSource(p.Source)
+					if !ok {
+						return nil, fmt.Errorf("groupedMembers: invalid product source")
+					}
+					return r.groupedMembers(p.Context, pg)
+				},
+			},
+		},
+	})
+
+	productConnectionType := gql.NewObject(gql.ObjectConfig{
+		Name: "ProductConnection",
+		Fields: gql.Fields{
+			"items":        &gql.Field{Type: gql.NewNonNull(gql.NewList(gql.NewNonNull(productType)))},
+			"truncated":    &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+			"hasMore":      &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
+			"nextAfter":    &gql.Field{Type: gql.String},
+			"depthLimited": &gql.Field{Type: gql.NewNonNull(gql.Boolean)},
 		},
 	})
 
@@ -101,10 +170,11 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 				},
 			},
 			"products": &gql.Field{
-				Type: gql.NewList(gql.NewNonNull(productType)),
+				Type: gql.NewNonNull(productConnectionType),
 				Args: gql.FieldConfigArgument{
 					"offset": &gql.ArgumentConfig{Type: gql.Int},
 					"limit":  &gql.ArgumentConfig{Type: gql.Int},
+					"after":  &gql.ArgumentConfig{Type: gql.String},
 				},
 				Resolve: func(p gql.ResolveParams) (interface{}, error) {
 					offset, err := intArg(p.Args, "offset", 0)
@@ -115,11 +185,11 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 					if err != nil {
 						return nil, err
 					}
-					items, err := r.products(p.Context, offset, limit)
+					after, err := optionalStringArg(p.Args, "after")
 					if err != nil {
 						return nil, err
 					}
-					return productsToGraph(items), nil
+					return r.products(p.Context, offset, limit, after)
 				},
 			},
 			"category": &gql.Field{
@@ -151,11 +221,12 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 				},
 			},
 			"categoryProducts": &gql.Field{
-				Type: gql.NewList(gql.NewNonNull(productType)),
+				Type: gql.NewNonNull(productConnectionType),
 				Args: gql.FieldConfigArgument{
 					"categoryId": &gql.ArgumentConfig{Type: gql.NewNonNull(gql.ID)},
 					"offset":     &gql.ArgumentConfig{Type: gql.Int},
 					"limit":      &gql.ArgumentConfig{Type: gql.Int},
+					"after":      &gql.ArgumentConfig{Type: gql.String},
 				},
 				Resolve: func(p gql.ResolveParams) (interface{}, error) {
 					categoryID, err := stringArg(p.Args, "categoryId")
@@ -170,11 +241,11 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 					if err != nil {
 						return nil, err
 					}
-					items, err := r.categoryProducts(p.Context, categoryID, offset, limit)
+					after, err := optionalStringArg(p.Args, "after")
 					if err != nil {
 						return nil, err
 					}
-					return productsToGraph(items), nil
+					return r.categoryProducts(p.Context, categoryID, offset, limit, after)
 				},
 			},
 			"extensionFields": &gql.Field{
@@ -305,12 +376,48 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 	return gql.NewSchema(gql.SchemaConfig{Query: queryType, Mutation: mutationType})
 }
 
+type visibilityModesGraph struct {
+	Catalog      string `json:"catalog"`
+	Search       string `json:"search"`
+	Individually string `json:"individually"`
+	Purchasable  string `json:"purchasable"`
+}
+
 type productGraph struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
+	ID                   string               `json:"id"`
+	Name                 string               `json:"name"`
+	Slug                 string               `json:"slug"`
+	Description          string               `json:"description"`
+	Status               string               `json:"status"`
+	Type                 string               `json:"type"`
+	VisibilityModes      visibilityModesGraph `json:"visibilityModes"`
+	RequiresLinkedParent bool                 `json:"requiresLinkedParent"`
+}
+
+type bundleComponentGraph struct {
+	ComponentProductID string `json:"componentProductId"`
+	Quantity           int    `json:"quantity"`
+	Required           bool   `json:"required"`
+	Name               string `json:"name"`
+	Slug               string `json:"slug"`
+	Type               string `json:"type"`
+	CreatedAt          string `json:"createdAt"`
+}
+
+type groupedMemberGraph struct {
+	MemberProductID string `json:"memberProductId"`
+	Name            string `json:"name"`
+	Slug            string `json:"slug"`
+	Type            string `json:"type"`
+	CreatedAt       string `json:"createdAt"`
+}
+
+type productConnectionGraph struct {
+	Items        []productGraph `json:"items"`
+	Truncated    bool           `json:"truncated"`
+	HasMore      bool           `json:"hasMore"`
+	NextAfter    *string        `json:"nextAfter"`
+	DepthLimited bool           `json:"depthLimited"`
 }
 
 type categoryGraph struct {
@@ -328,6 +435,14 @@ func productToGraph(p catalog.Product) productGraph {
 		Slug:        p.Slug,
 		Description: p.Description,
 		Status:      string(p.Status),
+		Type:        string(p.Type),
+		VisibilityModes: visibilityModesGraph{
+			Catalog:      string(p.VisibilityModes.Catalog),
+			Search:       string(p.VisibilityModes.Search),
+			Individually: string(p.VisibilityModes.Individually),
+			Purchasable:  string(p.VisibilityModes.Purchasable),
+		},
+		RequiresLinkedParent: p.RequiresLinkedParent,
 	}
 }
 

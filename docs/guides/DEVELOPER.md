@@ -102,7 +102,7 @@ Core plugins register through `plugins/core/register.go`, called from `registerP
 | Search | `search.engine` | `postgres` | `meilisearch` |
 | Cache | `cache.driver` | `postgres` | `redis` |
 | Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq`, `kafka`, `sqs` |
-| GraphQL API | `plugins.graphql.enabled` | off | read-only catalog at `POST /api/v1/graphql` |
+| GraphQL API | `plugins.graphql.enabled` | off | public read-only catalog at `POST /api/v1/graphql` (PR-1082: type, visibility modes, bundle/grouped children, ProductConnection listing meta; same axis gates as storefront REST when enforce is on — not admin allowlists) |
 | Storage | `storage.driver` | `local` | `s3` |
 | Stripe payments | `payment.stripe.enabled` | `false` | set `true` + Stripe env vars |
 
@@ -976,12 +976,12 @@ Public product exposure uses **two gates**, not one:
 
 | Surface | Axis | Typical routes |
 | --- | --- | --- |
-| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs |
+| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs; GraphQL `products` / `categoryProducts` |
 | `search` | `VisibleInSearch` | REST/HTML search + suggest fragments |
-| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed |
+| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed; GraphQL `product` / `productBySlug` |
 | `purchasable` | `Purchasable` | cart add/update + checkout (enforced in PR-1058) |
 
-The full audited map (REST + HTML/SSR + fragments, with `EnforceIn` PR-1057 vs PR-1058) is `storefront.PublicProductVisibilityRoutes()`.
+The full audited map (REST + HTML/SSR + fragments + GraphQL root fields, with `EnforceIn` PR-1057 / PR-1058 / PR-1082) is `storefront.PublicProductVisibilityRoutes()`. GraphQL operations use Method `GQL` and the root field name as Path (plugin-registered, not `wire_routes.go`).
 
 ### Storefront visibility enforcement (PR-1057)
 
@@ -994,13 +994,28 @@ When enforce is on, public reads resolve axes with AutoBasis facts from `catalog
 | `AllowWithFacts` | Single PDP / variant parent / review parent |
 | `FilterWithFacts` | Sitemap batch (individually surface — PDP URLs) |
 | `FilterIDsWithFacts` | Search hits, suggest `ProductID`s, CMS carousel IDs |
-| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=` |
+| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=`. GraphQL `products` / `categoryProducts` reuse the same helper and return a `ProductConnection` (`items`, `truncated`, `hasMore`, `nextAfter`, `depthLimited`) with `after` resume arg (when set, `offset` is ignored) |
 
 Listing responses include `meta.truncated`, `meta.has_more`, `meta.depth_limited`, and `meta.next_after` (when has_more). The cursor encodes DB offset plus any remaining visible skip so budget stops mid-`offset` do not jump pages. When `after` is set, query `offset` is ignored. Resume with `after`, never by bumping visible `offset`. Past 100k repository rows `depth_limited` is true and `next_after` is omitted (classic `offset` is not capped the same way).
 
 Search and suggest (PR-1079) filter via **indexed** visibility fields when `catalog.visibility.enforce` is on: the handler calls `search.ApplyVisibilityAxisFilter` / `ApplySuggestVisibilityAxisFilter` (`visible_in_search` / `visible_in_catalog`) before `SearchEngine.Search` / `Suggest` — engines do **not** bake visibility into Suggest for every caller. A fail-closed post-filter still runs when enforce is on. Meili visibility **and** `status` filters fail open for missing attrs (`(attr = true OR attr NOT EXISTS)` / `(status = "active" OR status NOT EXISTS)`) until reindex; ordered deploy is migrate → reindex → enable enforce (see DEPLOYMENT.md). Prefer `ListVisiblePage` over post-LIMIT `FilterProducts` for paginated REST catalog listings.
 
 Admin REST (`/api/v1/admin` and `/api/v1/admin/…`) and operator paths (import/export/seed) use `catalog.WithOperatorProductReadScope` (include-non-active + bypass axis gates) so shared helpers that call `AllowProduct` stay consistent with the admin UI.
+
+### GraphQL product read parity (PR-1082)
+
+When `plugins.graphql.enabled` is true, `POST /api/v1/graphql` is a **public, unauthenticated** catalog read surface. It overlaps some admin REST *product* fields (type, modes, composition children) but is **not** an admin API: linked-eligibility allowlists (`linkedEligibleParents` / `linkedEligibleCategories`) stay admin-only under ProductsRead. GraphQL keeps product-state `requiresLinkedParent` (bool) only. No composition/assignment mutations.
+
+| Field | Notes |
+| --- | --- |
+| `type` | Domain `Product.Type` (`simple` / `virtual` / `bundle` / `grouped` / `configurable` / `downloadable`) |
+| `visibilityModes { catalog search individually purchasable }` | Persisted modes (`auto` / `visible` / `hidden`) |
+| `requiresLinkedParent` | Bool from the product row (product state; not the admin allowlist) |
+| `bundleComponents` | Empty unless `type = bundle`; children batched via `ListByIDs`, gated with `AllowWithFacts` (`Individually`); hidden/missing children omitted; load/facts errors fail the field |
+| `groupedMembers` | Empty unless `type = grouped`; same child gating as bundles |
+| `products` / `categoryProducts` | `ProductConnection` with `items` + listing meta (`truncated`, `hasMore`, `nextAfter`, `depthLimited`); args `offset`/`limit`/`after` (after supersedes offset) |
+
+Visibility: when `catalog.visibility.enforce` is on, the plugin wires `VisibilityFactsRepo` and gates `product` / `productBySlug` with `AllowWithFacts` (`Individually` → null when denied) and listings with `ListVisiblePage` (`Catalog`). Nil facts / enforce off matches REST (no axis gate). Bundle/grouped list services are attached from DB in plugin Init (reusing the resolver product repo).
 
 ### Product read scope (PR-1054)
 
@@ -1098,7 +1113,7 @@ When the flag is true and `catalog.AssignmentContext` is empty, the **purchasabl
 
 Cart `ensureVariantPurchasable` and checkout `ValidateCartStep` enforce the same rule after the active check (and, in cart, after the grouped-parent check). They resolve assignment from the line first, then the request. A visibility bypass and a nil facts source do not skip it. Add stamps a non-empty request context onto the line. Guest claim keeps a stamped line and drops an unstamped one. Required bundle leaves are rejected with the same message. The gate does not use `HookCartAddItemBefore`.
 
-Admin `POST` / `PUT /api/v1/admin/products` accept `requires_linked_parent` (`*bool`). Omit on create stores false. Omit on update keeps the stored value. The product JSON field is `RequiresLinkedParent`. Product CSV imports/exports `requires_linked_parent` (create-only; existing mismatch skips). GraphQL does not set it. No config key.
+Admin `POST` / `PUT /api/v1/admin/products` accept `requires_linked_parent` (`*bool`). Omit on create stores false. Omit on update keeps the stored value. The product JSON field is `RequiresLinkedParent`. Product CSV imports/exports `requires_linked_parent` (create-only; existing mismatch skips). GraphQL exposes `requiresLinkedParent` read-only (PR-1082) and does not mutate it. No config key.
 
 ### ProductAssignment instance domain (PR-1069)
 
