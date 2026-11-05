@@ -58,31 +58,9 @@ func CheckFilenameHygiene(dir string) error {
 }
 
 func checkFilenameHygiene(names []string) error {
-	byPrefix := make(map[int][]string)
-	nameSet := make(map[string]struct{}, len(names))
-	prefixWidth := -1
-	widthReference := ""
-	for _, name := range names {
-		if !strings.HasSuffix(name, ".sql") {
-			continue
-		}
-		nameSet[name] = struct{}{}
-		m := migrationNamePattern.FindStringSubmatch(name)
-		if m == nil {
-			return fmt.Errorf("migrate: %q does not match the required migration filename pattern ^([0-9]+)_.*\\.sql$ (a numeric prefix is required so filename sort order matches migration order)", name)
-		}
-		digits := m[1]
-		if prefixWidth == -1 {
-			prefixWidth = len(digits)
-			widthReference = name
-		} else if len(digits) != prefixWidth {
-			return fmt.Errorf("migrate: %q has a %d-digit numeric prefix but %q has %d digits — mixed-width prefixes break lexicographic filename sort order (listMigrations sorts filenames as strings, not numbers), so a shorter/longer prefix can execute out of numeric order; zero-pad the prefix to match", name, len(digits), widthReference, prefixWidth)
-		}
-		n, err := strconv.Atoi(digits)
-		if err != nil {
-			return fmt.Errorf("migrate: %q has an unparseable numeric prefix: %w", name, err)
-		}
-		byPrefix[n] = append(byPrefix[n], name)
+	byPrefix, nameSet, err := collectMigrationPrefixes(names)
+	if err != nil {
+		return err
 	}
 
 	// Allowlist membership is independent of which prefixes are currently on
@@ -129,4 +107,59 @@ func checkFilenameHygiene(names []string) error {
 	}
 
 	return nil
+}
+
+// checkPluginFilenameHygiene validates plugin migration basenames: same
+// numeric-prefix / equal-width / unique-prefix rules as core, without the
+// core 025_* allowlist (plugin trees must never reuse a prefix).
+func checkPluginFilenameHygiene(names []string) error {
+	byPrefix, _, err := collectMigrationPrefixes(names)
+	if err != nil {
+		return err
+	}
+
+	prefixes := make([]int, 0, len(byPrefix))
+	for p := range byPrefix {
+		prefixes = append(prefixes, p)
+	}
+	sort.Ints(prefixes)
+
+	for _, p := range prefixes {
+		got := append([]string(nil), byPrefix[p]...)
+		sort.Strings(got)
+		if len(got) > 1 {
+			return fmt.Errorf("migrate: prefix %d is reused by multiple migration files %v — each migration needs a unique numeric prefix; renumber the new file", p, got)
+		}
+	}
+	return nil
+}
+
+func collectMigrationPrefixes(names []string) (byPrefix map[int][]string, nameSet map[string]struct{}, err error) {
+	byPrefix = make(map[int][]string)
+	nameSet = make(map[string]struct{}, len(names))
+	prefixWidth := -1
+	widthReference := ""
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+		nameSet[name] = struct{}{}
+		m := migrationNamePattern.FindStringSubmatch(name)
+		if m == nil {
+			return nil, nil, fmt.Errorf("migrate: %q does not match the required migration filename pattern ^([0-9]+)_.*\\.sql$ (a numeric prefix is required so filename sort order matches migration order)", name)
+		}
+		digits := m[1]
+		if prefixWidth == -1 {
+			prefixWidth = len(digits)
+			widthReference = name
+		} else if len(digits) != prefixWidth {
+			return nil, nil, fmt.Errorf("migrate: %q has a %d-digit numeric prefix but %q has %d digits — mixed-width prefixes break lexicographic filename sort order (listMigrations sorts filenames as strings, not numbers), so a shorter/longer prefix can execute out of numeric order; zero-pad the prefix to match", name, len(digits), widthReference, prefixWidth)
+		}
+		n, convErr := strconv.Atoi(digits)
+		if convErr != nil {
+			return nil, nil, fmt.Errorf("migrate: %q has an unparseable numeric prefix: %w", name, convErr)
+		}
+		byPrefix[n] = append(byPrefix[n], name)
+	}
+	return byPrefix, nameSet, nil
 }
