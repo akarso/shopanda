@@ -8,8 +8,9 @@ import (
 
 // Sync job trigger kinds.
 const (
-	SyncTriggerCron  = "cron"
-	SyncTriggerEvent = "event"
+	SyncTriggerCron   = "cron"
+	SyncTriggerEvent  = "event"
+	SyncTriggerManual = "manual"
 )
 
 // SyncLogger is the minimal logger surface passed to sync job handlers.
@@ -56,6 +57,13 @@ func OnEvent(eventName string) SyncTrigger {
 // Accepts 5-field cron syntax or "@every 5m" / "@every 1h" shorthands.
 func Cron(spec string) SyncTrigger {
 	return SyncTrigger{Kind: SyncTriggerCron, CronSpec: strings.TrimSpace(spec)}
+}
+
+// Manual returns an on-demand trigger for RegisterSyncJob.
+// Manual jobs are not wired to cron or events; enqueue via Integration.Enqueue
+// after the composition root binds the resolved jobs.Queue.
+func Manual() SyncTrigger {
+	return SyncTrigger{Kind: SyncTriggerManual}
 }
 
 // SyncJobType builds the queue job type for a plugin slug and job name.

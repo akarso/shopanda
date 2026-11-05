@@ -475,3 +475,54 @@ func TestWorker_OutcomeRecording_SurvivesContextCancellation(t *testing.T) {
 		t.Errorf("Fail's ctx.Err() = %v, want nil — the outcome-recording context must not inherit the poll-loop context's cancellation", q.failCtxErrs)
 	}
 }
+
+func TestWorker_ProcessOne_EmptyQueue(t *testing.T) {
+	w := jobs.NewWorker(&mockQueue{}, &mockLogger{}, time.Second)
+	if w.ProcessOne(context.Background()) {
+		t.Fatal("empty queue must return false")
+	}
+}
+
+func TestWorker_ProcessOne_MissingHandler(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	w := jobs.NewWorker(q, log, time.Second)
+	job, err := jobs.NewJob("j1", "unknown.type", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("dequeue with missing handler must return true")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failed) != 1 || q.failed[0] != "j1" {
+		t.Fatalf("failed = %v, want [j1]", q.failed)
+	}
+}
+
+func TestWorker_ProcessOne_Success(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	var ran bool
+	w := jobs.NewWorker(q, log, time.Second)
+	w.Register(&mockHandler{
+		jobType: "ok",
+		handleFn: func(context.Context, jobs.Job) error {
+			ran = true
+			return nil
+		},
+	})
+	job, _ := jobs.NewJob("j1", "ok", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected processed")
+	}
+	if !ran {
+		t.Fatal("handler not called")
+	}
+	if w.ProcessOne(context.Background()) {
+		t.Fatal("second ProcessOne on empty queue must be false")
+	}
+}

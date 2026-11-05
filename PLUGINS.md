@@ -52,7 +52,7 @@ There is no runtime plugin discovery, `.so` loading, or marketplace in the curre
 ### External plugins MUST NOT
 
 - Override core logic or mutate core schema
-- Access the database directly outside domain repositories (plugin-owned tables via `Bootstrap.DB` are OK when scoped to the plugin)
+- Access the database directly outside domain repositories (plugin-owned tables via `Bootstrap.DB` + `plugin.Migrator` are OK when scoped to the plugin; do not call raw `migrate.RunFS`)
 - Import `internal/infrastructure` or `internal/interfaces` (enforced by `TestImportBoundary`)
 - Register competing infrastructure backends (use or contribute a core plugin instead)
 - Block request lifecycle — use async events or jobs for slow work
@@ -110,6 +110,10 @@ Available today through `plugin.App`:
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
+| **Plugin schema** | `plugin.Migrator` (`Migration() MigrationSpec`) | One embed FS per plugin. Collected **without** `Init` by `app migrate` / `setup`; applied by `InitAll` before `Init` when `Bootstrap.DB` is set (PR-1086). Versions are `plugin:{Name()}:{basename}`. Set `Options.AdoptBareBasenames` only for a frozen legacy allowlist. |
+| **Outbound sync jobs** | `app.Integration(slug).RegisterSyncJob` or `pluginsdk` `RegisterCron` / `RegisterOnEvent` / `RegisterManual` + `Enqueue` | Cron / event / manual → `integration.sync.{slug}.{name}`. **Event-driven:** `RegisterOnEvent` (envelope `trigger=event`). **Run-now:** `Enqueue` after composition-root `BindQueue` (envelope `trigger=manual`). Handlers must be idempotent. Do not use Manual+`OnAsync`→`Enqueue` as the default event path — that stamps every run as manual. Bus enqueue failures are not retried. |
+
+**Plugin-owned tables:** implement `plugin.Migrator` once. Do not call `migrate.RunPluginFS` from `Init` — `InitAllContext` applies the same spec on boot (`PluginMigrateApply`), or verifies pending versions (`PluginMigrateVerify` for short-lived CLIs). Prefer `app migrate` / `setup` before processes start; that path never calls `InitAll`. Calling `Init` directly does **not** create tables. A `depends_on` sort error with any Migrator registered fails every `InitAll` caller (Failed=Registered) — check `plugin.InitSummaryError`. Do not use raw `migrate.RunFS` (shared basename namespace, no lock).
 
 **Infrastructure providers** (typed ports on `plugin.App`; wrong types fail at compile time):
 

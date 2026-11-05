@@ -39,7 +39,7 @@ func ensureTables(t *testing.T, db *sql.DB) {
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
 		t.Fatalf("run core migrations: %v", err)
 	}
-	if err := b2b.RunMigrationsForTest(db); err != nil {
+	if _, err := b2b.RunMigrationsForTest(db); err != nil {
 		t.Fatalf("run b2b migrations: %v", err)
 	}
 	t.Cleanup(func() {

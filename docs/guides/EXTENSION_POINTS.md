@@ -171,7 +171,7 @@ func (b *Bus) Publish(ctx context.Context, evt Event) error
 - No ordering guarantee across handlers for the same event name.
 - **Use for:** side effects and notifications that should happen *because of* something, not *as part of* it — sending a webhook, invalidating a cache, notifying another system. `internal/application/webhook/dispatcher.go` is the canonical example: it subscribes `OnAsync` to every event in `domainwebhook.SupportedEvents` and enqueues a delivery job.
 - **Don't use for:** same-request sequencing ("run B after A, and B needs A's return value") — that's exactly what the four mechanisms above exist for. An async handler that assumes it runs before some other in-request code will occasionally lose that race.
-- Keep `OnAsync` bodies short (enqueue a job, don't call a third-party API inline) — see [RUNBOOK.md's "Event bus drain"](../../RUNBOOK.md#event-bus-drain-sigterm) for the shutdown-grace budget a slow handler eats into.
+- Keep `OnAsync` bodies short (enqueue a job, don't call a third-party API inline) — see [RUNBOOK.md's "Event bus drain"](../../RUNBOOK.md#event-bus-drain-sigterm) for the shutdown-grace budget a slow handler eats into. For outbound / retryable work from a domain event, prefer `pluginsdk.Integration(slug).RegisterOnEvent(...)` — serve wires the enqueue with envelope `trigger=event`. `Enqueue` is for run-now (always stamps `trigger=manual`). A failed enqueue from the bus is log-only (`event.async_handler.failed`); durability begins only after the queue accepts the job. The example plugin uses `RegisterOnEvent` for `order.created`.
 
 ---
 
@@ -209,6 +209,7 @@ Every plugin-facing registry follows the same shape: a `Register*` method that r
 | Search provider | `internal/domain/search/search.go` (`SearchEngine`) | one implementation; second `Register*` panics | `app.RegisterSearchProvider(provider)` |
 | Cache provider | `internal/domain/cache/cache.go` (`Cache`) | one implementation; second `Register*` panics | `app.RegisterCache(c)` |
 | Queue provider | `internal/domain/jobs/job.go` (`Queue`) | one implementation; second `Register*` panics | `app.RegisterQueue(queue)` |
+| Sync jobs | `internal/platform/plugin/sync_job.go` | cron / event / manual outbound jobs → `integration.sync.{slug}.{name}` | `app.Integration(slug).RegisterSyncJob` or `pluginsdk` `RegisterCron` / `RegisterOnEvent` / `RegisterManual` + `Enqueue` |
 | Media storage provider | `internal/domain/media/storage.go` (`Storage`) | one implementation; second `Register*` panics | `app.RegisterMediaStorage(storage)` |
 | Tax calculator provider | `internal/domain/tax/calculator.go` (`Calculator`) | one implementation; second `Register*` panics | `app.RegisterTaxCalculator(calculator)` |
 | Mail sender provider | `internal/domain/mail/mail.go` (`Mailer`) | one implementation; second `Register*` panics | `app.RegisterMailSender(mailer)` |

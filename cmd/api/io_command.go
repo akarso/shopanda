@@ -168,9 +168,17 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 	if opts.WithHooks {
 		switch opts.Kind {
 		case ioImport:
-			regs.Import = bootstrapImportRegistry(cfg, log)
+			importReg, err := bootstrapImportRegistry(cfg, log)
+			if err != nil {
+				return err
+			}
+			regs.Import = importReg
 		case ioExport:
-			regs.Export = bootstrapExportRegistry(cfg, log)
+			exportReg, err := bootstrapExportRegistry(cfg, log)
+			if err != nil {
+				return err
+			}
+			regs.Export = exportReg
 		}
 	}
 

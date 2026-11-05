@@ -5,12 +5,25 @@ import (
 	"io"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
+
+type memQueue struct {
+	enqueued []jobs.Job
+}
+
+func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	q.enqueued = append(q.enqueued, job)
+	return nil
+}
+func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
+func (q *memQueue) Complete(context.Context, string) error     { return nil }
+func (q *memQueue) Fail(context.Context, string, error) error  { return nil }
 
 func testApp() *plugin.App {
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -120,6 +133,38 @@ func TestSyncJobs_RegisterOnEvent(t *testing.T) {
 	jobs := app.SyncJobs()
 	if len(jobs) != 1 || jobs[0].Job.MaxRetries != 3 {
 		t.Fatalf("SyncJobs() = %+v", jobs)
+	}
+}
+
+func TestSyncJobs_RegisterManualAndEnqueue(t *testing.T) {
+	app := testApp()
+	app.Bootstrap = &plugin.Bootstrap{}
+	queue := &memQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	sdk := pluginsdk.New(app, "example/demo")
+	handler := func(context.Context, extapi.SyncJobContext) error { return nil }
+	if err := sdk.Integration("example").RegisterManual("demo.ping", handler); err != nil {
+		t.Fatalf("RegisterManual: %v", err)
+	}
+	jobs := app.SyncJobs()
+	if len(jobs) != 1 || jobs[0].Job.Trigger.Kind != extapi.SyncTriggerManual {
+		t.Fatalf("SyncJobs() = %+v", jobs)
+	}
+	if err := sdk.Integration("example").Enqueue(context.Background(), "demo.ping", map[string]interface{}{"k": 1}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if len(queue.enqueued) != 1 || queue.enqueued[0].Type != "integration.sync.example.demo.ping" {
+		t.Fatalf("enqueued = %+v", queue.enqueued)
+	}
+	got := queue.enqueued[0]
+	if got.Payload["trigger"] != extapi.SyncTriggerManual {
+		t.Fatalf("trigger = %#v, want manual", got.Payload["trigger"])
+	}
+	inner, _ := got.Payload["payload"].(map[string]interface{})
+	if inner["k"] != 1 {
+		t.Fatalf("payload = %#v", inner)
 	}
 }
 

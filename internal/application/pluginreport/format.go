@@ -90,11 +90,15 @@ func FormatText(report Report) string {
 		b.WriteString("  (none)\n")
 	} else {
 		for _, job := range report.SyncJobs {
-			detail := job.Detail
-			if detail == "" {
-				detail = job.Trigger
+			trigger := job.Trigger
+			if trigger == "" {
+				trigger = "?"
 			}
-			fmt.Fprintf(&b, "  %s  %s  %s\n", job.JobType, detail, job.PluginSlug)
+			if job.Detail != "" {
+				fmt.Fprintf(&b, "  %s  trigger=%s(%s)  %s\n", job.JobType, trigger, job.Detail, job.PluginSlug)
+			} else {
+				fmt.Fprintf(&b, "  %s  trigger=%s  %s\n", job.JobType, trigger, job.PluginSlug)
+			}
 		}
 	}
 

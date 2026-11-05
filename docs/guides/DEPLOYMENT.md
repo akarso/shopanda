@@ -87,9 +87,11 @@ The setup command / wizard:
 If you prefer explicit CLI commands instead of `setup`:
 
 ```bash
-./shopanda migrate
+./shopanda migrate   # core migrations/ then every plugin.Migrator FS (no InitAll)
 ./shopanda seed
 ```
+
+Run `migrate` (or `setup`) **before** `serve` / `worker` / `scheduler` so plugin-owned tables exist before processes boot. `InitAll` still applies the same `Migrator` FS idempotently before `Init` if migrate was skipped.
 
 ### 5. Start the application
 
@@ -815,6 +817,8 @@ For larger deployments, place PgBouncer between Shopanda and PostgreSQL, especia
 
 If PgBouncer runs in transaction-pooling mode (the common mode for this topology), set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Shopanda's driver (pgx) otherwise defaults to server-side prepared statement caching, which does not survive transaction pooling and surfaces as `prepared statement "..." already exists` / `does not exist` errors under load. Leave this unset for a direct connection to PostgreSQL — it disables a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database.
 
+Plugin-owned schema (Phase 13 `migrate.RunPluginFS`) applies **one transaction per pending file**, each taking `pg_advisory_xact_lock` (lock **key** is per plugin; acquired for that file’s transaction only). That works with PgBouncer transaction pooling and preserves intentional lock-splitting across files (e.g. B2B `003` / `004`). Plugin SQL must be valid inside a transaction block: `RunPluginFS` **rejects** top-level `BEGIN`/`COMMIT`/`END`/`ROLLBACK`/`START TRANSACTION` and `CONCURRENTLY` DDL at load time. plpgsql `BEGIN` inside `$$` … `$$` is fine. B2B `Init` waits **5 minutes per file for the lock only** (same as `DefaultPluginLockWait`; DDL is not wall-clock capped); when `serve` and `worker` start together, one peer may restart while the other finishes a long first-boot migration — that is expected, and the holder is healthy. During a rolling deploy on an empty DB, avoid running an old `RunFS` B2B binary and a new `RunPluginFS` binary against the same fresh schema at once (both may attempt `001`). Core `migrations/` still apply one file per transaction via `migrate.Run` / `app migrate`. See RUNBOOK for B2B version-key reset and lock-wait behaviour.
+
 ### Back up the database
 
 Simple logical backup:
@@ -840,6 +844,8 @@ tar -czf shopanda-media-$(date +%F).tar.gz ./public/media
 If you use S3-compatible storage, rely on bucket-level lifecycle and backup policies instead.
 
 ### Migration filename policy
+
+`app migrate` / `setup` apply core SQL under `migrations/`, then every `plugin.Migrator` FS from the compile-time plugin set (no `Init`, no broker/Redis requirement). Boot `InitAllContext` on `serve` / worker / scheduler applies the same specs before each plugin `Init`; a Migrator or `depends_on` failure stops those processes (and every other `InitAll` caller via `InitSummaryError`). SIGTERM during boot wiring exits with `boot interrupted`. Short-lived CLIs use verify mode (pending versions → "run app migrate"). Keys are `plugin:{name}:{basename}`. Do **not** rename recorded plugin basenames.
 
 Migrations under `migrations/` are plain, forward-only SQL files applied in filename order — there is no golang-migrate/goose (or similar) tool and **no down migrations**. Rollback means **restore from a backup** (see above), not reversing a migration.
 

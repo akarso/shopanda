@@ -12,6 +12,7 @@ import (
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // Report is a point-in-time snapshot of plugin registrations and infrastructure ports.
@@ -144,10 +145,12 @@ func Build(registry *plugin.Registry, app *plugin.App, cfg *config.Config) Repor
 			MaxRetries: job.Job.MaxRetries,
 		}
 		switch job.Job.Trigger.Kind {
-		case "cron":
+		case extapi.SyncTriggerCron:
 			entry.Detail = job.Job.Trigger.CronSpec
-		case "event":
+		case extapi.SyncTriggerEvent:
 			entry.Detail = job.Job.Trigger.EventName
+		case extapi.SyncTriggerManual:
+			// no detail; text/JSON show trigger=manual
 		}
 		report.SyncJobs = append(report.SyncJobs, entry)
 	}

@@ -953,7 +953,7 @@ func TestRegisterPaymentFailedCompensation_FailsOrderAndRefundsOnce(t *testing.T
 		t.Fatalf("RecordPurchase: %v", err)
 	}
 	bus := testBus(t)
-	checkout.RegisterPaymentFailedCompensation(bus, orders, credits, flow)
+	checkout.RegisterPaymentFailedCompensation(bus, orders, credits, flow, testLogger())
 
 	evt := event.New(payment.EventPaymentFailed, "test", payment.PaymentStatusChangedData{OrderID: o.ID})
 	if err := bus.Publish(context.Background(), evt); err != nil {
@@ -1006,7 +1006,7 @@ func TestRegisterPaymentFailedCompensation_RevokeErrorStillRefunds(t *testing.T)
 		failLookupOrders{}, &mockVariantRepo037{variants: variantMap037("v1")}, assignmentPaymentStub{},
 	)
 	bus := testBus(t)
-	checkout.RegisterPaymentFailedCompensation(bus, orders, credits, revokeFlow)
+	checkout.RegisterPaymentFailedCompensation(bus, orders, credits, revokeFlow, testLogger())
 
 	err := bus.Publish(context.Background(), event.New(payment.EventPaymentFailed, "test", payment.PaymentStatusChangedData{OrderID: o.ID}))
 	if err == nil {

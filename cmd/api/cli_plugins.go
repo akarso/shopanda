@@ -12,7 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
-func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) *plugin.Registry {
+func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) (*plugin.Registry, error) {
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
 	app := &plugin.App{
@@ -20,13 +20,19 @@ func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) *plugin.R
 		Config: cfg,
 	}
 	preparePermissionRegistry(app)
-	registry.InitAll(app)
+	summary := registry.InitAll(app)
 	freezePermissionRegistry(app) // CLI: freeze only (no BindRuntime; avoid multi-App collisions)
-	return registry
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return nil, err
+	}
+	return registry, nil
 }
 
-func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func() *plugin.Registry, name string, args []string) (bool, error) {
-	registry := registryFn()
+func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func() (*plugin.Registry, error), name string, args []string) (bool, error) {
+	registry, err := registryFn()
+	if err != nil {
+		return false, err
+	}
 	cmdRegistry := registry.CLIRegistry()
 	if cmdRegistry == nil {
 		return false, nil
@@ -53,8 +59,12 @@ func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func(
 	return true, cmdRegistry.Run(name, ctx, args)
 }
 
-func pluginCLIHelpLines(registryFn func() *plugin.Registry) []string {
-	cmds := registryFn().CLIRegistry().List()
+func pluginCLIHelpLines(registryFn func() (*plugin.Registry, error)) []string {
+	registry, err := registryFn()
+	if err != nil || registry == nil || registry.CLIRegistry() == nil {
+		return nil
+	}
+	cmds := registry.CLIRegistry().List()
 	if len(cmds) == 0 {
 		return nil
 	}
@@ -66,7 +76,7 @@ func pluginCLIHelpLines(registryFn func() *plugin.Registry) []string {
 	return lines
 }
 
-func appendPluginCLIHelp(registryFn func() *plugin.Registry, base string) string {
+func appendPluginCLIHelp(registryFn func() (*plugin.Registry, error), base string) string {
 	lines := pluginCLIHelpLines(registryFn)
 	if len(lines) == 0 {
 		return base

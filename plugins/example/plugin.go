@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
-	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
@@ -35,8 +34,8 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("example plugin: register config: %w", err)
 	}
 	app.RegisterPricingStep(NewExampleFeeStep(&app.Config.Plugins.Example.FeeMinorUnits), "after:promotions")
-	if app.Bus != nil {
-		app.Bus.OnAsync(order.EventOrderCreated, newOrderCreatedListener(app.Logger))
+	if err := registerOrderCreatedSync(app); err != nil {
+		return fmt.Errorf("example plugin: sync job: %w", err)
 	}
 	if err := app.RegisterPermission(PermissionReportsRead, identity.RoleAdmin); err != nil {
 		return fmt.Errorf("example plugin: register permission: %w", err)

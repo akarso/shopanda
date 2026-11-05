@@ -82,11 +82,15 @@ func run() error {
 	// Subcommand dispatch.
 	if len(os.Args) > 1 {
 		var pluginCLIRegistry *plugin.Registry
-		pluginCLIRegistryFn := func() *plugin.Registry {
+		pluginCLIRegistryFn := func() (*plugin.Registry, error) {
 			if pluginCLIRegistry == nil {
-				pluginCLIRegistry = bootstrapPluginCLIRegistry(cfg, log)
+				reg, err := bootstrapPluginCLIRegistry(cfg, log)
+				if err != nil {
+					return nil, err
+				}
+				pluginCLIRegistry = reg
 			}
-			return pluginCLIRegistry
+			return pluginCLIRegistry, nil
 		}
 		switch os.Args[1] {
 		case "help":
@@ -253,10 +257,20 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 
-	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder)
+	bootSig := startBootSignal()
+	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder, bootSig.Context())
+	bootInterrupted := bootSig.Stop()
 	if err != nil {
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
+	}
+	if bootInterrupted != nil {
+		shutdownTracing()
+		rbac.UnbindRuntime()
+		if rt.rateLimitClose != nil {
+			rt.rateLimitClose()
+		}
+		return bootInterrupted
 	}
 	if rt.rateLimitClose != nil {
 		defer rt.rateLimitClose()
@@ -433,18 +447,34 @@ Flags:
 		})
 	}
 
-	// Step 2: Migrations.
+	// Step 2: Migrations (core then plugin Migrator FS — no InitAll).
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("setup: migrate: %w", err)
 	}
+	pluginRes, err := applyPluginMigrations(context.Background(), cfg, log, conn)
+	if err != nil {
+		if applied > 0 {
+			fmt.Printf("✓ %d core migrations applied (plugin step failed)\n", applied)
+		}
+		return fmt.Errorf("setup: %w", err)
+	}
 	if applied > 0 {
-		fmt.Printf("✓ %d migrations applied\n", applied)
+		fmt.Printf("✓ %d core migrations applied\n", applied)
 	} else {
-		fmt.Println("✓ Migrations up to date")
+		fmt.Println("✓ Core migrations up to date")
+	}
+	if pluginRes.Applied > 0 || pluginRes.Adopted > 0 {
+		fmt.Printf("✓ Plugin migrations applied=%d adopted=%d\n", pluginRes.Applied, pluginRes.Adopted)
+	} else {
+		fmt.Println("✓ Plugin migrations up to date")
 	}
 	if verbose {
-		log.Info("setup.migrate", map[string]interface{}{"applied": applied})
+		log.Info("setup.migrate", map[string]interface{}{
+			"applied":        applied,
+			"plugin_applied": pluginRes.Applied,
+			"plugin_adopted": pluginRes.Adopted,
+		})
 	}
 
 	// Step 3: Seeders.
@@ -492,13 +522,24 @@ func runMigrate(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("migrate.start", nil)
 
+	ctx := context.Background()
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	pluginRes, err := applyPluginMigrations(ctx, cfg, log, conn)
+	if err != nil {
+		log.Error("migrate.plugin_failed", err, map[string]interface{}{
+			"core_applied": applied,
+		})
+		return err
+	}
+
 	log.Info("migrate.complete", map[string]interface{}{
-		"applied": applied,
+		"applied":        applied,
+		"plugin_applied": pluginRes.Applied,
+		"plugin_adopted": pluginRes.Adopted,
 	})
 	return nil
 }
@@ -527,14 +568,26 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	bootSig := startBootSignal()
+	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
+	bootInterrupted := bootSig.Stop()
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
+	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	if bootInterrupted != nil {
+		return bootInterrupted
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
-	jobQueue, err := postgres.NewJobQueue(conn)
+	// Bind the plugin-registered queue when present (default core/postgres-queue).
+	// BindQueue rejects a different instance, so a second NewJobQueue cannot
+	// silently split cron/Enqueue from the worker's queue.
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
-		return fmt.Errorf("job queue: %w", err)
+		return err
 	}
 	// PR-1030: the standalone scheduler process is the one that's actually
 	// running in production (RUNTIME_MODES.md), so it's the one that must
@@ -714,7 +767,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.GpsrAttributesSeeder{})
 }
 
-func printHelp(cfg *config.Config, log logger.Logger, pluginCLIRegistryFn func() *plugin.Registry) {
+func printHelp(cfg *config.Config, log logger.Logger, pluginCLIRegistryFn func() (*plugin.Registry, error)) {
 	fmt.Print(appendPluginCLIHelp(pluginCLIRegistryFn, `Usage: app <command> [arguments]
 
 Commands:
@@ -723,7 +776,7 @@ Commands:
   setup                Run first-time setup (migrate + seed + verify)
   worker               Start the background job worker
   scheduler            Start the cron scheduler
-  migrate              Run database migrations
+  migrate              Run database migrations (core then plugin-owned schema)
   seed                 Seed the database with initial data
   search:reindex       Re-index all products in the search engine ([--wait])
   search:reindex-runs:reconcile <run-id> --reason=<text>
@@ -820,7 +873,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if metricsRecorder == nil {
 		metricsRecorder = metrics.Noop()
 	}
-	jobQueue, err := resolveJobQueue(app, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(app, conn, cfg)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -988,8 +1041,17 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	bootSig := startBootSignal()
+	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
+	bootInterrupted := bootSig.Stop()
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
+	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	if bootInterrupted != nil {
+		return bootInterrupted
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
@@ -1134,22 +1196,28 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		return nil, nil, nil, err
 	}
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+		Logger:            log,
+		Config:            cfg,
+		Bootstrap:         boot,
+		PluginMigrateMode: plugin.PluginMigrateVerify, // require app migrate; no DDL lock
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	summary := registry.InitAll(pluginApp)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
+	if summary.Failed > 0 {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
 	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
-	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		conn.Close()
-		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
+		return nil, nil, nil, err
 	}
 	runs, err = postgres.NewSearchIndexRunRepo(conn)
 	if err != nil {

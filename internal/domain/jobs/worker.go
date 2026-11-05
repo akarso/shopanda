@@ -124,14 +124,22 @@ func (w *Worker) Stop() {
 	w.stopOnce.Do(func() { close(w.stop) })
 }
 
-func (w *Worker) processNext(ctx context.Context) {
+// ProcessOne dequeues and handles at most one job. Returns true when a job
+// was dequeued (including missing-handler / handle failures). Returns false
+// when the queue is empty or Dequeue errors. For tests and one-shot drains;
+// production workers use Start.
+func (w *Worker) ProcessOne(ctx context.Context) bool {
+	return w.processNext(ctx)
+}
+
+func (w *Worker) processNext(ctx context.Context) bool {
 	job, err := w.queue.Dequeue(ctx)
 	if err != nil {
 		w.log.Error("worker.dequeue.failed", err, nil)
-		return
+		return false
 	}
 	if job == nil {
-		return
+		return false
 	}
 
 	w.mu.RLock()
@@ -149,7 +157,7 @@ func (w *Worker) processNext(ctx context.Context) {
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
 		// records something when jobErr is non-nil.
 		w.recordFail(ctx, job.ID, fmt.Errorf("no handler registered for job type %q", job.Type))
-		return
+		return true
 	}
 
 	w.log.Info("worker.job.processing", map[string]interface{}{
@@ -168,10 +176,11 @@ func (w *Worker) processNext(ctx context.Context) {
 		})
 		w.metrics.JobFailure(job.Type)
 		w.recordFail(ctx, job.ID, err)
-		return
+		return true
 	}
 
 	w.recordComplete(ctx, job.ID, job.Type)
+	return true
 }
 
 // safeHandle runs h.Handle with panic recovery, converting a panic into a

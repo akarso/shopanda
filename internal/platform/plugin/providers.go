@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"database/sql"
+	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -56,6 +57,30 @@ func (a *App) RegisterQueue(queue jobs.Queue) {
 		panic("plugin: queue already registered")
 	}
 	a.queue = queue
+}
+
+// BindQueue attaches the composition-root-resolved jobs.Queue for
+// Integration.Enqueue. Distinct from RegisterQueue (plugin provider slot):
+// Enqueue reads only the bound queue, so calls during Init always fail with
+// ErrSyncJobQueueUnbound until the composition root binds after InitAll.
+// When a plugin already RegisterQueue'd, queue must be that same instance
+// (so a mistaken second NewJobQueue cannot silently split cron/Enqueue from
+// the worker). Idempotent when the same instance is already bound.
+func (a *App) BindQueue(queue jobs.Queue) error {
+	if a == nil {
+		return fmt.Errorf("plugin: BindQueue: app is nil")
+	}
+	if queue == nil {
+		return fmt.Errorf("plugin: BindQueue: queue must not be nil")
+	}
+	if a.queue != nil && a.queue != queue {
+		return fmt.Errorf("plugin: BindQueue: enqueue queue must match plugin-registered queue")
+	}
+	if a.boundQueue != nil && a.boundQueue != queue {
+		return fmt.Errorf("plugin: BindQueue: enqueue queue already bound to a different instance")
+	}
+	a.boundQueue = queue
+	return nil
 }
 
 // RegisterPaymentProvider registers a payment provider for its Method().

@@ -57,14 +57,19 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 		return err
 	}
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+		Logger:            log,
+		Config:            cfg,
+		Bootstrap:         boot,
+		PluginMigrateMode: plugin.PluginMigrateVerify, // short-lived CLI: require app migrate
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)
+	summary := registry.InitAll(pluginApp)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
 	// Do not abort on unrelated plugin init failures; only the search provider is required.
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	if summary.Failed > 0 {
 		log.Warn("discovery_facet_sync.plugin_init_partial", map[string]interface{}{
 			"failed":      summary.Failed,
 			"initialized": summary.Initialized,
