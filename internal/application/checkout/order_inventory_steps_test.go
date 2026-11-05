@@ -86,7 +86,10 @@ type mockOrderRepo struct {
 	err   error
 }
 
-func (r *mockOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
+func (r *mockOrderRepo) FindByID(_ context.Context, id string) (*order.Order, error) {
+	if r.saved != nil && strings.TrimSpace(r.saved.ID) == strings.TrimSpace(id) {
+		return r.saved, nil
+	}
 	return nil, nil
 }
 
@@ -973,6 +976,144 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	}
 	if v.(string) == "" {
 		t.Error("created_order_id should not be empty")
+	}
+}
+
+func TestCreateOrderStep_PublishesOrderCreated(t *testing.T) {
+	bus := event.NewBus(logger.New("error"))
+	var got order.OrderCreatedData
+	var count int
+	bus.On(order.EventOrderCreated, func(_ context.Context, evt event.Event) error {
+		got = evt.Data.(order.OrderCreatedData)
+		count++
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(
+		&mockOrderRepo{},
+		&mockVariantRepo037{variants: variantMap037("v1", "v2")},
+		nil, nil, idleProducts(), idleComponents(), idlePrices(),
+	).WithStockEventPublishing(bus, logger.New("error"))
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("order.created count = %d, want 1", count)
+	}
+	if got.OrderID == "" || got.OrderID != cctx.Order.ID {
+		t.Fatalf("OrderID = %q, want %q", got.OrderID, cctx.Order.ID)
+	}
+	if got.CustomerID != "cust-1" || got.Currency != "EUR" || got.ItemCount != 4 {
+		t.Fatalf("payload = %+v, want cust-1/EUR/item_count=4", got)
+	}
+	// Idempotent re-entry must not republish (checkout retries after later steps).
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("idempotent Execute: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("order.created after idempotent = %d, want 1", count)
+	}
+}
+
+func TestWorkflow_LaterStepFailPublishesOrderFailedAfterCreated(t *testing.T) {
+	bus := event.NewBus(logger.New("error"))
+	var names []string
+	record := func(name string) {
+		bus.On(name, func(_ context.Context, evt event.Event) error {
+			names = append(names, evt.Name)
+			return nil
+		})
+	}
+	record(order.EventOrderCreated)
+	record(order.EventOrderFailed)
+	record(checkout.EventUnpaidFailed)
+
+	orders := &mockOrderRepo{}
+	create := checkout.NewCreateOrderStep(
+		orders,
+		&mockVariantRepo037{variants: variantMap037("v1")},
+		nil, nil, idleProducts(), idleComponents(), idlePrices(),
+	).WithStockEventPublishing(bus, logger.New("error"))
+	fail := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error {
+		return errors.New("shipping unavailable")
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{create, fail}, bus, logger.New("error")).
+		WithUnpaidOrderCompensation(orders, nil, nil, nil)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected later-step failure")
+	}
+	var sawCreated, sawFailed bool
+	for _, n := range names {
+		if n == order.EventOrderCreated {
+			sawCreated = true
+		}
+		if n == order.EventOrderFailed {
+			sawFailed = true
+		}
+	}
+	if !sawCreated {
+		t.Fatalf("events = %v, want order.created", names)
+	}
+	if !sawFailed {
+		t.Fatalf("events = %v, want order.failed after order.created", names)
+	}
+	if cctx.Order == nil || cctx.Order.Status() != order.OrderStatusFailed {
+		t.Fatalf("order status = %v, want failed", cctx.Order)
+	}
+}
+
+func TestWorkflow_OrderFailedPublishErrorStillRefunds(t *testing.T) {
+	bus := event.NewBus(logger.New("error"))
+	bus.On(order.EventOrderFailed, func(context.Context, event.Event) error {
+		return errors.New("plugin sync handler down")
+	})
+	var sawUnpaid bool
+	bus.On(checkout.EventUnpaidFailed, func(context.Context, event.Event) error {
+		sawUnpaid = true
+		return nil
+	})
+
+	orders := &mockOrderRepo{}
+	credits := &mockStoreCreditService{balance: 1500}
+	create := checkout.NewCreateOrderStep(
+		orders,
+		&mockVariantRepo037{variants: variantMap037("v1")},
+		credits, nil, idleProducts(), idleComponents(), idlePrices(),
+	).WithStockEventPublishing(bus, logger.New("error"))
+	fail := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error {
+		return errors.New("shipping unavailable")
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{create, fail}, bus, logger.New("error")).
+		WithUnpaidOrderCompensation(orders, nil, nil, credits)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Input.StoreCreditAmount = 1000
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected later-step failure")
+	}
+	if !sawUnpaid {
+		t.Fatal("expected checkout.unpaid_failed despite order.failed handler error")
+	}
+	if len(credits.issued) != 1 || credits.issued[0] != 1000 {
+		t.Fatalf("issued = %v, want [1000] restored after compensate", credits.issued)
+	}
+	if cctx.Order == nil || cctx.Order.Status() != order.OrderStatusFailed {
+		t.Fatalf("order status = %v, want failed", cctx.Order)
 	}
 }
 

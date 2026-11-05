@@ -6,10 +6,12 @@ import (
 	"strings"
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	orderapp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 const paymentFailedCreditKeyPrefix = "checkout:payment-failed:"
@@ -25,11 +27,14 @@ func paymentFailedCreditNote(orderID string) string {
 // RegisterPaymentFailedCompensation fails a still-pending order, issues
 // StoreCreditApplied back once (idempotency key tied to the order id),
 // and revokes current assignments when payment.failed is published.
+// log may be nil; publish failures after FailIfPending are logged and do
+// not block credit restore / revoke.
 func RegisterPaymentFailedCompensation(
 	bus *event.Bus,
 	orders unpaidOrderWriter,
 	credits storeCreditIssuer,
 	assignments *assignmentapp.Flow,
+	log logger.Logger,
 ) {
 	if bus == nil {
 		return
@@ -39,7 +44,7 @@ func RegisterPaymentFailedCompensation(
 		if orderID == "" {
 			return nil
 		}
-		return compensateFailedPayment(ctx, orders, credits, assignments, orderID)
+		return compensateFailedPayment(ctx, bus, orders, credits, assignments, log, orderID)
 	}
 	bus.On(payment.EventPaymentFailed, func(ctx context.Context, evt event.Event) error {
 		data, ok := evt.Data.(payment.PaymentStatusChangedData)
@@ -59,9 +64,11 @@ func RegisterPaymentFailedCompensation(
 
 func compensateFailedPayment(
 	ctx context.Context,
+	bus *event.Bus,
 	orders unpaidOrderWriter,
 	credits storeCreditIssuer,
 	assignments *assignmentapp.Flow,
+	log logger.Logger,
 	orderID string,
 ) error {
 	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
@@ -70,7 +77,8 @@ func compensateFailedPayment(
 	var failErr, creditErr, revokeErr error
 	var o *order.Order
 	if orders != nil {
-		if _, err := orders.FailIfPending(persistCtx, orderID); err != nil {
+		changed, err := orders.FailIfPending(persistCtx, orderID)
+		if err != nil {
 			failErr = fmt.Errorf("checkout: payment.failed persist order: %w", err)
 		}
 		if failErr == nil {
@@ -79,6 +87,18 @@ func compensateFailedPayment(
 				failErr = fmt.Errorf("checkout: payment.failed lookup order: %w", err)
 			} else {
 				o = found
+			}
+		}
+		// Persist already committed — log sync handler errors and continue
+		// so credit restore / revoke still run (same as workflow compensate).
+		if failErr == nil && changed {
+			if pubErr := orderapp.PublishFailed(
+				persistCtx, bus, "checkout.payment_failed", orderID,
+				string(order.OrderStatusPending), string(order.OrderStatusFailed),
+			); pubErr != nil && log != nil {
+				log.Error("checkout.payment_failed.publish_order_failed", pubErr, map[string]interface{}{
+					"order_id": orderID,
+				})
 			}
 		}
 		if failErr == nil && o != nil && o.Status() == order.OrderStatusFailed {

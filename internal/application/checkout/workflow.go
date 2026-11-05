@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	orderapp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -413,8 +414,24 @@ func (w *Workflow) compensateUnpaidOrder(ctx context.Context, cctx *Context) err
 	}
 	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
 	defer persistCancel()
-	if _, err := w.orders.FailIfPending(persistCtx, orderID); err != nil {
+	changed, err := w.orders.FailIfPending(persistCtx, orderID)
+	if err != nil {
 		return fmt.Errorf("checkout: compensate persist order: %w", err)
+	}
+	// Merchants may already have order.created (published mid-checkout). Emit
+	// order.failed when we actually transition pending→failed so webhooks and
+	// RegisterOnEvent jobs are not left with a phantom live order.
+	// Persist already committed — do not block credit restore / revoke on a
+	// sync handler error (same pattern as publishOrderCreated / PublishPaid).
+	if changed {
+		if pubErr := orderapp.PublishFailed(
+			persistCtx, w.bus, "checkout.workflow", orderID,
+			string(order.OrderStatusPending), string(order.OrderStatusFailed),
+		); pubErr != nil {
+			w.log.Error("checkout.compensate.publish_order_failed", pubErr, map[string]interface{}{
+				"order_id": orderID,
+			})
+		}
 	}
 	o, err := w.orders.FindByID(persistCtx, orderID)
 	if err != nil {

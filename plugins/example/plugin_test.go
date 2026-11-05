@@ -2,6 +2,7 @@ package example_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/example"
 )
 
@@ -242,9 +244,7 @@ func TestPlugin_OrderCreated_EnqueuesEventSyncJob(t *testing.T) {
 		t.Fatalf("InitAll() = %+v", summary)
 	}
 	queue := &memQueue{}
-	if err := app.BindQueue(queue); err != nil {
-		t.Fatal(err)
-	}
+	// Event triggers enqueue via the queue argument, not app.boundQueue.
 	if err := integrationApp.RegisterSyncJobEventTriggers(app, app.Bus, queue, log); err != nil {
 		t.Fatal(err)
 	}
@@ -271,9 +271,49 @@ func TestPlugin_OrderCreated_EnqueuesEventSyncJob(t *testing.T) {
 	if got.Payload["trigger"] != extapi.SyncTriggerEvent {
 		t.Fatalf("trigger = %#v, want event", got.Payload["trigger"])
 	}
-	payload, _ := got.Payload["payload"].(map[string]interface{})
-	data, ok := payload["data"].(order.OrderCreatedData)
-	if !ok || data.OrderID != "ord-1" || data.ItemCount != 2 {
-		t.Fatalf("payload = %#v", payload)
+	// Real queues JSON-encode the envelope; assert the post-round-trip map shape.
+	raw, err := json.Marshal(got.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := envelope["payload"].(map[string]interface{})
+	data, _ := payload["data"].(map[string]interface{})
+	if data["order_id"] != "ord-1" {
+		t.Fatalf("data after JSON round-trip = %#v, want order_id=ord-1", data)
+	}
+	if data["item_count"] != float64(2) {
+		t.Fatalf("item_count = %#v, want 2", data["item_count"])
+	}
+}
+
+func TestPlugin_Enqueue_RunNowUsesBoundQueue(t *testing.T) {
+	app := testApp(&config.Config{
+		Plugins: config.PluginsConfig{
+			Example: config.ExamplePluginConfig{Enabled: true},
+		},
+	})
+	queue := &memQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	sdk := pluginsdk.New(app, "example/demo")
+	if err := sdk.Integration("example").RegisterManual("demo.ping", func(context.Context, extapi.SyncJobContext) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sdk.Integration("example").Enqueue(context.Background(), "demo.ping", map[string]interface{}{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if queue.len() != 1 {
+		t.Fatalf("enqueued = %d", queue.len())
+	}
+	got := queue.first()
+	if got.Payload["trigger"] != extapi.SyncTriggerManual {
+		t.Fatalf("trigger = %#v", got.Payload["trigger"])
 	}
 }

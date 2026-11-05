@@ -38,12 +38,49 @@ func orderCreatedSyncHandler(log logger.Logger) extapi.SyncJobHandler {
 			"trigger": job.Trigger,
 			"payload": job.Payload,
 		}
-		// eventPayload wraps non-map Data as {"data": <value>}.
-		if data, ok := job.Payload["data"].(order.OrderCreatedData); ok {
-			fields["order_id"] = data.OrderID
-			fields["item_count"] = data.ItemCount
+		if orderID, itemCount, ok := orderCreatedFields(job.Payload); ok {
+			fields["order_id"] = orderID
+			fields["item_count"] = itemCount
 		}
 		log.Info("example.order.created", fields)
 		return nil
+	}
+}
+
+// orderCreatedFields reads eventPayload's {"data": …} after a real queue
+// JSON round-trip (map[string]interface{}). Also accepts the in-process
+// typed struct used by in-memory test queues.
+func orderCreatedFields(payload map[string]interface{}) (orderID string, itemCount int, ok bool) {
+	if payload == nil {
+		return "", 0, false
+	}
+	raw, exists := payload["data"]
+	if !exists {
+		return "", 0, false
+	}
+	switch data := raw.(type) {
+	case order.OrderCreatedData:
+		return data.OrderID, data.ItemCount, true
+	case map[string]interface{}:
+		id, _ := data["order_id"].(string)
+		if id == "" {
+			return "", 0, false
+		}
+		return id, jsonInt(data["item_count"]), true
+	default:
+		return "", 0, false
+	}
+}
+
+func jsonInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
 	}
 }
