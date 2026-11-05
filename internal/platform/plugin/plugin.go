@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -50,13 +49,9 @@ type App struct {
 	Config    *config.Config
 	Bootstrap *Bootstrap
 
-	// SkipPluginMigrations, when true, makes InitAll skip Migrator SQL apply.
-	// Use on short-lived CLI paths that already expect schema from app migrate.
-	SkipPluginMigrations bool
-
-	// MigrationCtx cancels Migrator apply during InitAll when set; otherwise
-	// InitAll uses context.Background().
-	MigrationCtx context.Context
+	// PluginMigrateMode controls Migrator handling in InitAllContext.
+	// Default (zero) is PluginMigrateApply. Short-lived CLIs use PluginMigrateVerify.
+	PluginMigrateMode PluginMigrateMode
 
 	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []checkoutStepRegistration

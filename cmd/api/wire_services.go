@@ -215,9 +215,12 @@ type serveRuntime struct {
 	checkoutHandler                *storefront.CheckoutHandler
 }
 
-func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos, metricsRecorder metrics.Recorder) (rt *serveRuntime, err error) {
+func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos, metricsRecorder metrics.Recorder, initCtx context.Context) (rt *serveRuntime, err error) {
 	if metricsRecorder == nil {
 		metricsRecorder = metrics.Noop()
+	}
+	if initCtx == nil {
+		initCtx = context.Background()
 	}
 	// Event bus (created early for plugin init and later handlers).
 	bus := event.NewBus(log)
@@ -277,15 +280,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
 	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo, conn)
 	permReg := preparePermissionRegistry(pluginApp)
-	summary := registry.InitAll(pluginApp)
+	summary := registry.InitAllContext(initCtx, pluginApp)
 	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
 	defer func() {
 		if err != nil {
 			rbac.UnbindRuntime()
 		}
 	}()
-	if summary.MigrateFailed > 0 {
-		return nil, fmt.Errorf("plugin migrate failed: %d plugin(s) failed schema apply (see plugin.init.failed logs)", summary.MigrateFailed)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return nil, err
 	}
 	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)

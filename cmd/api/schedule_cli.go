@@ -234,10 +234,10 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 		return err
 	}
 	pluginApp := &plugin.App{
-		Logger:               log,
-		Config:               cfg,
-		Bootstrap:            boot,
-		SkipPluginMigrations: true, // schema comes from app migrate / serve
+		Logger:            log,
+		Config:            cfg,
+		Bootstrap:         boot,
+		PluginMigrateMode: plugin.PluginMigrateVerify, // require app migrate; no DDL lock
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	// PR-1049's batched-reindex wiring is deliberately not added here: this
@@ -249,7 +249,11 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	summary := registry.InitAll(pluginApp)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
+	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
 	freezePermissionRegistry(pluginApp)

@@ -11,6 +11,17 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
 
+// PluginMigrateMode controls how InitAll handles Migrator plugins.
+type PluginMigrateMode int
+
+const (
+	// PluginMigrateApply runs RunPluginFS before Init (default for serve/worker/scheduler).
+	PluginMigrateApply PluginMigrateMode = iota
+	// PluginMigrateVerify checks schema_migrations for pending plugin versions
+	// and fails with "run app migrate" without taking the advisory lock.
+	PluginMigrateVerify
+)
+
 // MigrationSpec is the SQL filesystem owned by a Migrator plugin.
 // One spec per plugin — basenames share the plugin:{name}: namespace.
 type MigrationSpec struct {
@@ -21,8 +32,7 @@ type MigrationSpec struct {
 
 // Migrator is an optional Plugin interface. Implement it to declare plugin-owned
 // SQL without Init side effects. app migrate / setup collect Migrator specs
-// without calling Init; InitAll applies them (when Bootstrap.DB is set and
-// SkipPluginMigrations is false) before Init so tables exist for repo wiring.
+// without calling Init; InitAllContext applies or verifies them before Init.
 type Migrator interface {
 	Migration() MigrationSpec
 }
@@ -41,7 +51,7 @@ type MigrateResult struct {
 	Adopted int
 }
 
-func migrationRegistration(pluginName string, spec MigrationSpec) (MigrationRegistration, error) {
+func migrationRegistration(pluginName string, spec MigrationSpec) (reg MigrationRegistration, err error) {
 	name := strings.TrimSpace(pluginName)
 	if name == "" {
 		return MigrationRegistration{}, fmt.Errorf("plugin: migration: plugin name is required")
@@ -52,6 +62,15 @@ func migrationRegistration(pluginName string, spec MigrationSpec) (MigrationRegi
 	}
 	if dir == "" {
 		return MigrationRegistration{}, fmt.Errorf("plugin: %s: migration dir is required", name)
+	}
+	// Catch typed-nil FS and missing dirs early (also recovers panics from Open/ReadDir).
+	defer func() {
+		if rv := recover(); rv != nil {
+			err = &panicError{value: rv}
+		}
+	}()
+	if _, readErr := fs.ReadDir(spec.FS, dir); readErr != nil {
+		return MigrationRegistration{}, fmt.Errorf("plugin: %s: read migration dir %q: %w", name, dir, readErr)
 	}
 	opts := spec.Options
 	if n := len(opts.AdoptBareBasenames); n > 0 {
@@ -82,6 +101,15 @@ func migratorRegistration(name string, p Plugin) (reg MigrationRegistration, ok 
 	}()
 	reg, err = migrationRegistration(name, m.Migration())
 	return reg, ok, err
+}
+
+func hasMigrator(entries []Entry) bool {
+	for _, e := range entries {
+		if _, ok := e.Plugin.(Migrator); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // orderedEntries returns registry entries in depends_on order.
@@ -147,21 +175,93 @@ func ApplyMigrationRegistrations(ctx context.Context, db *sql.DB, log logger.Log
 	return totals, nil
 }
 
-// applyPluginMigrator runs a plugin's Migrator SQL before Init.
-func applyPluginMigrator(ctx context.Context, app *App, name string, p Plugin) error {
-	if app != nil && app.SkipPluginMigrations {
-		return nil
+func listSQLBasenames(fsys fs.FS, dir string) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return nil, err
 	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names, nil
+}
+
+func appliedVersions(db *sql.DB) (map[string]bool, error) {
+	rows, err := db.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
+}
+
+// verifyPluginMigration fails if any SQL basename for the registration is not
+// yet recorded under plugin:{name}:{basename}.
+func verifyPluginMigration(db *sql.DB, reg MigrationRegistration) error {
+	names, err := listSQLBasenames(reg.FS, reg.Dir)
+	if err != nil {
+		return fmt.Errorf("plugin: %s: list migrations: %w", reg.PluginName, err)
+	}
+	applied, err := appliedVersions(db)
+	if err != nil {
+		return fmt.Errorf("plugin: %s: query schema_migrations: %w", reg.PluginName, err)
+	}
+	for _, base := range names {
+		version := "plugin:" + reg.PluginName + ":" + base
+		if !applied[version] {
+			return fmt.Errorf("plugin: %s: pending migration %s — run app migrate", reg.PluginName, base)
+		}
+	}
+	return nil
+}
+
+// applyPluginMigrator runs or verifies a plugin's Migrator SQL before Init.
+func applyPluginMigrator(ctx context.Context, app *App, name string, p Plugin) (err error) {
 	if app == nil || app.Bootstrap == nil || app.Bootstrap.DB == nil {
 		return nil
 	}
-	reg, ok, err := migratorRegistration(name, p)
+	reg, ok, regErr := migratorRegistration(name, p)
 	if !ok {
 		return nil
 	}
-	if err != nil {
+	if regErr != nil {
+		return regErr
+	}
+	defer func() {
+		if rv := recover(); rv != nil {
+			err = &panicError{value: rv}
+		}
+	}()
+	mode := app.PluginMigrateMode
+	switch mode {
+	case PluginMigrateVerify:
+		return verifyPluginMigration(app.Bootstrap.DB, reg)
+	default:
+		_, err = ApplyMigrationRegistrations(ctx, app.Bootstrap.DB, app.Logger, []MigrationRegistration{reg})
 		return err
 	}
-	_, err = ApplyMigrationRegistrations(ctx, app.Bootstrap.DB, app.Logger, []MigrationRegistration{reg})
-	return err
+}
+
+// InitSummaryError returns a non-nil error when InitAll/InitAllContext left the
+// process in a state that must not continue (depends_on or Migrator failure).
+func InitSummaryError(summary InitSummary) error {
+	if summary.DependsOnErr != nil {
+		return fmt.Errorf("plugin depends_on: %w", summary.DependsOnErr)
+	}
+	if summary.MigrateFailed > 0 {
+		return fmt.Errorf("plugin migrate failed: %d plugin(s) failed schema apply (see plugin.init.failed logs)", summary.MigrateFailed)
+	}
+	return nil
 }

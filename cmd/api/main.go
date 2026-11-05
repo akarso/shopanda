@@ -253,7 +253,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 
-	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder)
+	bootCtx, bootStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder, bootCtx)
+	bootStop()
 	if err != nil {
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
@@ -554,7 +556,13 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	summary := registry.InitAllContext(initCtx, pluginApp)
+	initStop()
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
+	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
@@ -1015,7 +1023,13 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	summary := registry.InitAllContext(initCtx, pluginApp)
+	initStop()
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return err
+	}
+	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
@@ -1161,14 +1175,19 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		return nil, nil, nil, err
 	}
 	pluginApp := &plugin.App{
-		Logger:               log,
-		Config:               cfg,
-		Bootstrap:            boot,
-		SkipPluginMigrations: true, // schema comes from app migrate / serve
+		Logger:            log,
+		Config:            cfg,
+		Bootstrap:         boot,
+		PluginMigrateMode: plugin.PluginMigrateVerify, // require app migrate; no DDL lock
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)
-	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+	summary := registry.InitAll(pluginApp)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
+	if summary.Failed > 0 {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}

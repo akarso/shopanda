@@ -48,8 +48,6 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("b2b plugin: variant repository not configured")
 	}
 
-	// Requires plugin schema already present (app migrate, or InitAll with Bootstrap.DB).
-
 	groupRepo, err := groups.NewPostgresRepo(app.Bootstrap.DB)
 	if err != nil {
 		return fmt.Errorf("b2b plugin: groups repo: %w", err)

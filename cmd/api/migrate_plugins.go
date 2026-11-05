@@ -26,11 +26,7 @@ func applyPluginMigrations(ctx context.Context, cfg *config.Config, log logger.L
 	}
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
-	var depends map[string][]string
-	if cfg != nil {
-		depends = cfg.Plugins.DependsOn
-	}
-	regs, err := registry.CollectMigrations(depends)
+	regs, err := registry.CollectMigrations(cfg.Plugins.DependsOn)
 	if err != nil {
 		return zero, fmt.Errorf("migrate: %w", err)
 	}

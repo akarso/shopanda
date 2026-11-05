@@ -17,12 +17,13 @@ const (
 	StateFailed State = "failed"
 )
 
-// InitSummary reports the outcome of InitAll.
+// InitSummary reports the outcome of InitAll / InitAllContext.
 type InitSummary struct {
 	Registered    int
 	Initialized   int
 	Failed        int
-	MigrateFailed int // Migrator apply failures (subset of Failed)
+	MigrateFailed int   // Migrator apply/verify failures; always counted in Failed
+	DependsOnErr  error // non-nil when depends_on sort failed and a Migrator is registered
 }
 
 // Entry tracks a registered plugin and its lifecycle state.
@@ -99,28 +100,38 @@ func (r *Registry) CLIRegistry() *cli.Registry {
 	return r.cliRegistry
 }
 
-// InitAll initializes all loaded plugins by calling Init(app).
-// When Bootstrap.DB is set and SkipPluginMigrations is false, each Migrator's
-// SQL runs before Init (panics in Migration() are recovered). Plugins that
-// fail are marked failed and skipped. Returns an InitSummary describing the outcome.
+// InitAll is InitAllContext with context.Background().
 func (r *Registry) InitAll(app *App) InitSummary {
+	return r.InitAllContext(context.Background(), app)
+}
+
+// InitAllContext initializes all loaded plugins by calling Init(app).
+// When Bootstrap.DB is set, each Migrator's SQL is applied (PluginMigrateApply)
+// or verified (PluginMigrateVerify) before Init. ctx cancels Migrator work.
+// Panics in Migration() / apply are recovered. A depends_on sort error with any
+// Migrator registered sets DependsOnErr and skips all inits (same as migrate).
+// The first Migrator failure stops further plugins (fail-fast).
+func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 	if app == nil {
 		panic("plugin: app must not be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	app.configRegistry = r.configRegistry
 	var depends map[string][]string
 	if app.Config != nil {
 		depends = app.Config.Plugins.DependsOn
 	}
+	summary := InitSummary{Registered: len(r.entries)}
 	entries, sortErr := r.orderedEntries(depends)
 	if sortErr != nil {
 		r.log.Error("plugin.depends_on.sort_failed", sortErr, nil)
+		if hasMigrator(r.entries) {
+			summary.DependsOnErr = sortErr
+			return summary
+		}
 		entries = r.entries
-	}
-	summary := InitSummary{Registered: len(r.entries)}
-	ctx := context.Background()
-	if app.MigrationCtx != nil {
-		ctx = app.MigrationCtx
 	}
 	for i := range entries {
 		e := &entries[i]
@@ -140,13 +151,14 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			summary.MigrateFailed++
 			cause := "migrate"
 			if _, ok := err.(*panicError); ok {
-				cause = "panic"
+				cause = "migrate_panic"
 			}
 			r.log.Error("plugin.init.failed", err, map[string]interface{}{
 				"plugin": name,
 				"cause":  cause,
 			})
-			continue
+			// Fail-fast: do not Init remaining plugins after a schema failure.
+			break
 		}
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
