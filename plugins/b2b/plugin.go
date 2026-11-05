@@ -1,6 +1,7 @@
 package b2b
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -18,7 +19,7 @@ type Plugin struct{}
 // New returns the B2B plugin.
 func New() *Plugin { return &Plugin{} }
 
-func (p *Plugin) Name() string { return "shopanda/b2b" }
+func (p *Plugin) Name() string { return pluginName }
 
 func (p *Plugin) Init(app *plugin.App) error {
 	if app == nil {
@@ -48,8 +49,15 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("b2b plugin: variant repository not configured")
 	}
 
-	if err := runPluginMigrations(app.Bootstrap.DB); err != nil {
+	migRes, err := runPluginMigrations(context.Background(), app.Bootstrap.DB)
+	if err != nil {
 		return fmt.Errorf("b2b plugin: %w", err)
+	}
+	if app.Logger != nil && (migRes.Applied > 0 || migRes.Adopted > 0) {
+		app.Logger.Info("b2b plugin: migrations", map[string]any{
+			"applied": migRes.Applied,
+			"adopted": migRes.Adopted,
+		})
 	}
 
 	groupRepo, err := groups.NewPostgresRepo(app.Bootstrap.DB)

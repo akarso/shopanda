@@ -215,20 +215,20 @@ func TestRunPluginFS_SameBasenameDifferentPlugins(t *testing.T) {
 			pluginVersion(pluginA, basename), pluginVersion(pluginB, basename))
 	})
 
-	n, err := RunPluginFS(ctx, db, pluginA, fsysA, "migrations")
+	res, err := RunPluginFS(ctx, db, pluginA, fsysA, "migrations")
 	if err != nil {
 		t.Fatalf("RunPluginFS(%s): %v", pluginA, err)
 	}
-	if n != 1 {
-		t.Fatalf("RunPluginFS(%s) applied %d, want 1", pluginA, n)
+	if res.Applied != 1 {
+		t.Fatalf("RunPluginFS(%s) applied %d, want 1", pluginA, res.Applied)
 	}
 
-	n, err = RunPluginFS(ctx, db, pluginB, fsysB, "migrations")
+	res, err = RunPluginFS(ctx, db, pluginB, fsysB, "migrations")
 	if err != nil {
 		t.Fatalf("RunPluginFS(%s): %v", pluginB, err)
 	}
-	if n != 1 {
-		t.Fatalf("RunPluginFS(%s) applied %d, want 1 — same basename must be a distinct version", pluginB, n)
+	if res.Applied != 1 {
+		t.Fatalf("RunPluginFS(%s) applied %d, want 1 — same basename must be a distinct version", pluginB, res.Applied)
 	}
 
 	applied, err := getApplied(db)
@@ -261,19 +261,19 @@ func TestRunPluginFS_Idempotent(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", pluginVersion(plugin, basename))
 	})
 
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err != nil {
 		t.Fatalf("first RunPluginFS: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("first apply = %d, want 1", n)
+	if res.Applied != 1 {
+		t.Fatalf("first apply = %d, want 1", res.Applied)
 	}
-	n, err = RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err = RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err != nil {
 		t.Fatalf("second RunPluginFS: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("second apply = %d, want 0", n)
+	if res.Applied != 0 {
+		t.Fatalf("second apply = %d, want 0", res.Applied)
 	}
 }
 
@@ -303,12 +303,12 @@ func TestRunPluginFS_ConflictSkipsWithoutReexec(t *testing.T) {
 			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
 		},
 	}
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err != nil {
 		t.Fatalf("RunPluginFS: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("applied %d, want 0", n)
+	if res.Applied != 0 {
+		t.Fatalf("applied %d, want 0", res.Applied)
 	}
 	var exists bool
 	if err := db.QueryRow(`SELECT EXISTS (
@@ -361,10 +361,10 @@ func TestRunPluginFS_WaitsForHeldLock(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		close(started)
-		n, err := RunPluginFSOptions(context.Background(), db, plugin, fsys, "migrations", PluginFSOptions{
+		res, err := RunPluginFSOptions(context.Background(), db, plugin, fsys, "migrations", PluginFSOptions{
 			LockWait: 5 * time.Second,
 		})
-		done <- outcome{n, err}
+		done <- outcome{res.Applied, err}
 	}()
 	<-started
 
@@ -429,14 +429,14 @@ func TestRunPluginFS_LockTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	n, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+	res, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
 		LockWait: time.Hour, // ctx deadline must win
 	})
 	if err == nil {
 		t.Fatal("expected lock wait timeout error")
 	}
-	if n != 0 {
-		t.Fatalf("applied %d on timeout, want 0", n)
+	if res.Applied != 0 {
+		t.Fatalf("applied %d on timeout, want 0", res.Applied)
 	}
 	if !errors.Is(err, ErrMigrationLockHeld) {
 		t.Fatalf("error = %v, want ErrMigrationLockHeld", err)
@@ -462,12 +462,12 @@ func TestRunPluginFS_PartialFailureKeepsPriorFile(t *testing.T) {
 			pluginVersion(plugin, okName), pluginVersion(plugin, badName))
 	})
 
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err == nil {
 		t.Fatal("expected apply error")
 	}
-	if n != 1 {
-		t.Fatalf("applied count = %d, want 1 (first file committed)", n)
+	if res.Applied != 1 {
+		t.Fatalf("applied count = %d, want 1 (first file committed)", res.Applied)
 	}
 	if !strings.Contains(err.Error(), pluginVersion(plugin, badName)) {
 		t.Fatalf("error = %v, want version key for failing file", err)
@@ -484,12 +484,12 @@ func TestRunPluginFS_PartialFailureKeepsPriorFile(t *testing.T) {
 	}
 
 	// Retry after failure must not hang; second file still bad → still errors, count 0.
-	n, err = RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err = RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err == nil {
 		t.Fatal("expected second apply to still fail on bad file")
 	}
-	if n != 0 {
-		t.Fatalf("retry applied %d, want 0", n)
+	if res.Applied != 0 {
+		t.Fatalf("retry applied %d, want 0", res.Applied)
 	}
 }
 
@@ -520,12 +520,12 @@ INSERT INTO %s (id) VALUES (1);
 			pluginVersion(plugin, f1), pluginVersion(plugin, f2))
 	})
 
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err != nil {
 		t.Fatalf("RunPluginFS: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("applied %d, want 2", n)
+	if res.Applied != 2 {
+		t.Fatalf("applied %d, want 2", res.Applied)
 	}
 
 	// After both files, another session must acquire the same advisory lock immediately
@@ -583,13 +583,13 @@ func TestRunPluginFS_ConcurrentNoDoubleApply(t *testing.T) {
 	)
 	run := func(db *sql.DB) {
 		defer wg.Done()
-		n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+		res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
-		applied += n
+		applied += res.Applied
 	}
 
 	wg.Add(2)
@@ -621,12 +621,12 @@ func TestRunPluginFS_CtxCancelDuringSQL(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err == nil {
 		t.Fatal("expected context cancellation during SQL")
 	}
-	if n != 0 {
-		t.Fatalf("applied %d, want 0 (tx rolled back)", n)
+	if res.Applied != 0 {
+		t.Fatalf("applied %d, want 0 (tx rolled back)", res.Applied)
 	}
 	var recorded int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
@@ -662,12 +662,12 @@ func TestRunPluginFS_IgnoresNonSQLAlongsideValid(t *testing.T) {
 		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", pluginVersion(plugin, basename))
 	})
 
-	n, err := RunPluginFS(ctx, db, plugin, os.DirFS(dir), "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, os.DirFS(dir), "migrations")
 	if err != nil {
 		t.Fatalf("RunPluginFS: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("applied %d, want 1", n)
+	if res.Applied != 1 {
+		t.Fatalf("applied %d, want 1", res.Applied)
 	}
 }
 
@@ -807,12 +807,12 @@ func TestRunPluginFS_EndInSQLRejectedBeforeApply(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 
-	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	res, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
 	if err == nil {
 		t.Fatal("run 2 must still error — file remains pending")
 	}
-	if n != 0 {
-		t.Fatalf("run 2 applied %d, want 0", n)
+	if res.Applied != 0 {
+		t.Fatalf("run 2 applied %d, want 0", res.Applied)
 	}
 	var recorded int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
@@ -820,6 +820,314 @@ func TestRunPluginFS_EndInSQLRejectedBeforeApply(t *testing.T) {
 	}
 	if recorded != 0 {
 		t.Fatal("version must not be recorded when END is rejected at load time")
+	}
+}
+
+func TestRunPluginFS_AdoptBareVersions(t *testing.T) {
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "adopt-" + suffix
+	basename := fmt.Sprintf("001_legacy_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_adopt_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a prior RunFS apply: bare basename recorded + table exists.
+	if _, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (id INT)", table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, basename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+	})
+
+	// SQL would fail if re-executed (table already exists, no IF NOT EXISTS).
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+	}
+	res, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{basename},
+	})
+	if err != nil {
+		t.Fatalf("AdoptBareBasenames: %v", err)
+	}
+	if res.Applied != 0 || res.Adopted != 1 {
+		t.Fatalf("applied=%d adopted=%d, want applied=0 adopted=1", res.Applied, res.Adopted)
+	}
+
+	var recorded bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if !recorded {
+		t.Fatalf("missing adopted version %s", version)
+	}
+
+	// Idempotent: second call skips.
+	res, err = RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{basename},
+	})
+	if err != nil {
+		t.Fatalf("second adopt: %v", err)
+	}
+	if res.Applied != 0 || res.Adopted != 0 {
+		t.Fatalf("second applied=%d adopted=%d, want 0/0", res.Applied, res.Adopted)
+	}
+}
+
+func TestRunPluginFS_RejectsUnknownAdoptBasename(t *testing.T) {
+	ctx := context.Background()
+	// Non-nil db so a nil-db check reordered ahead of allowlist validation
+	// cannot mask a missing-basename failure (ensureTable never runs).
+	db, err := sql.Open("pgx", "postgres://invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	fsys := fstest.MapFS{
+		"migrations/001_ok.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
+	}
+	_, err = RunPluginFSOptions(ctx, db, "ok-plugin", fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{"001_missing.sql"},
+	})
+	if err == nil {
+		t.Fatal("expected error for AdoptBareBasenames entry missing from FS")
+	}
+	if !strings.Contains(err.Error(), "001_missing.sql") {
+		t.Fatalf("error = %v, want missing basename", err)
+	}
+}
+
+func TestRunPluginFS_AdoptAllowlistOnly(t *testing.T) {
+	// Bare row for a non-allowlisted basename must not be adopted — SQL runs and fails.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "noadopt-" + suffix
+	basename := fmt.Sprintf("001_collide_%s.sql", suffix)
+	other := fmt.Sprintf("002_listed_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_noadopt_%s", suffix)
+	tableOther := fmt.Sprintf("pr1085_listed_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (id INT)", table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, basename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + tableOther)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2 OR version = $3",
+			basename, version, pluginVersion(plugin, other))
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+		"migrations/" + other: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", tableOther)),
+		},
+	}
+	_, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{other}, // collide basename not listed
+	})
+	if err == nil {
+		t.Fatal("expected SQL re-exec failure when bare row is not allowlisted")
+	}
+}
+
+func TestRunPluginFS_AdoptFlagOffReexecutes(t *testing.T) {
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "flagoff-" + suffix
+	basename := fmt.Sprintf("001_flagoff_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_flagoff_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (id INT)", table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, basename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+	}
+	_, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	if err == nil {
+		t.Fatal("expected failure when AdoptBareBasenames is empty and bare row exists")
+	}
+}
+
+func TestRunPluginFS_MixedAdoptSkipApply(t *testing.T) {
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "mixed-" + suffix
+	b1 := fmt.Sprintf("001_a_%s.sql", suffix)
+	b2 := fmt.Sprintf("002_b_%s.sql", suffix)
+	b3 := fmt.Sprintf("003_c_%s.sql", suffix)
+	t1 := fmt.Sprintf("pr1085_m1_%s", suffix)
+	t2 := fmt.Sprintf("pr1085_m2_%s", suffix)
+	t3 := fmt.Sprintf("pr1085_m3_%s", suffix)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (id INT); CREATE TABLE %s (id INT)", t1, t2)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1), ($2)`, b1, pluginVersion(plugin, b2)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + t1)
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + t2)
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + t3)
+		for _, v := range []string{b1, b2, b3, pluginVersion(plugin, b1), pluginVersion(plugin, b2), pluginVersion(plugin, b3)} {
+			_, _ = db.Exec(`DELETE FROM schema_migrations WHERE version = $1`, v)
+		}
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + b1: &fstest.MapFile{Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", t1))},
+		"migrations/" + b2: &fstest.MapFile{Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", t2))},
+		"migrations/" + b3: &fstest.MapFile{Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", t3))},
+	}
+	res, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{b1, b2, b3},
+	})
+	if err != nil {
+		t.Fatalf("mixed: %v", err)
+	}
+	if res.Adopted != 1 || res.Applied != 1 {
+		t.Fatalf("adopted=%d applied=%d, want adopted=1 applied=1 (002 skipped)", res.Adopted, res.Applied)
+	}
+}
+
+func TestRunPluginFS_FreshApplyDualWritesBare(t *testing.T) {
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "dual-" + suffix
+	basename := fmt.Sprintf("001_dual_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_dual_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+	}
+	res, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{basename},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("applied=%d, want 1", res.Applied)
+	}
+	var bare, namespaced int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, basename).Scan(&bare); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&namespaced); err != nil {
+		t.Fatal(err)
+	}
+	if bare != 1 || namespaced != 1 {
+		t.Fatalf("bare=%d namespaced=%d, want both 1 (rollback-safe dual-write)", bare, namespaced)
+	}
+}
+
+func TestRunPluginFS_ConcurrentAdopt(t *testing.T) {
+	ctx := context.Background()
+	suffix := uniqueSuffix()
+	plugin := "concadopt-" + suffix
+	basename := fmt.Sprintf("001_ca_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_ca_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	dbA := openPluginTestDB(t)
+	dbB := openPluginTestDB(t)
+	if err := ensureTable(dbA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbA.Exec(fmt.Sprintf("CREATE TABLE %s (id INT)", table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbA.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, basename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = dbA.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = dbA.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+	}
+	opts := PluginFSOptions{AdoptBareBasenames: []string{basename}}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var adopted, applied int
+	var firstErr error
+	run := func(db *sql.DB) {
+		defer wg.Done()
+		res, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", opts)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		adopted += res.Adopted
+		applied += res.Applied
+	}
+	wg.Add(2)
+	go run(dbA)
+	go run(dbB)
+	wg.Wait()
+	if firstErr != nil {
+		t.Fatal(firstErr)
+	}
+	if adopted != 1 || applied != 0 {
+		t.Fatalf("adopted=%d applied=%d, want 1/0", adopted, applied)
 	}
 }
 
@@ -843,11 +1151,11 @@ func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
 	})
 
 	body := fmt.Sprintf("CREATE TABLE %s (id int); END;", table)
-	applied, err := applyPluginFile(ctx, db, plugin, version, body, time.Second)
+	outcome, err := applyPluginFile(ctx, db, plugin, basename, version, body, PluginFSOptions{LockWait: time.Second}, nil)
 	if err == nil {
 		t.Fatal("expected runtime error when END ends the transaction")
 	}
-	if applied {
+	if outcome != fileSkipped {
 		t.Fatal("must not report applied")
 	}
 	if !strings.Contains(err.Error(), "ended the transaction") {
@@ -860,6 +1168,103 @@ func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
 	}
 	if recorded != 0 {
 		t.Fatal("stale claim must be cleared so the file stays pending")
+	}
+}
+
+func TestApplyPluginFile_ProbeErrorDoesNotDeletePeerClaim(t *testing.T) {
+	// Connection loss after successful SQL must not DELETE a version row a peer
+	// just committed (Finding 1). The probe aborts A's tx (releasing the claim
+	// row lock), inserts a peer claim, then returns a check error — the old
+	// clearPluginVersionClaim path would DELETE that peer row.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	peer := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "probeerr-" + suffix
+	basename := fmt.Sprintf("001_probe_%s.sql", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		afterPluginMigrationSQL = nil
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	afterPluginMigrationSQL = func(_ context.Context, tx *sql.Tx) (bool, error) {
+		_ = tx.Rollback()
+		if _, err := peer.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+			t.Errorf("peer claim insert: %v", err)
+		}
+		return false, errors.New("simulated connection loss")
+	}
+
+	outcome, err := applyPluginFile(ctx, db, plugin, basename, version, "SELECT 1;", PluginFSOptions{LockWait: time.Second}, nil)
+	if err == nil {
+		t.Fatal("expected error after probe failure")
+	}
+	if outcome != fileSkipped {
+		t.Fatal("must not report applied")
+	}
+	if !strings.Contains(err.Error(), "lost transaction after SQL") {
+		t.Fatalf("error = %v, want lost transaction after SQL", err)
+	}
+	if strings.Contains(err.Error(), "ended the transaction") {
+		t.Fatalf("must not mis-report COMMIT/END path: %v", err)
+	}
+
+	var recorded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 1 {
+		t.Fatalf("peer claim count = %d, want 1 (DELETE must not run on probe error)", recorded)
+	}
+}
+
+func TestRunPluginFS_LockWaitExpiresWhilePeerApplies(t *testing.T) {
+	// Documents Finding 2: a short LockWait loses to a healthy peer running
+	// long SQL. Production B2B uses DefaultPluginLockWait (5m) for this reason.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	peerDB := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "lockrace-" + suffix
+	basename := fmt.Sprintf("001_sleep_%s.sql", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{Data: []byte("SELECT pg_sleep(1);")},
+	}
+
+	holderDone := make(chan error, 1)
+	go func() {
+		_, err := RunPluginFSOptions(context.Background(), db, plugin, fsys, "migrations", PluginFSOptions{
+			LockWait: time.Second,
+		})
+		holderDone <- err
+	}()
+
+	// Let the holder claim the lock and enter pg_sleep.
+	time.Sleep(100 * time.Millisecond)
+
+	_, err := RunPluginFSOptions(ctx, peerDB, plugin, fsys, "migrations", PluginFSOptions{
+		LockWait: 200 * time.Millisecond,
+	})
+	if !errors.Is(err, ErrMigrationLockHeld) {
+		t.Fatalf("waiter error = %v, want ErrMigrationLockHeld", err)
+	}
+
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder: %v", err)
 	}
 }
 
