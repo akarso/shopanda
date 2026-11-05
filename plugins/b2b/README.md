@@ -80,9 +80,13 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 ### Schema migrations (PR-1085)
 
-`Init` applies embedded SQL through `migrate.RunPluginFS` with plugin name `shopanda/b2b`. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table (one transaction + advisory lock per file).
+`Init` applies embedded SQL through `migrate.RunPluginFS` with plugin name `shopanda/b2b`. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table. Each file uses its own transaction; the advisory lock key is per plugin and is taken for that file only (released between files so 003/004 lock-splitting still works).
 
-Shops that previously applied B2B via `RunFS` (bare basename keys) are remapped in place: when a bare row exists and the namespaced key does not, the namespaced key is inserted under the same lock **without** re-executing DDL. Do not rename existing `migrations/*.sql` files — that would desync tracking.
+**Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back past PR-1085 on a database that first booted after it is unsupported for any file that exists only as a namespaced key. Do not rename existing `migrations/*.sql` files — that would desync tracking.
+
+**Reset:** delete both `plugin:shopanda/b2b:*` and the bare `001`–`004` rows (and drop the B2B tables if you intend to re-run DDL). Deleting only namespaced rows re-adopts from bare and skips SQL.
+
+**Boot lock:** `Init` waits up to 30s per file (2 minutes overall) for the migrate lock. `ErrMigrationLockHeld` fails Init — see RUNBOOK.
 
 Customer groups and group-aware pricing ship in this plugin. Quotes, PO, and approvals remain planned. B2B PR tags live on the `dev` branch under `docs/phase-5-maturity/ROADMAP.md`.
 

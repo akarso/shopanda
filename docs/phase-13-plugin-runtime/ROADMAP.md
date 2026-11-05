@@ -60,7 +60,7 @@ After the gate:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1084 | `RunPluginFS` + lock + namespaced versions | **done** — New runner: record `plugin:{name}:{basename}`; **one transaction + xact lock per file** (PgBouncer-safe; preserves 003/004 lock splits); claim-then-exec; strict name charset; plugin filename hygiene. Existing `Run` / `RunFS` unchanged. |
-| PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareVersions` remaps every embedded basename that already has a bare-key row (not a hard-coded 001/002 list) under the same per-file lock/tx. |
+| PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareBasenames` remaps the frozen legacy set (001–004) under the same per-file lock/tx; dual-writes bare keys on fresh apply of that set. |
 | PR-1086 | `RegisterMigrations` + `app migrate` | Plugins register an `embed.FS` during `Init`. `app migrate` applies core dir then every registered plugin FS (same lock/namespace as 1084). `Init` stays an idempotent safety net. Document the deploy order. |
 
 ---
@@ -104,7 +104,7 @@ After the gate:
 | PR | Track | License | One-liner |
 | --- | --- | --- | --- |
 | 1084 | A | [oss] | **done** — Namespaced plugin migrate runner + advisory lock |
-| 1085 | A | [oss] | **done** — B2B uses runner; backfill old version keys |
+| 1085 | A | [oss] | **done** — B2B uses runner; adopt frozen bare basenames |
 | 1086 | A | [oss] | `RegisterMigrations` + `app migrate` applies plugin SQL |
 | 1087 | B | [oss] | Manual sync trigger + `Enqueue` + queue bind |
 | 1088 | B | [oss] | SDK, docs, example, plugins report |
