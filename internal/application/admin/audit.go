@@ -17,6 +17,7 @@ const (
 	AuditOrderRead         AuditAction = "order.read"
 	AuditOrderUpdate       AuditAction = "order.update"
 	AuditOrderStatusChange AuditAction = "order.status_change"
+	AuditShipmentUpdate    AuditAction = "shipment.update"
 
 	// Future actions (for extensibility)
 	AuditProductCreate AuditAction = "product.create"

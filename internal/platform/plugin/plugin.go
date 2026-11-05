@@ -103,6 +103,9 @@ type App struct {
 	integrationOrderStatus   extapi.IntegrationOrderStatusUpdater
 	integrationOrderStatusMu sync.Mutex
 
+	integrationShipmentStatus   extapi.IntegrationShipmentStatusUpdater
+	integrationShipmentStatusMu sync.Mutex
+
 	integrationStockSync   extapi.IntegrationStockSyncer
 	integrationStockSyncMu sync.Mutex
 

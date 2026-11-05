@@ -30,11 +30,12 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-853 | F | [oss] | done | [Reference port replacement](PR-853.md) |
 | PR-854 | — | [oss] | done | [Checkout step positioning](PR-854.md) |
 | PR-855 | — | [oss] | done | [Phase 8 closure (docs)](PR-855.md) |
+| PR-1400 | — | [oss] | done | [Shipment status (integration + admin)](PR-1400.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../../guides/INTEGRATOR_PLATFORM.md`](../../guides/INTEGRATOR_PLATFORM.md) · Upstream: [Phase 7](../../phase-7-customization-platform/ROADMAP.md)
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 
-**Phase 8 complete** (PR-800–854; tracks A–F + post-phase checkout positioning).
+**Phase 8 complete** (PR-800–854; tracks A–F + post-phase checkout positioning). PR-1400 is a post-closure follow-on for shipment fulfillment inbound + admin.
 
 Individual PR spec files (`PR-812.md`, …) are added when implementation starts.

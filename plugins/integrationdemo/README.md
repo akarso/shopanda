@@ -1,10 +1,10 @@
 # Integration demo reference plugin
 
-Reference integrator plugin for Phase 8 Track D (PR-833). Demonstrates:
+Reference integrator plugin for Phase 8 Track D (PR-833) and PR-1400. Demonstrates:
 
 - `RegisterSecureRoute` with API key + optional HMAC
 - `Idempotency-Key` safe ERP retries (when API wires the Postgres idempotency store)
-- Thin handler → `extapi.IntegrationOrderStatusUpdater` (no direct Postgres imports)
+- Thin handlers → `extapi.IntegrationOrderStatusUpdater` / `IntegrationShipmentStatusUpdater` (no direct Postgres imports)
 
 ## Enable
 
@@ -23,7 +23,9 @@ SHOPANDA_PLUGINS_INTEGRATIONDEMO_ENABLED=true
 SHOPANDA_PLUGINS_INTEGRATIONDEMO_INTEGRATION_API_KEY=change-me
 ```
 
-## Route
+## Routes
+
+### Order status
 
 ```http
 POST /api/v1/integrations/integrationdemo/order-status
@@ -72,4 +74,27 @@ Supported status values: domain statuses (`confirmed`, `paid`, …) or ERP codes
 
 Repeating the same request with the same `Idempotency-Key` replays the first response (`X-Idempotency-Replayed: true`).
 
-Use this plugin as a template for inbound ERP callbacks — copy patterns, do not import this package from production plugins.
+### Shipment status (PR-1400)
+
+```http
+POST /api/v1/integrations/integrationdemo/shipment-status
+X-Integration-Key: change-me
+Idempotency-Key: wh-callback-001
+Content-Type: application/json
+```
+
+```json
+{
+  "order_id": "ord_abc123",
+  "status": "SHIPPED",
+  "tracking_number": "1Z999",
+  "provider_ref": "carrier-job-42",
+  "external_ref": "WH-90001"
+}
+```
+
+Supported statuses: `shipped` (tracking required), `delivered`, `cancelled` (or `SHIPPED` / `DELIVERED` / `CANCELLED`). Response key: `shipment_status`.
+
+`external_ref` is echoed on the response only — it is not persisted. Concurrent update races return **409** `shipment.conflict` (rotate `Idempotency-Key` after 5xx; 409 is safe to retry with a new key after re-reading state). Missing tracking on ship is **400** `shipment.invalid_payload`. Already-shipped retries with the same tracking are idempotent even if `provider_ref` is omitted; a different tracking (or conflicting non-empty `provider_ref`) is **422** `shipment.invalid_transition`. Cancel is irreversible for the order (unique shipment row; no reopen API).
+
+Use this plugin as a template for inbound ERP/warehouse callbacks — copy patterns, do not import this package from production plugins.

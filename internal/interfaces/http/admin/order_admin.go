@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/admin"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	shippingapp "github.com/akarso/shopanda/internal/application/shipping"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -24,6 +25,7 @@ type OrderAdminHandler struct {
 	auditor    *admin.Auditor
 	validator  admin.OrderValidator
 	bus        *event.Bus
+	shipments  *shippingapp.StatusService
 }
 
 // NewOrderAdminHandler creates an OrderAdminHandler.

@@ -232,6 +232,16 @@ Use these transitions consistently:
 - move to `cancelled` when the order should not be fulfilled
 - move to `failed` when checkout or payment did not complete successfully
 
+### Update shipment / tracking
+
+On the order detail **Shipping** panel (when checkout created a shipment):
+
+- **Mark shipped** — enter a tracking number (required) and optional provider reference; customer can receive the shipped email
+- **Mark delivered** — after shipped
+- **Cancel shipment** — only while still pending; **irreversible** for that order (no re-ship / reopen in the product — a misclick needs database repair)
+
+Digital orders that skipped shipping show “No shipment”. Warehouse systems can push the same transitions via the `integrationdemo` shipment-status route when that plugin is enabled.
+
 ### Issue refunds
 
 On the order detail page, open the **Refund** section when the payment provider supports online refunds (Stripe).

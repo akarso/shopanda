@@ -29,9 +29,13 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if cfg.IntegrationAPIKey == "" {
 		return fmt.Errorf("integrationdemo plugin: integration_api_key is required")
 	}
-	updater := app.IntegrationOrderStatusUpdater()
-	if updater == nil {
+	orderUpdater := app.IntegrationOrderStatusUpdater()
+	if orderUpdater == nil {
 		return fmt.Errorf("integrationdemo plugin: order status updater not configured")
+	}
+	shipmentUpdater := app.IntegrationShipmentStatusUpdater()
+	if shipmentUpdater == nil {
+		return fmt.Errorf("integrationdemo plugin: shipment status updater not configured")
 	}
 
 	replay := integrationhttp.NewMemoryReplayStore()
@@ -41,13 +45,18 @@ func (p *Plugin) Init(app *plugin.App) error {
 		ReplayStore: replay,
 		PluginSlug:  RouteSlug,
 	}
-	handler := NewOrderStatusHandler(updater, app.Logger)
-	if err := app.Integration(RouteSlug).RegisterSecureRoute("POST", RouteOrderStatus, auth, handler); err != nil {
+	orderHandler := NewOrderStatusHandler(orderUpdater, app.Logger)
+	if err := app.Integration(RouteSlug).RegisterSecureRoute("POST", RouteOrderStatus, auth, orderHandler); err != nil {
 		return fmt.Errorf("integrationdemo plugin: register order-status route: %w", err)
 	}
+	shipmentHandler := NewShipmentStatusHandler(shipmentUpdater, app.Logger)
+	if err := app.Integration(RouteSlug).RegisterSecureRoute("POST", RouteShipmentStatus, auth, shipmentHandler); err != nil {
+		return fmt.Errorf("integrationdemo plugin: register shipment-status route: %w", err)
+	}
 	if app.Logger != nil {
-		app.Logger.Info("integrationdemo plugin: inbound order-status route registered", map[string]interface{}{
-			"route": fmt.Sprintf("POST /api/v1/integrations/%s/%s", RouteSlug, RouteOrderStatus),
+		app.Logger.Info("integrationdemo plugin: inbound routes registered", map[string]interface{}{
+			"order_status":    fmt.Sprintf("POST /api/v1/integrations/%s/%s", RouteSlug, RouteOrderStatus),
+			"shipment_status": fmt.Sprintf("POST /api/v1/integrations/%s/%s", RouteSlug, RouteShipmentStatus),
 		})
 	}
 	return nil
