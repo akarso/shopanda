@@ -273,4 +273,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
 | [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform | Shipped |
-| **Phase 8** | **Integrator platform** | **Shipped (PR-800–854; tracks A–F complete)** |
+| **Phase 8** | **Integrator platform** | **Shipped (PR-800–854; tracks A–F complete)**; post-closure **PR-1400** shipment status inbound + admin |

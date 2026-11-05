@@ -11097,7 +11097,7 @@
                     '<h3>Items</h3>' + itemsHtml +
                     '<p><strong>Total:</strong> ' + formatMoney(Number(order.total_amount || 0), order.currency) + '</p>' +
                     '<h3>Shipping</h3>' +
-                    '<p>Shipping details are not available in the current order payload.</p>' +
+                    '<div id="order-shipment-panel">Loading shipment…</div>' +
                     '<h3>Payment & Refund</h3>' +
                     '<div id="order-refund-panel"></div>' +
                     '<h3>Invoices</h3>' +
@@ -11105,6 +11105,7 @@
                     '<div id="order-download-grants-panel"></div>' +
                     '</article>';
 
+                mountOrderShipmentPanel(document.getElementById("order-shipment-panel"), order.id, msg);
                 mountOrderRefundPanel(document.getElementById("order-refund-panel"), order);
                 mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
                 mountOrderDownloadGrantsPanel(document.getElementById("order-download-grants-panel"), order.id);
@@ -11145,6 +11146,119 @@
             return ["paid", "cancelled"];
         }
         return [];
+    }
+
+    function mountOrderShipmentPanel(mountEl, orderID, msgEl) {
+        if (!mountEl) {
+            return;
+        }
+        function renderShipment(sh) {
+            if (!sh) {
+                mountEl.innerHTML = "<p>No shipment for this order (digital or not created).</p>";
+                return;
+            }
+            var html = '<p><strong>Status:</strong> <span class="badge badge-' + esc(sh.status || "") + '">' + esc(sh.status || "") + "</span></p>" +
+                "<p><strong>Method:</strong> " + esc(sh.method || "") + "</p>";
+            if (sh.tracking_number) {
+                html += "<p><strong>Tracking:</strong> " + esc(sh.tracking_number) + "</p>";
+            }
+            if (sh.provider_ref) {
+                html += "<p><strong>Provider ref:</strong> " + esc(sh.provider_ref) + "</p>";
+            }
+            if (sh.status === "pending") {
+                html += '<form id="order-shipment-ship-form">' +
+                    '<label>Tracking number <input name="tracking_number" required autocomplete="off"></label> ' +
+                    '<label>Provider ref <input name="provider_ref" autocomplete="off"></label> ' +
+                    '<button type="submit">Mark shipped</button></form>' +
+                    '<p class="hint">Cancel is permanent for this order (no re-ship without database repair).</p>' +
+                    '<form id="order-shipment-cancel-form" style="margin-top:0.5rem">' +
+                    '<button type="submit">Cancel shipment</button></form>';
+            } else if (sh.status === "shipped") {
+                html += '<form id="order-shipment-deliver-form">' +
+                    '<button type="submit">Mark delivered</button></form>';
+            } else if (sh.status === "cancelled") {
+                html += "<p>Shipment cancelled — cannot re-ship this order.</p>";
+            }
+            mountEl.innerHTML = html;
+
+            function putStatus(body, submitBtn) {
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                }
+                return api("/admin/orders/" + encodeURIComponent(orderID) + "/shipment", {
+                    method: "PUT",
+                    body: JSON.stringify(body)
+                }).then(function (resp) {
+                    if (resp && resp.error) {
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                        }
+                        if (msgEl) {
+                            msgEl.innerHTML = '<p role="alert">' + esc(resp.error.message || "Failed to update shipment") + "</p>";
+                        }
+                        return;
+                    }
+                    if (msgEl) {
+                        msgEl.innerHTML = "<p>Shipment updated.</p>";
+                    }
+                    loadShipment();
+                }).catch(function () {
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                    }
+                    if (msgEl) {
+                        msgEl.innerHTML = '<p role="alert">Failed to update shipment.</p>';
+                    }
+                });
+            }
+
+            var shipForm = document.getElementById("order-shipment-ship-form");
+            if (shipForm) {
+                shipForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    putStatus({
+                        status: "shipped",
+                        tracking_number: shipForm.elements.tracking_number.value,
+                        provider_ref: shipForm.elements.provider_ref.value
+                    }, shipForm.querySelector('button[type="submit"]'));
+                });
+            }
+            var deliverForm = document.getElementById("order-shipment-deliver-form");
+            if (deliverForm) {
+                deliverForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    putStatus({ status: "delivered" }, deliverForm.querySelector('button[type="submit"]'));
+                });
+            }
+            var cancelForm = document.getElementById("order-shipment-cancel-form");
+            if (cancelForm) {
+                cancelForm.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    if (!window.confirm("Cancel this shipment permanently? You cannot mark it shipped again for this order.")) {
+                        return;
+                    }
+                    putStatus({ status: "cancelled" }, cancelForm.querySelector('button[type="submit"]'));
+                });
+            }
+        }
+
+        function loadShipment() {
+            api("/admin/orders/" + encodeURIComponent(orderID) + "/shipment").then(function (res) {
+                if (res && res.error) {
+                    if (res.error.code === "not_found") {
+                        renderShipment(null);
+                        return;
+                    }
+                    mountEl.innerHTML = '<p role="alert">' + esc((res.error && res.error.message) || "Failed to load shipment.") + "</p>";
+                    return;
+                }
+                renderShipment(res && res.data && res.data.shipment);
+            }).catch(function () {
+                mountEl.innerHTML = '<p role="alert">Failed to load shipment.</p>';
+            });
+        }
+
+        loadShipment();
     }
 
     function derivePaymentStatus(orderStatus) {

@@ -27,6 +27,9 @@ const JobTypeEmailSend = "email.send"
 // KindOrderConfirmed is the notification_dedupe kind for paid-order emails.
 const KindOrderConfirmed = "order_confirmed"
 
+// KindOrderShipped is the notification_dedupe kind for shipment.shipped emails.
+const KindOrderShipped = "order_shipped"
+
 // EmailDedupeStore claims one send per (subject_key, kind) so confirmation
 // dedupe does not depend on queue-driver job-id primary-key behavior.
 type EmailDedupeStore interface {
@@ -73,7 +76,8 @@ func WithPDFRenderer(r invoice.PDFRenderer) Option {
 }
 
 // WithEmailDedupe sets the persistent send claim store used by
-// enqueueEmailOnce when a subject/kind key is provided (order confirmation).
+// enqueueEmailOnce when a subject/kind key is provided (order confirmation,
+// order shipped).
 func WithEmailDedupe(store EmailDedupeStore) Option {
 	return func(s *Service) { s.dedupe = store }
 }
@@ -523,6 +527,14 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		s.log.Error("HandleShipmentShipped.order_not_found", err, map[string]interface{}{"order_id": data.OrderID})
 		return err
 	}
+	if o.Status() == order.OrderStatusCancelled || o.Status() == order.OrderStatusFailed {
+		s.log.Info("HandleShipmentShipped.skipped_order_not_fulfillable", map[string]interface{}{
+			"order_id":    data.OrderID,
+			"shipment_id": data.ShipmentID,
+			"status":      string(o.Status()),
+		})
+		return nil
+	}
 
 	recipient, err := s.resolveOrderRecipient(ctx, o, "HandleShipmentShipped")
 	if err != nil {
@@ -550,12 +562,21 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return fmt.Errorf("notification: render template: %w", err)
 	}
 
-	return s.enqueueEmail(ctx, msg, "HandleShipmentShipped", map[string]interface{}{
+	// Persistent dedupe + stable job id so MarkShipped heal republish cannot double-send.
+	return s.enqueueEmailOnce(ctx, msg, orderShippedJobID(data.ShipmentID), "HandleShipmentShipped", map[string]interface{}{
 		"order_id":    data.OrderID,
 		"shipment_id": data.ShipmentID,
 		"customer_id": o.CustomerID,
 		"guest":       recipient.Guest,
-	})
+	}, data.ShipmentID, KindOrderShipped)
+}
+
+// orderShippedJobID returns a stable UUID v5-shaped id for one shipped email per shipment.
+func orderShippedJobID(shipmentID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.order_shipped:" + strings.TrimSpace(shipmentID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
+	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // HandleInvoiceCreated is an event handler for invoice.created.
