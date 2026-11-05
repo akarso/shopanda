@@ -891,7 +891,8 @@ func TestHandleShipmentShipped(t *testing.T) {
 		},
 	}
 
-	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	dedupe := &mockDedupe{}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithEmailDedupe(dedupe))
 	evt := event.New(shipping.EventShipmentShipped, "core.shipping", shipping.ShipmentStatusChangedData{
 		ShipmentID:     "ship-1",
 		OrderID:        "ord-1",
@@ -914,6 +915,50 @@ func TestHandleShipmentShipped(t *testing.T) {
 	}
 	if subj, _ := job.Payload["subject"].(string); subj == "" {
 		t.Error("payload.subject is empty")
+	}
+
+	// Heal republish must not double-enqueue.
+	if err := svc.HandleShipmentShipped(context.Background(), evt); err != nil {
+		t.Fatalf("second HandleShipmentShipped: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected still 1 enqueued job after heal, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleShipmentShipped_SkipsCancelledOrder(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	item, err := order.NewItem("v1", "SKU", "Item", 1, shared.MustNewMoney(100, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &o, nil
+			}
+			return nil, nil
+		},
+	}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, ordRepo, q)
+	evt := event.New(shipping.EventShipmentShipped, "core.shipping", shipping.ShipmentStatusChangedData{
+		ShipmentID: "ship-1",
+		OrderID:    "ord-1",
+	})
+	if err := svc.HandleShipmentShipped(context.Background(), evt); err != nil {
+		t.Fatalf("HandleShipmentShipped: %v", err)
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected no email for cancelled order, got %d", len(q.enqueued))
 	}
 }
 

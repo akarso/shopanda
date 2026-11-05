@@ -39,6 +39,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/notification"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/application/pluginreport"
+	shippingApp "github.com/akarso/shopanda/internal/application/shipping"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
@@ -278,6 +279,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo).WithEventBus(bus)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
+	shipmentStatusService := shippingApp.NewStatusService(repos.shippingRepo).
+		WithOrders(repos.orderRepo).
+		WithEventBus(bus).
+		WithLogger(log)
+	pluginApp.SetIntegrationShipmentStatusUpdater(plugin.NewIntegrationShipmentStatusUpdater(shipmentStatusService))
 	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo, conn)
 	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAllContext(initCtx, pluginApp)
@@ -891,7 +897,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
 	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService).
-		WithEventBus(bus)
+		WithEventBus(bus).
+		WithShipmentStatusService(shipmentStatusService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)

@@ -22,7 +22,7 @@ Historical design dumps (pricing pipeline, foundation, checkout workflow, Phase 
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
-| §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status plugin (PR-830–833) |
+| §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status (PR-830–833) + shipment-status (PR-1400) |
 | §7 Outbound integration | **Done** — sync jobs, client SDK, warehouse + PIM reference plugins (PR-840–843) |
 | §8 Wiring ergonomics | **Shipped** — plugin SDK, registration report, replace-by-name, reference port replacement (PR-850–853) |
 | §10 Validation | **Achieved** — acceptance criteria met via reference plugins + CLI (PR-800–854) |
@@ -191,7 +191,7 @@ Core importer calls the chain **after** header validation, **before** repository
 
 ## 6) Inbound integration (ERP → Shopanda)
 
-**Goal:** SAP (or any ERP) pushes order status, inventory, or master data via REST without editing `cmd/api/main.go`.
+**Goal:** SAP (or any ERP/warehouse) pushes order status, shipment/tracking updates, inventory, or master data via REST without editing `cmd/api/main.go`.
 
 ### Surfaces
 
@@ -213,7 +213,7 @@ Core importer calls the chain **after** header validation, **before** repository
 4. **Structured errors:** `{ "error": "code", "message": "…", "details": {} }` — ERP-parseable
 5. **Audit:** integration writes log plugin name + idempotency key (no secrets)
 
-Reference plugin: accept SAP IDoc-shaped JSON (simplified) → update order status.
+Reference plugin (`integrationdemo`): accept SAP IDoc-shaped JSON (simplified) → update order status; accept flat JSON → update shipment status (`shipped`/`delivered`/`cancelled`) via `extapi.IntegrationShipmentStatusUpdater` (PR-1400). Admin can also update shipment status on the order detail page.
 
 ---
 

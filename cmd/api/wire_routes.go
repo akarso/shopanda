@@ -225,6 +225,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(rt.orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(rt.orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(rt.orderAdmin.Update()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}/shipment", requireOrdersRead(rt.orderAdmin.GetShipment()))
+	router.Handle("PUT /api/v1/admin/orders/{orderId}/shipment", requireOrdersWrite(rt.orderAdmin.UpdateShipment()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}/download-grants", requireDownloadsRead(rt.downloadGrantAdmin.ListByOrder()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}/invoices", requireInvoicesRead(rt.invoiceAdmin.ListByOrder()))
 	router.Handle("GET /api/v1/admin/invoices/{invoiceId}/pdf", requireInvoicesRead(rt.invoiceAdmin.DownloadPDF()))
