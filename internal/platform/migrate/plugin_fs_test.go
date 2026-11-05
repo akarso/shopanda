@@ -883,6 +883,22 @@ func TestRunPluginFS_AdoptBareVersions(t *testing.T) {
 	}
 }
 
+func TestRunPluginFS_RejectsUnknownAdoptBasename(t *testing.T) {
+	ctx := context.Background()
+	fsys := fstest.MapFS{
+		"migrations/001_ok.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
+	}
+	_, err := RunPluginFSOptions(ctx, nil, "ok-plugin", fsys, "migrations", PluginFSOptions{
+		AdoptBareBasenames: []string{"001_missing.sql"},
+	})
+	if err == nil {
+		t.Fatal("expected error for AdoptBareBasenames entry missing from FS")
+	}
+	if !strings.Contains(err.Error(), "001_missing.sql") {
+		t.Fatalf("error = %v, want missing basename", err)
+	}
+}
+
 func TestRunPluginFS_AdoptAllowlistOnly(t *testing.T) {
 	// Bare row for a non-allowlisted basename must not be adopted — SQL runs and fails.
 	ctx := context.Background()
@@ -890,7 +906,9 @@ func TestRunPluginFS_AdoptAllowlistOnly(t *testing.T) {
 	suffix := uniqueSuffix()
 	plugin := "noadopt-" + suffix
 	basename := fmt.Sprintf("001_collide_%s.sql", suffix)
+	other := fmt.Sprintf("002_listed_%s.sql", suffix)
 	table := fmt.Sprintf("pr1085_noadopt_%s", suffix)
+	tableOther := fmt.Sprintf("pr1085_listed_%s", suffix)
 	version := pluginVersion(plugin, basename)
 
 	if err := ensureTable(db); err != nil {
@@ -904,16 +922,21 @@ func TestRunPluginFS_AdoptAllowlistOnly(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
-		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + tableOther)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2 OR version = $3",
+			basename, version, pluginVersion(plugin, other))
 	})
 
 	fsys := fstest.MapFS{
 		"migrations/" + basename: &fstest.MapFile{
 			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
 		},
+		"migrations/" + other: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", tableOther)),
+		},
 	}
 	_, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
-		AdoptBareBasenames: []string{"001_other.sql"}, // basename not listed
+		AdoptBareBasenames: []string{other}, // collide basename not listed
 	})
 	if err == nil {
 		t.Fatal("expected SQL re-exec failure when bare row is not allowlisted")

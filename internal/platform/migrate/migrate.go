@@ -122,6 +122,10 @@ func RunPluginFSOptions(ctx context.Context, db *sql.DB, pluginName string, fsys
 		return result, fmt.Errorf("migrate: plugin %s: %w", name, err)
 	}
 
+	if err := validateAdoptBareBasenames(opts.AdoptBareBasenames, files); err != nil {
+		return result, fmt.Errorf("migrate: plugin %s: %w", name, err)
+	}
+
 	if db == nil {
 		return result, fmt.Errorf("migrate: plugin %s: database is required", name)
 	}
@@ -164,6 +168,28 @@ func bareAdoptSet(names []string) map[string]struct{} {
 		set[n] = struct{}{}
 	}
 	return set
+}
+
+// validateAdoptBareBasenames requires every allowlisted basename to exist in
+// the loaded plugin FS so a typo cannot silently disable adopt for that file.
+func validateAdoptBareBasenames(allowlist []string, files []migrationFile) error {
+	if len(allowlist) == 0 {
+		return nil
+	}
+	present := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		present[f.name] = struct{}{}
+	}
+	var missing []string
+	for _, name := range allowlist {
+		if _, ok := present[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("AdoptBareBasenames entries not found in plugin migrations: %s", strings.Join(missing, ", "))
 }
 
 func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, basename, version, content string, opts PluginFSOptions, adoptSet map[string]struct{}) (outcome fileOutcome, err error) {

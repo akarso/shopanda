@@ -60,7 +60,7 @@ After the gate:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1084 | `RunPluginFS` + lock + namespaced versions | **done** — New runner: record `plugin:{name}:{basename}`; **one transaction + xact lock per file** (PgBouncer-safe; preserves 003/004 lock splits); claim-then-exec; strict name charset; plugin filename hygiene. Existing `Run` / `RunFS` unchanged. |
-| PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareBasenames` remaps the frozen legacy set (001–004) under the same per-file lock/tx; dual-writes bare keys on fresh apply of that set. |
+| PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareBasenames` remaps the frozen legacy set (001–004) under the same per-file lock/tx; dual-writes bare keys on fresh apply; allowlist must match the embed FS; lock wait only (no DDL wall-clock cap). |
 | PR-1086 | `RegisterMigrations` + `app migrate` | Plugins register an `embed.FS` during `Init`. `app migrate` applies core dir then every registered plugin FS (same lock/namespace as 1084). `Init` stays an idempotent safety net. Document the deploy order. |
 
 ---

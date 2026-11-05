@@ -82,11 +82,11 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 `Init` applies embedded SQL through `migrate.RunPluginFS` with plugin name `shopanda/b2b`. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table. Each file uses its own transaction; the advisory lock key is per plugin and is taken for that file only (released between files so 003/004 lock-splitting still works).
 
-**Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back past PR-1085 on a database that first booted after it is unsupported for any file that exists only as a namespaced key. Do not rename existing `migrations/*.sql` files — that would desync tracking.
+**Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key (those basenames are reserved in global `schema_migrations`) so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back a release does not undo that release’s schema. Do not rename existing `migrations/*.sql` files — that would desync tracking.
 
 **Reset:** delete both `plugin:shopanda/b2b:*` and the bare `001`–`004` rows (and drop the B2B tables if you intend to re-run DDL). Deleting only namespaced rows re-adopts from bare and skips SQL.
 
-**Boot lock:** `Init` waits up to 30s per file (2 minutes overall) for the migrate lock. `ErrMigrationLockHeld` fails Init — see RUNBOOK.
+**Boot lock:** `Init` waits up to 30s **per file for the advisory lock only**; DDL itself is not wall-clock capped. `ErrMigrationLockHeld` fails Init — a peer restart during a long first-boot migration is expected; see RUNBOOK.
 
 Customer groups and group-aware pricing ship in this plugin. Quotes, PO, and approvals remain planned. B2B PR tags live on the `dev` branch under `docs/phase-5-maturity/ROADMAP.md`.
 

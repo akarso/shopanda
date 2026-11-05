@@ -29,6 +29,13 @@ func MigrationBasenamesForTest() ([]string, error) {
 // PluginNameForTest returns the stable plugin name / migrate namespace.
 func PluginNameForTest() string { return pluginName }
 
+// LegacyBareMigrationBasenamesForTest returns a copy of the frozen adopt allowlist.
+func LegacyBareMigrationBasenamesForTest() []string {
+	out := make([]string, len(legacyBareMigrationBasenames))
+	copy(out, legacyBareMigrationBasenames)
+	return out
+}
+
 // NewAdminHandlersForTest exposes newAdminHandlers for wiring unit tests.
 func NewAdminHandlersForTest(
 	boot *plugin.Bootstrap,
