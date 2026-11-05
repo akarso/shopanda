@@ -80,7 +80,7 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 ### Schema migrations (PR-1085)
 
-B2B implements `plugin.Migrator` once (`Migrations()` returns the embed FS + adopt options). `app migrate` / `setup` apply that FS after core migrations **without** calling `Init`. `InitAll` applies the same specs before `Init` when `Bootstrap.DB` is set (boot safety net). Versions are `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table. Each file uses its own transaction; the advisory lock key is per plugin and is taken for that file only (released between files so 003/004 lock-splitting still works).
+B2B implements `plugin.Migrator` once (`Migration()` returns the embed FS + adopt options). `app migrate` / `setup` apply that FS after core migrations **without** calling `Init` (and without a license check — schema is separate from enabling the commercial module). `InitAll` applies the same spec before `Init` when `Bootstrap.DB` is set; a Migrator failure fails `serve` (and worker/scheduler). Direct `Init` without prior migrate/`InitAll` does not create tables. Versions are `plugin:shopanda/b2b:{basename}`. Each file uses its own transaction; the advisory lock key is per plugin (released between files so 003/004 lock-splitting still works).
 
 **Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key (those basenames are reserved in global `schema_migrations`) so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back a release does not undo that release’s schema. Do not rename existing `migrations/*.sql` files — that would desync tracking.
 

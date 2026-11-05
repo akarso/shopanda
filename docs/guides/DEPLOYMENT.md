@@ -845,7 +845,7 @@ If you use S3-compatible storage, rely on bucket-level lifecycle and backup poli
 
 ### Migration filename policy
 
-`app migrate` / `setup` apply core SQL under `migrations/`, then every `plugin.Migrator` FS from the compile-time plugin set (no `Init`, no broker/Redis requirement). Boot `InitAll` applies the same specs before each plugin `Init` when a DB is available. Keys are `plugin:{name}:{basename}`. Do **not** rename recorded plugin basenames — that desyncs `schema_migrations` the same way renaming a core file would.
+`app migrate` / `setup` apply core SQL under `migrations/`, then every `plugin.Migrator` FS from the compile-time plugin set (no `Init`, no broker/Redis requirement). Boot `InitAll` on `serve` / worker / scheduler applies the same specs before each plugin `Init` when a DB is available; a Migrator failure stops those processes. Short-lived CLIs skip that apply (`SkipPluginMigrations`). Keys are `plugin:{name}:{basename}`. Do **not** rename recorded plugin basenames.
 
 Migrations under `migrations/` are plain, forward-only SQL files applied in filename order — there is no golang-migrate/goose (or similar) tool and **no down migrations**. Rollback means **restore from a backup** (see above), not reversing a migration.
 

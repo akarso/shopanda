@@ -33,12 +33,8 @@ type migrationPlugin struct {
 
 func (p *migrationPlugin) Name() string { return p.name }
 
-func (p *migrationPlugin) Migrations() []plugin.MigrationSpec {
-	return []plugin.MigrationSpec{{
-		FS:      p.fsys,
-		Dir:     p.dir,
-		Options: p.opts,
-	}}
+func (p *migrationPlugin) Migration() plugin.MigrationSpec {
+	return plugin.MigrationSpec{FS: p.fsys, Dir: p.dir, Options: p.opts}
 }
 
 func (p *migrationPlugin) Init(*plugin.App) error {
@@ -51,6 +47,16 @@ type plainPlugin struct{ name string }
 func (p *plainPlugin) Name() string           { return p.name }
 func (p *plainPlugin) Init(*plugin.App) error { return nil }
 
+type panickingMigrator struct{}
+
+func (p *panickingMigrator) Name() string { return "shopanda/panic-mig" }
+func (p *panickingMigrator) Init(*plugin.App) error {
+	return nil
+}
+func (p *panickingMigrator) Migration() plugin.MigrationSpec {
+	panic("migrations boom")
+}
+
 func TestCollectMigrations_SkipsNonMigrators(t *testing.T) {
 	log := migrationTestLogger()
 	reg := plugin.NewRegistry(log)
@@ -60,7 +66,7 @@ func TestCollectMigrations_SkipsNonMigrators(t *testing.T) {
 		fsys: fstest.MapFS{"migrations/001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
 		dir:  "migrations",
 	})
-	regs, err := reg.CollectMigrations(&plugin.App{})
+	regs, err := reg.CollectMigrations(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,27 +75,41 @@ func TestCollectMigrations_SkipsNonMigrators(t *testing.T) {
 	}
 }
 
-func TestCollectMigrations_RejectsEmptySpec(t *testing.T) {
-	log := migrationTestLogger()
-	reg := plugin.NewRegistry(log)
-	reg.Register(&emptyMigratorPlugin{})
-	_, err := reg.CollectMigrations(&plugin.App{})
-	if err == nil {
-		t.Fatal("expected error for empty Migrator")
+func TestCollectMigrations_DoesNotCallInit(t *testing.T) {
+	p := &migrationPlugin{
+		name: "shopanda/noinit",
+		fsys: fstest.MapFS{"migrations/001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
+		dir:  "migrations",
+	}
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(p)
+	if _, err := reg.CollectMigrations(nil); err != nil {
+		t.Fatal(err)
+	}
+	if p.initRan {
+		t.Fatal("CollectMigrations must not call Init")
 	}
 }
 
-type emptyMigratorPlugin struct{}
-
-func (p *emptyMigratorPlugin) Name() string                       { return "shopanda/empty" }
-func (p *emptyMigratorPlugin) Init(*plugin.App) error             { return nil }
-func (p *emptyMigratorPlugin) Migrations() []plugin.MigrationSpec { return nil }
+func TestCollectMigrations_RecoversPanic(t *testing.T) {
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(&panickingMigrator{})
+	_, err := reg.CollectMigrations(nil)
+	if err == nil {
+		t.Fatal("expected panic to become error")
+	}
+	if !strings.Contains(err.Error(), "shopanda/panic-mig") {
+		t.Fatalf("error = %v, want plugin name", err)
+	}
+	if !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("error = %v, want panic", err)
+	}
+}
 
 func TestCollectMigrations_RejectsNilFS(t *testing.T) {
-	log := migrationTestLogger()
-	reg := plugin.NewRegistry(log)
+	reg := plugin.NewRegistry(migrationTestLogger())
 	reg.Register(&nilFSMigrator{})
-	_, err := reg.CollectMigrations(&plugin.App{})
+	_, err := reg.CollectMigrations(nil)
 	if err == nil {
 		t.Fatal("expected error for nil FS")
 	}
@@ -97,67 +117,68 @@ func TestCollectMigrations_RejectsNilFS(t *testing.T) {
 
 type nilFSMigrator struct{}
 
-func (p *nilFSMigrator) Name() string { return "shopanda/nilfs" }
-func (p *nilFSMigrator) Init(*plugin.App) error {
-	return nil
-}
-func (p *nilFSMigrator) Migrations() []plugin.MigrationSpec {
-	return []plugin.MigrationSpec{{Dir: "migrations"}}
+func (p *nilFSMigrator) Name() string           { return "shopanda/nilfs" }
+func (p *nilFSMigrator) Init(*plugin.App) error { return nil }
+func (p *nilFSMigrator) Migration() plugin.MigrationSpec {
+	return plugin.MigrationSpec{Dir: "migrations"}
 }
 
-func TestApplyMigrationRegistrations_StopsOnError(t *testing.T) {
-	dsn := os.Getenv("SHOPANDA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SHOPANDA_TEST_DSN not set")
-	}
-	dbConn, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = dbConn.Close() })
-	if err := dbConn.Ping(); err != nil {
-		t.Fatal(err)
-	}
-
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	okName := "shopanda/ok-" + suffix
-	badName := "shopanda/bad-" + suffix
-	okTable := "pr1086_ok_" + suffix
-	okVersion := "plugin:" + okName + ":001_ok.sql"
-	t.Cleanup(func() {
-		_, _ = dbConn.Exec("DROP TABLE IF EXISTS " + okTable)
-		_, _ = dbConn.Exec("DELETE FROM schema_migrations WHERE version = $1", okVersion)
+func TestCollectMigrations_DependsOnSortError(t *testing.T) {
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(&migrationPlugin{
+		name: "shopanda/a",
+		fsys: fstest.MapFS{"migrations/001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
+		dir:  "migrations",
 	})
-
-	regs := []plugin.MigrationRegistration{
-		{
-			PluginName: okName,
-			FS: fstest.MapFS{
-				"migrations/001_ok.sql": &fstest.MapFile{Data: []byte("CREATE TABLE " + okTable + " (id int);")},
-			},
-			Dir: "migrations",
-		},
-		{
-			PluginName: badName,
-			FS: fstest.MapFS{
-				"migrations/001_bad.sql": &fstest.MapFile{Data: []byte("SELECT 1/0;")},
-			},
-			Dir: "migrations",
-		},
-	}
-	_, err = plugin.ApplyMigrationRegistrations(context.Background(), dbConn, migrationTestLogger(), regs)
+	reg.Register(&migrationPlugin{
+		name: "shopanda/b",
+		fsys: fstest.MapFS{"migrations/001_b.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
+		dir:  "migrations",
+	})
+	_, err := reg.CollectMigrations(map[string][]string{
+		"shopanda/a": {"shopanda/b"},
+		"shopanda/b": {"shopanda/a"},
+	})
 	if err == nil {
-		t.Fatal("expected error from second registration")
+		t.Fatal("expected depends_on cycle error")
 	}
-	if !strings.Contains(err.Error(), badName) {
-		t.Fatalf("error = %v, want plugin name %s", err, badName)
+}
+
+func TestInitAll_RecoversMigratorPanic(t *testing.T) {
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(&panickingMigrator{})
+	app := &plugin.App{
+		Logger:    migrationTestLogger(),
+		Bootstrap: &plugin.Bootstrap{DB: &sql.DB{}}, // non-nil triggers apply; Migration() panics first
 	}
-	var n int
-	if err := dbConn.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = $1`, okTable).Scan(&n); err != nil {
-		t.Fatal(err)
+	summary := reg.InitAll(app)
+	if summary.MigrateFailed != 1 || summary.Failed != 1 {
+		t.Fatalf("InitAll summary = %+v, want MigrateFailed=1", summary)
 	}
-	if n != 1 {
-		t.Fatalf("first plugin table missing after stop-on-error")
+	entries := reg.Entries()
+	if len(entries) != 1 || entries[0].State != plugin.StateFailed {
+		t.Fatalf("Entries() = %+v, want failed", entries)
+	}
+}
+
+func TestInitAll_SkipPluginMigrations(t *testing.T) {
+	p := &migrationPlugin{
+		name: "shopanda/skip",
+		fsys: fstest.MapFS{
+			"migrations/001_x.sql": &fstest.MapFile{Data: []byte("SELECT 1/0;")},
+		},
+		dir: "migrations",
+	}
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(p)
+	app := &plugin.App{
+		Logger:               migrationTestLogger(),
+		SkipPluginMigrations: true,
+		Bootstrap:            &plugin.Bootstrap{DB: &sql.DB{}},
+	}
+	summary := reg.InitAll(app)
+	if summary.Failed != 0 || !p.initRan {
+		t.Fatalf("summary=%+v initRan=%v", summary, p.initRan)
 	}
 }
 
@@ -207,7 +228,7 @@ func TestInitAll_AppliesMigratorBeforeInit(t *testing.T) {
 		t.Fatal("Init was not called")
 	}
 	var n int
-	if err := dbConn.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = $1`, table).Scan(&n); err != nil {
+	if err := dbConn.QueryRow(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`, table).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -227,18 +248,51 @@ func TestInitAll_AppliesMigratorBeforeInit(t *testing.T) {
 	}
 }
 
-func TestCollectMigrations_DoesNotCallInit(t *testing.T) {
-	p := &migrationPlugin{
-		name: "shopanda/noinit",
-		fsys: fstest.MapFS{"migrations/001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
-		dir:  "migrations",
+func TestApplyMigrationRegistrations_StopsOnError(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
 	}
-	reg := plugin.NewRegistry(migrationTestLogger())
-	reg.Register(p)
-	if _, err := reg.CollectMigrations(&plugin.App{}); err != nil {
+	dbConn, err := sql.Open("pgx", dsn)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if p.initRan {
-		t.Fatal("CollectMigrations must not call Init")
+	t.Cleanup(func() { _ = dbConn.Close() })
+	if err := dbConn.Ping(); err != nil {
+		t.Fatal(err)
+	}
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	okName := "shopanda/ok-" + suffix
+	badName := "shopanda/bad-" + suffix
+	okTable := "pr1086_ok_" + suffix
+	okVersion := "plugin:" + okName + ":001_ok.sql"
+	t.Cleanup(func() {
+		_, _ = dbConn.Exec("DROP TABLE IF EXISTS " + okTable)
+		_, _ = dbConn.Exec("DELETE FROM schema_migrations WHERE version = $1", okVersion)
+	})
+
+	regs := []plugin.MigrationRegistration{
+		{
+			PluginName: okName,
+			FS: fstest.MapFS{
+				"migrations/001_ok.sql": &fstest.MapFile{Data: []byte("CREATE TABLE " + okTable + " (id int);")},
+			},
+			Dir: "migrations",
+		},
+		{
+			PluginName: badName,
+			FS: fstest.MapFS{
+				"migrations/001_bad.sql": &fstest.MapFile{Data: []byte("SELECT 1/0;")},
+			},
+			Dir: "migrations",
+		},
+	}
+	_, err = plugin.ApplyMigrationRegistrations(context.Background(), dbConn, migrationTestLogger(), regs)
+	if err == nil {
+		t.Fatal("expected error from second registration")
+	}
+	if !strings.Contains(err.Error(), badName) {
+		t.Fatalf("error = %v, want plugin name %s", err, badName)
 	}
 }

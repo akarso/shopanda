@@ -110,9 +110,9 @@ Available today through `plugin.App`:
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
-| **Plugin schema** | `plugin.Migrator` (`Migrations() []MigrationSpec`) | Embedded SQL collected **without** `Init` by `app migrate` / `setup`, and applied by `InitAll` before `Init` when `Bootstrap.DB` is set (PR-1086). Versions are `plugin:{Name()}:{basename}`. Set `Options.AdoptBareBasenames` only for a frozen legacy allowlist. |
+| **Plugin schema** | `plugin.Migrator` (`Migration() MigrationSpec`) | One embed FS per plugin. Collected **without** `Init` by `app migrate` / `setup`; applied by `InitAll` before `Init` when `Bootstrap.DB` is set (PR-1086). Versions are `plugin:{Name()}:{basename}`. Set `Options.AdoptBareBasenames` only for a frozen legacy allowlist. |
 
-**Plugin-owned tables:** implement `plugin.Migrator` once (FS + dir + options). Do not also call `migrate.RunPluginFS` from `Init` — the registry applies the same specs on boot. Operators run `app migrate` (or `setup`) before processes start; that path never calls `InitAll` (no brokers/licenses). Do not use raw `migrate.RunFS` for plugin SQL (shared basename namespace, no lock).
+**Plugin-owned tables:** implement `plugin.Migrator` once. Do not call `migrate.RunPluginFS` from `Init` — `InitAll` applies the same spec on boot (unless `App.SkipPluginMigrations`). Prefer `app migrate` / `setup` before processes start; that path never calls `InitAll`. Calling `Init` directly does **not** create tables — use `InitAll` with `Bootstrap.DB`, or run migrate first. Do not use raw `migrate.RunFS` (shared basename namespace, no lock).
 
 **Infrastructure providers** (typed ports on `plugin.App`; wrong types fail at compile time):
 

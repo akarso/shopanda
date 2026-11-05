@@ -284,6 +284,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 			rbac.UnbindRuntime()
 		}
 	}()
+	if summary.MigrateFailed > 0 {
+		return nil, fmt.Errorf("plugin migrate failed: %d plugin(s) failed schema apply (see plugin.init.failed logs)", summary.MigrateFailed)
+	}
 	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
@@ -295,9 +298,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	plugin.LogStartup(log, registry, cfg)
 	pluginreport.LogSummary(log, pluginreport.Build(registry, pluginApp, cfg))
 	log.Info("plugin.init.summary", map[string]interface{}{
-		"registered":  summary.Registered,
-		"initialized": summary.Initialized,
-		"failed":      summary.Failed,
+		"registered":     summary.Registered,
+		"initialized":    summary.Initialized,
+		"failed":         summary.Failed,
+		"migrate_failed": summary.MigrateFailed,
 	})
 
 	adminRoleService := adminroleApp.NewService(repos.rolePermRepo, permReg)

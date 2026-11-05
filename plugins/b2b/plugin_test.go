@@ -122,9 +122,12 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 	rbac.BindRuntime(app.PermissionRegistry())
 	t.Cleanup(rbac.UnbindRuntime)
 
-	specs := b2b.New().Migrations()
-	if len(specs) != 1 || specs[0].Dir != "migrations" || specs[0].FS == nil {
-		t.Fatalf("Migrations() = %+v, want one embed spec", specs)
+	spec := b2b.New().Migration()
+	if spec.Dir != "migrations" || spec.FS == nil {
+		t.Fatalf("Migration() = %+v, want embed spec", spec)
+	}
+	if len(spec.Options.AdoptBareBasenames) != 4 {
+		t.Fatalf("AdoptBareBasenames = %v, want 4", spec.Options.AdoptBareBasenames)
 	}
 
 	if !rbac.HasPermission(identity.RoleAdmin, b2b.PermissionGroupsRead) {

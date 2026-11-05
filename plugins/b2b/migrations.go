@@ -41,14 +41,14 @@ func migrationOptions() migrate.PluginFSOptions {
 
 var _ plugin.Migrator = (*Plugin)(nil)
 
-// Migrations implements plugin.Migrator. Declared once for migrate CLI and
+// Migration implements plugin.Migrator. Declared once for migrate CLI and
 // InitAll (applied before Init when Bootstrap.DB is set).
-func (p *Plugin) Migrations() []plugin.MigrationSpec {
-	return []plugin.MigrationSpec{{
+func (p *Plugin) Migration() plugin.MigrationSpec {
+	return plugin.MigrationSpec{
 		FS:      migrationFiles,
 		Dir:     "migrations",
 		Options: migrationOptions(),
-	}}
+	}
 }
 
 // RunMigrationsForTest applies embedded B2B migrations (integration tests only).

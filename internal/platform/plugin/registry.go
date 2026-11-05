@@ -19,9 +19,10 @@ const (
 
 // InitSummary reports the outcome of InitAll.
 type InitSummary struct {
-	Registered  int
-	Initialized int
-	Failed      int
+	Registered    int
+	Initialized   int
+	Failed        int
+	MigrateFailed int // Migrator apply failures (subset of Failed)
 }
 
 // Entry tracks a registered plugin and its lifecycle state.
@@ -99,40 +100,59 @@ func (r *Registry) CLIRegistry() *cli.Registry {
 }
 
 // InitAll initializes all loaded plugins by calling Init(app).
-// Plugins that fail initialization (including panics) are marked as failed and skipped.
-// Returns an InitSummary describing the outcome.
+// When Bootstrap.DB is set and SkipPluginMigrations is false, each Migrator's
+// SQL runs before Init (panics in Migration() are recovered). Plugins that
+// fail are marked failed and skipped. Returns an InitSummary describing the outcome.
 func (r *Registry) InitAll(app *App) InitSummary {
 	if app == nil {
 		panic("plugin: app must not be nil")
 	}
 	app.configRegistry = r.configRegistry
-	entries := r.orderedEntries(app)
-	summary := InitSummary{Registered: len(entries)}
+	var depends map[string][]string
+	if app.Config != nil {
+		depends = app.Config.Plugins.DependsOn
+	}
+	entries, sortErr := r.orderedEntries(depends)
+	if sortErr != nil {
+		r.log.Error("plugin.depends_on.sort_failed", sortErr, nil)
+		entries = r.entries
+	}
+	summary := InitSummary{Registered: len(r.entries)}
 	ctx := context.Background()
+	if app.MigrationCtx != nil {
+		ctx = app.MigrationCtx
+	}
 	for i := range entries {
 		e := &entries[i]
-		if e.State != StateLoaded {
+		// Resolve the live registry entry so State updates persist under depends_on sorts.
+		live := r.entryByName(e.Name)
+		if live == nil || live.State != StateLoaded {
 			continue
 		}
-		name := e.Name
+		name := live.Name
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
-		if err := applyPluginMigrator(ctx, app, name, e.Plugin); err != nil {
-			e.State = StateFailed
-			e.Err = err
+		if err := applyPluginMigrator(ctx, app, name, live.Plugin); err != nil {
+			live.State = StateFailed
+			live.Err = err
 			summary.Failed++
+			summary.MigrateFailed++
+			cause := "migrate"
+			if _, ok := err.(*panicError); ok {
+				cause = "panic"
+			}
 			r.log.Error("plugin.init.failed", err, map[string]interface{}{
 				"plugin": name,
-				"cause":  "migrate",
+				"cause":  cause,
 			})
 			continue
 		}
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
-		if err := r.safeInit(e, app); err != nil {
-			e.State = StateFailed
-			e.Err = err
+		if err := r.safeInit(live, app); err != nil {
+			live.State = StateFailed
+			live.Err = err
 			summary.Failed++
 			cause := "error"
 			if _, ok := err.(*panicError); ok {
@@ -145,7 +165,7 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			continue
 		}
 		r.cliRegistry.Merge(stagingCLI)
-		e.State = StateActive
+		live.State = StateActive
 		summary.Initialized++
 		r.log.Info("plugin.init.complete", map[string]interface{}{
 			"plugin": name,
@@ -153,6 +173,15 @@ func (r *Registry) InitAll(app *App) InitSummary {
 	}
 	app.cliRegistry = r.cliRegistry
 	return summary
+}
+
+func (r *Registry) entryByName(name string) *Entry {
+	for i := range r.entries {
+		if r.entries[i].Name == name {
+			return &r.entries[i]
+		}
+	}
+	return nil
 }
 
 // panicError wraps a recovered panic value.

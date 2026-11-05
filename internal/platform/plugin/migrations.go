@@ -11,7 +11,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
 
-// MigrationSpec is one SQL filesystem owned by a plugin.
+// MigrationSpec is the SQL filesystem owned by a Migrator plugin.
+// One spec per plugin — basenames share the plugin:{name}: namespace.
 type MigrationSpec struct {
 	FS      fs.FS
 	Dir     string
@@ -20,10 +21,10 @@ type MigrationSpec struct {
 
 // Migrator is an optional Plugin interface. Implement it to declare plugin-owned
 // SQL without Init side effects. app migrate / setup collect Migrator specs
-// without calling Init; InitAll applies them (when Bootstrap.DB is set) before
-// Init so tables exist for repo wiring.
+// without calling Init; InitAll applies them (when Bootstrap.DB is set and
+// SkipPluginMigrations is false) before Init so tables exist for repo wiring.
 type Migrator interface {
-	Migrations() []MigrationSpec
+	Migration() MigrationSpec
 }
 
 // MigrationRegistration is a named MigrationSpec ready to apply.
@@ -34,8 +35,8 @@ type MigrationRegistration struct {
 	Options    migrate.PluginFSOptions
 }
 
-// PluginMigrateResult aggregates RunPluginFS outcomes across plugins.
-type PluginMigrateResult struct {
+// MigrateResult aggregates RunPluginFS outcomes across plugins.
+type MigrateResult struct {
 	Applied int
 	Adopted int
 }
@@ -66,59 +67,62 @@ func migrationRegistration(pluginName string, spec MigrationSpec) (MigrationRegi
 	}, nil
 }
 
-// orderedEntries returns registry entries in InitAll order. When depends_on is
-// unset (or sorting fails), the returned slice shares the registry backing
-// array so InitAll state updates stick on r.entries.
-func (r *Registry) orderedEntries(app *App) []Entry {
-	entries := r.entries
-	var depends map[string][]string
-	if app != nil && app.Config != nil {
-		depends = app.Config.Plugins.DependsOn
+// migratorRegistration calls Migrator.Migration under recover and validates the
+// spec. ok is false when p is not a Migrator.
+func migratorRegistration(name string, p Plugin) (reg MigrationRegistration, ok bool, err error) {
+	m, isMigrator := p.(Migrator)
+	if !isMigrator {
+		return MigrationRegistration{}, false, nil
 	}
-	if len(depends) == 0 {
-		return entries
-	}
-	sorted, err := SortEntriesByDependsOn(entries, depends)
-	if err != nil {
-		if r != nil && r.log != nil {
-			r.log.Error("plugin.depends_on.sort_failed", err, nil)
+	ok = true
+	defer func() {
+		if rv := recover(); rv != nil {
+			err = &panicError{value: rv}
 		}
-		return entries
+	}()
+	reg, err = migrationRegistration(name, m.Migration())
+	return reg, ok, err
+}
+
+// orderedEntries returns registry entries in depends_on order.
+// When dependsOn is empty, the returned slice shares r.entries.
+// A sort error is returned to the caller (migrate must not silently reorder).
+func (r *Registry) orderedEntries(dependsOn map[string][]string) ([]Entry, error) {
+	entries := r.entries
+	if len(dependsOn) == 0 {
+		return entries, nil
 	}
-	return sorted
+	return SortEntriesByDependsOn(entries, dependsOn)
 }
 
 // CollectMigrations returns validated registrations for every Migrator plugin
-// in InitAll order. Does not call Init. Invalid or empty specs error.
-func (r *Registry) CollectMigrations(app *App) ([]MigrationRegistration, error) {
+// in depends_on order. Does not call Init. Panics inside Migration() are
+// recovered and returned as errors naming the plugin.
+func (r *Registry) CollectMigrations(dependsOn map[string][]string) ([]MigrationRegistration, error) {
 	if r == nil {
 		return nil, fmt.Errorf("plugin: registry is required")
 	}
-	entries := r.orderedEntries(app)
+	entries, err := r.orderedEntries(dependsOn)
+	if err != nil {
+		return nil, fmt.Errorf("plugin: depends_on: %w", err)
+	}
 	var out []MigrationRegistration
 	for _, e := range entries {
-		m, ok := e.Plugin.(Migrator)
+		reg, ok, regErr := migratorRegistration(e.Name, e.Plugin)
 		if !ok {
 			continue
 		}
-		specs := m.Migrations()
-		if len(specs) == 0 {
-			return nil, fmt.Errorf("plugin: %s: Migrator returned no migration specs", e.Name)
+		if regErr != nil {
+			return nil, fmt.Errorf("plugin: %s: %w", e.Name, regErr)
 		}
-		for _, spec := range specs {
-			reg, err := migrationRegistration(e.Name, spec)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, reg)
-		}
+		out = append(out, reg)
 	}
 	return out, nil
 }
 
 // ApplyMigrationRegistrations runs RunPluginFSOptions for each registration.
-func ApplyMigrationRegistrations(ctx context.Context, db *sql.DB, log logger.Logger, regs []MigrationRegistration) (PluginMigrateResult, error) {
-	var totals PluginMigrateResult
+func ApplyMigrationRegistrations(ctx context.Context, db *sql.DB, log logger.Logger, regs []MigrationRegistration) (MigrateResult, error) {
+	var totals MigrateResult
 	if db == nil {
 		return totals, fmt.Errorf("plugin: ApplyMigrations: database is required")
 	}
@@ -143,27 +147,21 @@ func ApplyMigrationRegistrations(ctx context.Context, db *sql.DB, log logger.Log
 	return totals, nil
 }
 
-// applyPluginMigrator runs Migrator specs for one plugin before Init.
+// applyPluginMigrator runs a plugin's Migrator SQL before Init.
 func applyPluginMigrator(ctx context.Context, app *App, name string, p Plugin) error {
-	m, ok := p.(Migrator)
-	if !ok {
+	if app != nil && app.SkipPluginMigrations {
 		return nil
 	}
 	if app == nil || app.Bootstrap == nil || app.Bootstrap.DB == nil {
 		return nil
 	}
-	specs := m.Migrations()
-	if len(specs) == 0 {
-		return fmt.Errorf("plugin: %s: Migrator returned no migration specs", name)
+	reg, ok, err := migratorRegistration(name, p)
+	if !ok {
+		return nil
 	}
-	var regs []MigrationRegistration
-	for _, spec := range specs {
-		reg, err := migrationRegistration(name, spec)
-		if err != nil {
-			return err
-		}
-		regs = append(regs, reg)
+	if err != nil {
+		return err
 	}
-	_, err := ApplyMigrationRegistrations(ctx, app.Bootstrap.DB, app.Logger, regs)
+	_, err = ApplyMigrationRegistrations(ctx, app.Bootstrap.DB, app.Logger, []MigrationRegistration{reg})
 	return err
 }

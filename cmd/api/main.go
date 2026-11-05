@@ -516,6 +516,9 @@ func runMigrate(cfg *config.Config, log logger.Logger) error {
 
 	pluginRes, err := applyPluginMigrations(ctx, cfg, log, conn)
 	if err != nil {
+		log.Error("migrate.plugin_failed", err, map[string]interface{}{
+			"core_applied": applied,
+		})
 		return err
 	}
 
@@ -1158,9 +1161,10 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		return nil, nil, nil, err
 	}
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+		Logger:               log,
+		Config:               cfg,
+		Bootstrap:            boot,
+		SkipPluginMigrations: true, // schema comes from app migrate / serve
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)

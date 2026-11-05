@@ -234,9 +234,10 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 		return err
 	}
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+		Logger:               log,
+		Config:               cfg,
+		Bootstrap:            boot,
+		SkipPluginMigrations: true, // schema comes from app migrate / serve
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	// PR-1049's batched-reindex wiring is deliberately not added here: this

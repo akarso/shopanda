@@ -35,9 +35,10 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 		return nil, nil, err
 	}
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+		Logger:               log,
+		Config:               cfg,
+		Bootstrap:            boot,
+		SkipPluginMigrations: true, // schema comes from app migrate / serve
 	}
 	preparePermissionRegistry(pluginApp)
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {

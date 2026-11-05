@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -48,6 +49,14 @@ type App struct {
 	Bus       *event.Bus
 	Config    *config.Config
 	Bootstrap *Bootstrap
+
+	// SkipPluginMigrations, when true, makes InitAll skip Migrator SQL apply.
+	// Use on short-lived CLI paths that already expect schema from app migrate.
+	SkipPluginMigrations bool
+
+	// MigrationCtx cancels Migrator apply during InitAll when set; otherwise
+	// InitAll uses context.Background().
+	MigrationCtx context.Context
 
 	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []checkoutStepRegistration
