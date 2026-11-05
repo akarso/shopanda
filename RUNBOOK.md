@@ -280,6 +280,7 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 - If PgBouncer (or similar) sits in front of PostgreSQL in **transaction-pooling mode**, set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Otherwise pgx defaults to server-side prepared statement caching, which does not survive that pooling mode — symptom: `prepared statement "..." already exists` / `does not exist` errors under load.
 - Leave unset for a direct connection to PostgreSQL — it trades away a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md) ("Consider connection pooling").
+- **Plugin migrations (`migrate.RunPluginFS`, PR-1084+):** each pending file runs in its **own** transaction with `pg_advisory_xact_lock` (safe under transaction pooling). The lock is held only for that file, so splits like B2B 003 (CHECK rewrite) / 004 (`VALIDATE CONSTRAINT`) still release ACCESS EXCLUSIVE between files. Top-level `BEGIN`/`COMMIT`/`ROLLBACK`/`START TRANSACTION` and `CONCURRENTLY` DDL are **rejected at load time** (a mid-file `COMMIT` would durable-claim the version while leaving later statements unapplied). Lock wait defaults to 5 minutes (`ErrMigrationLockHeld` is retryable — do not crash-loop forever without backoff).
 
 ## Catalog visibility enforcement (PR-1057)
 

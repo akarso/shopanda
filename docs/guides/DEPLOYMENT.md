@@ -815,6 +815,8 @@ For larger deployments, place PgBouncer between Shopanda and PostgreSQL, especia
 
 If PgBouncer runs in transaction-pooling mode (the common mode for this topology), set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Shopanda's driver (pgx) otherwise defaults to server-side prepared statement caching, which does not survive transaction pooling and surfaces as `prepared statement "..." already exists` / `does not exist` errors under load. Leave this unset for a direct connection to PostgreSQL — it disables a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database.
 
+Plugin-owned schema (Phase 13 `migrate.RunPluginFS`) applies **one transaction per pending file**, each taking `pg_advisory_xact_lock` for that file only. That works with PgBouncer transaction pooling and preserves intentional lock-splitting across files (e.g. B2B `003` / `004`). Plugin SQL must be valid inside a transaction block: `RunPluginFS` **rejects** top-level `BEGIN`/`COMMIT`/`ROLLBACK`/`START TRANSACTION` and `CONCURRENTLY` DDL at load time (enforced in code, not docs-only). plpgsql `BEGIN` inside `$$` … `$$` is fine. Core `migrations/` still apply one file per transaction via `migrate.Run` / `app migrate`.
+
 ### Back up the database
 
 Simple logical backup:
