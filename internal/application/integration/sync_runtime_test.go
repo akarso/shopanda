@@ -122,3 +122,32 @@ func TestRegisterSyncJobCronTriggers_RegistersSchedulerTask(t *testing.T) {
 		t.Fatalf("RegisterSyncJobCronTriggers: %v", err)
 	}
 }
+
+func TestRegisterSyncJobTriggers_SkipManual(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	queue := &memQueue{}
+	sched := cron.New(log)
+	app := &plugin.App{Logger: log, Bus: bus, Bootstrap: &plugin.Bootstrap{}}
+	job := extapi.SyncJob{
+		Name:    "webhook.ingest",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	}
+	if err := app.Integration("acme").RegisterSyncJob(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(app, bus, queue, log); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrationApp.RegisterSyncJobCronTriggers(app, queue, sched, log); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{Name: "order.created"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("manual jobs must not be auto-enqueued, got %d", len(queue.enqueued))
+	}
+}

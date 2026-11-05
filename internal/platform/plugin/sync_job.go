@@ -1,9 +1,12 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -19,6 +22,17 @@ func (i *Integration) RegisterSyncJob(job extapi.SyncJob) error {
 		return fmt.Errorf("plugin: integration app not configured")
 	}
 	return i.app.registerSyncJob(i.slug, job)
+}
+
+// Enqueue queues a previously registered sync job for this plugin slug.
+// The composition root must BindQueue the resolved jobs.Queue after InitAll.
+// Payload may be nil (stored as an empty object). The job payload trigger is
+// always "manual" so handlers can distinguish on-demand runs from cron/event.
+func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
+	if i == nil || i.app == nil {
+		return fmt.Errorf("plugin: integration app not configured")
+	}
+	return i.app.enqueueSyncJob(ctx, i.slug, name, payload)
 }
 
 func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
@@ -48,6 +62,8 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 		if eventName == "" {
 			return fmt.Errorf("plugin: sync job %q: event name required", name)
 		}
+	case extapi.SyncTriggerManual:
+		// On-demand only; no cron/event fields.
 	default:
 		return fmt.Errorf("plugin: sync job %q: unsupported trigger kind %q", name, job.Trigger.Kind)
 	}
@@ -57,6 +73,63 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 		}
 	}
 	a.syncJobs = append(a.syncJobs, reg)
+	return nil
+}
+
+func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, payload map[string]interface{}) error {
+	if a == nil {
+		return fmt.Errorf("plugin: app is nil")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin: enqueue sync job: %w", extapi.ErrSyncJobNameRequired)
+	}
+	jobType, err := extapi.SyncJobType(pluginSlug, name)
+	if err != nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
+	}
+	var reg *SyncJobRegistration
+	for i := range a.syncJobs {
+		if a.syncJobs[i].JobType == jobType {
+			reg = &a.syncJobs[i]
+			break
+		}
+	}
+	if reg == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, extapi.ErrSyncJobNotFound)
+	}
+	queue, ok := a.Queue()
+	if !ok || queue == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, extapi.ErrSyncJobQueueUnbound)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	job, err := jobs.NewJob(id.New(), reg.JobType, map[string]interface{}{
+		"plugin":  reg.PluginSlug,
+		"name":    reg.Job.Name,
+		"trigger": extapi.SyncTriggerManual,
+		"payload": payload,
+	})
+	if err != nil {
+		return err
+	}
+	if reg.Job.MaxRetries > 0 {
+		job.MaxRetries = reg.Job.MaxRetries
+	}
+	if err := queue.Enqueue(ctx, job); err != nil {
+		return err
+	}
+	if a.Logger != nil {
+		a.Logger.Info("integration.sync_job.enqueued", map[string]interface{}{
+			"job_id":   job.ID,
+			"job_type": job.Type,
+			"trigger":  extapi.SyncTriggerManual,
+		})
+	}
 	return nil
 }
 
