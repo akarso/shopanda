@@ -86,7 +86,7 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 **Reset:** delete both `plugin:shopanda/b2b:*` and the bare `001`–`004` rows (and drop the B2B tables if you intend to re-run DDL). Deleting only namespaced rows re-adopts from bare and skips SQL.
 
-**Boot lock:** `Init` waits up to 30s **per file for the advisory lock only**; DDL itself is not wall-clock capped. `ErrMigrationLockHeld` fails Init — a peer restart during a long first-boot migration is expected; see RUNBOOK.
+**Boot lock:** `Init` waits up to 5 minutes **per file for the advisory lock only** (`migrate.DefaultPluginLockWait`); DDL itself is not wall-clock capped. `ErrMigrationLockHeld` fails Init — a peer restart during a long first-boot migration is expected while the holder finishes; see RUNBOOK.
 
 Customer groups and group-aware pricing ship in this plugin. Quotes, PO, and approvals remain planned. B2B PR tags live on the `dev` branch under `docs/phase-5-maturity/ROADMAP.md`.
 

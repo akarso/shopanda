@@ -23,8 +23,13 @@ const DefaultPluginLockWait = 5 * time.Minute
 
 // ErrMigrationLockHeld means another process holds the plugin migrate lock.
 // Long-running callers may retry with backoff. Plugin Init typically fails
-// boot on this error — operators should free the stuck peer (see RUNBOOK).
+// boot on this error — wait for a peer that is still applying DDL, or raise
+// LockWait; only treat a persistently silent peer as stuck (see RUNBOOK).
 var ErrMigrationLockHeld = errors.New("migrate: migration lock held by another process")
+
+// afterPluginMigrationSQL, when non-nil, replaces the post-SQL in-transaction
+// probe. Tests only — production leaves this nil.
+var afterPluginMigrationSQL func(ctx context.Context, tx *sql.Tx) (stillInTx bool, err error)
 
 // PluginFSResult counts outcomes from RunPluginFS / RunPluginFSOptions.
 type PluginFSResult struct {
@@ -249,11 +254,10 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, basename, vers
 
 	// Defense in depth: a top-level COMMIT/END/ROLLBACK inside the file ends the
 	// server transaction early (claim may already be durable) while database/sql
-	// still believes the Tx is open. Detect that, clear the stale claim, and
-	// fail so the next boot re-attempts instead of skipping a half-migration.
-	var inTx bool
-	checkErr := tx.QueryRowContext(ctx, `SELECT pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&inTx)
-	stillInTx := checkErr == nil && inTx
+	// still believes the Tx is open. Detect that, clear the stale claim under the
+	// plugin lock, and fail so the next boot re-attempts instead of skipping a
+	// half-migration.
+	stillInTx, checkErr := probePluginTxStillOpen(ctx, tx)
 	if stillInTx {
 		if execErr != nil {
 			return fileSkipped, fmt.Errorf("migrate: plugin %s: apply %s: %w", pluginName, version, execErr)
@@ -272,13 +276,19 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, basename, vers
 		return fileApplied, nil
 	}
 
-	if execErr != nil && checkErr != nil {
-		return fileSkipped, fmt.Errorf("migrate: plugin %s: apply %s: %w", pluginName, version, execErr)
+	// Probe failed (e.g. connection drop after SQL). Do not DELETE the version
+	// row: the claim may have rolled back with this tx, and a peer may already
+	// have claimed and committed the same version under the released lock.
+	if checkErr != nil {
+		if execErr != nil {
+			return fileSkipped, fmt.Errorf("migrate: plugin %s: apply %s: %w (also lost transaction: %v)", pluginName, version, execErr, checkErr)
+		}
+		return fileSkipped, fmt.Errorf("migrate: plugin %s: apply %s: lost transaction after SQL: %w", pluginName, version, checkErr)
 	}
 
 	_ = tx.Rollback()
 	err = nil
-	clearErr := clearPluginVersionClaim(ctx, db, version)
+	clearErr := clearPluginVersionClaim(ctx, db, pluginName, version, lockWait)
 	msg := fmt.Sprintf("migrate: plugin %s: apply %s: migration SQL ended the transaction (top-level BEGIN/COMMIT/END/ROLLBACK are not allowed)", pluginName, version)
 	if execErr != nil {
 		msg = fmt.Sprintf("%s: %v", msg, execErr)
@@ -289,9 +299,37 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, basename, vers
 	return fileSkipped, errors.New(msg)
 }
 
-func clearPluginVersionClaim(ctx context.Context, db *sql.DB, version string) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version)
-	return err
+func probePluginTxStillOpen(ctx context.Context, tx *sql.Tx) (stillInTx bool, err error) {
+	if afterPluginMigrationSQL != nil {
+		return afterPluginMigrationSQL(ctx, tx)
+	}
+	var inTx bool
+	err = tx.QueryRowContext(ctx, `SELECT pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&inTx)
+	return err == nil && inTx, err
+}
+
+// clearPluginVersionClaim deletes a version row that may have been committed by
+// an early COMMIT/END inside migration SQL. It re-takes the plugin advisory
+// lock so a concurrent apply cannot interleave with the DELETE unnoticed; the
+// caller must only invoke this when the in-tx probe positively observed an
+// ended transaction (not on probe/connection errors).
+func clearPluginVersionClaim(ctx context.Context, db *sql.DB, pluginName, version string, lockWait time.Duration) error {
+	if lockWait <= 0 {
+		lockWait = DefaultPluginLockWait
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := waitPluginAdvisoryLock(ctx, tx, pluginLockKey(pluginName), lockWait); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func pluginLockKey(pluginName string) string {

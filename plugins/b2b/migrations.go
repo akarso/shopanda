@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"time"
 
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
@@ -29,9 +28,11 @@ var legacyBareMigrationBasenames = []string{
 }
 
 // initMigrateLockWait bounds how long Init waits per file for the plugin
-// migrate advisory lock. No overall deadline is applied here; the caller's
-// ctx governs DDL so large VALIDATE CONSTRAINT scans are not cancelled.
-const initMigrateLockWait = 30 * time.Second
+// migrate advisory lock. Matches DefaultPluginLockWait so a peer running a
+// long VALIDATE CONSTRAINT (or similar) does not cause crash-loops while the
+// lock holder is healthy. No overall DDL deadline is applied here; the
+// caller's ctx governs statement cancellation.
+const initMigrateLockWait = migrate.DefaultPluginLockWait
 
 func runPluginMigrations(ctx context.Context, db *sql.DB) (migrate.PluginFSResult, error) {
 	var zero migrate.PluginFSResult

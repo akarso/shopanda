@@ -1171,6 +1171,103 @@ func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
 	}
 }
 
+func TestApplyPluginFile_ProbeErrorDoesNotDeletePeerClaim(t *testing.T) {
+	// Connection loss after successful SQL must not DELETE a version row a peer
+	// just committed (Finding 1). The probe aborts A's tx (releasing the claim
+	// row lock), inserts a peer claim, then returns a check error — the old
+	// clearPluginVersionClaim path would DELETE that peer row.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	peer := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "probeerr-" + suffix
+	basename := fmt.Sprintf("001_probe_%s.sql", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		afterPluginMigrationSQL = nil
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	afterPluginMigrationSQL = func(_ context.Context, tx *sql.Tx) (bool, error) {
+		_ = tx.Rollback()
+		if _, err := peer.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+			t.Errorf("peer claim insert: %v", err)
+		}
+		return false, errors.New("simulated connection loss")
+	}
+
+	outcome, err := applyPluginFile(ctx, db, plugin, basename, version, "SELECT 1;", PluginFSOptions{LockWait: time.Second}, nil)
+	if err == nil {
+		t.Fatal("expected error after probe failure")
+	}
+	if outcome != fileSkipped {
+		t.Fatal("must not report applied")
+	}
+	if !strings.Contains(err.Error(), "lost transaction after SQL") {
+		t.Fatalf("error = %v, want lost transaction after SQL", err)
+	}
+	if strings.Contains(err.Error(), "ended the transaction") {
+		t.Fatalf("must not mis-report COMMIT/END path: %v", err)
+	}
+
+	var recorded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 1 {
+		t.Fatalf("peer claim count = %d, want 1 (DELETE must not run on probe error)", recorded)
+	}
+}
+
+func TestRunPluginFS_LockWaitExpiresWhilePeerApplies(t *testing.T) {
+	// Documents Finding 2: a short LockWait loses to a healthy peer running
+	// long SQL. Production B2B uses DefaultPluginLockWait (5m) for this reason.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	peerDB := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "lockrace-" + suffix
+	basename := fmt.Sprintf("001_sleep_%s.sql", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{Data: []byte("SELECT pg_sleep(1);")},
+	}
+
+	holderDone := make(chan error, 1)
+	go func() {
+		_, err := RunPluginFSOptions(context.Background(), db, plugin, fsys, "migrations", PluginFSOptions{
+			LockWait: time.Second,
+		})
+		holderDone <- err
+	}()
+
+	// Let the holder claim the lock and enter pg_sleep.
+	time.Sleep(100 * time.Millisecond)
+
+	_, err := RunPluginFSOptions(ctx, peerDB, plugin, fsys, "migrations", PluginFSOptions{
+		LockWait: 200 * time.Millisecond,
+	})
+	if !errors.Is(err, ErrMigrationLockHeld) {
+		t.Fatalf("waiter error = %v, want ErrMigrationLockHeld", err)
+	}
+
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder: %v", err)
+	}
+}
+
 func TestRunFS_StillRecordsBareBasename(t *testing.T) {
 	db := openPluginTestDB(t)
 	suffix := uniqueSuffix()
