@@ -178,6 +178,52 @@ func TestInitAll_DependsOnSortErrorWithMigrator(t *testing.T) {
 	if summary.Initialized != 0 {
 		t.Fatalf("Initialized = %d, want 0", summary.Initialized)
 	}
+	if summary.Failed != summary.Registered {
+		t.Fatalf("Failed = %d, want Registered=%d so Failed-only callers refuse", summary.Failed, summary.Registered)
+	}
+}
+
+// No Bootstrap.DB: Migrator SQL is skipped, but a depends_on error must still
+// refuse Init so import/export/CLI callers cannot silently drop hooks.
+func TestInitAll_DependsOnSortErrorSkipsInitWithoutDB(t *testing.T) {
+	ok := &migrationPlugin{
+		name: "shopanda/b2b-like",
+		fsys: fstest.MapFS{"migrations/001_a.sql": &fstest.MapFile{Data: []byte("SELECT 1;")}},
+		dir:  "migrations",
+	}
+	hookRan := false
+	hooksOK := &initRecorder{name: "shopanda/hooks", ran: &hookRan}
+	reg := plugin.NewRegistry(migrationTestLogger())
+	reg.Register(hooksOK)
+	reg.Register(ok)
+	app := &plugin.App{
+		Logger: migrationTestLogger(),
+		Config: &config.Config{
+			Plugins: config.PluginsConfig{
+				DependsOn: map[string][]string{
+					"shopanda/hooks": {"shopanda/disabled-plugin"},
+				},
+			},
+		},
+	}
+	summary := reg.InitAll(app)
+	if summary.DependsOnErr == nil || summary.Failed == 0 || summary.Initialized != 0 {
+		t.Fatalf("summary = %+v, want DependsOnErr + Failed>0 + Initialized=0", summary)
+	}
+	if hookRan {
+		t.Fatal("Init must not run when depends_on sort fails with a Migrator registered")
+	}
+}
+
+type initRecorder struct {
+	name string
+	ran  *bool
+}
+
+func (p *initRecorder) Name() string { return p.name }
+func (p *initRecorder) Init(*plugin.App) error {
+	*p.ran = true
+	return nil
 }
 
 func TestInitAll_EntriesStateUnderDependsOn(t *testing.T) {

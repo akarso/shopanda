@@ -8,7 +8,7 @@ import (
 )
 
 // bootstrapImportRegistry loads plugins and returns the shared import row hook registry.
-func bootstrapImportRegistry(cfg *config.Config, log logger.Logger) *importctxApp.Registry {
+func bootstrapImportRegistry(cfg *config.Config, log logger.Logger) (*importctxApp.Registry, error) {
 	importRegistry := importctxApp.NewRegistry(log)
 	pluginRegistry := plugin.NewRegistry(log)
 	registerPlugins(pluginRegistry, cfg)
@@ -20,6 +20,9 @@ func bootstrapImportRegistry(cfg *config.Config, log logger.Logger) *importctxAp
 	preparePermissionRegistry(app)
 	summary := pluginRegistry.InitAll(app)
 	freezePermissionRegistry(app) // import CLI: freeze only (no BindRuntime)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return nil, err
+	}
 	if summary.Failed > 0 {
 		log.Warn("import.plugins.init", map[string]interface{}{
 			"registered":  summary.Registered,
@@ -27,5 +30,5 @@ func bootstrapImportRegistry(cfg *config.Config, log logger.Logger) *importctxAp
 			"failed":      summary.Failed,
 		})
 	}
-	return importRegistry
+	return importRegistry, nil
 }

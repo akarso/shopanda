@@ -128,7 +128,10 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 	if sortErr != nil {
 		r.log.Error("plugin.depends_on.sort_failed", sortErr, nil)
 		if hasMigrator(r.entries) {
+			// Fail closed: do not Init anyone. Failed matches Registered so
+			// callers that only check Failed still refuse to continue.
 			summary.DependsOnErr = sortErr
+			summary.Failed = summary.Registered
 			return summary
 		}
 		entries = r.entries

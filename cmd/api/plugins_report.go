@@ -16,7 +16,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
-func bootstrapPluginReport(cfg *config.Config, log logger.Logger) (*plugin.Registry, *plugin.App) {
+func bootstrapPluginReport(cfg *config.Config, log logger.Logger) (*plugin.Registry, *plugin.App, error) {
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
 	app := &plugin.App{
@@ -28,9 +28,12 @@ func bootstrapPluginReport(cfg *config.Config, log logger.Logger) (*plugin.Regis
 	app.SetImportRegistry(importctxapp.NewRegistry(log))
 	app.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(app)
-	registry.InitAll(app)
+	summary := registry.InitAll(app)
 	freezePermissionRegistry(app) // plugins report: freeze only (no BindRuntime)
-	return registry, app
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return nil, nil, err
+	}
+	return registry, app, nil
 }
 
 func runPluginsReport(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
@@ -54,7 +57,10 @@ Uses the same compile-time plugin set as the running application (no database re
 		}
 	}
 
-	registry, app := bootstrapPluginReport(cfg, log)
+	registry, app, err := bootstrapPluginReport(cfg, log)
+	if err != nil {
+		return err
+	}
 	report := pluginreport.Build(registry, app, cfg)
 	if jsonOut {
 		data, err := pluginreport.FormatJSON(report)
@@ -67,6 +73,6 @@ Uses the same compile-time plugin set as the running application (no database re
 		}
 		return err
 	}
-	_, err := fmt.Fprint(w, pluginreport.FormatText(report))
+	_, err = fmt.Fprint(w, pluginreport.FormatText(report))
 	return err
 }

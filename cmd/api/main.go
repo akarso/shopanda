@@ -82,11 +82,15 @@ func run() error {
 	// Subcommand dispatch.
 	if len(os.Args) > 1 {
 		var pluginCLIRegistry *plugin.Registry
-		pluginCLIRegistryFn := func() *plugin.Registry {
+		pluginCLIRegistryFn := func() (*plugin.Registry, error) {
 			if pluginCLIRegistry == nil {
-				pluginCLIRegistry = bootstrapPluginCLIRegistry(cfg, log)
+				reg, err := bootstrapPluginCLIRegistry(cfg, log)
+				if err != nil {
+					return nil, err
+				}
+				pluginCLIRegistry = reg
 			}
-			return pluginCLIRegistry
+			return pluginCLIRegistry, nil
 		}
 		switch os.Args[1] {
 		case "help":
@@ -255,10 +259,19 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	bootCtx, bootStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder, bootCtx)
+	bootInterrupted := errBootInterrupted(bootCtx)
 	bootStop()
 	if err != nil {
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
+	}
+	if bootInterrupted != nil {
+		shutdownTracing()
+		rbac.UnbindRuntime()
+		if rt.rateLimitClose != nil {
+			rt.rateLimitClose()
+		}
+		return bootInterrupted
 	}
 	if rt.rateLimitClose != nil {
 		defer rt.rateLimitClose()
@@ -558,12 +571,16 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	preparePermissionRegistry(pluginApp)
 	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	summary := registry.InitAllContext(initCtx, pluginApp)
+	bootInterrupted := errBootInterrupted(initCtx)
 	initStop()
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	if bootInterrupted != nil {
+		return bootInterrupted
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
@@ -749,7 +766,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.GpsrAttributesSeeder{})
 }
 
-func printHelp(cfg *config.Config, log logger.Logger, pluginCLIRegistryFn func() *plugin.Registry) {
+func printHelp(cfg *config.Config, log logger.Logger, pluginCLIRegistryFn func() (*plugin.Registry, error)) {
 	fmt.Print(appendPluginCLIHelp(pluginCLIRegistryFn, `Usage: app <command> [arguments]
 
 Commands:
@@ -1025,12 +1042,16 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	preparePermissionRegistry(pluginApp)
 	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	summary := registry.InitAllContext(initCtx, pluginApp)
+	bootInterrupted := errBootInterrupted(initCtx)
 	initStop()
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	if bootInterrupted != nil {
+		return bootInterrupted
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
