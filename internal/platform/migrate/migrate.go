@@ -43,9 +43,10 @@ var pluginNamePattern = regexp.MustCompile(`^[a-z0-9]+([_/-][a-z0-9]+)*$`)
 var concurrentDDLPattern = regexp.MustCompile(`(?is)\b(create\s+(unique\s+)?index|drop\s+index|reindex(\s+\w+)?)\s+concurrently\b`)
 
 // txnControlStatementPattern matches top-level transaction-control keywords
-// after comments and quoted strings are stripped (so plpgsql BEGIN inside $$
-// is ignored).
-var txnControlStatementPattern = regexp.MustCompile(`(?is)(?:^|;)\s*(commit|rollback|abort|begin|start\s+transaction|end\s+transaction)\b`)
+// after comments and quoted strings are stripped (so plpgsql BEGIN/END inside
+// $$ is ignored). Bare END is a COMMIT synonym in Postgres; BEGIN ATOMIC …
+// END function bodies are rejected — write those as AS $$ … $$ instead.
+var txnControlStatementPattern = regexp.MustCompile(`(?is)(?:^|;)\s*(commit(\s+and\s+chain)?|rollback(\s+and\s+chain)?|abort|begin(\s+(work|transaction|atomic))?|start\s+transaction|end(\s+(work|transaction))?)\b`)
 
 // Run applies all pending SQL migrations from dir to the database.
 func Run(db *sql.DB, dir string) (int, error) {
@@ -167,25 +168,47 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, version, conte
 		return false, fmt.Errorf("migrate: plugin %s: claim %s: %w", pluginName, version, scanErr)
 	}
 
-	if _, execErr := tx.ExecContext(ctx, content); execErr != nil {
+	_, execErr := tx.ExecContext(ctx, content)
+
+	// Defense in depth: a top-level COMMIT/END/ROLLBACK inside the file ends the
+	// server transaction early (claim may already be durable) while database/sql
+	// still believes the Tx is open. Detect that, clear the stale claim, and
+	// fail so the next boot re-attempts instead of skipping a half-migration.
+	var inTx bool
+	checkErr := tx.QueryRowContext(ctx, `SELECT pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&inTx)
+	stillInTx := checkErr == nil && inTx
+	if stillInTx {
+		if execErr != nil {
+			return false, fmt.Errorf("migrate: plugin %s: apply %s: %w", pluginName, version, execErr)
+		}
+		if err = tx.Commit(); err != nil {
+			return false, fmt.Errorf("migrate: plugin %s: commit %s: %w", pluginName, version, err)
+		}
+		return true, nil
+	}
+
+	if execErr != nil && checkErr != nil {
+		// Typical SQL failure left the Tx aborted; QueryRow cannot run. Roll back
+		// via defer — do not treat this as an early COMMIT/END.
 		return false, fmt.Errorf("migrate: plugin %s: apply %s: %w", pluginName, version, execErr)
 	}
 
-	// Defense in depth: a top-level COMMIT/ROLLBACK inside the file ends the
-	// server transaction early (claim may already be durable) while database/sql
-	// still believes the Tx is open. Refuse to Commit from a dead transaction.
-	var inTx bool
-	if checkErr := tx.QueryRowContext(ctx, `SELECT pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&inTx); checkErr != nil {
-		return false, fmt.Errorf("migrate: plugin %s: apply %s: verify transaction: %w", pluginName, version, checkErr)
+	_ = tx.Rollback()
+	err = nil // suppress deferred rollback on a finished Tx
+	clearErr := clearPluginVersionClaim(ctx, db, version)
+	msg := fmt.Sprintf("migrate: plugin %s: apply %s: migration SQL ended the transaction (top-level BEGIN/COMMIT/END/ROLLBACK are not allowed)", pluginName, version)
+	if execErr != nil {
+		msg = fmt.Sprintf("%s: %v", msg, execErr)
 	}
-	if !inTx {
-		return false, fmt.Errorf("migrate: plugin %s: apply %s: migration SQL ended the transaction (top-level BEGIN/COMMIT/ROLLBACK are not allowed)", pluginName, version)
+	if clearErr != nil {
+		return false, fmt.Errorf("%s; also failed to clear stale claim: %w", msg, clearErr)
 	}
+	return false, errors.New(msg)
+}
 
-	if err = tx.Commit(); err != nil {
-		return false, fmt.Errorf("migrate: plugin %s: commit %s: %w", pluginName, version, err)
-	}
-	return true, nil
+func clearPluginVersionClaim(ctx context.Context, db *sql.DB, version string) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version)
+	return err
 }
 
 func pluginLockKey(pluginName string) string {
@@ -312,13 +335,14 @@ func checkPluginSQLContent(name, content string) error {
 	}
 	stripped := stripSQLNoise(content)
 	if txnControlStatementPattern.MatchString(stripped) {
-		return fmt.Errorf("%q: top-level BEGIN/COMMIT/ROLLBACK/START TRANSACTION is not allowed in plugin migrations (each file runs inside a migrate transaction)", name)
+		return fmt.Errorf("%q: top-level BEGIN/COMMIT/END/ROLLBACK/START TRANSACTION is not allowed in plugin migrations (each file runs inside a migrate transaction; write BEGIN ATOMIC function bodies as AS $$ … $$)", name)
 	}
 	return nil
 }
 
-// stripSQLNoise removes -- and /* */ comments plus single-quoted and
-// dollar-quoted string literals so content checks see only statement text.
+// stripSQLNoise removes -- and /* */ comments plus single-quoted (including
+// E'…' with backslash escapes) and dollar-quoted string literals so content
+// checks see only statement text.
 func stripSQLNoise(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -341,6 +365,27 @@ func stripSQLNoise(s string) string {
 			if i+1 < len(s) {
 				i += 2
 			}
+			continue
+		}
+		// E'…' / e'…' string with backslash escapes
+		if (s[i] == 'E' || s[i] == 'e') && i+1 < len(s) && s[i+1] == '\'' {
+			i += 2
+			for i < len(s) {
+				if s[i] == '\\' && i+1 < len(s) {
+					i += 2
+					continue
+				}
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+			b.WriteByte(' ')
 			continue
 		}
 		// Single-quoted string

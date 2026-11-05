@@ -118,9 +118,13 @@ func TestRunPluginFS_RejectsTxnControl(t *testing.T) {
 		sql  string
 	}{
 		{"commit", "CREATE TABLE a_t (id int); COMMIT; CREATE TABLE b_t (id int);"},
+		{"end", "CREATE TABLE a_t (id int); END; CREATE TABLE b_t (id int);"},
+		{"end_work", "CREATE TABLE a_t (id int); END WORK;"},
+		{"end_transaction", "CREATE TABLE a_t (id int); END TRANSACTION;"},
 		{"rollback", "CREATE TABLE c_t (id int); ROLLBACK;"},
 		{"begin", "BEGIN; CREATE TABLE d_t (id int);"},
 		{"start_transaction", "START TRANSACTION; CREATE TABLE e_t (id int);"},
+		{"commit_hidden_in_e_string", `SELECT E'\''; COMMIT; SELECT 'x';`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,7 +135,7 @@ func TestRunPluginFS_RejectsTxnControl(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected transaction-control rejection")
 			}
-			if !strings.Contains(err.Error(), "BEGIN/COMMIT/ROLLBACK") {
+			if !strings.Contains(err.Error(), "BEGIN/COMMIT/END/ROLLBACK") {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -739,6 +743,9 @@ func TestRunPluginFS_CommitInSQLRejectedBeforeApply(t *testing.T) {
 	basename := "001_x.sql"
 	version := pluginVersion(plugin, basename)
 
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
 	fsys := fstest.MapFS{
 		"migrations/" + basename: &fstest.MapFile{Data: []byte(
 			"CREATE TABLE a_t_" + suffix + " (id int); COMMIT; CREATE TABLE b_t_" + suffix + " (id int); SELECT 1/0;",
@@ -754,7 +761,7 @@ func TestRunPluginFS_CommitInSQLRejectedBeforeApply(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected rejection")
 	}
-	if !strings.Contains(err.Error(), "BEGIN/COMMIT/ROLLBACK") {
+	if !strings.Contains(err.Error(), "BEGIN/COMMIT/END/ROLLBACK") {
 		t.Fatalf("error = %v", err)
 	}
 
@@ -764,6 +771,95 @@ func TestRunPluginFS_CommitInSQLRejectedBeforeApply(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatal("version must not be recorded when COMMIT is rejected at load time")
+	}
+}
+
+func TestRunPluginFS_EndInSQLRejectedBeforeApply(t *testing.T) {
+	// END is a COMMIT synonym; same half-migration hazard as COMMIT.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "endbug-" + suffix
+	basename := "001_x.sql"
+	version := pluginVersion(plugin, basename)
+	tableA := "a_end_" + suffix
+	tableB := "b_end_" + suffix
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{Data: []byte(
+			"CREATE TABLE " + tableA + " (id int); END; CREATE TABLE " + tableB + " (id int); SELECT 1/0;",
+		)},
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + tableA)
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + tableB)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	_, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	if err == nil {
+		t.Fatal("expected rejection")
+	}
+	if !strings.Contains(err.Error(), "BEGIN/COMMIT/END/ROLLBACK") {
+		t.Fatalf("error = %v", err)
+	}
+
+	n, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	if err == nil {
+		t.Fatal("run 2 must still error — file remains pending")
+	}
+	if n != 0 {
+		t.Fatalf("run 2 applied %d, want 0", n)
+	}
+	var recorded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 0 {
+		t.Fatal("version must not be recorded when END is rejected at load time")
+	}
+}
+
+func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
+	// Bypass load-time checks to exercise the runtime guard: END commits the
+	// claim, then we must DELETE it so a later RunPluginFS does not skip.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "staleclaim-" + suffix
+	basename := fmt.Sprintf("001_stale_%s.sql", suffix)
+	version := pluginVersion(plugin, basename)
+	table := "stale_" + suffix
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	body := fmt.Sprintf("CREATE TABLE %s (id int); END;", table)
+	applied, err := applyPluginFile(ctx, db, plugin, version, body, time.Second)
+	if err == nil {
+		t.Fatal("expected runtime error when END ends the transaction")
+	}
+	if applied {
+		t.Fatal("must not report applied")
+	}
+	if !strings.Contains(err.Error(), "ended the transaction") {
+		t.Fatalf("error = %v", err)
+	}
+
+	var recorded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded != 0 {
+		t.Fatal("stale claim must be cleared so the file stays pending")
 	}
 }
 
