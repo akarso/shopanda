@@ -112,12 +112,23 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		},
 	}
 	app := testApp(cfg, db)
-	if err := b2b.New().Init(app); err != nil {
-		t.Fatalf("Init() error: %v", err)
+	log := app.Logger
+	reg := plugin.NewRegistry(log)
+	reg.Register(b2b.New())
+	if summary := reg.InitAll(app); summary.Failed != 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll summary = %+v", summary)
 	}
 	app.FreezePermissionRegistry()
 	rbac.BindRuntime(app.PermissionRegistry())
 	t.Cleanup(rbac.UnbindRuntime)
+
+	spec := b2b.New().Migration()
+	if spec.Dir != "migrations" || spec.FS == nil {
+		t.Fatalf("Migration() = %+v, want embed spec", spec)
+	}
+	if len(spec.Options.AdoptBareBasenames) != 4 {
+		t.Fatalf("AdoptBareBasenames = %v, want 4", spec.Options.AdoptBareBasenames)
+	}
 
 	if !rbac.HasPermission(identity.RoleAdmin, b2b.PermissionGroupsRead) {
 		t.Fatal("expected b2b.groups.read for admin")

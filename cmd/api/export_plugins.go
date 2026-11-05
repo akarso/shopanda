@@ -8,7 +8,7 @@ import (
 )
 
 // bootstrapExportRegistry loads plugins and returns the shared export row hook registry.
-func bootstrapExportRegistry(cfg *config.Config, log logger.Logger) *exportctxApp.Registry {
+func bootstrapExportRegistry(cfg *config.Config, log logger.Logger) (*exportctxApp.Registry, error) {
 	exportRegistry := exportctxApp.NewRegistry(log)
 	pluginRegistry := plugin.NewRegistry(log)
 	registerPlugins(pluginRegistry, cfg)
@@ -20,6 +20,9 @@ func bootstrapExportRegistry(cfg *config.Config, log logger.Logger) *exportctxAp
 	preparePermissionRegistry(app)
 	summary := pluginRegistry.InitAll(app)
 	freezePermissionRegistry(app) // export CLI: freeze only (no BindRuntime)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		return nil, err
+	}
 	if summary.Failed > 0 {
 		log.Warn("export.plugins.init", map[string]interface{}{
 			"registered":  summary.Registered,
@@ -27,5 +30,5 @@ func bootstrapExportRegistry(cfg *config.Config, log logger.Logger) *exportctxAp
 			"failed":      summary.Failed,
 		})
 	}
-	return exportRegistry
+	return exportRegistry, nil
 }

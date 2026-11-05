@@ -53,6 +53,22 @@ func TestRunPluginsReport_UnknownFlag(t *testing.T) {
 	}
 }
 
+func TestRunPluginsReport_DependsOnError(t *testing.T) {
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			B2B: config.B2BPluginConfig{Enabled: true, LicenseKey: "DEV-test"},
+			DependsOn: map[string][]string{
+				"shopanda/b2b": {"shopanda/disabled-plugin"},
+			},
+		},
+	}
+	log := logger.New("error")
+	err := runPluginsReport(ioDiscardWriter{}, cfg, log, nil)
+	if err == nil || !strings.Contains(err.Error(), "depends_on") {
+		t.Fatalf("err = %v, want depends_on", err)
+	}
+}
+
 type ioDiscardWriter struct{}
 
 func (ioDiscardWriter) Write(p []byte) (int, error) { return len(p), nil }

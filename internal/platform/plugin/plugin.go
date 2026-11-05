@@ -49,6 +49,10 @@ type App struct {
 	Config    *config.Config
 	Bootstrap *Bootstrap
 
+	// PluginMigrateMode controls Migrator handling in InitAllContext.
+	// Default (zero) is PluginMigrateApply. Short-lived CLIs use PluginMigrateVerify.
+	PluginMigrateMode PluginMigrateMode
+
 	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []checkoutStepRegistration
 	compositionSteps map[string][]any

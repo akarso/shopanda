@@ -13,7 +13,7 @@ import (
 func TestRunPluginCLICommand_UnknownReturnsFalse(t *testing.T) {
 	cfg := &config.Config{}
 	log := logger.New("error")
-	ran, err := runPluginCLICommand(cfg, log, func() *plugin.Registry {
+	ran, err := runPluginCLICommand(cfg, log, func() (*plugin.Registry, error) {
 		return bootstrapPluginCLIRegistry(cfg, log)
 	}, "does-not-exist", nil)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestPluginCLIHelpLines_IncludesExampleWhenEnabled(t *testing.T) {
 		},
 	}
 	log := logger.New("error")
-	registryFn := func() *plugin.Registry {
+	registryFn := func() (*plugin.Registry, error) {
 		return bootstrapPluginCLIRegistry(cfg, log)
 	}
 	lines := pluginCLIHelpLines(registryFn)

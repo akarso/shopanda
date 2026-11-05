@@ -19,7 +19,7 @@ Each PR is tagged **`[oss]`**.
 
 | Subsystem | Today | End of this phase |
 | --- | --- | --- |
-| Plugin schema | B2B calls `migrate.RunFS` in `Init`; versions = SQL basename; no lock; not part of `app migrate` | `RunPluginFS` records `plugin:{name}:{file}`; advisory lock; B2B moved over; `RegisterMigrations` + `app migrate` applies plugin SQL |
+| Plugin schema | ~~B2B `RunFS` in `Init`~~ | `RunPluginFS` + advisory lock; `plugin.Migrator`; `app migrate` / `setup` apply without Init; InitAll applies before Init |
 | Plugin jobs | Cron or event sync only; no queue on `Bootstrap`; `OnAsync` is the escape hatch | Same job types + worker path; `manual` trigger; `Enqueue` after queue bind; SDK + docs |
 
 ---
@@ -61,7 +61,7 @@ After the gate:
 | --- | --- | --- |
 | PR-1084 | `RunPluginFS` + lock + namespaced versions | **done** — New runner: record `plugin:{name}:{basename}`; **one transaction + xact lock per file** (PgBouncer-safe; preserves 003/004 lock splits); claim-then-exec; strict name charset; plugin filename hygiene. Existing `Run` / `RunFS` unchanged. |
 | PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareBasenames` remaps the frozen legacy set (001–004) under the same per-file lock/tx; dual-writes bare keys on fresh apply; allowlist must match the embed FS; lock wait only (no DDL wall-clock cap). |
-| PR-1086 | `RegisterMigrations` + `app migrate` | Plugins register an `embed.FS` during `Init`. `app migrate` applies core dir then every registered plugin FS (same lock/namespace as 1084). `Init` stays an idempotent safety net. Document the deploy order. |
+| PR-1086 | `Migrator` + `app migrate` | **done** — `plugin.Migrator` (`Migration()` one FS). migrate without InitAll; `InitAllContext` apply/verify before Init; depends_on fatal with Migrator; serve fails on MigrateFailed; panics recovered. |
 
 ---
 
@@ -105,7 +105,7 @@ After the gate:
 | --- | --- | --- | --- |
 | 1084 | A | [oss] | **done** — Namespaced plugin migrate runner + advisory lock |
 | 1085 | A | [oss] | **done** — B2B uses runner; adopt frozen bare basenames |
-| 1086 | A | [oss] | `RegisterMigrations` + `app migrate` applies plugin SQL |
+| 1086 | A | [oss] | **done** — `Migrator` + `app migrate` applies plugin SQL (no InitAll) |
 | 1087 | B | [oss] | Manual sync trigger + `Enqueue` + queue bind |
 | 1088 | B | [oss] | SDK, docs, example, plugins report |
 
@@ -120,4 +120,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | `RegisterSyncJob` cron/event | Shipped |
 | [Phase 11](../phase-11-jobs-search-cache/ROADMAP.md) | Jobs admin for any queued type | Shipped |
 | [Phase 12](../phase-12-product-composition/ROADMAP.md) | Catalog types & composition | In progress — no dependency |
-| **Phase 13** | Plugin schema + on-demand sync | **In progress** (1084–1085 done) |
+| **Phase 13** | Plugin schema + on-demand sync | **In progress** (Track A done; next PR-1087) |

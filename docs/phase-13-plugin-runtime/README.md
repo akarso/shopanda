@@ -15,7 +15,7 @@ This phase closes those two gaps as small increments on existing ports. It does 
 
 - **Namespace, don’t isolate.** Plugin migration versions become `plugin:{name}:{basename}` in the same `schema_migrations` table. Plugin job types stay `integration.sync.{slug}.{name}`.
 - **Lock around DDL.** Plugin apply uses a PostgreSQL advisory lock so multi-process `Init` is safe.
-- **`app migrate` is the deploy path.** `Init` remains an idempotent safety net (same lock), not the only way plugin SQL runs.
+- **`app migrate` is the deploy path.** Plugins declare SQL via `Migrator` (no Init). `InitAll` re-applies the same specs before `Init` when a DB is available.
 - **Extend `RegisterSyncJob`, don’t add `RegisterJobHandler`.** On-demand work is a third trigger kind (`manual`) plus `Enqueue` after the composition root binds the resolved queue. Phase 11 jobs admin already lists/retries any type on that queue.
 - **One PR = one responsibility**, reviewable in ~10–20 minutes.
 
@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 
 ## Status
 
-**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). PR-1084–1085 done — next is PR-1086 (`RegisterMigrations` + `app migrate`). Independent of Phase 12 catalog work; can run in parallel.
+**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). Track A (PR-1084–1086) done — next is PR-1087 (`manual` sync + `Enqueue`). Independent of Phase 12 catalog work; can run in parallel.
 
 ## Relationship
 
@@ -32,4 +32,4 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 | Phase 8 | Integrator platform — `RegisterSyncJob`, outbound warehouse/PIM | Shipped (PR-840–843) |
 | Phase 11 | Jobs admin (list / retry / cancel) + queue reachability | Shipped |
 | Phase 12 | Product types & composition | In progress (unrelated catalog work) |
-| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **In progress** (PR-1084–1085 done; do before a real site) |
+| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **In progress** (Track A done; PR-1087 next; do before a real site) |
