@@ -38,7 +38,14 @@ type PluginFSOptions struct {
 // schema_migrations keys (plugin:{name}:{basename}).
 var pluginNamePattern = regexp.MustCompile(`^[a-z0-9]+([_/-][a-z0-9]+)*$`)
 
-var concurrentIndexPattern = regexp.MustCompile(`(?is)\bcreate\s+(unique\s+)?index\s+concurrently\b`)
+// concurrentDDLPattern rejects CONCURRENTLY forms that cannot run inside a
+// transaction. Mention in a comment still matches — prefer rewriting the comment.
+var concurrentDDLPattern = regexp.MustCompile(`(?is)\b(create\s+(unique\s+)?index|drop\s+index|reindex(\s+\w+)?)\s+concurrently\b`)
+
+// txnControlStatementPattern matches top-level transaction-control keywords
+// after comments and quoted strings are stripped (so plpgsql BEGIN inside $$
+// is ignored).
+var txnControlStatementPattern = regexp.MustCompile(`(?is)(?:^|;)\s*(commit|rollback|abort|begin|start\s+transaction|end\s+transaction)\b`)
 
 // Run applies all pending SQL migrations from dir to the database.
 func Run(db *sql.DB, dir string) (int, error) {
@@ -162,6 +169,17 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, version, conte
 
 	if _, execErr := tx.ExecContext(ctx, content); execErr != nil {
 		return false, fmt.Errorf("migrate: plugin %s: apply %s: %w", pluginName, version, execErr)
+	}
+
+	// Defense in depth: a top-level COMMIT/ROLLBACK inside the file ends the
+	// server transaction early (claim may already be durable) while database/sql
+	// still believes the Tx is open. Refuse to Commit from a dead transaction.
+	var inTx bool
+	if checkErr := tx.QueryRowContext(ctx, `SELECT pg_current_xact_id_if_assigned() IS NOT NULL`).Scan(&inTx); checkErr != nil {
+		return false, fmt.Errorf("migrate: plugin %s: apply %s: verify transaction: %w", pluginName, version, checkErr)
+	}
+	if !inTx {
+		return false, fmt.Errorf("migrate: plugin %s: apply %s: migration SQL ended the transaction (top-level BEGIN/COMMIT/ROLLBACK are not allowed)", pluginName, version)
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -289,10 +307,96 @@ func loadPluginMigrations(fsys fs.FS, dir string) ([]migrationFile, error) {
 }
 
 func checkPluginSQLContent(name, content string) error {
-	if concurrentIndexPattern.MatchString(content) {
-		return fmt.Errorf("%q: CREATE INDEX CONCURRENTLY is not allowed in plugin migrations (each file runs inside a transaction)", name)
+	if concurrentDDLPattern.MatchString(content) {
+		return fmt.Errorf("%q: CONCURRENTLY DDL is not allowed in plugin migrations (each file runs inside a transaction)", name)
+	}
+	stripped := stripSQLNoise(content)
+	if txnControlStatementPattern.MatchString(stripped) {
+		return fmt.Errorf("%q: top-level BEGIN/COMMIT/ROLLBACK/START TRANSACTION is not allowed in plugin migrations (each file runs inside a migrate transaction)", name)
 	}
 	return nil
+}
+
+// stripSQLNoise removes -- and /* */ comments plus single-quoted and
+// dollar-quoted string literals so content checks see only statement text.
+func stripSQLNoise(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		// Line comment
+		if s[i] == '-' && i+1 < len(s) && s[i+1] == '-' {
+			i += 2
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		// Block comment
+		if s[i] == '/' && i+1 < len(s) && s[i+1] == '*' {
+			i += 2
+			for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
+				i++
+			}
+			if i+1 < len(s) {
+				i += 2
+			}
+			continue
+		}
+		// Single-quoted string
+		if s[i] == '\'' {
+			i++
+			for i < len(s) {
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						i += 2
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+			b.WriteByte(' ')
+			continue
+		}
+		// Dollar-quoted string: $$…$$ or $tag$…$tag$
+		if s[i] == '$' {
+			tag, ok := readDollarTag(s, i)
+			if ok {
+				i += len(tag)
+				end := strings.Index(s[i:], tag)
+				if end < 0 {
+					break
+				}
+				i += end + len(tag)
+				b.WriteByte(' ')
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func readDollarTag(s string, start int) (string, bool) {
+	if start >= len(s) || s[start] != '$' {
+		return "", false
+	}
+	j := start + 1
+	for j < len(s) {
+		c := s[j]
+		if c == '$' {
+			return s[start : j+1], true
+		}
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			j++
+			continue
+		}
+		return "", false
+	}
+	return "", false
 }
 
 type migrationFile struct {
@@ -330,7 +434,9 @@ func runMigrations(db *sql.DB, list func() ([]migrationFile, error), versionOf f
 }
 
 // ensureTable creates the schema_migrations table if it does not exist.
-// Retries once on unique_violation (23505) from concurrent CREATE TABLE races.
+// Concurrent CREATE TABLE IF NOT EXISTS races surface as 42P07 (duplicate
+// relation), 42710 (duplicate type), or occasionally 23505 — not only 23505.
+// Retry once; the second IF NOT EXISTS sees the winner's table.
 func ensureTable(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -338,7 +444,7 @@ func ensureTable(db *sql.DB) error {
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	if err != nil && isUniqueViolation(err) {
+	if err != nil && isCreateExistsRace(err) {
 		_, err = db.Exec(`
 			CREATE TABLE IF NOT EXISTS schema_migrations (
 				version  TEXT PRIMARY KEY,
@@ -352,9 +458,19 @@ func ensureTable(db *sql.DB) error {
 	return nil
 }
 
-func isUniqueViolation(err error) bool {
+func isCreateExistsRace(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	switch pgErr.Code {
+	case "23505", // unique_violation (catalog race)
+		"42P07", // duplicate_table
+		"42710": // duplicate_object (e.g. composite type)
+		return true
+	default:
+		return false
+	}
 }
 
 // getApplied returns a set of already-applied migration filenames.

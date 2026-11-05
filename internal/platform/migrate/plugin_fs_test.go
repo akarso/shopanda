@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -106,6 +108,64 @@ func TestRunPluginFS_RejectsConcurrentIndex(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "CONCURRENTLY") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunPluginFS_RejectsTxnControl(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"commit", "CREATE TABLE a_t (id int); COMMIT; CREATE TABLE b_t (id int);"},
+		{"rollback", "CREATE TABLE c_t (id int); ROLLBACK;"},
+		{"begin", "BEGIN; CREATE TABLE d_t (id int);"},
+		{"start_transaction", "START TRANSACTION; CREATE TABLE e_t (id int);"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				"migrations/001_x.sql": &fstest.MapFile{Data: []byte(tc.sql)},
+			}
+			_, err := RunPluginFS(ctx, nil, "txn-"+uniqueSuffix(), fsys, "migrations")
+			if err == nil {
+				t.Fatal("expected transaction-control rejection")
+			}
+			if !strings.Contains(err.Error(), "BEGIN/COMMIT/ROLLBACK") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckPluginSQLContent_AllowsPlpgsqlBegin(t *testing.T) {
+	sql := `
+DO $$
+BEGIN
+  RAISE NOTICE 'ok';
+END $$;
+`
+	if err := checkPluginSQLContent("001_do.sql", sql); err != nil {
+		t.Fatalf("plpgsql BEGIN inside dollar quotes must be allowed: %v", err)
+	}
+}
+
+func TestCheckPluginSQLContent_AllowsCommitInComment(t *testing.T) {
+	sql := "-- COMMIT after deploy\nCREATE TABLE t (id int);\n"
+	if err := checkPluginSQLContent("001_ok.sql", sql); err != nil {
+		t.Fatalf("COMMIT in comment must be allowed: %v", err)
+	}
+}
+
+func TestIsCreateExistsRace_Codes(t *testing.T) {
+	for _, code := range []string{"23505", "42P07", "42710"} {
+		err := &pgconn.PgError{Code: code}
+		if !isCreateExistsRace(err) {
+			t.Fatalf("code %s should be a create-exists race", code)
+		}
+	}
+	if isCreateExistsRace(&pgconn.PgError{Code: "42P01"}) {
+		t.Fatal("undefined_table must not match")
 	}
 }
 
@@ -604,6 +664,106 @@ func TestRunPluginFS_IgnoresNonSQLAlongsideValid(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("applied %d, want 1", n)
+	}
+}
+
+func TestEnsureTable_ConcurrentFreshDatabase(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if err := admin.Ping(); err != nil {
+		t.Fatal(err)
+	}
+
+	dbName := fmt.Sprintf("pr1084_ensure_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE DATABASE " + dbName); err != nil {
+		t.Fatalf("CREATE DATABASE %s: %v (role needs CREATEDB)", dbName, err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, dbName)
+		_, _ = admin.Exec("DROP DATABASE IF EXISTS " + dbName)
+	})
+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	u.Path = "/" + dbName
+	fresh, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+	fresh.SetMaxOpenConns(16)
+	if err := fresh.Ping(); err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 16
+	start := make(chan struct{})
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- ensureTable(fresh)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("ensureTable under concurrency: %v", err)
+		}
+	}
+}
+
+func TestRunPluginFS_CommitInSQLRejectedBeforeApply(t *testing.T) {
+	// Regression for half-migrated claim: COMMIT mid-file must fail at load
+	// time so the version row is never inserted.
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "commitbug-" + suffix
+	basename := "001_x.sql"
+	version := pluginVersion(plugin, basename)
+
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{Data: []byte(
+			"CREATE TABLE a_t_" + suffix + " (id int); COMMIT; CREATE TABLE b_t_" + suffix + " (id int); SELECT 1/0;",
+		)},
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS a_t_" + suffix)
+		_, _ = db.Exec("DROP TABLE IF EXISTS b_t_" + suffix)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1", version)
+	})
+
+	_, err := RunPluginFS(ctx, db, plugin, fsys, "migrations")
+	if err == nil {
+		t.Fatal("expected rejection")
+	}
+	if !strings.Contains(err.Error(), "BEGIN/COMMIT/ROLLBACK") {
+		t.Fatalf("error = %v", err)
+	}
+
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = $1`, version).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("version must not be recorded when COMMIT is rejected at load time")
 	}
 }
 
