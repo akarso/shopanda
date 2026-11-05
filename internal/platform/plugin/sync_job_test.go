@@ -265,19 +265,21 @@ func TestApp_Integration_Enqueue_NormalizesSlug(t *testing.T) {
 	}
 }
 
-func TestApp_BindQueue_SeparateFromRegisterQueue(t *testing.T) {
+func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {
 	app := &plugin.App{}
 	pluginQ := &memQueue{}
 	app.RegisterQueue(pluginQ)
-	resolved := &memQueue{} // composition root may bind the same or resolved instance
-	if err := app.BindQueue(resolved); err != nil {
-		t.Fatalf("BindQueue after RegisterQueue: %v", err)
+	if err := app.BindQueue(&memQueue{}); err == nil {
+		t.Fatal("expected error binding a different instance than RegisterQueue")
+	}
+	if err := app.BindQueue(pluginQ); err != nil {
+		t.Fatalf("BindQueue same instance: %v", err)
 	}
 	if q, ok := app.Queue(); !ok || q != pluginQ {
 		t.Fatal("Queue() must still report the plugin-registered instance")
 	}
-	if err := app.BindQueue(&memQueue{}); err == nil {
-		t.Fatal("expected error binding a second enqueue queue")
+	if err := app.BindQueue(pluginQ); err != nil {
+		t.Fatalf("idempotent re-bind: %v", err)
 	}
 }
 

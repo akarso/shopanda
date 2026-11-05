@@ -26,12 +26,14 @@ func (i *Integration) RegisterSyncJob(job extapi.SyncJob) error {
 
 // Enqueue queues a previously registered sync job for this plugin slug.
 // Any registered job may be enqueued (manual, cron, or event) — this is the
-// on-demand / "run now" path. The composition root must BindQueue the resolved
-// jobs.Queue after InitAll; Enqueue during Init fails with ErrSyncJobQueueUnbound.
-// Payload may be nil (stored as an empty object). The job envelope trigger is
-// always "manual" so handlers can distinguish on-demand runs from cron/event.
-// Cross-plugin enqueue (calling Integration with another plugin's slug) is
-// allowed, matching RegisterSyncJob; ownership checks are out of scope.
+// on-demand / "run now" path. Handlers must be idempotent: run-now can overlap
+// a cron/event run of the same job type. The composition root must BindQueue
+// the resolved jobs.Queue after InitAll; Enqueue during Init fails with
+// ErrSyncJobQueueUnbound. Payload may be nil (stored as an empty object). The
+// job envelope trigger is always "manual" so handlers can distinguish on-demand
+// runs from cron/event. Cross-plugin enqueue (calling Integration with another
+// plugin's slug) is allowed, matching RegisterSyncJob; ownership checks are
+// out of scope.
 func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
 	if i == nil || i.app == nil {
 		return fmt.Errorf("plugin: integration app not configured")

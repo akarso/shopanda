@@ -63,13 +63,18 @@ func (a *App) RegisterQueue(queue jobs.Queue) {
 // Integration.Enqueue. Distinct from RegisterQueue (plugin provider slot):
 // Enqueue reads only the bound queue, so calls during Init always fail with
 // ErrSyncJobQueueUnbound until the composition root binds after InitAll.
-// Idempotent when the same instance is already bound.
+// When a plugin already RegisterQueue'd, queue must be that same instance
+// (so a mistaken second NewJobQueue cannot silently split cron/Enqueue from
+// the worker). Idempotent when the same instance is already bound.
 func (a *App) BindQueue(queue jobs.Queue) error {
 	if a == nil {
 		return fmt.Errorf("plugin: BindQueue: app is nil")
 	}
 	if queue == nil {
 		return fmt.Errorf("plugin: BindQueue: queue must not be nil")
+	}
+	if a.queue != nil && a.queue != queue {
+		return fmt.Errorf("plugin: BindQueue: enqueue queue must match plugin-registered queue")
 	}
 	if a.boundQueue != nil && a.boundQueue != queue {
 		return fmt.Errorf("plugin: BindQueue: enqueue queue already bound to a different instance")

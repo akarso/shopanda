@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -24,9 +25,20 @@ func (q *syncMemQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
-func (q *syncMemQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (q *syncMemQueue) Complete(context.Context, string) error     { return nil }
-func (q *syncMemQueue) Fail(context.Context, string, error) error  { return nil }
+
+func (q *syncMemQueue) Dequeue(context.Context) (*jobs.Job, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.enqueued) == 0 {
+		return nil, nil
+	}
+	job := q.enqueued[0]
+	q.enqueued = q.enqueued[1:]
+	return &job, nil
+}
+
+func (q *syncMemQueue) Complete(context.Context, string) error    { return nil }
+func (q *syncMemQueue) Fail(context.Context, string, error) error { return nil }
 
 func TestManualEnqueue_ThroughWorkerHandler(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -49,7 +61,7 @@ func TestManualEnqueue_ThroughWorkerHandler(t *testing.T) {
 	if err := app.BindQueue(queue); err != nil {
 		t.Fatal(err)
 	}
-	worker := jobs.NewWorker(queue, log, 0)
+	worker := jobs.NewWorker(queue, log, time.Second)
 	if err := RegisterSyncJobHandlers(app, worker); err != nil {
 		t.Fatal(err)
 	}
@@ -58,18 +70,13 @@ func TestManualEnqueue_ThroughWorkerHandler(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	queue.mu.Lock()
-	enqueued := queue.enqueued[0]
-	queue.mu.Unlock()
 
-	h := newSyncJobHandler(app.SyncJobs()[0], app.Bootstrap.DB, log)
-	if err := h.Handle(context.Background(), enqueued); err != nil {
-		t.Fatal(err)
-	}
+	worker.ProcessOne(context.Background())
+
 	if got.Plugin != "acme" || got.Name != "webhook.ingest" || got.Trigger != extapi.SyncTriggerManual {
 		t.Fatalf("got = %+v", got)
 	}
-	if got.Payload["body"] != "hello" || got.JobID != enqueued.ID || got.DB != app.Bootstrap.DB {
+	if got.Payload["body"] != "hello" || got.DB != app.Bootstrap.DB || got.JobID == "" {
 		t.Fatalf("got = %+v", got)
 	}
 }

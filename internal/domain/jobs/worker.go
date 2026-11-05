@@ -124,6 +124,12 @@ func (w *Worker) Stop() {
 	w.stopOnce.Do(func() { close(w.stop) })
 }
 
+// ProcessOne dequeues and handles at most one job. Intended for tests and
+// one-shot CLI drains; production workers use Start.
+func (w *Worker) ProcessOne(ctx context.Context) {
+	w.processNext(ctx)
+}
+
 func (w *Worker) processNext(ctx context.Context) {
 	job, err := w.queue.Dequeue(ctx)
 	if err != nil {

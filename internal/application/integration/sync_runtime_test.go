@@ -188,9 +188,15 @@ func TestRegisterSyncJobTriggers_SkipManual(t *testing.T) {
 	sched := &recordingScheduler{}
 	app := &plugin.App{Logger: log, Bus: bus, Bootstrap: &plugin.Bootstrap{}}
 
+	// EventName is ignored for Manual(), but if the Kind != event guard were
+	// removed, this subscription would fire on order.created — so an empty
+	// EventName would not prove the skip.
 	manual := extapi.SyncJob{
-		Name:    "webhook.ingest",
-		Trigger: extapi.Manual(),
+		Name: "webhook.ingest",
+		Trigger: extapi.SyncTrigger{
+			Kind:      extapi.SyncTriggerManual,
+			EventName: "order.created",
+		},
 		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
 	}
 	eventJob := extapi.SyncJob{
@@ -220,23 +226,21 @@ func TestRegisterSyncJobTriggers_SkipManual(t *testing.T) {
 		t.Fatalf("cron registrations = %v, want only warehouse.stock", names)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < 50; i++ {
-			if queue.len() > 0 {
-				close(done)
-				return
-			}
-			time.Sleep(2 * time.Millisecond)
-		}
-		close(done)
-	}()
 	if err := bus.Publish(context.Background(), event.Event{Name: "order.created"}); err != nil {
 		t.Fatal(err)
 	}
-	<-done
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if queue.len() >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	// Wait out the window so a late second enqueue from a bad manual
+	// subscription would still be visible.
+	time.Sleep(50 * time.Millisecond)
 	if queue.len() != 1 {
-		t.Fatalf("enqueued = %d, want only the event job", queue.len())
+		t.Fatalf("enqueued = %d, want only the event job (manual must not subscribe)", queue.len())
 	}
 	if queue.first().Type != "integration.sync.acme.export.order" {
 		t.Fatalf("job type = %q", queue.first().Type)
