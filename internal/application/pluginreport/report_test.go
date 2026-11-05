@@ -71,10 +71,44 @@ func TestFormatText_IncludesSections(t *testing.T) {
 		"after:promotions",
 		"Sync jobs:",
 		"integration.sync.warehousedemo.warehouse.stock",
+		"trigger=cron(@every 5m)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestBuild_SyncJobManualTrigger(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	if err := app.Integration("example").RegisterSyncJob(extapi.SyncJob{
+		Name:    "demo.ping",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	}); err != nil {
+		t.Fatalf("RegisterSyncJob: %v", err)
+	}
+	report := pluginreport.Build(nil, app, &config.Config{})
+	if len(report.SyncJobs) != 1 || report.SyncJobs[0].Trigger != "manual" || report.SyncJobs[0].Detail != "" {
+		t.Fatalf("sync jobs = %+v", report.SyncJobs)
+	}
+	text := pluginreport.FormatText(report)
+	if !strings.Contains(text, "trigger=manual") {
+		t.Fatalf("text missing trigger=manual:\n%s", text)
+	}
+}
+
+func TestFormatText_SyncJobEventTrigger(t *testing.T) {
+	text := pluginreport.FormatText(pluginreport.Report{
+		SyncJobs: []pluginreport.SyncJob{{
+			PluginSlug: "example",
+			JobType:    "integration.sync.example.demo.order_created",
+			Trigger:    "event",
+			Detail:     "order.created",
+		}},
+	})
+	if !strings.Contains(text, "trigger=event(order.created)") {
+		t.Fatalf("text missing trigger=event(…):\n%s", text)
 	}
 }
 

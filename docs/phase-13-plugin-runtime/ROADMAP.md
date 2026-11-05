@@ -72,7 +72,7 @@ After the gate:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1087 | `manual` trigger + `Enqueue` + queue bind | **done** — `extapi.Manual()`; `Integration.Enqueue`; `BindQueue` after resolve (serve/worker/scheduler/CLIs). Unknown name / unbound queue fail clearly. |
-| PR-1088 | SDK + docs + example | `pluginsdk` `RegisterManual` / `Enqueue`; PLUGINS.md / DEVELOPER.md / EXTENSION_POINTS.md / PLUGIN_COMPOSITION.md; `plugins report` lists `trigger=manual`. Point `plugins/example` off inline `OnAsync` work toward enqueue-or-document the anti-pattern. |
+| PR-1088 | SDK + docs + example | **done** — `pluginsdk` `RegisterManual` / `Enqueue`; docs; `plugins report` `trigger=…`; example uses `RegisterOnEvent`. |
 
 ---
 
@@ -107,7 +107,7 @@ After the gate:
 | 1085 | A | [oss] | **done** — B2B uses runner; adopt frozen bare basenames |
 | 1086 | A | [oss] | **done** — `Migrator` + `app migrate` applies plugin SQL (no InitAll) |
 | 1087 | B | [oss] | **done** — Manual sync trigger + `Enqueue` + queue bind |
-| 1088 | B | [oss] | SDK, docs, example, plugins report |
+| 1088 | B | [oss] | **done** — SDK, docs, example, plugins report |
 
 PR specs: [`prs/`](prs/).
 
@@ -120,4 +120,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | `RegisterSyncJob` cron/event | Shipped |
 | [Phase 11](../phase-11-jobs-search-cache/ROADMAP.md) | Jobs admin for any queued type | Shipped |
 | [Phase 12](../phase-12-product-composition/ROADMAP.md) | Catalog types & composition | In progress — no dependency |
-| **Phase 13** | Plugin schema + on-demand sync | **In progress** (Track A done; PR-1087 done; next PR-1088) |
+| **Phase 13** | Plugin schema + on-demand sync | **Done** (PR-1084–1088) |

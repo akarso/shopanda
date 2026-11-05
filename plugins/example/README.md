@@ -5,7 +5,7 @@ Reference implementation for third-party-style plugins living outside `plugins/c
 ## What it demonstrates
 
 - **Pricing step** — adds a fixed example fee (`example.fee`) to the pricing pipeline
-- **Event listener** — async handler on `order.created` that logs order metadata
+- **Event sync job** — `RegisterOnEvent("demo.order_created", order.created, …)`. Checkout publishes `order.created` after the order is saved; if a later checkout step fails, compensation publishes `order.failed` (pending→failed). Serve wires Bus → queue with envelope `trigger=event`. Do **not** hand-roll `OnAsync` + `Enqueue` for this (that stamps `trigger=manual`). Use `Enqueue` only for true run-now. Handlers must tolerate a follow-up `order.failed`.
 - **Admin permission** — registers `example.reports.read` for the Admin role
 - **CLI command** — registers `example:ping` via `RegisterCommand`
 
@@ -35,10 +35,19 @@ Try the CLI hook:
 app example:ping
 ```
 
+List the sync job (requires `plugins.example.enabled=true`):
+
+```bash
+app plugins report
+# … Sync jobs: integration.sync.example.demo.order_created  trigger=event(order.created)  example
+```
+
 ## Authoring notes
 
 - Implement `plugin.Plugin` with a unique `Name()` (use a vendor prefix, e.g. `acme/shipping`)
-- Register extensions in `Init` via `plugin.App` — do not modify core domain packages
-- Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, and permissions
+- Register extensions in `Init` via `plugin.App` / `pluginsdk` — do not modify core domain packages
+- Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, permissions, and sync jobs
+- Event → durable work: `RegisterOnEvent`. Run-now: `Enqueue` after boot. Keep any custom `OnAsync` body tiny; a failed bus enqueue is not retried by the event bus (durability starts once the queue accepts the job).
+- After dequeue, event payloads are JSON maps (`payload["data"].(map[string]interface{})`), not domain structs — typed asserts only work on in-memory test queues.
 
 See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../PLUGINS.md)

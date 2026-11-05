@@ -245,10 +245,12 @@ if err := app.Integration("acme").Enqueue(ctx, "webhook.ingest", map[string]inte
 }
 ```
 
+Prefer `pluginsdk.Integration(slug).RegisterOnEvent(...)` for event→queue (envelope `trigger=event`). `Enqueue` is run-now only (always stamps `trigger=manual`). A failed enqueue from a hand-rolled bus listener is not retried by the event bus — durability starts after the queue accepts the job.
+
 - Handler receives `Bootstrap.DB`, plugin config, structured logger
 - Uses **`pkg/integrationsdk/http`** or **`graphql`** thin wrappers (stdlib-first; no heavy client framework in core)
 - Failures → queue retry with backoff (reuse existing queue port)
-- `Enqueue` works for any registered job; the envelope `trigger` is always `manual` so handlers can tell on-demand from cron/event (PR-1087). Handlers must be idempotent — run-now can overlap a cron/event run of the same type.
+- Handlers must be idempotent — run-now can overlap a cron/event run of the same type
 
 ### Reference patterns
 

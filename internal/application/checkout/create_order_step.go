@@ -10,6 +10,7 @@ import (
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
+	orderapp "github.com/akarso/shopanda/internal/application/order"
 	pricingapp "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -82,7 +83,8 @@ func (s *CreateOrderStep) WithReservations(reservations inventory.ReservationRep
 
 // WithStockEventPublishing publishes inventory.EventStockUpdated when a
 // failed order releases reservations, using the same variant and parent
-// rollup path as ReserveInventoryStep. Release failures are logged.
+// rollup path as ReserveInventoryStep. It also publishes order.created
+// after a successful save (same bus). Release / publish failures are logged.
 func (s *CreateOrderStep) WithStockEventPublishing(bus *event.Bus, log logger.Logger) *CreateOrderStep {
 	if s == nil {
 		return nil
@@ -245,6 +247,7 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 
 	cctx.Order = &o
 	cctx.SetMeta("created_order_id", o.ID)
+	s.publishOrderCreated(ctx, &o)
 
 	if s.extensions != nil {
 		updatedBy := strings.TrimSpace(cctx.CustomerID)
@@ -272,6 +275,19 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 	}
 
 	return nil
+}
+
+func (s *CreateOrderStep) publishOrderCreated(ctx context.Context, o *order.Order) {
+	if s == nil || s.bus == nil || o == nil {
+		return
+	}
+	if err := orderapp.PublishCreated(ctx, s.bus, "checkout.create_order", o); err != nil && s.log != nil {
+		// Order already committed — do not fail the step. Idempotent re-entry
+		// skips publish to avoid duplicate jobs on later checkout retries.
+		s.log.Error("create_order.publish_order_created_failed", err, map[string]interface{}{
+			"order_id": o.ID,
+		})
+	}
 }
 
 func (s *CreateOrderStep) persistOrder(ctx context.Context, cctx *Context, o *order.Order, appliedCredit *shared.Money) error {

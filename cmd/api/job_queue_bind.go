@@ -10,7 +10,7 @@ import (
 )
 
 // resolveAndBindJobQueue resolves the active jobs.Queue (plugin-registered when
-// present) and BindQueue's it for Integration.Enqueue. Shared by serve, worker,
+// present) and binds it for Integration.Enqueue. Shared by serve, worker,
 // scheduler, and CLIs so resolve+bind cannot drift across processes.
 func resolveAndBindJobQueue(app *plugin.App, conn *sql.DB, cfg *config.Config) (jobs.Queue, error) {
 	jobQueue, err := resolveJobQueue(app, conn, cfg)

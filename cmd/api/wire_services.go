@@ -752,7 +752,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log).
 		WithMetrics(metricsRecorder).
 		WithUnpaidOrderCompensation(repos.orderRepo, assignmentFlow, repos.paymentRepo, storeCreditService)
-	checkoutApp.RegisterPaymentFailedCompensation(bus, repos.orderRepo, storeCreditService, assignmentFlow)
+	checkoutApp.RegisterPaymentFailedCompensation(bus, repos.orderRepo, storeCreditService, assignmentFlow, log)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
 	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionValueService)
 
