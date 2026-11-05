@@ -582,7 +582,11 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
-	jobQueue, err := postgres.NewJobQueue(conn)
+	// Same as schedule_cli / setupWorker: use the plugin-registered queue when
+	// present (default core/postgres-queue). A second NewJobQueue here would
+	// BindQueue-fail against the Init-time registration, or enqueue into a
+	// table no non-Postgres worker reads.
+	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		return fmt.Errorf("job queue: %w", err)
 	}

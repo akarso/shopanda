@@ -20,5 +20,5 @@ var ErrSyncJobNameInvalid = errSyncJobNameInvalid
 var ErrSyncJobNotFound = errSyncJobNotFound
 
 // ErrSyncJobQueueUnbound indicates Enqueue ran before the composition root
-// bound the resolved jobs.Queue onto plugin.App.
+// called BindQueue (distinct from a plugin RegisterQueue during Init).
 var ErrSyncJobQueueUnbound = errSyncJobQueueUnbound

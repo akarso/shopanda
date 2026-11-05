@@ -10,7 +10,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/platform/event"
-	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -88,20 +87,9 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 }
 
 func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger) error {
-	if payload == nil {
-		payload = map[string]interface{}{}
-	}
-	job, err := jobs.NewJob(id.New(), reg.JobType, map[string]interface{}{
-		"plugin":  reg.PluginSlug,
-		"name":    reg.Job.Name,
-		"trigger": trigger,
-		"payload": payload,
-	})
+	job, err := plugin.NewSyncJobEnvelope(reg, trigger, payload)
 	if err != nil {
 		return err
-	}
-	if reg.Job.MaxRetries > 0 {
-		job.MaxRetries = reg.Job.MaxRetries
 	}
 	if err := queue.Enqueue(ctx, job); err != nil {
 		return err

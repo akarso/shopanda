@@ -224,21 +224,29 @@ Reference plugin: accept SAP IDoc-shaped JSON (simplified) → update order stat
 ### Registration
 
 ```go
-app.Integration().RegisterSyncJob(integration.SyncJob{
-    Name:     "acme.pim.enrich",
-    Trigger:  integration.OnEvent("catalog.product.updated"),
+app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+    Name:     "pim.enrich",
+    Trigger:  extapi.OnEvent("catalog.product.updated"),
     Handler:  syncProductToPIM,
 })
-app.Integration().RegisterSyncJob(integration.SyncJob{
-    Name:     "acme.warehouse.stock",
-    Trigger:  integration.Cron("@every 5m"),
+app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+    Name:     "warehouse.stock",
+    Trigger:  extapi.Cron("@every 5m"),
     Handler:  pullStockLevels,
 })
+app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+    Name:     "webhook.ingest",
+    Trigger:  extapi.Manual(),
+    Handler:  ingestWebhook,
+})
+// After boot (composition root BindQueue): on-demand / "run now"
+_ = app.Integration("acme").Enqueue(ctx, "webhook.ingest", map[string]interface{}{"id": "…"})
 ```
 
 - Handler receives `Bootstrap.DB`, plugin config, structured logger
 - Uses **`pkg/integrationsdk/http`** or **`graphql`** thin wrappers (stdlib-first; no heavy client framework in core)
 - Failures → queue retry with backoff (reuse existing queue port)
+- `Enqueue` works for any registered job; the envelope `trigger` is always `manual` so handlers can tell on-demand from cron/event (PR-1087)
 
 ### Reference patterns
 

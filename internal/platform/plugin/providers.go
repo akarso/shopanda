@@ -59,9 +59,11 @@ func (a *App) RegisterQueue(queue jobs.Queue) {
 	a.queue = queue
 }
 
-// BindQueue attaches the composition-root-resolved jobs.Queue so
-// Integration.Enqueue can use it after InitAll. Idempotent when the same
-// instance is already registered (e.g. a core queue plugin filled the slot).
+// BindQueue attaches the composition-root-resolved jobs.Queue for
+// Integration.Enqueue. Distinct from RegisterQueue (plugin provider slot):
+// Enqueue reads only the bound queue, so calls during Init always fail with
+// ErrSyncJobQueueUnbound until the composition root binds after InitAll.
+// Idempotent when the same instance is already bound.
 func (a *App) BindQueue(queue jobs.Queue) error {
 	if a == nil {
 		return fmt.Errorf("plugin: BindQueue: app is nil")
@@ -69,10 +71,10 @@ func (a *App) BindQueue(queue jobs.Queue) error {
 	if queue == nil {
 		return fmt.Errorf("plugin: BindQueue: queue must not be nil")
 	}
-	if a.queue != nil && a.queue != queue {
-		return fmt.Errorf("plugin: BindQueue: queue already bound to a different instance")
+	if a.boundQueue != nil && a.boundQueue != queue {
+		return fmt.Errorf("plugin: BindQueue: enqueue queue already bound to a different instance")
 	}
-	a.queue = queue
+	a.boundQueue = queue
 	return nil
 }
 
