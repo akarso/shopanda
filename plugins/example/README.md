@@ -5,7 +5,7 @@ Reference implementation for third-party-style plugins living outside `plugins/c
 ## What it demonstrates
 
 - **Pricing step** — adds a fixed example fee (`example.fee`) to the pricing pipeline
-- **Manual sync job** — `extapi.Manual()` job `demo.order_created`; `OnAsync(order.created)` only enqueues (queue retry + jobs admin). Do not put slow I/O in the bus listener.
+- **Event sync job** — `RegisterOnEvent("demo.order_created", order.created, …)`. Serve wires Bus → queue with envelope `trigger=event`. Do **not** hand-roll `OnAsync` + `Enqueue` for this (that stamps `trigger=manual`). Use `Enqueue` only for true run-now.
 - **Admin permission** — registers `example.reports.read` for the Admin role
 - **CLI command** — registers `example:ping` via `RegisterCommand`
 
@@ -35,11 +35,11 @@ Try the CLI hook:
 app example:ping
 ```
 
-List the sync job:
+List the sync job (requires `plugins.example.enabled=true`):
 
 ```bash
 app plugins report
-# … Sync jobs: integration.sync.example.demo.order_created  trigger=manual  example
+# … Sync jobs: integration.sync.example.demo.order_created  trigger=event(order.created)  example
 ```
 
 ## Authoring notes
@@ -47,6 +47,6 @@ app plugins report
 - Implement `plugin.Plugin` with a unique `Name()` (use a vendor prefix, e.g. `acme/shipping`)
 - Register extensions in `Init` via `plugin.App` / `pluginsdk` — do not modify core domain packages
 - Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, permissions, and sync jobs
-- For durable/retryable work from an event: `RegisterManual` + `Enqueue` from a tiny `OnAsync` body (PR-1088). Inline third-party calls in `OnAsync` have no queue retry.
+- Event → durable work: `RegisterOnEvent`. Run-now: `Enqueue` after boot. Keep any custom `OnAsync` body tiny; a failed bus enqueue is not retried by the event bus (durability starts once the queue accepts the job).
 
 See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../PLUGINS.md)

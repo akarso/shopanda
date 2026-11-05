@@ -56,7 +56,10 @@ func (sj *SyncJobs) RegisterOnEvent(name, eventName string, handler extapi.SyncJ
 }
 
 // RegisterManual registers an on-demand sync job (no cron/event wiring).
-// Enqueue after the composition root BindQueue's the resolved jobs.Queue.
+// For event-driven durable work prefer RegisterOnEvent (envelope trigger=event).
+// Use RegisterManual + Enqueue for true run-now, or for custom/conditional
+// payload shaping that RegisterOnEvent's eventPayload cannot express.
+// Call Enqueue only after the composition root binds the resolved jobs.Queue.
 func (sj *SyncJobs) RegisterManual(name string, handler extapi.SyncJobHandler, opts ...SyncJobOption) error {
 	job := extapi.SyncJob{
 		Name:    name,

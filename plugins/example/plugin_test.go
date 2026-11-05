@@ -3,9 +3,13 @@ package example_test
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
+	"time"
 
+	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -14,8 +18,36 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/plugins/example"
 )
+
+type memQueue struct {
+	mu       sync.Mutex
+	enqueued []jobs.Job
+}
+
+func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.enqueued = append(q.enqueued, job)
+	return nil
+}
+func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
+func (q *memQueue) Complete(context.Context, string) error     { return nil }
+func (q *memQueue) Fail(context.Context, string, error) error  { return nil }
+
+func (q *memQueue) len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.enqueued)
+}
+
+func (q *memQueue) first() jobs.Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.enqueued[0]
+}
 
 func testApp(cfg *config.Config) *plugin.App {
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -73,15 +105,16 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 		t.Fatalf("step name = %q, want example.fee", step.Name())
 	}
 
-	if app.Bus.Handlers(order.EventOrderCreated) != 1 {
-		t.Fatalf("order.created handlers = %d, want 1", app.Bus.Handlers(order.EventOrderCreated))
-	}
 	jobs := app.SyncJobs()
 	if len(jobs) != 1 || jobs[0].JobType != "integration.sync.example.demo.order_created" {
-		t.Fatalf("SyncJobs() = %+v, want manual demo.order_created", jobs)
+		t.Fatalf("SyncJobs() = %+v, want event demo.order_created", jobs)
 	}
-	if jobs[0].Job.Trigger.Kind != "manual" {
-		t.Fatalf("trigger = %q, want manual", jobs[0].Job.Trigger.Kind)
+	if jobs[0].Job.Trigger.Kind != "event" || jobs[0].Job.Trigger.EventName != order.EventOrderCreated {
+		t.Fatalf("trigger = %+v, want event %s", jobs[0].Job.Trigger, order.EventOrderCreated)
+	}
+	// Event→queue wiring is composition-root (RegisterSyncJobEventTriggers), not Init.
+	if app.Bus.Handlers(order.EventOrderCreated) != 0 {
+		t.Fatalf("order.created handlers = %d, want 0 until serve wires event triggers", app.Bus.Handlers(order.EventOrderCreated))
 	}
 
 	if !rbac.HasPermission(identity.RoleAdmin, example.PermissionReportsRead) {
@@ -192,5 +225,55 @@ func TestExampleFeeStep_ReflectsRuntimeConfigChange(t *testing.T) {
 	}
 	if pctx.FeesTotal.Amount() != 250 {
 		t.Fatalf("FeesTotal after second run = %d, want 250", pctx.FeesTotal.Amount())
+	}
+}
+
+func TestPlugin_OrderCreated_EnqueuesEventSyncJob(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			Example: config.ExamplePluginConfig{Enabled: true},
+		},
+	}
+	reg := plugin.NewRegistry(log)
+	reg.Register(example.New())
+	app := testApp(cfg)
+	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll() = %+v", summary)
+	}
+	queue := &memQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(app, app.Bus, queue, log); err != nil {
+		t.Fatal(err)
+	}
+
+	evt := event.Event{
+		Name: order.EventOrderCreated,
+		ID:   "evt-1",
+		Data: order.OrderCreatedData{OrderID: "ord-1", ItemCount: 2},
+	}
+	if err := app.Bus.Publish(context.Background(), evt); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && queue.len() < 1 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if queue.len() != 1 {
+		t.Fatalf("enqueued = %d, want 1", queue.len())
+	}
+	got := queue.first()
+	if got.Type != "integration.sync.example.demo.order_created" {
+		t.Fatalf("type = %q", got.Type)
+	}
+	if got.Payload["trigger"] != extapi.SyncTriggerEvent {
+		t.Fatalf("trigger = %#v, want event", got.Payload["trigger"])
+	}
+	payload, _ := got.Payload["payload"].(map[string]interface{})
+	data, ok := payload["data"].(order.OrderCreatedData)
+	if !ok || data.OrderID != "ord-1" || data.ItemCount != 2 {
+		t.Fatalf("payload = %#v", payload)
 	}
 }

@@ -158,6 +158,14 @@ func TestSyncJobs_RegisterManualAndEnqueue(t *testing.T) {
 	if len(queue.enqueued) != 1 || queue.enqueued[0].Type != "integration.sync.example.demo.ping" {
 		t.Fatalf("enqueued = %+v", queue.enqueued)
 	}
+	got := queue.enqueued[0]
+	if got.Payload["trigger"] != extapi.SyncTriggerManual {
+		t.Fatalf("trigger = %#v, want manual", got.Payload["trigger"])
+	}
+	inner, _ := got.Payload["payload"].(map[string]interface{})
+	if inner["k"] != 1 {
+		t.Fatalf("payload = %#v", inner)
+	}
 }
 
 func TestNew_PanicsOnNilApp(t *testing.T) {

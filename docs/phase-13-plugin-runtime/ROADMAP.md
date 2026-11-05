@@ -72,7 +72,7 @@ After the gate:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1087 | `manual` trigger + `Enqueue` + queue bind | **done** — `extapi.Manual()`; `Integration.Enqueue`; `BindQueue` after resolve (serve/worker/scheduler/CLIs). Unknown name / unbound queue fail clearly. |
-| PR-1088 | SDK + docs + example | **done** — `pluginsdk` `RegisterManual` / `Enqueue`; docs; `plugins report` `trigger=manual`; example enqueues from tiny `OnAsync`. |
+| PR-1088 | SDK + docs + example | **done** — `pluginsdk` `RegisterManual` / `Enqueue`; docs; `plugins report` `trigger=…`; example uses `RegisterOnEvent`. |
 
 ---
 

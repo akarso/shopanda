@@ -117,8 +117,8 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Custom checkout validation | `RegisterCheckoutStep` | `start` / `end` / `before:` / `after:` anchors (PR-854) | Shipped |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
 | SAP / ERP inbound REST callback | `app.Integration(slug).RegisterSecureRoute` | Route per plugin under `/api/v1/integrations/{plugin}/…` | Shipped (PR-830–832) |
-| Warehouse / PIM outbound sync | `app.Integration(slug).RegisterSyncJob` / `pluginsdk` | Cron, event, or `RegisterManual` → queue retry; `Enqueue` after `BindQueue` | Shipped (PR-840; manual: PR-1087–1088) |
-| Slow work from an event (retryable) | `RegisterManual` + tiny `OnAsync` that `Enqueue`s | Do **not** call third parties inline in `OnAsync` | Shipped (PR-1088; see `plugins/example`) |
+| Warehouse / PIM outbound sync | `app.Integration(slug).RegisterSyncJob` / `pluginsdk` | Cron, `RegisterOnEvent`, or `RegisterManual` → queue retry; `Enqueue` for run-now after `BindQueue` | Shipped (PR-840; manual: PR-1087–1088) |
+| Slow work from an event (retryable) | `RegisterOnEvent` (primary) | Serve wires async enqueue with `trigger=event`. `Enqueue` is for run-now (stamps `trigger=manual`). Custom `OnAsync`+`Enqueue` only when you need payload shaping `eventPayload` cannot do — and bus enqueue failures are not retried | Shipped (PR-1088; see `plugins/example`) |
 | Replace search / cache / tax backend | Typed infrastructure port (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …) | Config picks one winner | Shipped (typed registers: PR-1015; tax: PR-813, template: PR-853) |
 | Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
 | Durable custom line data | Extension field on `cart_item` → snapshot `order_item` | Registry + ACL | Shipped (Phase 7) |

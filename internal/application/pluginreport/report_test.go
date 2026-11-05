@@ -98,6 +98,20 @@ func TestBuild_SyncJobManualTrigger(t *testing.T) {
 	}
 }
 
+func TestFormatText_SyncJobEventTrigger(t *testing.T) {
+	text := pluginreport.FormatText(pluginreport.Report{
+		SyncJobs: []pluginreport.SyncJob{{
+			PluginSlug: "example",
+			JobType:    "integration.sync.example.demo.order_created",
+			Trigger:    "event",
+			Detail:     "order.created",
+		}},
+	})
+	if !strings.Contains(text, "trigger=event(order.created)") {
+		t.Fatalf("text missing trigger=event(…):\n%s", text)
+	}
+}
+
 func TestFormatJSON_RoundTrip(t *testing.T) {
 	report := pluginreport.Report{
 		Plugins: []pluginreport.PluginStatus{{Name: "x", State: "active"}},
