@@ -59,7 +59,8 @@ type App struct {
 
 	searchProvider   search.SearchEngine
 	cache            cache.Cache
-	queue            jobs.Queue
+	queue            jobs.Queue // plugin-registered backend (RegisterQueue)
+	boundQueue       jobs.Queue // composition-root bind for Integration.Enqueue
 	paymentRegistry  *payment.ProviderRegistry
 	shippingRegistry *shipping.ProviderRegistry
 	mediaStorage     media.Storage

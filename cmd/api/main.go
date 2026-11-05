@@ -582,9 +582,12 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
-	jobQueue, err := postgres.NewJobQueue(conn)
+	// Bind the plugin-registered queue when present (default core/postgres-queue).
+	// BindQueue rejects a different instance, so a second NewJobQueue cannot
+	// silently split cron/Enqueue from the worker's queue.
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
-		return fmt.Errorf("job queue: %w", err)
+		return err
 	}
 	// PR-1030: the standalone scheduler process is the one that's actually
 	// running in production (RUNTIME_MODES.md), so it's the one that must
@@ -870,7 +873,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if metricsRecorder == nil {
 		metricsRecorder = metrics.Noop()
 	}
-	jobQueue, err := resolveJobQueue(app, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(app, conn, cfg)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1211,10 +1214,10 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 	}
 	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
-	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		conn.Close()
-		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
+		return nil, nil, nil, err
 	}
 	runs, err = postgres.NewSearchIndexRunRepo(conn)
 	if err != nil {

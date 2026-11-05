@@ -28,3 +28,10 @@ func TestCron(t *testing.T) {
 		t.Fatalf("Cron() = %+v", tr)
 	}
 }
+
+func TestManual(t *testing.T) {
+	tr := Manual()
+	if tr.Kind != SyncTriggerManual || tr.CronSpec != "" || tr.EventName != "" {
+		t.Fatalf("Manual() = %+v", tr)
+	}
+}

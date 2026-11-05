@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 
 ## Status
 
-**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). Track A (PR-1084–1086) done — next is PR-1087 (`manual` sync + `Enqueue`). Independent of Phase 12 catalog work; can run in parallel.
+**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). Track A done; PR-1087 (`manual` sync + `Enqueue`) done — next is PR-1088 (SDK/docs/example). Independent of Phase 12 catalog work; can run in parallel.
 
 ## Relationship
 
