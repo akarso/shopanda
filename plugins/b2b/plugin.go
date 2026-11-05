@@ -1,7 +1,6 @@
 package b2b
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -49,20 +48,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("b2b plugin: variant repository not configured")
 	}
 
-	if err := app.RegisterMigrations(pluginName, migrationFiles, "migrations", migrationOptions()); err != nil {
-		return fmt.Errorf("b2b plugin: %w", err)
-	}
-
-	migRes, err := runPluginMigrations(context.Background(), app.Bootstrap.DB)
-	if err != nil {
-		return fmt.Errorf("b2b plugin: %w", err)
-	}
-	if app.Logger != nil && (migRes.Applied > 0 || migRes.Adopted > 0) {
-		app.Logger.Info("b2b plugin: migrations", map[string]any{
-			"applied": migRes.Applied,
-			"adopted": migRes.Adopted,
-		})
-	}
+	// Schema is applied by InitAll (Migrator) before Init, or by app migrate.
 
 	groupRepo, err := groups.NewPostgresRepo(app.Bootstrap.DB)
 	if err != nil {

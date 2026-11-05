@@ -112,16 +112,19 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		},
 	}
 	app := testApp(cfg, db)
-	if err := b2b.New().Init(app); err != nil {
-		t.Fatalf("Init() error: %v", err)
+	log := app.Logger
+	reg := plugin.NewRegistry(log)
+	reg.Register(b2b.New())
+	if summary := reg.InitAll(app); summary.Failed != 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll summary = %+v", summary)
 	}
 	app.FreezePermissionRegistry()
 	rbac.BindRuntime(app.PermissionRegistry())
 	t.Cleanup(rbac.UnbindRuntime)
 
-	regs := app.Migrations()
-	if len(regs) != 1 || regs[0].PluginName != "shopanda/b2b" || regs[0].Dir != "migrations" {
-		t.Fatalf("Migrations() = %+v, want one shopanda/b2b registration", regs)
+	specs := b2b.New().Migrations()
+	if len(specs) != 1 || specs[0].Dir != "migrations" || specs[0].FS == nil {
+		t.Fatalf("Migrations() = %+v, want one embed spec", specs)
 	}
 
 	if !rbac.HasPermission(identity.RoleAdmin, b2b.PermissionGroupsRead) {

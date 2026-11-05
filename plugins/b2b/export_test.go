@@ -36,11 +36,6 @@ func LegacyBareMigrationBasenamesForTest() []string {
 	return out
 }
 
-// MigrationFilesForTest returns the embedded migrations FS and directory name.
-func MigrationFilesForTest() (fs.FS, string) {
-	return migrationFiles, "migrations"
-}
-
 // NewAdminHandlersForTest exposes newAdminHandlers for wiring unit tests.
 func NewAdminHandlersForTest(
 	boot *plugin.Bootstrap,

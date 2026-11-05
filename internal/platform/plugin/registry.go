@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/cli"
@@ -105,16 +106,9 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		panic("plugin: app must not be nil")
 	}
 	app.configRegistry = r.configRegistry
-	entries := r.entries
-	if app.Config != nil && len(app.Config.Plugins.DependsOn) > 0 {
-		sorted, err := SortEntriesByDependsOn(entries, app.Config.Plugins.DependsOn)
-		if err != nil {
-			r.log.Error("plugin.depends_on.sort_failed", err, nil)
-		} else {
-			entries = sorted
-		}
-	}
+	entries := r.orderedEntries(app)
 	summary := InitSummary{Registered: len(entries)}
+	ctx := context.Background()
 	for i := range entries {
 		e := &entries[i]
 		if e.State != StateLoaded {
@@ -124,11 +118,19 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
+		if err := applyPluginMigrator(ctx, app, name, e.Plugin); err != nil {
+			e.State = StateFailed
+			e.Err = err
+			summary.Failed++
+			r.log.Error("plugin.init.failed", err, map[string]interface{}{
+				"plugin": name,
+				"cause":  "migrate",
+			})
+			continue
+		}
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
-		app.setInitPluginName(name)
 		if err := r.safeInit(e, app); err != nil {
-			app.setInitPluginName("")
 			e.State = StateFailed
 			e.Err = err
 			summary.Failed++
@@ -142,7 +144,6 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			})
 			continue
 		}
-		app.setInitPluginName("")
 		r.cliRegistry.Merge(stagingCLI)
 		e.State = StateActive
 		summary.Initialized++

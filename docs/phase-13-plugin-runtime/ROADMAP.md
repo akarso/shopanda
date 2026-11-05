@@ -19,7 +19,7 @@ Each PR is tagged **`[oss]`**.
 
 | Subsystem | Today | End of this phase |
 | --- | --- | --- |
-| Plugin schema | ~~B2B `RunFS` in `Init`~~ | `RunPluginFS` records `plugin:{name}:{file}`; advisory lock; B2B on runner; `RegisterMigrations` + `app migrate` / `setup` apply plugin SQL |
+| Plugin schema | ~~B2B `RunFS` in `Init`~~ | `RunPluginFS` + advisory lock; `plugin.Migrator`; `app migrate` / `setup` apply without Init; InitAll applies before Init |
 | Plugin jobs | Cron or event sync only; no queue on `Bootstrap`; `OnAsync` is the escape hatch | Same job types + worker path; `manual` trigger; `Enqueue` after queue bind; SDK + docs |
 
 ---
@@ -61,7 +61,7 @@ After the gate:
 | --- | --- | --- |
 | PR-1084 | `RunPluginFS` + lock + namespaced versions | **done** — New runner: record `plugin:{name}:{basename}`; **one transaction + xact lock per file** (PgBouncer-safe; preserves 003/004 lock splits); claim-then-exec; strict name charset; plugin filename hygiene. Existing `Run` / `RunFS` unchanged. |
 | PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareBasenames` remaps the frozen legacy set (001–004) under the same per-file lock/tx; dual-writes bare keys on fresh apply; allowlist must match the embed FS; lock wait only (no DDL wall-clock cap). |
-| PR-1086 | `RegisterMigrations` + `app migrate` | **done** — Plugins `RegisterMigrations` during `Init`. `app migrate` / `setup` apply core then every registration via `RunPluginFSOptions`. `Init` stays an idempotent safety net. |
+| PR-1086 | `Migrator` + `app migrate` | **done** — `plugin.Migrator` declares FS once. `app migrate` / `setup` apply without InitAll. InitAll applies Migrator SQL before Init when DB is set. |
 
 ---
 
@@ -105,7 +105,7 @@ After the gate:
 | --- | --- | --- | --- |
 | 1084 | A | [oss] | **done** — Namespaced plugin migrate runner + advisory lock |
 | 1085 | A | [oss] | **done** — B2B uses runner; adopt frozen bare basenames |
-| 1086 | A | [oss] | **done** — `RegisterMigrations` + `app migrate` applies plugin SQL |
+| 1086 | A | [oss] | **done** — `Migrator` + `app migrate` applies plugin SQL (no InitAll) |
 | 1087 | B | [oss] | Manual sync trigger + `Enqueue` + queue bind |
 | 1088 | B | [oss] | SDK, docs, example, plugins report |
 

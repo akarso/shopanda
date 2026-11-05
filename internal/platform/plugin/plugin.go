@@ -102,9 +102,6 @@ type App struct {
 	integrationStockSyncMu sync.Mutex
 
 	syncJobs []SyncJobRegistration
-
-	migrations     []MigrationRegistration
-	initPluginName string // set by Registry.InitAll around each Plugin.Init
 }
 
 // RegisterCompositionStep registers a composition pipeline step.

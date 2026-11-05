@@ -433,12 +433,16 @@ Flags:
 		})
 	}
 
-	// Step 2: Migrations (core then registered plugin FS).
+	// Step 2: Migrations (core then plugin Migrator FS — no InitAll).
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("setup: migrate: %w", err)
 	}
-	if err := applyPluginMigrations(cfg, log, conn); err != nil {
+	pluginRes, err := applyPluginMigrations(context.Background(), cfg, log, conn)
+	if err != nil {
+		if applied > 0 {
+			fmt.Printf("✓ %d core migrations applied (plugin step failed)\n", applied)
+		}
 		return fmt.Errorf("setup: %w", err)
 	}
 	if applied > 0 {
@@ -446,9 +450,17 @@ Flags:
 	} else {
 		fmt.Println("✓ Core migrations up to date")
 	}
-	fmt.Println("✓ Plugin migrations up to date")
+	if pluginRes.Applied > 0 || pluginRes.Adopted > 0 {
+		fmt.Printf("✓ Plugin migrations applied=%d adopted=%d\n", pluginRes.Applied, pluginRes.Adopted)
+	} else {
+		fmt.Println("✓ Plugin migrations up to date")
+	}
 	if verbose {
-		log.Info("setup.migrate", map[string]interface{}{"applied": applied})
+		log.Info("setup.migrate", map[string]interface{}{
+			"applied":        applied,
+			"plugin_applied": pluginRes.Applied,
+			"plugin_adopted": pluginRes.Adopted,
+		})
 	}
 
 	// Step 3: Seeders.
@@ -496,17 +508,21 @@ func runMigrate(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("migrate.start", nil)
 
+	ctx := context.Background()
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	if err := applyPluginMigrations(cfg, log, conn); err != nil {
+	pluginRes, err := applyPluginMigrations(ctx, cfg, log, conn)
+	if err != nil {
 		return err
 	}
 
 	log.Info("migrate.complete", map[string]interface{}{
-		"applied": applied,
+		"applied":        applied,
+		"plugin_applied": pluginRes.Applied,
+		"plugin_adopted": pluginRes.Adopted,
 	})
 	return nil
 }

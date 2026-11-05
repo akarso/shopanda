@@ -10,35 +10,30 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
-// applyPluginMigrations initializes compile-time plugins so they can
-// RegisterMigrations, then applies every registered plugin FS (idempotent with
-// the Init safety-net apply). Call after core migrate.Run.
-func applyPluginMigrations(cfg *config.Config, log logger.Logger, conn *sql.DB) error {
+// applyPluginMigrations collects plugin.Migrator specs from the compile-time
+// registry (no InitAll — no brokers, licenses, or app wiring) and applies them
+// after core migrate.Run.
+func applyPluginMigrations(ctx context.Context, cfg *config.Config, log logger.Logger, conn *sql.DB) (plugin.PluginMigrateResult, error) {
+	var zero plugin.PluginMigrateResult
 	if cfg == nil {
-		return fmt.Errorf("migrate: config is required")
+		return zero, fmt.Errorf("migrate: config is required")
 	}
 	if conn == nil {
-		return fmt.Errorf("migrate: database is required")
+		return zero, fmt.Errorf("migrate: database is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
-	boot, err := newPluginBootstrap(conn)
+	// Pass a minimal App only for depends_on ordering (Config).
+	regs, err := registry.CollectMigrations(&plugin.App{Config: cfg})
 	if err != nil {
-		return fmt.Errorf("migrate: %w", err)
+		return zero, fmt.Errorf("migrate: %w", err)
 	}
-	pluginApp := &plugin.App{
-		Logger:    log,
-		Config:    cfg,
-		Bootstrap: boot,
+	totals, err := plugin.ApplyMigrationRegistrations(ctx, conn, log, regs)
+	if err != nil {
+		return totals, fmt.Errorf("migrate: %w", err)
 	}
-	preparePermissionRegistry(pluginApp)
-	summary := registry.InitAll(pluginApp)
-	freezePermissionRegistry(pluginApp)
-	if summary.Failed > 0 {
-		return fmt.Errorf("migrate: plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
-	}
-	if err := pluginApp.ApplyMigrations(context.Background(), conn); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	return nil
+	return totals, nil
 }

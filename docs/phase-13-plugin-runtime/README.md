@@ -15,7 +15,7 @@ This phase closes those two gaps as small increments on existing ports. It does 
 
 - **Namespace, don’t isolate.** Plugin migration versions become `plugin:{name}:{basename}` in the same `schema_migrations` table. Plugin job types stay `integration.sync.{slug}.{name}`.
 - **Lock around DDL.** Plugin apply uses a PostgreSQL advisory lock so multi-process `Init` is safe.
-- **`app migrate` is the deploy path.** `Init` remains an idempotent safety net (same lock), not the only way plugin SQL runs.
+- **`app migrate` is the deploy path.** Plugins declare SQL via `Migrator` (no Init). `InitAll` re-applies the same specs before `Init` when a DB is available.
 - **Extend `RegisterSyncJob`, don’t add `RegisterJobHandler`.** On-demand work is a third trigger kind (`manual`) plus `Enqueue` after the composition root binds the resolved queue. Phase 11 jobs admin already lists/retries any type on that queue.
 - **One PR = one responsibility**, reviewable in ~10–20 minutes.
 
