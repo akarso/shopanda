@@ -5,7 +5,7 @@ Reference implementation for third-party-style plugins living outside `plugins/c
 ## What it demonstrates
 
 - **Pricing step** — adds a fixed example fee (`example.fee`) to the pricing pipeline
-- **Event listener** — async handler on `order.created` that logs order metadata
+- **Manual sync job** — `extapi.Manual()` job `demo.order_created`; `OnAsync(order.created)` only enqueues (queue retry + jobs admin). Do not put slow I/O in the bus listener.
 - **Admin permission** — registers `example.reports.read` for the Admin role
 - **CLI command** — registers `example:ping` via `RegisterCommand`
 
@@ -35,10 +35,18 @@ Try the CLI hook:
 app example:ping
 ```
 
+List the sync job:
+
+```bash
+app plugins report
+# … Sync jobs: integration.sync.example.demo.order_created  trigger=manual  example
+```
+
 ## Authoring notes
 
 - Implement `plugin.Plugin` with a unique `Name()` (use a vendor prefix, e.g. `acme/shipping`)
-- Register extensions in `Init` via `plugin.App` — do not modify core domain packages
-- Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, and permissions
+- Register extensions in `Init` via `plugin.App` / `pluginsdk` — do not modify core domain packages
+- Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, permissions, and sync jobs
+- For durable/retryable work from an event: `RegisterManual` + `Enqueue` from a tiny `OnAsync` body (PR-1088). Inline third-party calls in `OnAsync` have no queue retry.
 
 See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../PLUGINS.md)

@@ -76,6 +76,13 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 	if app.Bus.Handlers(order.EventOrderCreated) != 1 {
 		t.Fatalf("order.created handlers = %d, want 1", app.Bus.Handlers(order.EventOrderCreated))
 	}
+	jobs := app.SyncJobs()
+	if len(jobs) != 1 || jobs[0].JobType != "integration.sync.example.demo.order_created" {
+		t.Fatalf("SyncJobs() = %+v, want manual demo.order_created", jobs)
+	}
+	if jobs[0].Job.Trigger.Kind != "manual" {
+		t.Fatalf("trigger = %q, want manual", jobs[0].Job.Trigger.Kind)
+	}
 
 	if !rbac.HasPermission(identity.RoleAdmin, example.PermissionReportsRead) {
 		t.Fatal("expected example.reports.read for admin role")

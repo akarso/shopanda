@@ -1,6 +1,8 @@
 package pluginsdk
 
 import (
+	"context"
+
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -51,6 +53,26 @@ func (sj *SyncJobs) RegisterOnEvent(name, eventName string, handler extapi.SyncJ
 		opt(&job)
 	}
 	return sj.register(job)
+}
+
+// RegisterManual registers an on-demand sync job (no cron/event wiring).
+// Enqueue after the composition root BindQueue's the resolved jobs.Queue.
+func (sj *SyncJobs) RegisterManual(name string, handler extapi.SyncJobHandler, opts ...SyncJobOption) error {
+	job := extapi.SyncJob{
+		Name:    name,
+		Trigger: extapi.Manual(),
+		Handler: handler,
+	}
+	for _, opt := range opts {
+		opt(&job)
+	}
+	return sj.register(job)
+}
+
+// Enqueue queues a previously registered sync job for this slug ("run now").
+// Works for manual, cron, or event jobs; the envelope trigger is always "manual".
+func (sj *SyncJobs) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
+	return sj.sdk.app.Integration(sj.slug).Enqueue(ctx, name, payload)
 }
 
 func (sj *SyncJobs) register(job extapi.SyncJob) error {

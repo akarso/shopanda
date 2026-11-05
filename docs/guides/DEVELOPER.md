@@ -801,7 +801,7 @@ Phases 1–12 and 14 are **shipped** (Phase 12 still has VAT / configurable / as
 | --- | --- |
 | Integrator platform, merchant discovery, jobs/search/cache | Shipped |
 | Product types, visibility, bundle/grouped, linked, downloadable | Shipped with caveats |
-| Plugin-owned migrations + on-demand sync enqueue | Track A done; PR-1087 `Manual()` + `Enqueue` + `BindQueue` done; SDK/docs polish in PR-1088 |
+| Plugin-owned migrations + on-demand sync enqueue | **Done** (PR-1084–1088) — site-ready gate met |
 
 See [Integrator Platform spec](INTEGRATOR_PLATFORM.md) and [EU Compliance](COMPLIANCE_EU.md). Phase roadmaps and PR specs live on the `dev` branch under `docs/phase-*` (not on `main`).
 
