@@ -52,7 +52,7 @@ There is no runtime plugin discovery, `.so` loading, or marketplace in the curre
 ### External plugins MUST NOT
 
 - Override core logic or mutate core schema
-- Access the database directly outside domain repositories (plugin-owned tables via `Bootstrap.DB` are OK when scoped to the plugin)
+- Access the database directly outside domain repositories (plugin-owned tables via `Bootstrap.DB` + `RegisterMigrations` are OK when scoped to the plugin; do not call raw `migrate.RunFS`)
 - Import `internal/infrastructure` or `internal/interfaces` (enforced by `TestImportBoundary`)
 - Register competing infrastructure backends (use or contribute a core plugin instead)
 - Block request lifecycle — use async events or jobs for slow work
@@ -110,6 +110,9 @@ Available today through `plugin.App`:
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
+| **Plugin schema** | `RegisterMigrations(name, fsys, dir, opts)` | Embedded SQL applied by `app migrate` / `setup`, with the same `migrate.RunPluginFS` runner as the Init safety net (PR-1086). Versions are `plugin:{name}:{basename}`. Set `opts.AdoptBareBasenames` only for a frozen legacy allowlist. |
+
+**Plugin-owned tables:** call `RegisterMigrations(Name(), fsys, dir, opts)` during `Init` with an `embed.FS` (and still apply via `RunPluginFS` / the same helper as a boot safety net). Operators run `app migrate` (or `setup`) before processes start — that path applies core `migrations/` then every registration. Do not use raw `migrate.RunFS` for plugin SQL (shared basename namespace, no lock).
 
 **Infrastructure providers** (typed ports on `plugin.App`; wrong types fail at compile time):
 

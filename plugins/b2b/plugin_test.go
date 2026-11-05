@@ -119,6 +119,11 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 	rbac.BindRuntime(app.PermissionRegistry())
 	t.Cleanup(rbac.UnbindRuntime)
 
+	regs := app.Migrations()
+	if len(regs) != 1 || regs[0].PluginName != "shopanda/b2b" || regs[0].Dir != "migrations" {
+		t.Fatalf("Migrations() = %+v, want one shopanda/b2b registration", regs)
+	}
+
 	if !rbac.HasPermission(identity.RoleAdmin, b2b.PermissionGroupsRead) {
 		t.Fatal("expected b2b.groups.read for admin")
 	}

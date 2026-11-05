@@ -49,6 +49,10 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("b2b plugin: variant repository not configured")
 	}
 
+	if err := app.RegisterMigrations(pluginName, migrationFiles, "migrations", migrationOptions()); err != nil {
+		return fmt.Errorf("b2b plugin: %w", err)
+	}
+
 	migRes, err := runPluginMigrations(context.Background(), app.Bootstrap.DB)
 	if err != nil {
 		return fmt.Errorf("b2b plugin: %w", err)

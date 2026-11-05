@@ -433,16 +433,20 @@ Flags:
 		})
 	}
 
-	// Step 2: Migrations.
+	// Step 2: Migrations (core then registered plugin FS).
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("setup: migrate: %w", err)
 	}
-	if applied > 0 {
-		fmt.Printf("✓ %d migrations applied\n", applied)
-	} else {
-		fmt.Println("✓ Migrations up to date")
+	if err := applyPluginMigrations(cfg, log, conn); err != nil {
+		return fmt.Errorf("setup: %w", err)
 	}
+	if applied > 0 {
+		fmt.Printf("✓ %d core migrations applied\n", applied)
+	} else {
+		fmt.Println("✓ Core migrations up to date")
+	}
+	fmt.Println("✓ Plugin migrations up to date")
 	if verbose {
 		log.Info("setup.migrate", map[string]interface{}{"applied": applied})
 	}
@@ -495,6 +499,10 @@ func runMigrate(cfg *config.Config, log logger.Logger) error {
 	applied, err := migrate.Run(conn, "migrations")
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+
+	if err := applyPluginMigrations(cfg, log, conn); err != nil {
+		return err
 	}
 
 	log.Info("migrate.complete", map[string]interface{}{
@@ -723,7 +731,7 @@ Commands:
   setup                Run first-time setup (migrate + seed + verify)
   worker               Start the background job worker
   scheduler            Start the cron scheduler
-  migrate              Run database migrations
+  migrate              Run database migrations (core then plugin-owned schema)
   seed                 Seed the database with initial data
   search:reindex       Re-index all products in the search engine ([--wait])
   search:reindex-runs:reconcile <run-id> --reason=<text>

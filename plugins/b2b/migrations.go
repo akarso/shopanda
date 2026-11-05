@@ -34,16 +34,20 @@ var legacyBareMigrationBasenames = []string{
 // caller's ctx governs statement cancellation.
 const initMigrateLockWait = migrate.DefaultPluginLockWait
 
+func migrationOptions() migrate.PluginFSOptions {
+	return migrate.PluginFSOptions{
+		LockWait:           initMigrateLockWait,
+		AdoptBareBasenames: legacyBareMigrationBasenames,
+	}
+}
+
 func runPluginMigrations(ctx context.Context, db *sql.DB) (migrate.PluginFSResult, error) {
 	var zero migrate.PluginFSResult
 	if db == nil {
 		return zero, fmt.Errorf("b2b plugin: database not configured")
 	}
 
-	res, err := migrate.RunPluginFSOptions(ctx, db, pluginName, migrationFiles, "migrations", migrate.PluginFSOptions{
-		LockWait:           initMigrateLockWait,
-		AdoptBareBasenames: legacyBareMigrationBasenames,
-	})
+	res, err := migrate.RunPluginFSOptions(ctx, db, pluginName, migrationFiles, "migrations", migrationOptions())
 	if err != nil {
 		return res, fmt.Errorf("b2b plugin: migrate: %w", err)
 	}

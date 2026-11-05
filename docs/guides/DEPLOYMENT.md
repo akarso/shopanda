@@ -87,9 +87,11 @@ The setup command / wizard:
 If you prefer explicit CLI commands instead of `setup`:
 
 ```bash
-./shopanda migrate
+./shopanda migrate   # core migrations/ then every plugin RegisterMigrations FS
 ./shopanda seed
 ```
+
+Run `migrate` (or `setup`) **before** `serve` / `worker` / `scheduler` so plugin-owned tables exist before processes boot. `Init` still applies the same plugin FS idempotently if migrate was skipped.
 
 ### 5. Start the application
 
@@ -842,6 +844,8 @@ tar -czf shopanda-media-$(date +%F).tar.gz ./public/media
 If you use S3-compatible storage, rely on bucket-level lifecycle and backup policies instead.
 
 ### Migration filename policy
+
+`app migrate` / `setup` apply core SQL under `migrations/`, then every FS registered with `plugin.App.RegisterMigrations` during plugin `Init` (same `migrate.RunPluginFS` runner and `plugin:{name}:{basename}` keys as the boot safety net). Do **not** rename recorded plugin basenames — that desyncs `schema_migrations` the same way renaming a core file would.
 
 Migrations under `migrations/` are plain, forward-only SQL files applied in filename order — there is no golang-migrate/goose (or similar) tool and **no down migrations**. Rollback means **restore from a backup** (see above), not reversing a migration.
 

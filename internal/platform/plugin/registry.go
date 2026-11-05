@@ -126,7 +126,9 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		})
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
+		app.setInitPluginName(name)
 		if err := r.safeInit(e, app); err != nil {
+			app.setInitPluginName("")
 			e.State = StateFailed
 			e.Err = err
 			summary.Failed++
@@ -140,6 +142,7 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			})
 			continue
 		}
+		app.setInitPluginName("")
 		r.cliRegistry.Merge(stagingCLI)
 		e.State = StateActive
 		summary.Initialized++

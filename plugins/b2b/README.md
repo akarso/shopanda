@@ -80,7 +80,7 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 ### Schema migrations (PR-1085)
 
-`Init` applies embedded SQL through `migrate.RunPluginFS` with plugin name `shopanda/b2b`. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table. Each file uses its own transaction; the advisory lock key is per plugin and is taken for that file only (released between files so 003/004 lock-splitting still works).
+`Init` calls `RegisterMigrations` for the embedded FS, then applies it through `migrate.RunPluginFS` with plugin name `shopanda/b2b` (boot safety net). `app migrate` / `setup` apply the same registration after core migrations. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table. Each file uses its own transaction; the advisory lock key is per plugin and is taken for that file only (released between files so 003/004 lock-splitting still works).
 
 **Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key (those basenames are reserved in global `schema_migrations`) so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back a release does not undo that release’s schema. Do not rename existing `migrations/*.sql` files — that would desync tracking.
 
