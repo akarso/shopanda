@@ -582,11 +582,10 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
-	// Same as schedule_cli / setupWorker: bind the plugin-registered queue when
-	// present (default core/postgres-queue). BindQueue rejects a different
-	// instance, so a second NewJobQueue cannot silently split cron/Enqueue
-	// from the worker's queue.
-	jobQueue, err := bindSchedulerQueue(pluginApp, conn, cfg)
+	// Bind the plugin-registered queue when present (default core/postgres-queue).
+	// BindQueue rejects a different instance, so a second NewJobQueue cannot
+	// silently split cron/Enqueue from the worker's queue.
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		return err
 	}
@@ -874,11 +873,8 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if metricsRecorder == nil {
 		metricsRecorder = metrics.Noop()
 	}
-	jobQueue, err := resolveJobQueue(app, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(app, conn, cfg)
 	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	if err := app.BindQueue(jobQueue); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second).WithMetrics(metricsRecorder)
@@ -1218,12 +1214,8 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 	}
 	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
-	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
-		conn.Close()
-		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
-	}
-	if err := pluginApp.BindQueue(jobQueue); err != nil {
 		conn.Close()
 		return nil, nil, nil, err
 	}

@@ -71,7 +71,12 @@ func TestManualEnqueue_ThroughWorkerHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	worker.ProcessOne(context.Background())
+	if !worker.ProcessOne(context.Background()) {
+		t.Fatal("ProcessOne: expected a dequeued job")
+	}
+	if worker.ProcessOne(context.Background()) {
+		t.Fatal("ProcessOne: queue should be empty")
+	}
 
 	if got.Plugin != "acme" || got.Name != "webhook.ingest" || got.Trigger != extapi.SyncTriggerManual {
 		t.Fatalf("got = %+v", got)

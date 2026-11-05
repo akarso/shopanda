@@ -265,7 +265,7 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	// hardcoded Postgres queue here would enqueue into a table no worker
 	// is polling, and this command would report "triggered" for work
 	// that silently never runs.
-	jobQueue, err := bindSchedulerQueue(pluginApp, conn, cfg)
+	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		return err
 	}

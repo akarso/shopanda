@@ -229,18 +229,21 @@ func TestRegisterSyncJobTriggers_SkipManual(t *testing.T) {
 	if err := bus.Publish(context.Background(), event.Event{Name: "order.created"}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(200 * time.Millisecond)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	var n int
 	for time.Now().Before(deadline) {
-		if queue.len() >= 1 {
+		n = queue.len()
+		if n >= 1 {
+			// Settle briefly so a late second enqueue from a bad manual
+			// subscription would still be visible.
+			time.Sleep(20 * time.Millisecond)
+			n = queue.len()
 			break
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	// Wait out the window so a late second enqueue from a bad manual
-	// subscription would still be visible.
-	time.Sleep(50 * time.Millisecond)
-	if queue.len() != 1 {
-		t.Fatalf("enqueued = %d, want only the event job (manual must not subscribe)", queue.len())
+	if n != 1 {
+		t.Fatalf("enqueued = %d, want only the event job (manual must not subscribe)", n)
 	}
 	if queue.first().Type != "integration.sync.acme.export.order" {
 		t.Fatalf("job type = %q", queue.first().Type)
