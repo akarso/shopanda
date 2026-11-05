@@ -8,6 +8,7 @@ import (
 	"time"
 
 	shippingapp "github.com/akarso/shopanda/internal/application/shipping"
+	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	domainShipping "github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -92,6 +93,35 @@ func mustPending(t *testing.T) *domainShipping.Shipment {
 	return &s
 }
 
+type stubOrderLookup struct {
+	o   *domainOrder.Order
+	err error
+}
+
+func (s *stubOrderLookup) FindByID(context.Context, string) (*domainOrder.Order, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.o == nil {
+		return nil, nil
+	}
+	cp := *s.o
+	return &cp, nil
+}
+
+func mustOrder(t *testing.T, id string) *domainOrder.Order {
+	t.Helper()
+	item, err := domainOrder.NewItem("v1", "SKU", "Item", 1, shared.MustNewMoney(100, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := domainOrder.NewOrder(id, "cust-1", "", "EUR", []domainOrder.Item{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &o
+}
+
 func TestStatusService_MarkShipped(t *testing.T) {
 	sh := mustPending(t)
 	repo := newMemShipments(sh)
@@ -117,13 +147,79 @@ func TestStatusService_MarkShipped(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("events = %v", names)
 	}
-	// Idempotent.
+	// Idempotent heal: republish shipment.shipped so lost email side effects can recover.
 	res2, err := svc.MarkShipped(context.Background(), "ord-1", "TRACK-1", "carrier-ref")
 	if err != nil || res2.Changed {
 		t.Fatalf("idempotent = %+v err=%v", res2, err)
 	}
+	if len(names) != 2 {
+		t.Fatalf("heal republish = %v, want 2", names)
+	}
+}
+
+func TestStatusService_MarkShipped_RejectsCancelledOrder(t *testing.T) {
+	o := mustOrder(t, "ord-1")
+	if err := o.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	svc := shippingapp.NewStatusService(newMemShipments(mustPending(t))).WithOrders(&stubOrderLookup{o: o})
+	_, err := svc.MarkShipped(context.Background(), "ord-1", "T1", "")
+	if !errors.Is(err, shippingapp.ErrOrderNotFulfillable) {
+		t.Fatalf("err = %v, want ErrOrderNotFulfillable", err)
+	}
+}
+
+func TestStatusService_MarkShipped_HealSkipsWhenOrderCancelled(t *testing.T) {
+	o := mustOrder(t, "ord-1")
+	orders := &stubOrderLookup{o: o}
+	bus := event.NewBus(logger.New("error"))
+	var names []string
+	bus.On(domainShipping.EventShipmentShipped, func(context.Context, event.Event) error {
+		names = append(names, domainShipping.EventShipmentShipped)
+		return nil
+	})
+	svc := shippingapp.NewStatusService(newMemShipments(mustPending(t))).WithOrders(orders).WithEventBus(bus)
+	if _, err := svc.MarkShipped(context.Background(), "ord-1", "T1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	orders.o = o
+	res, err := svc.MarkShipped(context.Background(), "ord-1", "T1", "")
+	if err != nil || res.Changed {
+		t.Fatalf("retry after cancel = %+v err=%v", res, err)
+	}
 	if len(names) != 1 {
-		t.Fatalf("republish = %v", names)
+		t.Fatalf("heal must not republish after cancel: %v", names)
+	}
+}
+
+func TestStatusService_MarkShipped_HealPropagatesOrderLookupError(t *testing.T) {
+	o := mustOrder(t, "ord-1")
+	orders := &stubOrderLookup{o: o}
+	bus := event.NewBus(logger.New("error"))
+	var names []string
+	bus.On(domainShipping.EventShipmentShipped, func(context.Context, event.Event) error {
+		names = append(names, domainShipping.EventShipmentShipped)
+		return nil
+	})
+	svc := shippingapp.NewStatusService(newMemShipments(mustPending(t))).WithOrders(orders).WithEventBus(bus)
+	if _, err := svc.MarkShipped(context.Background(), "ord-1", "T1", ""); err != nil {
+		t.Fatal(err)
+	}
+	lookupErr := errors.New("orders unavailable")
+	orders.err = lookupErr
+	orders.o = nil
+	res, err := svc.MarkShipped(context.Background(), "ord-1", "T1", "")
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("err = %v, want lookup error", err)
+	}
+	if res.Changed {
+		t.Fatal("heal must not claim a change when order lookup fails")
+	}
+	if len(names) != 1 {
+		t.Fatalf("heal must not republish on lookup failure: %v", names)
 	}
 }
 

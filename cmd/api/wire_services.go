@@ -279,7 +279,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo).WithEventBus(bus)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
-	shipmentStatusService := shippingApp.NewStatusService(repos.shippingRepo).WithEventBus(bus).WithLogger(log)
+	shipmentStatusService := shippingApp.NewStatusService(repos.shippingRepo).
+		WithOrders(repos.orderRepo).
+		WithEventBus(bus).
+		WithLogger(log)
 	pluginApp.SetIntegrationShipmentStatusUpdater(plugin.NewIntegrationShipmentStatusUpdater(shipmentStatusService))
 	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo, conn)
 	permReg := preparePermissionRegistry(pluginApp)

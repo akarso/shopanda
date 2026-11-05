@@ -76,6 +76,21 @@ func TestIntegrationShipmentStatusUpdater_MissingTracking(t *testing.T) {
 	}
 }
 
+func TestIntegrationShipmentStatusUpdater_EmptyOrderIDMapsToInvalidPayload(t *testing.T) {
+	pending, err := domainShipping.NewShipment("s1", "o1", domainShipping.MethodFlatRate, shared.MustNewMoney(100, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upd := plugin.NewIntegrationShipmentStatusUpdater(shippingapp.NewStatusService(&stubShipRepo{sh: &pending}))
+	_, err = upd.ApplyShipmentStatus(context.Background(), "  ", "SHIPPED", "T", "")
+	if !errors.Is(err, extapi.ErrIntegrationShipmentInvalidPayload) {
+		t.Fatalf("err = %v, want InvalidPayload", err)
+	}
+	if errors.Is(err, extapi.ErrIntegrationShipmentInvalidTransition) {
+		t.Fatal("empty order id must not map to InvalidTransition")
+	}
+}
+
 func TestIntegrationShipmentStatusUpdater_TrackingAmendMapsToInvalidTransition(t *testing.T) {
 	pending, err := domainShipping.NewShipment("s1", "o1", domainShipping.MethodFlatRate, shared.MustNewMoney(100, "EUR"))
 	if err != nil {

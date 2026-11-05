@@ -72,10 +72,10 @@ func mapIntegrationShipmentStatusError(err error) error {
 		return fmt.Errorf("%w: %s", extapi.ErrIntegrationShipmentConflict, appErr.Message)
 	case apperror.CodeValidation:
 		msg := appErr.Message
-		if errors.Is(err, shippingapp.ErrTrackingRequired) {
+		if errors.Is(err, shippingapp.ErrTrackingRequired) || errors.Is(err, shippingapp.ErrOrderIDRequired) {
 			return fmt.Errorf("%w: %s", extapi.ErrIntegrationShipmentInvalidPayload, msg)
 		}
-		// Includes ErrTrackingAmendNotSupported and domain lifecycle refusals.
+		// Includes ErrTrackingAmendNotSupported, ErrOrderNotFulfillable, domain lifecycle refusals.
 		return fmt.Errorf("%w: %s", extapi.ErrIntegrationShipmentInvalidTransition, msg)
 	}
 	return err

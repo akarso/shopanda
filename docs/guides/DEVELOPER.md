@@ -446,7 +446,7 @@ Checkout creates a **pending** shipment when shipping is required. To mark it sh
 - Admin: `GET`/`PUT /api/v1/admin/orders/{orderId}/shipment` (`orders.read` / `orders.write`)
 - Plugins: `app.IntegrationShipmentStatusUpdater()` (`extapi.IntegrationShipmentStatusUpdater`) — see `plugins/integrationdemo` `shipment-status` route (PR-1400)
 
-`MarkShipped` requires a non-empty tracking number. Already-shipped retries with the same tracking are idempotent when `provider_ref` is omitted; a different tracking (or conflicting non-empty `provider_ref`) is rejected. Publish failures after persist are logged and do not fail the caller.
+`MarkShipped` requires a non-empty tracking number and a fulfillable order (not `cancelled`/`failed`). Already-shipped retries with the same tracking are idempotent when `provider_ref` is omitted and republish `shipment.shipped` so a lost email can heal (notification dedupes by shipment id). A different tracking (or conflicting non-empty `provider_ref`) is rejected. Publish failures after persist are logged and do not fail the caller.
 
 ## Add a Storage Backend
 

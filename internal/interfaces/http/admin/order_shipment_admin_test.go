@@ -12,6 +12,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	shippingapp "github.com/akarso/shopanda/internal/application/shipping"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -51,6 +52,12 @@ func (m *memShipmentRepo) UpdateStatus(_ context.Context, s *domainShipping.Ship
 
 func shipmentAdminSetup(t *testing.T) (*http.ServeMux, *memShipmentRepo) {
 	t.Helper()
+	mux, repo, _ := shipmentAdminSetupWithAudit(t, nil)
+	return mux, repo
+}
+
+func shipmentAdminSetupWithAudit(t *testing.T, sink logger.Logger) (*http.ServeMux, *memShipmentRepo, *adminapp.Auditor) {
+	t.Helper()
 	pending, err := domainShipping.NewShipment("ship-1", "ord-1", domainShipping.MethodFlatRate, shared.MustNewMoney(500, "EUR"))
 	if err != nil {
 		t.Fatal(err)
@@ -58,12 +65,19 @@ func shipmentAdminSetup(t *testing.T) (*http.ServeMux, *memShipmentRepo) {
 	repo := &memShipmentRepo{sh: &pending}
 	svc := shippingapp.NewStatusService(repo)
 	orders := newStubOrderRepo()
-	handler := admin.NewOrderAdminHandler(orders, logger.New("error"), nil).WithShipmentStatusService(svc)
+	var auditor *adminapp.Auditor
+	var handler *admin.OrderAdminHandler
+	if sink != nil {
+		auditor = adminapp.NewAuditor(sink)
+		handler = admin.NewOrderAdminHandlerWithAuditor(orders, auditor, nil).WithShipmentStatusService(svc)
+	} else {
+		handler = admin.NewOrderAdminHandler(orders, logger.New("error"), nil).WithShipmentStatusService(svc)
+	}
 	requireAdmin := admin.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/orders/{orderId}/shipment", requireAdmin(handler.GetShipment()))
 	mux.Handle("PUT /api/v1/admin/orders/{orderId}/shipment", requireAdmin(handler.UpdateShipment()))
-	return mux, repo
+	return mux, repo, auditor
 }
 
 func TestOrderAdmin_GetAndShipShipment(t *testing.T) {
@@ -176,5 +190,52 @@ func assertAdminShipmentError(t *testing.T, rec *httptest.ResponseRecorder, want
 	errBody, _ := body["error"].(map[string]interface{})
 	if errBody == nil || errBody["code"] != wantCode {
 		t.Fatalf("error = %#v, want code %q", errBody, wantCode)
+	}
+}
+
+func TestOrderAdmin_GetShipment_Audit(t *testing.T) {
+	sink := &auditSink{}
+	mux, _, _ := shipmentAdminSetupWithAudit(t, sink)
+
+	getOK := testhelper.AdminRequest(httptest.NewRequest("GET", "/api/v1/admin/orders/ord-1/shipment", nil), "admin-1")
+	mux.ServeHTTP(httptest.NewRecorder(), getOK)
+	if len(sink.records) != 1 {
+		t.Fatalf("success audit records = %d, want 1", len(sink.records))
+	}
+	if got, _ := sink.records[0].context["action"].(adminapp.AuditAction); got != adminapp.AuditShipmentRead {
+		t.Fatalf("action = %v, want %s", sink.records[0].context["action"], adminapp.AuditShipmentRead)
+	}
+	if got := sink.records[0].context["result"]; got != "success" {
+		t.Fatalf("result = %v", got)
+	}
+
+	sink.records = nil
+	get404 := testhelper.AdminRequest(httptest.NewRequest("GET", "/api/v1/admin/orders/missing/shipment", nil), "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, get404)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(sink.records) != 0 {
+		t.Fatalf("audit records = %d, want 0 on 404", len(sink.records))
+	}
+}
+
+func TestOrderAdmin_UpdateShipment_AuditsInvalidStatus(t *testing.T) {
+	sink := &auditSink{}
+	mux, _, _ := shipmentAdminSetupWithAudit(t, sink)
+	req := testhelper.AdminRequest(httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1/shipment",
+		strings.NewReader(`{"status":"nope"}`)), "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assertAdminShipmentError(t, rec, http.StatusUnprocessableEntity, "validation")
+	if len(sink.records) != 1 {
+		t.Fatalf("audit records = %d, want 1", len(sink.records))
+	}
+	if got, _ := sink.records[0].context["action"].(adminapp.AuditAction); got != adminapp.AuditShipmentUpdate {
+		t.Fatalf("action = %v", sink.records[0].context["action"])
+	}
+	if got := sink.records[0].context["result"]; got != "error" {
+		t.Fatalf("result = %v", got)
 	}
 }

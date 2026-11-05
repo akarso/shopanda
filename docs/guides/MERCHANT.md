@@ -236,8 +236,8 @@ Use these transitions consistently:
 
 On the order detail **Shipping** panel (when checkout created a shipment):
 
-- **Mark shipped** — enter a tracking number (required) and optional provider reference; customer can receive the shipped email
-- **Mark delivered** — after shipped
+- **Mark shipped** — enter a tracking number (required) and optional provider reference; customer can receive the shipped email. Blocked when the order is `cancelled` or `failed`
+- **Mark delivered** — after shipped; also blocked for cancelled/failed orders
 - **Cancel shipment** — only while still pending; **irreversible** for that order (no re-ship / reopen in the product — a misclick needs database repair)
 
 Digital orders that skipped shipping show “No shipment”. Warehouse systems can push the same transitions via the `integrationdemo` shipment-status route when that plugin is enabled.

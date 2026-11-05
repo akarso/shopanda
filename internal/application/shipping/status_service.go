@@ -2,8 +2,10 @@ package shipping
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	domainShipping "github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -15,9 +17,15 @@ type shipmentEventBus interface {
 	Publish(ctx context.Context, evt event.Event) error
 }
 
+// orderLookup loads orders so ship/deliver can refuse cancelled/failed fulfillment.
+type orderLookup interface {
+	FindByID(ctx context.Context, id string) (*domainOrder.Order, error)
+}
+
 // StatusService applies domain-valid shipment transitions for integrations and admin.
 type StatusService struct {
 	shipments domainShipping.ShipmentRepository
+	orders    orderLookup
 	bus       shipmentEventBus
 	log       logger.Logger
 }
@@ -28,6 +36,16 @@ func NewStatusService(shipments domainShipping.ShipmentRepository) *StatusServic
 		panic("shipping: status service repository must not be nil")
 	}
 	return &StatusService{shipments: shipments}
+}
+
+// WithOrders gates ship/deliver on cancelled/failed order status. Nil skips the check
+// (tests that only cover shipment transitions); production wiring always sets this.
+func (s *StatusService) WithOrders(orders orderLookup) *StatusService {
+	if s == nil {
+		return nil
+	}
+	s.orders = orders
+	return s
 }
 
 // WithEventBus publishes shipment.* after successful transitions. Nil skips publish.
@@ -59,7 +77,7 @@ type StatusResult struct {
 func (s *StatusService) FindByOrderID(ctx context.Context, orderID string) (*domainShipping.Shipment, error) {
 	orderID = strings.TrimSpace(orderID)
 	if orderID == "" {
-		return nil, apperror.Validation("order id must not be empty")
+		return nil, apperror.Wrap(apperror.CodeValidation, ErrOrderIDRequired.Error(), ErrOrderIDRequired)
 	}
 	sh, err := s.shipments.FindByOrderID(ctx, orderID)
 	if err != nil {
@@ -73,8 +91,10 @@ func (s *StatusService) FindByOrderID(ctx context.Context, orderID string) (*dom
 
 // MarkShipped transitions pending → shipped with a tracking number.
 // Already shipped with the same tracking is an idempotent no-op when provider_ref
-// is omitted (empty) or matches the stored value. A different tracking, or a
-// non-empty provider_ref that disagrees with storage, is rejected (amend not supported).
+// is omitted (empty) or matches the stored value; the shipment.shipped event is
+// republished so a lost async email side effect can heal (deduped by notification).
+// A different tracking, or a non-empty provider_ref that disagrees with storage,
+// is rejected (amend not supported). Cancelled/failed orders cannot be shipped.
 func (s *StatusService) MarkShipped(ctx context.Context, orderID, trackingNumber, providerRef string) (StatusResult, error) {
 	trackingNumber = strings.TrimSpace(trackingNumber)
 	providerRef = strings.TrimSpace(providerRef)
@@ -87,10 +107,23 @@ func (s *StatusService) MarkShipped(ctx context.Context, orderID, trackingNumber
 	}
 	previous := sh.Status()
 	if previous == domainShipping.StatusShipped {
-		if sameShippedIdentity(sh.TrackingNumber, sh.ProviderRef, trackingNumber, providerRef) {
-			return StatusResult{Shipment: sh, PreviousStatus: previous, Changed: false}, nil
+		if !sameShippedIdentity(sh.TrackingNumber, sh.ProviderRef, trackingNumber, providerRef) {
+			return StatusResult{}, apperror.Wrap(apperror.CodeValidation, ErrTrackingAmendNotSupported.Error(), ErrTrackingAmendNotSupported)
 		}
-		return StatusResult{}, apperror.Wrap(apperror.CodeValidation, ErrTrackingAmendNotSupported.Error(), ErrTrackingAmendNotSupported)
+		// Heal republish only while the order is still fulfillable.
+		// Cancelled/failed → silent no-heal (shipment already shipped; do not fail ERP retry).
+		// Other lookup errors must propagate so callers can retry heal.
+		if err := s.requireFulfillableOrder(ctx, orderID); err != nil {
+			if errors.Is(err, ErrOrderNotFulfillable) {
+				return StatusResult{Shipment: sh, PreviousStatus: previous, Changed: false}, nil
+			}
+			return StatusResult{Shipment: sh, PreviousStatus: previous, Changed: false}, err
+		}
+		s.publishStatus(ctx, sh, previous, domainShipping.StatusShipped)
+		return StatusResult{Shipment: sh, PreviousStatus: previous, Changed: false}, nil
+	}
+	if err := s.requireFulfillableOrder(ctx, orderID); err != nil {
+		return StatusResult{}, err
 	}
 	return s.applyLoaded(ctx, sh, previous, domainShipping.StatusShipped, func(working *domainShipping.Shipment) error {
 		return working.Ship(trackingNumber, providerRef)
@@ -111,18 +144,50 @@ func sameShippedIdentity(storedTracking, storedProviderRef, tracking, providerRe
 }
 
 // MarkDelivered transitions shipped → delivered.
+// Cancelled/failed orders cannot be marked delivered.
 func (s *StatusService) MarkDelivered(ctx context.Context, orderID string) (StatusResult, error) {
-	return s.apply(ctx, orderID, domainShipping.StatusDelivered, func(sh *domainShipping.Shipment) error {
-		return sh.Deliver()
+	sh, err := s.FindByOrderID(ctx, orderID)
+	if err != nil {
+		return StatusResult{}, err
+	}
+	previous := sh.Status()
+	if previous == domainShipping.StatusDelivered {
+		return StatusResult{Shipment: sh, PreviousStatus: previous, Changed: false}, nil
+	}
+	if err := s.requireFulfillableOrder(ctx, orderID); err != nil {
+		return StatusResult{}, err
+	}
+	return s.applyLoaded(ctx, sh, previous, domainShipping.StatusDelivered, func(working *domainShipping.Shipment) error {
+		return working.Deliver()
 	})
 }
 
 // Cancel transitions pending → cancelled. Cancelled shipments cannot be reopened
-// (order_id is unique; there is no recreate API).
+// (order_id is unique; there is no recreate API). Order status is not checked —
+// cancelling a shipment for an already-cancelled order is allowed.
 func (s *StatusService) Cancel(ctx context.Context, orderID string) (StatusResult, error) {
 	return s.apply(ctx, orderID, domainShipping.StatusCancelled, func(sh *domainShipping.Shipment) error {
 		return sh.Cancel()
 	})
+}
+
+func (s *StatusService) requireFulfillableOrder(ctx context.Context, orderID string) error {
+	if s == nil || s.orders == nil {
+		return nil
+	}
+	o, err := s.orders.FindByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if o == nil {
+		return apperror.NotFound("order not found")
+	}
+	switch o.Status() {
+	case domainOrder.OrderStatusCancelled, domainOrder.OrderStatusFailed:
+		return apperror.Wrap(apperror.CodeValidation, ErrOrderNotFulfillable.Error(), ErrOrderNotFulfillable)
+	default:
+		return nil
+	}
 }
 
 func (s *StatusService) apply(

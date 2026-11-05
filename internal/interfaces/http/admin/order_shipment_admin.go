@@ -45,19 +45,33 @@ func (h *OrderAdminHandler) GetShipment() http.HandlerFunc {
 		adminID := h.getAdminID(r)
 		sh, err := h.shipments.FindByOrderID(r.Context(), orderID)
 		if err != nil {
-			scopeDetails := adminScopeDetailsFromRequest(r)
-			h.auditor.LogAction(r.Context(), admin.AuditEntry{
-				AdminID:      adminID,
-				Action:       admin.AuditOrderRead,
-				ResourceType: "shipment",
-				ResourceID:   orderID,
-				Details:      scopeDetails,
-				Result:       "error",
-				Error:        err.Error(),
-			})
+			// Do not audit not_found (anti-enumeration); audit other lookup failures.
+			if !apperror.Is(err, apperror.CodeNotFound) {
+				scopeDetails := adminScopeDetailsFromRequest(r)
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditShipmentRead,
+					ResourceType: "shipment",
+					ResourceID:   orderID,
+					Details:      scopeDetails,
+					Result:       "error",
+					Error:        err.Error(),
+				})
+			}
 			httpshared.JSONError(w, err)
 			return
 		}
+
+		scopeDetails := adminScopeDetailsFromRequest(r)
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditShipmentRead,
+			ResourceType: "shipment",
+			ResourceID:   orderID,
+			Result:       "success",
+			Details:      scopeDetails,
+		})
+
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 			"shipment": shipmentResponse(sh),
 		})
@@ -82,17 +96,46 @@ func (h *OrderAdminHandler) UpdateShipment() http.HandlerFunc {
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxUpdateShipmentBodyBytes))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
+			scopeDetails := adminScopeDetailsFromRequest(r)
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditShipmentUpdate,
+					ResourceType: "shipment",
+					ResourceID:   orderID,
+					Result:       "error",
+					Error:        "request body too large",
+					Details:      scopeDetails,
+				})
 				httpshared.JSONError(w, apperror.Validation("request body too large"))
 				return
 			}
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditShipmentUpdate,
+				ResourceType: "shipment",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "invalid JSON body",
+				Details:      scopeDetails,
+			})
 			httpshared.JSONError(w, apperror.Validation("invalid JSON body"))
 			return
 		}
 
 		target, err := shippingapp.NormalizeStatus(req.Status)
 		if err != nil {
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditShipmentUpdate,
+				ResourceType: "shipment",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "status must be shipped, delivered, or cancelled",
+				Details:      scopeDetails,
+			})
 			httpshared.JSONError(w, apperror.Validation("status must be shipped, delivered, or cancelled"))
 			return
 		}
@@ -106,6 +149,16 @@ func (h *OrderAdminHandler) UpdateShipment() http.HandlerFunc {
 		case domainShipping.StatusCancelled:
 			res, err = h.shipments.Cancel(r.Context(), orderID)
 		default:
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditShipmentUpdate,
+				ResourceType: "shipment",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "unsupported shipment status",
+				Details:      scopeDetails,
+			})
 			httpshared.JSONError(w, apperror.Validation("unsupported shipment status"))
 			return
 		}

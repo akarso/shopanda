@@ -95,6 +95,6 @@ Content-Type: application/json
 
 Supported statuses: `shipped` (tracking required), `delivered`, `cancelled` (or `SHIPPED` / `DELIVERED` / `CANCELLED`). Response key: `shipment_status`.
 
-`external_ref` is echoed on the response only — it is not persisted. Concurrent update races return **409** `shipment.conflict` (rotate `Idempotency-Key` after 5xx; 409 is safe to retry with a new key after re-reading state). Missing tracking on ship is **400** `shipment.invalid_payload`. Already-shipped retries with the same tracking are idempotent even if `provider_ref` is omitted; a different tracking (or conflicting non-empty `provider_ref`) is **422** `shipment.invalid_transition`. Cancel is irreversible for the order (unique shipment row; no reopen API).
+`external_ref` is echoed on the response only — it is not persisted. Concurrent update races return **409** `shipment.conflict` (rotate `Idempotency-Key` after 5xx; 409 is safe to retry with a new key after re-reading state). Missing tracking / blank `order_id` on ship is **400** `shipment.invalid_payload`. Already-shipped retries with the same tracking are idempotent even if `provider_ref` is omitted (and republish `shipment.shipped` for email heal); a different tracking (or conflicting non-empty `provider_ref`), or ship/deliver on a cancelled/failed order, is **422** `shipment.invalid_transition`. Cancel is irreversible for the order (unique shipment row; no reopen API).
 
 Use this plugin as a template for inbound ERP/warehouse callbacks — copy patterns, do not import this package from production plugins.
