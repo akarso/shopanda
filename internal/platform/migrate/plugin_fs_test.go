@@ -885,10 +885,17 @@ func TestRunPluginFS_AdoptBareVersions(t *testing.T) {
 
 func TestRunPluginFS_RejectsUnknownAdoptBasename(t *testing.T) {
 	ctx := context.Background()
+	// Non-nil db so a nil-db check reordered ahead of allowlist validation
+	// cannot mask a missing-basename failure (ensureTable never runs).
+	db, err := sql.Open("pgx", "postgres://invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
 	fsys := fstest.MapFS{
 		"migrations/001_ok.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
 	}
-	_, err := RunPluginFSOptions(ctx, nil, "ok-plugin", fsys, "migrations", PluginFSOptions{
+	_, err = RunPluginFSOptions(ctx, db, "ok-plugin", fsys, "migrations", PluginFSOptions{
 		AdoptBareBasenames: []string{"001_missing.sql"},
 	})
 	if err == nil {

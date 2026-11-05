@@ -29,8 +29,8 @@ var legacyBareMigrationBasenames = []string{
 }
 
 // initMigrateLockWait bounds how long Init waits per file for the plugin
-// migrate advisory lock. DDL itself uses context.Background() semantics
-// (no overall deadline) so large VALIDATE CONSTRAINT scans are not cancelled.
+// migrate advisory lock. No overall deadline is applied here; the caller's
+// ctx governs DDL so large VALIDATE CONSTRAINT scans are not cancelled.
 const initMigrateLockWait = 30 * time.Second
 
 func runPluginMigrations(ctx context.Context, db *sql.DB) (migrate.PluginFSResult, error) {

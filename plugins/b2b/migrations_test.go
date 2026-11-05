@@ -98,11 +98,14 @@ func TestRunMigrationsForTest_AdoptsLegacyBareBasenames(t *testing.T) {
 	plugin := b2b.PluginNameForTest()
 	legacy := b2b.LegacyBareMigrationBasenamesForTest()
 
+	resetB2BSchema(t, db, bases, plugin)
+
 	if _, err := b2b.RunMigrationsForTest(db); err != nil {
 		t.Fatalf("initial B2B migrate: %v", err)
 	}
 
-	// Rewrite tracking to bare-only inside one transaction (no parallel gap).
+	// Rewrite only legacy tracking to bare-only (pre-1085 shop shape). Later
+	// files keep their namespaced rows and are skipped — Applied stays 0.
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -134,10 +137,9 @@ func TestRunMigrationsForTest_AdoptsLegacyBareBasenames(t *testing.T) {
 		t.Fatalf("adopt via RunMigrationsForTest: %v", err)
 	}
 	wantAdopted := len(legacy)
-	wantApplied := len(bases) - len(legacy)
-	if res.Adopted != wantAdopted || res.Applied != wantApplied {
-		t.Fatalf("adopt run: adopted=%d applied=%d, want adopted=%d applied=%d",
-			res.Adopted, res.Applied, wantAdopted, wantApplied)
+	if res.Adopted != wantAdopted || res.Applied != 0 {
+		t.Fatalf("adopt run: adopted=%d applied=%d, want adopted=%d applied=0",
+			res.Adopted, res.Applied, wantAdopted)
 	}
 	for _, base := range legacy {
 		version := "plugin:" + plugin + ":" + base
