@@ -1,6 +1,7 @@
 package b2b
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -48,7 +49,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("b2b plugin: variant repository not configured")
 	}
 
-	if err := runPluginMigrations(app.Bootstrap.DB); err != nil {
+	if err := runPluginMigrations(context.Background(), app.Bootstrap.DB, p.Name()); err != nil {
 		return fmt.Errorf("b2b plugin: %w", err)
 	}
 

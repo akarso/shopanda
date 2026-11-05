@@ -60,7 +60,7 @@ After the gate:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1084 | `RunPluginFS` + lock + namespaced versions | **done** — New runner: record `plugin:{name}:{basename}`; **one transaction + xact lock per file** (PgBouncer-safe; preserves 003/004 lock splits); claim-then-exec; strict name charset; plugin filename hygiene. Existing `Run` / `RunFS` unchanged. |
-| PR-1085 | Move B2B onto `RunPluginFS` | B2B `Init` uses the namespaced runner. One-time treat already-applied B2B basenames (`001_create_customer_groups.sql`, `002_create_customer_group_prices.sql`) as applied under the new keys so enablement does not re-exec DDL. |
+| PR-1085 | Move B2B onto `RunPluginFS` | **done** — B2B `Init` uses the namespaced runner. `AdoptBareVersions` remaps every embedded basename that already has a bare-key row (not a hard-coded 001/002 list) under the same per-file lock/tx. |
 | PR-1086 | `RegisterMigrations` + `app migrate` | Plugins register an `embed.FS` during `Init`. `app migrate` applies core dir then every registered plugin FS (same lock/namespace as 1084). `Init` stays an idempotent safety net. Document the deploy order. |
 
 ---
@@ -104,7 +104,7 @@ After the gate:
 | PR | Track | License | One-liner |
 | --- | --- | --- | --- |
 | 1084 | A | [oss] | **done** — Namespaced plugin migrate runner + advisory lock |
-| 1085 | A | [oss] | B2B uses runner; backfill old version keys |
+| 1085 | A | [oss] | **done** — B2B uses runner; backfill old version keys |
 | 1086 | A | [oss] | `RegisterMigrations` + `app migrate` applies plugin SQL |
 | 1087 | B | [oss] | Manual sync trigger + `Enqueue` + queue bind |
 | 1088 | B | [oss] | SDK, docs, example, plugins report |
@@ -120,4 +120,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | `RegisterSyncJob` cron/event | Shipped |
 | [Phase 11](../phase-11-jobs-search-cache/ROADMAP.md) | Jobs admin for any queued type | Shipped |
 | [Phase 12](../phase-12-product-composition/ROADMAP.md) | Catalog types & composition | In progress — no dependency |
-| **Phase 13** | Plugin schema + on-demand sync | **In progress** (1084 done) |
+| **Phase 13** | Plugin schema + on-demand sync | **In progress** (1084–1085 done) |

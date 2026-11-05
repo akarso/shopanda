@@ -76,7 +76,13 @@ B2B extends Shopanda through the same `plugin.Plugin` contract as external plugi
 
 - Implements domain **ports** defined in open core (never the reverse)
 - Registers admin permissions, HTTP routes, pricing/checkout steps via `plugin.App`
-- Does not modify core schema directly; plugin-owned tables ship via embedded migrations
+- Does not modify core schema directly; plugin-owned tables ship via embedded migrations under `migrations/`
+
+### Schema migrations (PR-1085)
+
+`Init` applies embedded SQL through `migrate.RunPluginFS` with plugin name `shopanda/b2b`. Versions are recorded as `plugin:shopanda/b2b:{basename}` in the shared `schema_migrations` table (one transaction + advisory lock per file).
+
+Shops that previously applied B2B via `RunFS` (bare basename keys) are remapped in place: when a bare row exists and the namespaced key does not, the namespaced key is inserted under the same lock **without** re-executing DDL. Do not rename existing `migrations/*.sql` files — that would desync tracking.
 
 Customer groups and group-aware pricing ship in this plugin. Quotes, PO, and approvals remain planned. B2B PR tags live on the `dev` branch under `docs/phase-5-maturity/ROADMAP.md`.
 

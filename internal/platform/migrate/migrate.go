@@ -32,6 +32,12 @@ type PluginFSOptions struct {
 	// still wins. Ctx also cancels SQL execution after the lock is acquired —
 	// do not pass a short ctx "only for the lock" around long DDL.
 	LockWait time.Duration
+
+	// AdoptBareVersions, when true, treats an existing bare-basename row in
+	// schema_migrations (legacy RunFS tracking) as already applied: under the
+	// same per-file advisory lock, inserts plugin:{name}:{basename} without
+	// re-executing SQL. Used when moving a plugin from RunFS to RunPluginFS.
+	AdoptBareVersions bool
 }
 
 // pluginNamePattern is the permanent contract for names embedded in
@@ -117,15 +123,10 @@ func RunPluginFSOptions(ctx context.Context, db *sql.DB, pluginName string, fsys
 		return 0, err
 	}
 
-	lockWait := opts.LockWait
-	if lockWait <= 0 {
-		lockWait = DefaultPluginLockWait
-	}
-
 	count := 0
 	for _, f := range files {
 		version := pluginVersion(name, f.name)
-		applied, applyErr := applyPluginFile(ctx, db, name, version, f.content, lockWait)
+		applied, applyErr := applyPluginFile(ctx, db, name, f.name, version, f.content, opts)
 		if applyErr != nil {
 			return count, applyErr
 		}
@@ -136,7 +137,12 @@ func RunPluginFSOptions(ctx context.Context, db *sql.DB, pluginName string, fsys
 	return count, nil
 }
 
-func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, version, content string, lockWait time.Duration) (applied bool, err error) {
+func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, basename, version, content string, opts PluginFSOptions) (applied bool, err error) {
+	lockWait := opts.LockWait
+	if lockWait <= 0 {
+		lockWait = DefaultPluginLockWait
+	}
+
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, fmt.Errorf("migrate: plugin %s: begin: %w", pluginName, err)
@@ -150,6 +156,26 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, version, conte
 	lockKey := pluginLockKey(pluginName)
 	if err = waitPluginAdvisoryLock(ctx, tx, lockKey, lockWait); err != nil {
 		return false, fmt.Errorf("migrate: plugin %s: %w", pluginName, err)
+	}
+
+	if opts.AdoptBareVersions {
+		outcome, adoptErr := adoptBareVersionIfPresent(ctx, tx, pluginName, basename, version)
+		if adoptErr != nil {
+			return false, adoptErr
+		}
+		switch outcome {
+		case adoptSkipExisting:
+			if rbErr := tx.Rollback(); rbErr != nil {
+				return false, fmt.Errorf("migrate: plugin %s: rollback skip %s: %w", pluginName, version, rbErr)
+			}
+			err = nil
+			return false, nil
+		case adoptFromBare:
+			if err = tx.Commit(); err != nil {
+				return false, fmt.Errorf("migrate: plugin %s: commit adopt %s: %w", pluginName, version, err)
+			}
+			return false, nil
+		}
 	}
 
 	var recorded sql.NullString
@@ -209,6 +235,45 @@ func applyPluginFile(ctx context.Context, db *sql.DB, pluginName, version, conte
 func clearPluginVersionClaim(ctx context.Context, db *sql.DB, version string) error {
 	_, err := db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = $1`, version)
 	return err
+}
+
+// adopt outcomes for legacy bare-basename remapping under the migrate lock.
+type adoptOutcome int
+
+const (
+	adoptNone adoptOutcome = iota
+	adoptSkipExisting
+	adoptFromBare
+)
+
+// adoptBareVersionIfPresent remaps a legacy RunFS bare-basename row to the
+// namespaced key under the caller's lock/tx. adoptNone means continue with
+// claim+exec; adoptSkipExisting means the namespaced key is already present;
+// adoptFromBare means the namespaced key was inserted from the bare row.
+func adoptBareVersionIfPresent(ctx context.Context, tx *sql.Tx, pluginName, basename, version string) (adoptOutcome, error) {
+	var namespacedExists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&namespacedExists); err != nil {
+		return adoptNone, fmt.Errorf("migrate: plugin %s: check %s: %w", pluginName, version, err)
+	}
+	if namespacedExists {
+		return adoptSkipExisting, nil
+	}
+
+	var bareExists bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, basename).Scan(&bareExists); err != nil {
+		return adoptNone, fmt.Errorf("migrate: plugin %s: check bare %s: %w", pluginName, basename, err)
+	}
+	if !bareExists {
+		return adoptNone, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, version); err != nil {
+		return adoptNone, fmt.Errorf("migrate: plugin %s: adopt %s: %w", pluginName, version, err)
+	}
+	return adoptFromBare, nil
 }
 
 func pluginLockKey(pluginName string) string {

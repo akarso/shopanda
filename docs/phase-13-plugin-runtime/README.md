@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 
 ## Status
 
-**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). PR-1084 done — next is PR-1085 (B2B onto `RunPluginFS`). Independent of Phase 12 catalog work; can run in parallel.
+**In progress.** Site-ready gate is Track A + Track B (PR-1084–1088). PR-1084–1085 done — next is PR-1086 (`RegisterMigrations` + `app migrate`). Independent of Phase 12 catalog work; can run in parallel.
 
 ## Relationship
 
@@ -32,4 +32,4 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 | Phase 8 | Integrator platform — `RegisterSyncJob`, outbound warehouse/PIM | Shipped (PR-840–843) |
 | Phase 11 | Jobs admin (list / retry / cancel) + queue reachability | Shipped |
 | Phase 12 | Product types & composition | In progress (unrelated catalog work) |
-| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **In progress** (PR-1084 done; do before a real site) |
+| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **In progress** (PR-1084–1085 done; do before a real site) |

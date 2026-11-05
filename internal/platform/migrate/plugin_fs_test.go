@@ -823,6 +823,66 @@ func TestRunPluginFS_EndInSQLRejectedBeforeApply(t *testing.T) {
 	}
 }
 
+func TestRunPluginFS_AdoptBareVersions(t *testing.T) {
+	ctx := context.Background()
+	db := openPluginTestDB(t)
+	suffix := uniqueSuffix()
+	plugin := "adopt-" + suffix
+	basename := fmt.Sprintf("001_legacy_%s.sql", suffix)
+	table := fmt.Sprintf("pr1085_adopt_%s", suffix)
+	version := pluginVersion(plugin, basename)
+
+	if err := ensureTable(db); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a prior RunFS apply: bare basename recorded + table exists.
+	if _, err := db.Exec(fmt.Sprintf("CREATE TABLE %s (id INT)", table)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, basename); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Exec("DROP TABLE IF EXISTS " + table)
+		_, _ = db.Exec("DELETE FROM schema_migrations WHERE version = $1 OR version = $2", basename, version)
+	})
+
+	// SQL would fail if re-executed (table already exists, no IF NOT EXISTS).
+	fsys := fstest.MapFS{
+		"migrations/" + basename: &fstest.MapFile{
+			Data: []byte(fmt.Sprintf("CREATE TABLE %s (id INT);", table)),
+		},
+	}
+	n, err := RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareVersions: true,
+	})
+	if err != nil {
+		t.Fatalf("AdoptBareVersions: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("applied %d, want 0 (adopt must not re-exec SQL)", n)
+	}
+
+	var recorded bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&recorded); err != nil {
+		t.Fatal(err)
+	}
+	if !recorded {
+		t.Fatalf("missing adopted version %s", version)
+	}
+
+	// Idempotent: second call skips.
+	n, err = RunPluginFSOptions(ctx, db, plugin, fsys, "migrations", PluginFSOptions{
+		AdoptBareVersions: true,
+	})
+	if err != nil {
+		t.Fatalf("second adopt: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("second applied %d, want 0", n)
+	}
+}
+
 func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
 	// Bypass load-time checks to exercise the runtime guard: END commits the
 	// claim, then we must DELETE it so a later RunPluginFS does not skip.
@@ -843,7 +903,7 @@ func TestApplyPluginFile_ClearsStaleClaimWhenTxnEndedEarly(t *testing.T) {
 	})
 
 	body := fmt.Sprintf("CREATE TABLE %s (id int); END;", table)
-	applied, err := applyPluginFile(ctx, db, plugin, version, body, time.Second)
+	applied, err := applyPluginFile(ctx, db, plugin, basename, version, body, PluginFSOptions{LockWait: time.Second})
 	if err == nil {
 		t.Fatal("expected runtime error when END ends the transaction")
 	}
