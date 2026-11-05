@@ -257,10 +257,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 
-	bootCtx, bootStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder, bootCtx)
-	bootInterrupted := errBootInterrupted(bootCtx)
-	bootStop()
+	bootSig := startBootSignal()
+	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder, bootSig.Context())
+	bootInterrupted := bootSig.Stop()
 	if err != nil {
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
@@ -569,10 +568,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	summary := registry.InitAllContext(initCtx, pluginApp)
-	bootInterrupted := errBootInterrupted(initCtx)
-	initStop()
+	bootSig := startBootSignal()
+	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
+	bootInterrupted := bootSig.Stop()
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
@@ -1040,10 +1038,9 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
-	initCtx, initStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	summary := registry.InitAllContext(initCtx, pluginApp)
-	bootInterrupted := errBootInterrupted(initCtx)
-	initStop()
+	bootSig := startBootSignal()
+	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
+	bootInterrupted := bootSig.Stop()
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
