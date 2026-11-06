@@ -144,6 +144,8 @@ Extension mechanisms (events, pricing/checkout/composition pipelines, permission
 
 See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
+**Product sites** (own git remote, optional CI): [Building a product site](docs/guides/PRODUCT_SITES.md) · `bash scripts/product-init.sh --slug myproduct` · portable checks via `make check` / [`scripts/ci/`](scripts/ci/) · sample pipelines in [`ci-samples/`](ci-samples/) (opt-in; local/FTP needs none).
+
 **Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin hot reload. Theme templates reload in `SHOPANDA_DEV_MODE`.
 
 Phases 1–12 and 14 are shipped (Phase 12 still has VAT / configurable / assignment-CSV / linked-parent storefront caveats). Phase 13 (plugin-owned schema + on-demand jobs) remains the **site-ready gate** before a real merchant site. Working notes live on the `dev` branch under `docs/phase-*` — see [docs/README.md](docs/README.md).

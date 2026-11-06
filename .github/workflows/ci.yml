@@ -62,23 +62,12 @@ jobs:
         with:
           node-version: "22"
 
-      - name: go mod verify
-        run: go mod verify
-
-      - name: gofmt
-        run: |
-          files="$(gofmt -l .)"
-          if [ -n "$files" ]; then
-            echo "gofmt needed on:"
-            echo "$files"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test
-        run: go test ./...
+      - name: Unit contract (scripts/ci/unit.sh)
+        env:
+          # Platform-only: reserved-slugs must cover every plugins/*/ package.
+          # Product clones leave this unset so product-init + make check works.
+          SHOPANDA_PLATFORM: "1"
+        run: bash scripts/ci/unit.sh
 
   integration:
     name: integration
@@ -132,9 +121,8 @@ jobs:
           exit 1
 
       - name: DSN-gated integration tests
-        # -json + jq: detect Action=skip (default go test text hides skip reasons).
-        # -p 1: serialize packages so concurrent migrate.Run on one DB cannot race.
-        run: bash .github/scripts/run-integration-tests.sh
+        # Portable contract: scripts/ci/integration.sh
+        run: bash scripts/ci/integration.sh
 
   govuln:
     name: govuln
@@ -170,7 +158,7 @@ jobs:
           govulncheck -version
 
       - name: govulncheck (fail-closed + baseline)
-        run: bash .github/scripts/run-govulncheck.sh
+        run: bash scripts/ci/govuln.sh
 
   docs-policy:
     name: docs-policy
@@ -182,11 +170,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Product docs must not relative-link into docs/phase-*
-        run: bash .github/scripts/check-product-docs-links.sh
-
-      - name: Promote script replays (second run, overwrite, FORCE, two-parent merge)
-        run: bash scripts/promote-dev-to-main_test.sh
+      - name: Docs policy (links + promote fixture)
+        env:
+          # Fail closed if promote fixture / product-doc roots vanish on upstream.
+          SHOPANDA_PLATFORM: "1"
+        run: bash scripts/ci/docs-policy.sh
 
   docs-main:
     name: docs-main

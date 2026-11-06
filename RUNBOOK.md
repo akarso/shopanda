@@ -555,7 +555,7 @@ sum(rate(shopanda_fpc_backend_get_errors_total[5m]))
 
 ## Container releases (GHCR)
 
-Version tags (`v*`) publish `ghcr.io/<owner>/shopanda`. **Pin deploys** to `sha-<full40gitsha>` or `@sha256:…` digest — not the version tag alias. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md#pull-from-ghcr-releases).
+Version tags (`v*`) publish `ghcr.io/<owner>/${SHOPANDA_IMAGE_NAME:-shopanda}`. Product forks must set repository variable `SHOPANDA_IMAGE_NAME` to their slug. **Pin deploys** to `sha-<full40gitsha>` or `@sha256:…` digest — not the version tag alias. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md#pull-from-ghcr-releases) and [PRODUCT_SITES.md](docs/guides/PRODUCT_SITES.md).
 
 The `sha-<commit>` tag is never overwritten: the Release workflow refuses to re-push it if it already exists in GHCR (rebuilding the same commit can still yield different image content, since Alpine packages are installed unpinned at build time). A release re-run for an already-released commit fails fast in the "Guard — sha tag must stay immutable" step — this is expected; cut a new commit/tag if you need to publish a fix.
 

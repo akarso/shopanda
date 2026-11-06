@@ -1,0 +1,14 @@
+# Govulncheck baseline
+
+Fail-closed policy when you opt into `scripts/ci/govuln.sh` / the sample CI
+govuln job. Empty allowlist = any finding fails.
+
+| OSV ID | Module / package | Owner | Expiry (UTC) | Notes |
+| --- | --- | --- | --- | --- |
+| *(none)* | — | — | — | Empty stub from product-init |
+
+Machine-readable allowlist used by CI (one OSV ID per line; `#` comments OK):
+
+```text
+# empty
+```

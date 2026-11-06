@@ -16,7 +16,7 @@ must fail CI.
 Rules:
 
 1. Every baseline row needs an **owner** and an **expiry** date (YYYY-MM-DD, UTC).
-2. Expiry must be **≤ 90 days from today** when the row is checked in CI (enforced by `.github/scripts/run-govulncheck.sh`).
+2. Expiry must be **≤ 90 days from today** when the row is checked in CI (enforced by `scripts/ci/govuln.sh`).
 3. Expired rows are treated as failures (remove the exception or fix the vuln).
 4. The fenced allowlist and the table must list the **same** OSV IDs (CI fails if they diverge).
 5. Prefer upgrading the dependency / Go toolchain over extending the baseline.
@@ -35,3 +35,4 @@ Machine-readable allowlist used by CI (one OSV ID per line; `#` comments OK):
 3. Open a follow-up issue/PR before expiry to remove the exception.
 
 Pinned scanner version is recorded in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (`GOVULNCHECK_VERSION`).
+Portable entrypoint: `bash scripts/ci/govuln.sh` (optional `--baseline` / `SHOPANDA_GOVULN_BASELINE`).

@@ -338,7 +338,8 @@ Prefer deploying a **CI-built GHCR image** (or a local `docker build`) over chec
 
 Pushing a git tag matching `v*` (for example `v1.2.3`) runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which builds the Dockerfile and pushes to GitHub Container Registry.
 
-Image name: `ghcr.io/<owner>/shopanda` (owner lowercased).
+Image name: `ghcr.io/<owner>/<image>` where `<image>` defaults to `shopanda`.
+Override with repository variable **`SHOPANDA_IMAGE_NAME`** (product forks must set this — see [PRODUCT_SITES.md](PRODUCT_SITES.md)).
 
 | Tag / reference | Role |
 | --- | --- |

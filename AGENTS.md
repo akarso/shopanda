@@ -29,6 +29,12 @@ These rules apply across the entire system (core, plugins, API, optional fronten
   * testable (when applicable)
   * reviewable in ~10–20 minutes
 
+### Quality checks (portable)
+
+* Prefer `make check` / `bash scripts/ci/unit.sh` before opening a PR (same contract as `CI / unit`).
+* Vendor CI YAML is an adapter for this upstream repo; product sites use [`ci-samples/`](ci-samples/) opt-in or no CI. Do not add mandatory git hooks.
+* Product forks: see [`docs/guides/PRODUCT_SITES.md`](docs/guides/PRODUCT_SITES.md) and Phase 17 on `dev`.
+
 ### PR Guidelines
 
 * Avoid “big bang” implementations
