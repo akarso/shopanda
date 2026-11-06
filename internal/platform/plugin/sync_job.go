@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -123,6 +124,32 @@ func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+// InjectRequestID shallow-copies payload and, when ctx carries a request ID
+// and the payload has no usable request_id, stores it as "request_id".
+// Empty string, nil, or non-string existing values are treated as unset and
+// overwritten. Callers that already set a non-empty string keep their value.
+// Empty / missing ctx IDs are a no-op.
+func InjectRequestID(ctx context.Context, payload map[string]interface{}) map[string]interface{} {
+	out := shallowCopyStringMap(payload)
+	if out == nil {
+		out = map[string]interface{}{}
+	}
+	if ctx == nil {
+		return out
+	}
+	rid := requestctx.RequestID(ctx)
+	if rid == "" {
+		return out
+	}
+	if existing, ok := out["request_id"]; ok {
+		if s, isStr := existing.(string); isStr && s != "" {
+			return out
+		}
+	}
+	out["request_id"] = rid
+	return out
+}
+
 func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, payload map[string]interface{}) error {
 	if a == nil {
 		return fmt.Errorf("plugin: app is nil")
@@ -153,6 +180,7 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	payload = InjectRequestID(ctx, payload)
 	job, err := NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload)
 	if err != nil {
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
@@ -161,11 +189,15 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
 	if a.Logger != nil {
-		a.Logger.Info("integration.sync_job.enqueued", map[string]interface{}{
+		fields := map[string]interface{}{
 			"job_id":   job.ID,
 			"job_type": job.Type,
 			"trigger":  extapi.SyncTriggerManual,
-		})
+		}
+		if rid, _ := payload["request_id"].(string); rid != "" {
+			fields["request_id"] = rid
+		}
+		a.Logger.Info("integration.sync_job.enqueued", fields)
 	}
 	return nil
 }

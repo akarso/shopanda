@@ -618,6 +618,7 @@ func (m *mockMetricsRecorder) CheckoutResult(outcome string) {
 	m.checkoutOutcomes = append(m.checkoutOutcomes, outcome)
 }
 func (m *mockMetricsRecorder) JobFailure(string)                       {}
+func (m *mockMetricsRecorder) JobResult(string, string, time.Duration) {}
 func (m *mockMetricsRecorder) WebhookDelivery(string)                  {}
 func (m *mockMetricsRecorder) RateLimitBackendError(string, string)    {}
 func (m *mockMetricsRecorder) FPCRequest(string, string)               {}

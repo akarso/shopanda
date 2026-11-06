@@ -19,12 +19,15 @@ type Logger interface {
 	Error(msg string, err error, fields map[string]interface{})
 }
 
-// MetricsRecorder records job failure counts. jobType is always one of the
+// MetricsRecorder records job outcomes. jobType is always one of the
 // registered handlers' compile-time type strings, or the fixed sentinel
 // "unknown" for a dequeued job whose type matches no registered handler —
 // never the raw, unbounded value read off the queue.
 type MetricsRecorder interface {
 	JobFailure(jobType string)
+	// JobResult records handler duration for a finished attempt.
+	// outcome must be "success" or "failed" (bounded).
+	JobResult(jobType, outcome string, duration time.Duration)
 }
 
 // unknownJobType labels JobFailure for a dequeued job type with no
@@ -37,7 +40,8 @@ const unknownJobType = "unknown"
 // so processNext never needs a nil check.
 type noopMetrics struct{}
 
-func (noopMetrics) JobFailure(string) {}
+func (noopMetrics) JobFailure(string)                       {}
+func (noopMetrics) JobResult(string, string, time.Duration) {}
 
 // Worker polls the queue and dispatches jobs to registered handlers.
 type Worker struct {
@@ -152,6 +156,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 			"job_type": job.Type,
 		})
 		w.metrics.JobFailure(unknownJobType)
+		w.metrics.JobResult(unknownJobType, "failed", 0)
 		// A real error, not nil: this is exactly the failure an operator
 		// most needs last_error for — a misconfigured or typo'd job type —
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
@@ -160,27 +165,56 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		return true
 	}
 
-	w.log.Info("worker.job.processing", map[string]interface{}{
+	procFields := map[string]interface{}{
 		"job_id":      job.ID,
 		"job_type":    job.Type,
 		"attempt":     job.Attempts,
 		"max_retries": job.MaxRetries,
-	})
+	}
+	mergeJobRequestID(procFields, job.Payload)
+	w.log.Info("worker.job.processing", procFields)
 
-	if err := w.safeHandle(ctx, h, *job); err != nil {
-		w.log.Error("worker.job.failed", err, map[string]interface{}{
+	start := time.Now()
+	err = w.safeHandle(ctx, h, *job)
+	duration := time.Since(start)
+	if err != nil {
+		failFields := map[string]interface{}{
 			"job_id":      job.ID,
 			"job_type":    job.Type,
 			"attempt":     job.Attempts,
 			"max_retries": job.MaxRetries,
-		})
+			"duration_ms": duration.Milliseconds(),
+		}
+		mergeJobRequestID(failFields, job.Payload)
+		w.log.Error("worker.job.failed", err, failFields)
 		w.metrics.JobFailure(job.Type)
+		w.metrics.JobResult(job.Type, "failed", duration)
 		w.recordFail(ctx, job.ID, err)
 		return true
 	}
 
-	w.recordComplete(ctx, job.ID, job.Type)
+	w.recordComplete(ctx, job.ID, job.Type, job.Payload, duration)
 	return true
+}
+
+// mergeJobRequestID copies request_id onto log fields when present. Prefers
+// a top-level envelope key (e.g. webhook.deliver), then sync-envelope
+// payload.request_id.
+func mergeJobRequestID(fields map[string]interface{}, envelope map[string]interface{}) {
+	if fields == nil || envelope == nil {
+		return
+	}
+	if rid, _ := envelope["request_id"].(string); rid != "" {
+		fields["request_id"] = rid
+		return
+	}
+	inner, _ := envelope["payload"].(map[string]interface{})
+	if inner == nil {
+		return
+	}
+	if rid, _ := inner["request_id"].(string); rid != "" {
+		fields["request_id"] = rid
+	}
 }
 
 // safeHandle runs h.Handle with panic recovery, converting a panic into a
@@ -214,22 +248,32 @@ func (w *Worker) recordFail(ctx context.Context, jobID string, jobErr error) {
 	}
 }
 
-func (w *Worker) recordComplete(ctx context.Context, jobID, jobType string) {
+func (w *Worker) recordComplete(ctx context.Context, jobID, jobType string, envelope map[string]interface{}, duration time.Duration) {
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
 	if err := w.queue.Complete(outcomeCtx, jobID); err != nil {
-		w.log.Error("worker.job.complete_failed", err, map[string]interface{}{
-			"job_id": jobID,
-		})
+		failFields := map[string]interface{}{
+			"job_id":      jobID,
+			"job_type":    jobType,
+			"duration_ms": duration.Milliseconds(),
+		}
+		mergeJobRequestID(failFields, envelope)
+		w.log.Error("worker.job.complete_failed", err, failFields)
 		// The handler itself succeeded, but the job may now be redelivered
 		// (e.g. duplicate webhook sends) since the queue never learned it
 		// finished — record it as a failure so dashboards aren't silent
-		// about a real, actionable problem.
+		// about a real, actionable problem. JobResult is recorded here
+		// (not before Complete) so success-rate metrics stay honest.
 		w.metrics.JobFailure(jobType)
+		w.metrics.JobResult(jobType, "failed", duration)
 		return
 	}
-	w.log.Info("worker.job.done", map[string]interface{}{
-		"job_id":   jobID,
-		"job_type": jobType,
-	})
+	w.metrics.JobResult(jobType, "success", duration)
+	doneFields := map[string]interface{}{
+		"job_id":      jobID,
+		"job_type":    jobType,
+		"duration_ms": duration.Milliseconds(),
+	}
+	mergeJobRequestID(doneFields, envelope)
+	w.log.Info("worker.job.done", doneFields)
 }

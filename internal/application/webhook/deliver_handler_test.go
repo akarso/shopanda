@@ -18,6 +18,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 type recordingMetrics struct {
@@ -27,6 +28,7 @@ type recordingMetrics struct {
 func (m *recordingMetrics) HTTPRequest(string, string, string, time.Duration) {}
 func (m *recordingMetrics) CheckoutResult(string)                             {}
 func (m *recordingMetrics) JobFailure(string)                                 {}
+func (m *recordingMetrics) JobResult(string, string, time.Duration)           {}
 func (m *recordingMetrics) RateLimitBackendError(string, string)              {}
 func (m *recordingMetrics) FPCRequest(string, string)                         {}
 func (m *recordingMetrics) FPCRenderDuration(string, time.Duration)           {}
@@ -148,6 +150,88 @@ func TestDispatcher_EnqueuesMatchingEndpoints(t *testing.T) {
 	if len(jobsSnapshot) != 1 {
 		t.Fatalf("jobs = %d, want 1", len(jobsSnapshot))
 	}
+}
+
+func TestDispatcher_StampsRequestID(t *testing.T) {
+	repo := &stubWebhookRepo{
+		endpoints: []domainwebhook.Endpoint{{
+			ID:     "ep-1",
+			URL:    "https://example.com/hook",
+			Secret: "secret",
+			Events: []string{order.EventOrderPaid},
+			Active: true,
+		}},
+	}
+
+	t.Run("from_publish_ctx", func(t *testing.T) {
+		queue := &recordingQueue{enqueued: make(chan jobs.Job, 1)}
+		dispatcher := webhookApp.NewDispatcher(repo, queue, logger.New("error"))
+		bus := event.NewBus(logger.New("error"))
+		dispatcher.Register(bus)
+
+		ctx := requestctx.WithRequestID(context.Background(), "req-from-ctx")
+		if err := bus.Publish(ctx, event.New(order.EventOrderPaid, "test", order.OrderStatusChangedData{
+			OrderID: "ord-1",
+		})); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		select {
+		case job := <-queue.enqueued:
+			if job.Payload["request_id"] != "req-from-ctx" {
+				t.Fatalf("payload = %#v, want request_id from ctx", job.Payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for webhook enqueue")
+		}
+	})
+
+	t.Run("from_publish_async_ctx", func(t *testing.T) {
+		queue := &recordingQueue{enqueued: make(chan jobs.Job, 1)}
+		dispatcher := webhookApp.NewDispatcher(repo, queue, logger.New("error"))
+		bus := event.NewBus(logger.New("error"))
+		dispatcher.Register(bus)
+
+		// Sync-failure fallback: caller keeps original evt; PublishAsync stamps
+		// from ctx onto the dispatched copy.
+		bus.On(order.EventOrderPaid, func(context.Context, event.Event) error {
+			return fmt.Errorf("sync boom")
+		})
+		ctx := requestctx.WithRequestID(context.Background(), "req-from-async")
+		evt := event.New(order.EventOrderPaid, "test", order.OrderStatusChangedData{OrderID: "ord-2"})
+		if err := bus.Publish(ctx, evt); err == nil {
+			t.Fatal("expected Publish sync error")
+		}
+		bus.PublishAsync(ctx, evt)
+		select {
+		case job := <-queue.enqueued:
+			if job.Payload["request_id"] != "req-from-async" {
+				t.Fatalf("payload = %#v, want request_id from PublishAsync ctx", job.Payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for webhook enqueue")
+		}
+	})
+
+	t.Run("from_meta_only", func(t *testing.T) {
+		queue := &recordingQueue{enqueued: make(chan jobs.Job, 1)}
+		dispatcher := webhookApp.NewDispatcher(repo, queue, logger.New("error"))
+		bus := event.NewBus(logger.New("error"))
+		dispatcher.Register(bus)
+
+		evt := event.New(order.EventOrderPaid, "test", order.OrderStatusChangedData{
+			OrderID: "ord-3",
+		}).WithMeta("request_id", "req-from-meta")
+		// PublishAsync with empty ctx still dispatches Meta onto handler ctx.
+		bus.PublishAsync(context.Background(), evt)
+		select {
+		case job := <-queue.enqueued:
+			if job.Payload["request_id"] != "req-from-meta" {
+				t.Fatalf("payload = %#v, want request_id from Meta", job.Payload)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for webhook enqueue")
+		}
+	})
 }
 
 func TestDeliverHandler_PostsSignedPayload(t *testing.T) {

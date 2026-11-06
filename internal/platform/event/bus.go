@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 // Handler processes an event. Returning an error from a sync handler aborts
@@ -67,8 +68,10 @@ func (b *Bus) On(name string, h Handler) {
 // Async handlers run in separate goroutines after all sync handlers
 // have succeeded. They receive the bus shutdown context (not the Publish
 // request context) so request cancel does not abort in-flight side effects.
-// Process shutdown uses wait-then-cancel: ctx stays live during Drain's
-// grace window, then is cancelled so stragglers can exit.
+// When Publish's context (or evt.Meta) carries a request_id, that value is
+// copied onto the handler context so correlation survives without inheriting
+// request cancellation. Process shutdown uses wait-then-cancel: ctx stays
+// live during Drain's grace window, then is cancelled so stragglers can exit.
 func (b *Bus) OnAsync(name string, h Handler) {
 	if h == nil {
 		panic(fmt.Sprintf("event.Bus.OnAsync(%q): handler must not be nil", name))
@@ -86,11 +89,19 @@ func (b *Bus) OnAsync(name string, h Handler) {
 //  2. After BeginShutdown, Publish still runs sync handlers (abort
 //     semantics unchanged) but does not start new async goroutines.
 //  3. Async handlers each run in their own goroutine with the shutdown
-//     context; errors are logged.
+//     context (optionally annotated with request_id from ctx / Meta);
+//     errors are logged.
+//
+// When ctx carries a non-empty request_id and evt.Meta does not already
+// set one, Publish stamps Meta["request_id"] before dispatch so async
+// enqueue paths (sync jobs, webhooks) can correlate without the Publish
+// request context.
 func (b *Bus) Publish(ctx context.Context, evt Event) error {
 	b.mu.RLock()
 	syncH := append([]Handler(nil), b.sync[evt.Name]...)
 	b.mu.RUnlock()
+
+	evt = stampRequestIDMeta(ctx, evt)
 
 	b.log.Info("event.published", map[string]interface{}{
 		"event_id":   evt.ID,
@@ -126,7 +137,12 @@ func (b *Bus) Publish(ctx context.Context, evt Event) error {
 // for a concrete case. Calling both Publish (on success) and PublishAsync
 // for the same evt would double-dispatch to async handlers; only call
 // this as a fallback when Publish itself returned a non-nil error.
-func (b *Bus) PublishAsync(evt Event) {
+//
+// ctx is used only to stamp Meta["request_id"] (same rules as Publish).
+// Publish's local stamped copy is not visible to the caller, so fallback
+// PublishAsync must receive the request context to keep correlation.
+func (b *Bus) PublishAsync(ctx context.Context, evt Event) {
+	evt = stampRequestIDMeta(ctx, evt)
 	b.dispatchAsync(evt)
 }
 
@@ -144,7 +160,7 @@ func (b *Bus) dispatchAsync(evt Event) {
 	if n := len(asyncH); n > 0 {
 		b.wg.Add(n)
 	}
-	handlerCtx := b.shutdownCtx
+	handlerCtx := withEventRequestID(b.shutdownCtx, evt)
 	b.mu.RUnlock()
 
 	for _, h := range asyncH {
@@ -158,6 +174,37 @@ func (b *Bus) dispatchAsync(evt Event) {
 			}
 		}(h)
 	}
+}
+
+// stampRequestIDMeta copies requestctx.RequestID(ctx) onto evt.Meta when
+// Meta does not already carry a non-empty request_id.
+func stampRequestIDMeta(ctx context.Context, evt Event) Event {
+	if ctx == nil {
+		return evt
+	}
+	rid := requestctx.RequestID(ctx)
+	if rid == "" {
+		return evt
+	}
+	if existing := evt.Meta["request_id"]; existing != "" {
+		return evt
+	}
+	return evt.WithMeta("request_id", rid)
+}
+
+// withEventRequestID annotates ctx with evt.Meta["request_id"] when set.
+func withEventRequestID(ctx context.Context, evt Event) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	rid := evt.Meta["request_id"]
+	if rid == "" {
+		return ctx
+	}
+	if requestctx.RequestID(ctx) == rid {
+		return ctx
+	}
+	return requestctx.WithRequestID(ctx, rid)
 }
 
 // BeginShutdown stops admitting new async publishes and starts waiting for

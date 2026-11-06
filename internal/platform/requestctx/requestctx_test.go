@@ -3,6 +3,7 @@ package requestctx
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -56,6 +57,31 @@ func TestMiddleware_UsesExistingHeader(t *testing.T) {
 	}
 	if rec.Header().Get("X-Request-ID") != "incoming-id-456" {
 		t.Error("response header should echo the incoming ID")
+	}
+}
+
+func TestMiddleware_RejectsOversizedOrUnsafeHeader(t *testing.T) {
+	cases := []string{
+		strings.Repeat("a", MaxRequestIDLen+1),
+		"bad id with spaces",
+		"id\nwith\nnewlines",
+		"id\"quote",
+	}
+	for _, inbound := range cases {
+		var capturedID string
+		handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedID = RequestID(r.Context())
+		}))
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("X-Request-ID", inbound)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if capturedID == "" || capturedID == inbound {
+			t.Fatalf("inbound %q → %q, want generated replacement", inbound, capturedID)
+		}
+		if rec.Header().Get("X-Request-ID") != capturedID {
+			t.Fatalf("response header %q != context %q", rec.Header().Get("X-Request-ID"), capturedID)
+		}
 	}
 }
 

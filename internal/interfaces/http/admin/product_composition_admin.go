@@ -367,11 +367,11 @@ func (h *ProductCompositionAdminHandler) publishBundleParentUpdated(ctx context.
 	}
 	evt := event.New(catalog.EventProductUpdated, "bundle.composition", data)
 	if strings.TrimSpace(data.Slug) == "" {
-		h.bus.PublishAsync(evt)
+		h.bus.PublishAsync(ctx, evt)
 		return
 	}
 	if err := h.bus.Publish(ctx, evt); err != nil {
-		h.bus.PublishAsync(evt)
+		h.bus.PublishAsync(ctx, evt)
 	}
 }
 
