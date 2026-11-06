@@ -1,0 +1,34 @@
+package {{.Package}}_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/akarso/shopanda/internal/platform/plugin"
+	{{.Package}} "github.com/akarso/shopanda/plugins/{{.Slug}}"
+)
+
+func TestName(t *testing.T) {
+	t.Parallel()
+	if got := {{.Package}}.New().Name(); got != "{{.PluginName}}" {
+		t.Fatalf("Name() = %q, want {{.PluginName}}", got)
+	}
+}
+
+func TestInitRegistersHealth(t *testing.T) {
+	t.Parallel()
+	app := &plugin.App{}
+	if err := {{.Package}}.New().Init(app); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	routes := app.PublicRoutes()
+	if len(routes) != 1 || routes[0].Pattern != "GET /api/{{.Slug}}/health" {
+		t.Fatalf("PublicRoutes = %+v, want health route", routes)
+	}
+	rec := httptest.NewRecorder()
+	routes[0].Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/{{.Slug}}/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}

@@ -1,0 +1,50 @@
+# plugins/{{.Slug}}
+
+{{.DisplayName}} — product external plugin scaffolded by `scripts/product-init.sh` (Phase 17).
+
+## What you get
+
+- `GET /api/{{.Slug}}/health` — public health route (register only when this plugin is registered)
+- `plugin.Migrator` with `migrations/001_create_meta.sql`
+- Stable name `{{.PluginName}}` (also the migration namespace)
+
+## Enable
+
+1. Register in `cmd/api/register_plugins.go`:
+
+```go
+import "github.com/akarso/shopanda/plugins/{{.Slug}}"
+
+// inside registerPlugins:
+registry.Register({{.Package}}.New())
+```
+
+2. Rebuild and run. Prefer gating on a config flag once you add `plugins.{{.Slug}}.enabled` to `internal/platform/config`.
+
+## Jobs
+
+Use **only** sync job types:
+
+```text
+integration.sync.{{.Slug}}.<name>
+```
+
+```go
+sdk := pluginsdk.New(app, "{{.PluginName}}")
+if err := sdk.Integration("{{.Slug}}").RegisterManual("generate", handler); err != nil {
+    return err
+}
+// After boot / BindQueue:
+_ = sdk.Integration("{{.Slug}}").Enqueue(ctx, "generate", map[string]interface{}{"id": "..."})
+```
+
+Do **not** invent free-form types like `{{.Slug}}.generate` — they are out of scope upstream.
+
+## Checks
+
+```bash
+make check
+# or: bash scripts/ci/unit.sh
+```
+
+CI/CD is optional. See `ci-samples/README.md` and `docs/guides/PRODUCT_SITES.md`.

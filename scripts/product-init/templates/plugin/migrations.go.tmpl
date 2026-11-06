@@ -1,0 +1,20 @@
+package {{.Package}}
+
+import (
+	"embed"
+
+	"github.com/akarso/shopanda/internal/platform/plugin"
+)
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+var _ plugin.Migrator = (*Plugin)(nil)
+
+// Migration implements plugin.Migrator for app migrate / InitAll.
+func (p *Plugin) Migration() plugin.MigrationSpec {
+	return plugin.MigrationSpec{
+		FS:  migrationFiles,
+		Dir: "migrations",
+	}
+}

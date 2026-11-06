@@ -1,0 +1,94 @@
+# SAMPLE — copy to repository root as .gitlab-ci.yml only if you want GitLab CI.
+# Calls the portable scripts under scripts/ci/ (Phase 17).
+# Local-only / FTP sites: do not copy this file.
+#
+# Requires: jq (integration), Node 22 (unit / TestCacheAdminUI_Node).
+# Node is installed from the official nodejs.org tarball with a pinned SHA-256
+# (no curl|bash NodeSource installer).
+
+stages:
+  - test
+  - vuln
+
+variables:
+  GOFLAGS: "-mod=readonly"
+  GOVULNCHECK_VERSION: "v1.7.0"
+  NODE_VERSION: "22.16.0"
+  # SHASUMS256.txt line for node-v${NODE_VERSION}-linux-x64.tar.xz (nodejs.org).
+  NODE_LINUX_X64_SHA256: "f4cb75bb036f0d0eddf6b79d9596df1aaab9ddccd6a20bf489be5abe9467e84e"
+  POSTGRES_USER: shopanda
+  POSTGRES_PASSWORD: shopanda
+  POSTGRES_DB: shopanda_test
+  SHOPANDA_TEST_DSN: "postgres://shopanda:shopanda@postgres:5432/shopanda_test?sslmode=disable"
+
+.golang_prep: &golang_prep
+  image: golang:1.26
+  before_script:
+    - apt-get update
+    - apt-get install -y ca-certificates curl jq xz-utils
+    - |
+      set -euo pipefail
+      arch="$(uname -m)"
+      case "${arch}" in
+        x86_64) node_arch=linux-x64; expect_sha="${NODE_LINUX_X64_SHA256}" ;;
+        *) echo "ERROR: unsupported arch ${arch} in this sample — extend SHAs or use a custom image" >&2; exit 1 ;;
+      esac
+      tarball="node-v${NODE_VERSION}-${node_arch}.tar.xz"
+      curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${tarball}" -o "/tmp/${tarball}"
+      echo "${expect_sha}  /tmp/${tarball}" | sha256sum -c -
+      tar -xJf "/tmp/${tarball}" -C /usr/local --strip-components=1
+      node --version
+      command -v jq
+
+unit:
+  stage: test
+  <<: *golang_prep
+  script:
+    - bash scripts/ci/unit.sh
+
+integration:
+  stage: test
+  <<: *golang_prep
+  services:
+    - name: postgres:17-alpine@sha256:778d0b486d6daa02b77434d0358ec57a1b21fd8b6d22ac2eef56a33e816928f6
+      alias: postgres
+  script:
+    - |
+      set -euo pipefail
+      echo "Waiting for Postgres at postgres:5432 (max 60s)..."
+      ready=0
+      for i in $(seq 1 30); do
+        if command -v pg_isready >/dev/null 2>&1; then
+          if pg_isready -h postgres -p 5432 -U shopanda -d shopanda_test; then
+            echo "Postgres is ready (attempt $i)."
+            ready=1
+            break
+          fi
+        elif (echo >/dev/tcp/postgres/5432) >/dev/null 2>&1; then
+          echo "Postgres TCP open (attempt $i)."
+          ready=1
+          break
+        fi
+        sleep 2
+      done
+      if [[ "${ready}" -ne 1 ]]; then
+        echo "ERROR: Postgres did not become ready within 60s" >&2
+        exit 1
+      fi
+    - bash scripts/ci/integration.sh
+
+govuln:
+  stage: vuln
+  image: golang:1.26
+  script:
+    - go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+    - bash scripts/ci/govuln.sh
+
+# Optional docs-policy (Shopanda promote model) — comment out on product forks:
+# docs-policy:
+#   stage: test
+#   image: alpine:3.20
+#   before_script:
+#     - apk add --no-cache bash git
+#   script:
+#     - bash scripts/ci/docs-policy.sh

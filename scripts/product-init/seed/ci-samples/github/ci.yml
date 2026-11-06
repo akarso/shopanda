@@ -1,0 +1,113 @@
+# SAMPLE — copy to .github/workflows/ci.yml only if you want GitHub Actions.
+# Calls the portable scripts under scripts/ci/ (Phase 17).
+# Action pins match Shopanda upstream (full SHAs) — do not switch back to mutable tags.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=readonly
+  GOVULNCHECK_VERSION: v1.7.0
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Unit contract
+        run: bash scripts/ci/unit.sh
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        # Same digest as Shopanda docker-compose / upstream CI.
+        image: postgres:17-alpine@sha256:778d0b486d6daa02b77434d0358ec57a1b21fd8b6d22ac2eef56a33e816928f6
+        env:
+          POSTGRES_USER: shopanda
+          POSTGRES_PASSWORD: shopanda
+          POSTGRES_DB: shopanda_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shopanda -d shopanda_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      SHOPANDA_TEST_DSN: postgres://shopanda:shopanda@localhost:5432/shopanda_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install jq + wait for Postgres
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y jq postgresql-client
+          echo "Waiting for Postgres at localhost:5432 (max 60s)..."
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U shopanda -d shopanda_test; then
+              echo "Postgres is ready (attempt $i)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: Postgres did not become ready within 60s" >&2
+          exit 1
+      - name: Integration contract
+        run: bash scripts/ci/integration.sh
+
+  govuln:
+    name: govuln
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install govulncheck
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+      - name: Govuln contract
+        run: bash scripts/ci/govuln.sh
+
+  # Optional: omit on product forks that do not use Shopanda's docs/phase-* promote model.
+  # docs-policy:
+  #   name: docs-policy
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #     - run: bash scripts/ci/docs-policy.sh
