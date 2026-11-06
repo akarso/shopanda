@@ -4,6 +4,8 @@ This guide is for engineers extending Shopanda itself.
 
 It documents the extension points that exist in the current codebase, including where the platform is already plugin-friendly and where extension is still a code-level integration task.
 
+**Building a separate product site** (own git remote, track Shopanda as `upstream`, optional CI)? Start with [PRODUCT_SITES.md](PRODUCT_SITES.md) and `bash scripts/product-init.sh --slug …`. This guide remains the deep tutorial for extension points inside a Shopanda tree.
+
 For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For merchant-facing operations, see [Merchant Guide](MERCHANT.md).
 
 Deciding *which* extension mechanism fits your task (events vs hooks vs pricing pipeline vs checkout workflow vs composition steps, plus the full registry catalog)? Start with [Extension Points](EXTENSION_POINTS.md) — this guide is the tutorial walkthrough once you've picked one.
@@ -13,6 +15,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Architecture Overview](#architecture-overview)
 - [Three-Tier Extension Model](#three-tier-extension-model)
 - [Enable Core Plugins](#enable-core-plugins)
+- [Building a product site](PRODUCT_SITES.md)
 - [Create an External Plugin](#create-an-external-plugin)
 - [Add a Payment Provider](#add-a-payment-provider)
 - [Add a Shipping Provider](#add-a-shipping-provider)
@@ -818,28 +821,41 @@ When extending the platform, keep hexagonal rules: domain ports first, explicit 
 
 ## Continuous Integration
 
-PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). Checks:
+### Portable contract (run the same checks CI runs)
+
+Vendor YAML is an adapter. The contract lives under [`scripts/ci/`](../../scripts/ci/):
+
+| Script | What it runs |
+| --- | --- |
+| `scripts/ci/unit.sh` / `make check` | `go mod verify`, `gofmt`, `go vet`, `go test ./...` |
+| `scripts/ci/integration.sh` | DSN-gated packages (`SHOPANDA_TEST_DSN`); fails if those tests skip |
+| `scripts/ci/govuln.sh` | Pinned `govulncheck` (fail-closed + baseline; path overridable) |
+| `scripts/ci/docs-policy.sh` | Product-doc link policy + promote fixture (platform) |
+
+No git hooks are installed by default. Product sites may omit all vendor CI — see [PRODUCT_SITES.md](PRODUCT_SITES.md) and [`ci-samples/`](../../ci-samples/README.md).
+
+Before opening a PR against **this** repository, run:
+
+```bash
+make check
+go build ./cmd/api/
+```
+
+`go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (Node 18+). Match CI: **Node 22** on `PATH`.
+
+### Shopanda upstream GitHub Actions
+
+PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), which shells out to `scripts/ci/*`. Checks:
 
 | Check | What it runs |
 | --- | --- |
-| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
-| **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
-| **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
-| **`CI / docs-policy`** | Product docs have no relative `docs/phase-*` links; `scripts/promote-dev-to-main_test.sh` (second promote, untracked overwrite, FORCE restore, two-parent merge) |
-| **`CI / docs-main`** | `main` / PRs to `main` / merge queue to `main` only — fails if `docs/phase-*` is tracked. Promote with `scripts/promote-dev-to-main.sh`. |
+| **`CI / unit`** | `bash scripts/ci/unit.sh` (installs **Node 22** on the runner) |
+| **`CI / integration`** | Postgres 17 + `bash scripts/ci/integration.sh` |
+| **`CI / govuln`** | Pinned `govulncheck` + `bash scripts/ci/govuln.sh` |
+| **`CI / docs-policy`** | `bash scripts/ci/docs-policy.sh` |
+| **`CI / docs-main`** | `main` only — fails if `docs/phase-*` is tracked |
 
-The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, **`CI / govuln`**, and **`CI / docs-policy`** on `main` and `dev`, and **`CI / docs-main`** on `main` only (Settings → Rules / Branch protection → required status checks). Do **not** require `docs-main` on `dev`: the job is skipped there, and a skipped required check blocks merges.
-
-Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
-
-```bash
-export GOFLAGS=-mod=readonly
-go mod verify
-test -z "$(gofmt -l .)"
-go vet ./...
-go test ./...
-go build ./cmd/api/
-```
+A repository admin must require **`CI / unit`**, **`CI / integration`**, **`CI / govuln`**, and **`CI / docs-policy`** on `main` and `dev`, and **`CI / docs-main`** on `main` only. Do **not** require `docs-main` on `dev`.
 
 ### Integration tests (local)
 
@@ -857,7 +873,7 @@ export SHOPANDA_TEST_DSN='postgres://shopanda:shopanda@localhost:5432/shopanda_t
 export GOFLAGS=-mod=readonly
 
 # Same gate as CI (requires jq): fails if DSN empty, any test skips, or canaries miss.
-bash .github/scripts/run-integration-tests.sh
+bash scripts/ci/integration.sh
 ```
 
 Repo tests apply root `migrations/` themselves. The script runs `go test -p 1` so packages do not race on `migrate.Run`.
@@ -878,19 +894,21 @@ Review CI on each Dependabot PR before merge. Prefer small, reviewable upgrades 
 
 ### govulncheck (fail-closed)
 
-CI job **`CI / govuln`** installs a **pinned** `govulncheck` (`GOVULNCHECK_VERSION` in [`ci.yml`](../../.github/workflows/ci.yml)) and runs [`.github/scripts/run-govulncheck.sh`](../../.github/scripts/run-govulncheck.sh).
+CI job **`CI / govuln`** installs a **pinned** `govulncheck` (`GOVULNCHECK_VERSION` in [`ci.yml`](../../.github/workflows/ci.yml)) and runs [`scripts/ci/govuln.sh`](../../scripts/ci/govuln.sh).
 
 Policy:
 
 - Any vulnerability that affects reachable code fails the job (**fail-closed**).
 - Temporary exceptions live in [`GOVULN_BASELINE.md`](../GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
 - Prefer upgrading Go / dependencies over extending the baseline.
+- Baseline path: `SHOPANDA_GOVULN_BASELINE` or `--baseline PATH` (default `docs/GOVULN_BASELINE.md`).
 
 Local:
 
 ```bash
 go install golang.org/x/vuln/cmd/govulncheck@v1.7.0   # match GOVULNCHECK_VERSION
-bash .github/scripts/run-govulncheck.sh
+make govuln
+# or: bash scripts/ci/govuln.sh --baseline docs/GOVULN_BASELINE.md
 ```
 
 ### Confirm fail-closed (do not merge)
@@ -898,7 +916,7 @@ bash .github/scripts/run-govulncheck.sh
 To verify CI would catch a newly introduced vuln (throwaway branch only):
 
 1. Add a temporary `require` of a known-vulnerable module version (or pin Go below a fixed stdlib advisory).
-2. Run `bash .github/scripts/run-govulncheck.sh` — expect a non-zero exit listing an OSV ID not on the baseline.
+2. Run `bash scripts/ci/govuln.sh` — expect a non-zero exit listing an OSV ID not on the baseline.
 3. Discard the change; never merge the fixture.
 
 ## Practical Advice

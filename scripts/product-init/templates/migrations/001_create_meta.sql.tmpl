@@ -1,0 +1,8 @@
+-- Placeholder meta table for {{.Slug}} (product-init skeleton).
+-- Replace or extend with real product schema. Versions are tracked as
+-- plugin:{{.PluginName}}:001_create_meta.sql
+CREATE TABLE IF NOT EXISTS {{.TablePrefix}}_meta (
+    key text PRIMARY KEY,
+    value text NOT NULL DEFAULT '',
+    updated_at timestamptz NOT NULL DEFAULT now()
+);

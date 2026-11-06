@@ -16,6 +16,8 @@ These must stay complete on a clone of `main`. A default-branch checkout has to 
 
 Do **not** nest living operator or CI artifacts under `docs/phase-*`.
 
+Product-fork runbooks (CI samples, upstream upgrade) live under [`runbooks/`](runbooks/) when present on this branch; promote keeps product guides, not phase history.
+
 ## Working history (`dev` only)
 
 Phase folders, PR specs, in-progress roadmaps, and historical design dumps live under `docs/phase-*` on the `dev` branch. Check out `dev` to read them. Product guides name those paths in prose; they are not markdown links, because the href would 404 on `main`.
@@ -26,6 +28,8 @@ PRs targeting `dev` still write a PR spec and update the phase index/roadmap. PR
 
 ## Guides
 
+- [Building a product site](guides/PRODUCT_SITES.md) — product fork, portable checks, optional CI samples
+- [Plugin runtime contract](guides/PLUGIN_RUNTIME_CONTRACT.md) — Migrator + `integration.sync.{slug}.*`
 - [Merchant Guide](guides/MERCHANT.md)
 - [Deployment Guide](guides/DEPLOYMENT.md)
 - [Developer Guide](guides/DEVELOPER.md)

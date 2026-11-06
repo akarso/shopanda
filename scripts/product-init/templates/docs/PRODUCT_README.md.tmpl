@@ -1,0 +1,35 @@
+# {{.DisplayName}}
+
+Product repository built on [Shopanda](https://github.com/akarso/shopanda).
+
+| | |
+| --- | --- |
+| Product plugin | [`plugins/{{.Slug}}/`](plugins/{{.Slug}}/) |
+| Upstream | Shopanda (`upstream` remote, fetch-only) |
+| Local checks | `make check` / `bash scripts/ci/unit.sh` |
+| CI/CD | Optional — see [`ci-samples/README.md`](ci-samples/README.md) |
+
+## Remotes
+
+```bash
+git remote -v
+# origin    → this product repository (push here)
+# upstream  → https://github.com/akarso/shopanda.git  (fetch upgrades only)
+
+git remote set-url --push upstream DISABLED
+```
+
+Pin and upgrade procedure: `docs/guides/PRODUCT_SITES.md` and
+`docs/runbooks/product-fork-upgrade.md`.
+
+## Bring-up
+
+```bash
+cp .env.example .env
+# Set SHOPANDA_AUTH_JWT_SECRET and SHOPANDA_DEV_MODE=true for local boot.
+go build -o app ./cmd/api
+./app setup
+./app dev
+```
+
+Health (when the plugin is registered): `GET /api/{{.Slug}}/health`

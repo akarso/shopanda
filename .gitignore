@@ -39,4 +39,10 @@ shopanda
 # .idea/
 # .vscode/
 
-src
+# Legacy local scratch dir at repo root only — do not ignore storefront/src or
+# plugins/*/src (Phase 17 / product storefronts).
+/src/
+
+# product-init --force-ci-samples backups + same-FS staging
+.product-init-backup/
+.product-init-stage/
