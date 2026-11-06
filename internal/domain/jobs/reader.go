@@ -68,4 +68,10 @@ type Reader interface {
 	// A status with zero jobs is simply absent from the map, not present
 	// with a zero value.
 	CountsByStatus(ctx context.Context) (map[Status]int, error)
+
+	// CountsByType returns the number of jobs of jobType currently in each
+	// status. jobType must be a registered queue type string (bounded). A
+	// status with zero jobs is absent from the map. Empty jobType returns
+	// an error.
+	CountsByType(ctx context.Context, jobType string) (map[Status]int, error)
 }

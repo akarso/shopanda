@@ -26,6 +26,7 @@ type recordingFPCMetrics struct {
 func (m *recordingFPCMetrics) HTTPRequest(string, string, string, time.Duration) {}
 func (m *recordingFPCMetrics) CheckoutResult(string)                             {}
 func (m *recordingFPCMetrics) JobFailure(string)                                 {}
+func (m *recordingFPCMetrics) JobResult(string, string, time.Duration)           {}
 func (m *recordingFPCMetrics) WebhookDelivery(string)                            {}
 func (m *recordingFPCMetrics) RateLimitBackendError(string, string)              {}
 func (m *recordingFPCMetrics) FPCRenderDuration(string, time.Duration)           {}

@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 )
@@ -81,6 +82,14 @@ func (s *Service) Get(ctx context.Context, id string) (*domainjobs.Detail, error
 // CountsByStatus returns the number of jobs currently in each status.
 func (s *Service) CountsByStatus(ctx context.Context) (map[domainjobs.Status]int, error) {
 	return s.reader.CountsByStatus(ctx)
+}
+
+// CountsByType returns per-status counts for one registered job type.
+func (s *Service) CountsByType(ctx context.Context, jobType string) (map[domainjobs.Status]int, error) {
+	if strings.TrimSpace(jobType) == "" {
+		return nil, fmt.Errorf("jobs: counts by type: empty type")
+	}
+	return s.reader.CountsByType(ctx, jobType)
 }
 
 // Retry resets a failed job back to pending. See domainjobs.Admin for the

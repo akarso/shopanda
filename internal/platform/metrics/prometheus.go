@@ -16,6 +16,8 @@ type PrometheusRecorder struct {
 	httpDuration   *prometheus.HistogramVec
 	checkoutResult *prometheus.CounterVec
 	jobFailures    *prometheus.CounterVec
+	jobResults     *prometheus.CounterVec
+	jobDuration    *prometheus.HistogramVec
 	webhookResult  *prometheus.CounterVec
 	rateLimitErr   *prometheus.CounterVec
 	fpcRequests    *prometheus.CounterVec
@@ -46,6 +48,17 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 			Name: "shopanda_job_failures_total",
 			Help: "Total background job failures, labelled by job type.",
 		}, []string{"job_type"}),
+		jobResults: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "shopanda_job_results_total",
+			Help: "Total finished background job attempts, labelled by job type and outcome (success/failed).",
+		}, []string{"job_type", "outcome"}),
+		jobDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "shopanda_job_duration_seconds",
+			Help: "Background job handler duration in seconds, labelled by job type and outcome.",
+			// Outbound sync / webhook jobs regularly exceed DefBuckets' 10s
+			// ceiling; keep short buckets and extend through 5m.
+			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+		}, []string{"job_type", "outcome"}),
 		webhookResult: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "shopanda_webhook_deliveries_total",
 			Help: "Total outbound webhook delivery attempts, labelled by outcome (success/failed).",
@@ -77,6 +90,8 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 		r.httpDuration,
 		r.checkoutResult,
 		r.jobFailures,
+		r.jobResults,
+		r.jobDuration,
 		r.webhookResult,
 		r.rateLimitErr,
 		r.fpcRequests,
@@ -98,6 +113,17 @@ func (r *PrometheusRecorder) CheckoutResult(outcome string) {
 
 func (r *PrometheusRecorder) JobFailure(jobType string) {
 	r.jobFailures.WithLabelValues(jobType).Inc()
+}
+
+func (r *PrometheusRecorder) JobResult(jobType, outcome string, duration time.Duration) {
+	switch outcome {
+	case OutcomeSuccess, OutcomeFailed:
+		// keep
+	default:
+		outcome = OutcomeFailed
+	}
+	r.jobResults.WithLabelValues(jobType, outcome).Inc()
+	r.jobDuration.WithLabelValues(jobType, outcome).Observe(duration.Seconds())
 }
 
 func (r *PrometheusRecorder) WebhookDelivery(outcome string) {

@@ -52,8 +52,15 @@ type Recorder interface {
 
 	// JobFailure records one failed background job execution. jobType must
 	// be the job's registered type string (a fixed, compile-time set —
-	// never a job ID or payload value).
+	// never a job ID or payload value). Prefer JobResult for new call sites
+	// that also need duration; JobFailure remains for compatibility.
 	JobFailure(jobType string)
+
+	// JobResult records one finished background job attempt (success or
+	// failure) with duration. jobType and outcome must be bounded
+	// (OutcomeSuccess / OutcomeFailed); never pass attempt numbers, job
+	// IDs, or payload values as labels.
+	JobResult(jobType, outcome string, duration time.Duration)
 
 	// WebhookDelivery records one attempted outbound webhook delivery.
 	// outcome must be OutcomeSuccess or OutcomeFailed. Skipped deliveries
@@ -97,6 +104,7 @@ func Noop() Recorder { return noopRecorder{} }
 func (noopRecorder) HTTPRequest(string, string, string, time.Duration) {}
 func (noopRecorder) CheckoutResult(string)                             {}
 func (noopRecorder) JobFailure(string)                                 {}
+func (noopRecorder) JobResult(string, string, time.Duration)           {}
 func (noopRecorder) WebhookDelivery(string)                            {}
 func (noopRecorder) RateLimitBackendError(string, string)              {}
 func (noopRecorder) FPCRequest(string, string)                         {}

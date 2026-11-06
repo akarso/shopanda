@@ -513,6 +513,24 @@ func TestJobQueue_CountsByStatus(t *testing.T) {
 	if _, ok := counts[jobs.StatusFailed]; ok {
 		t.Errorf("counts[failed] present with no failed jobs, want absent")
 	}
+
+	byType, err := q.CountsByType(ctx, "test")
+	if err != nil {
+		t.Fatalf("CountsByType: %v", err)
+	}
+	if byType[jobs.StatusPending]+byType[jobs.StatusProcessing] != 2 {
+		t.Fatalf("CountsByType(test) = %#v, want 2 jobs", byType)
+	}
+	empty, err := q.CountsByType(ctx, "no.such.type")
+	if err != nil {
+		t.Fatalf("CountsByType missing: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("CountsByType missing = %#v, want empty", empty)
+	}
+	if _, err := q.CountsByType(ctx, ""); err == nil {
+		t.Fatal("CountsByType empty type: want error")
+	}
 }
 
 func TestJobQueue_Retry_ResetsFailedJobToPending(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -37,6 +38,8 @@ func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) {
 	}
 	job := q.enqueued[0]
 	q.enqueued = q.enqueued[1:]
+	job.Status = jobs.StatusProcessing
+	job.Attempts++
 	return &job, nil
 }
 func (q *memQueue) Complete(context.Context, string) error    { return nil }
@@ -122,6 +125,94 @@ func TestRegisterSyncJobEventTriggers_EnqueuesOnPublish(t *testing.T) {
 	payload, _ := queue.first().Payload["payload"].(map[string]interface{})
 	if payload["order_id"] != "ord-1" {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestRegisterSyncJobEventTriggers_PropagatesRequestIDFromPublish(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	queue := &memQueue{}
+	app := &plugin.App{
+		Logger:    log,
+		Bus:       bus,
+		Bootstrap: &plugin.Bootstrap{},
+	}
+	job := extapi.SyncJob{
+		Name:    "export.order",
+		Trigger: extapi.OnEvent("order.created"),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	}
+	if err := app.Integration("acme").RegisterSyncJob(job); err != nil {
+		t.Fatalf("RegisterSyncJob: %v", err)
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(app, bus, queue, log); err != nil {
+		t.Fatalf("RegisterSyncJobEventTriggers: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	publishCtx := requestctx.WithRequestID(context.Background(), "req-http-checkout")
+	if err := bus.Publish(publishCtx, event.Event{
+		Name: "order.created",
+		Data: map[string]interface{}{"order_id": "ord-1"},
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	for time.Now().Before(deadline) {
+		if queue.len() >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if queue.len() != 1 {
+		t.Fatalf("enqueued = %d", queue.len())
+	}
+	payload, _ := queue.first().Payload["payload"].(map[string]interface{})
+	if payload["request_id"] != "req-http-checkout" {
+		t.Fatalf("payload = %#v, want request_id from Publish ctx", payload)
+	}
+	if payload["order_id"] != "ord-1" {
+		t.Fatalf("payload = %#v, want order_id preserved", payload)
+	}
+}
+
+func TestRegisterSyncJobHandlers_AttemptsFromDequeuedJob(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	var gotAttempts int
+	app := &plugin.App{
+		Logger:    log,
+		Bootstrap: &plugin.Bootstrap{DB: &sql.DB{}},
+	}
+	job := extapi.SyncJob{
+		Name:    "pull.stock",
+		Trigger: extapi.Cron("@every 5m"),
+		Handler: func(_ context.Context, req extapi.SyncJobContext) error {
+			gotAttempts = req.Attempts
+			return nil
+		},
+	}
+	if err := app.Integration("acme").RegisterSyncJob(job); err != nil {
+		t.Fatalf("RegisterSyncJob: %v", err)
+	}
+
+	queue := &memQueue{}
+	worker := jobs.NewWorker(queue, log, time.Second)
+	if err := integrationApp.RegisterSyncJobHandlers(app, worker); err != nil {
+		t.Fatalf("RegisterSyncJobHandlers: %v", err)
+	}
+
+	envelope, err := plugin.NewSyncJobEnvelope(app.SyncJobs()[0], extapi.SyncTriggerCron, map[string]interface{}{"k": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Enqueue(context.Background(), envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !worker.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	// memQueue.Dequeue increments Attempts like the real queue.
+	if gotAttempts != 1 {
+		t.Fatalf("Attempts = %d, want 1 after dequeue", gotAttempts)
 	}
 }
 

@@ -7,9 +7,10 @@
 | PR-1086 | A | done | [`Migrator` + `app migrate`](PR-1086.md) |
 | PR-1087 | B | done | [`manual` trigger + `Enqueue` + queue bind](PR-1087.md) |
 | PR-1088 | B | done | [SDK + docs + example](PR-1088.md) |
+| PR-1089 | B | done | [Sync job observability](PR-1089.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
-**Ordering rule:** Track A (1084→1085→1086) before Track B in calendar time (site-ready: plugin tables first). Track B has no code dependency on A. Do not start a merchant site until all five are `done`.
+**Ordering rule:** Track A (1084→1085→1086) before Track B in calendar time (site-ready: plugin tables first). Track B has no code dependency on A. Do not start a merchant site until Track A+B site-ready PRs are `done`.
 
-Continues Phase 12 numbering (highest reserved: PR-1083).
+Continues Phase 12 numbering; highest issued in this phase: PR-1089.
