@@ -41,7 +41,20 @@ func RegisterSyncJobEventTriggers(app *plugin.App, bus *event.Bus, queue jobs.Qu
 		eventName := reg.Job.Trigger.EventName
 		jobReg := reg
 		bus.OnAsync(eventName, func(ctx context.Context, evt event.Event) error {
-			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, eventPayload(evt.Data), log)
+			payload := eventPayload(evt.Data)
+			if rid := evt.Meta["request_id"]; rid != "" {
+				// Shallow-copy before mutate so request_id is not written
+				// back into evt.Data (shared map from typed Publish callers).
+				copied := make(map[string]interface{}, len(payload)+1)
+				for k, v := range payload {
+					copied[k] = v
+				}
+				if existing, ok := copied["request_id"].(string); !ok || existing == "" {
+					copied["request_id"] = rid
+				}
+				payload = copied
+			}
+			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, payload, log)
 		})
 		if log != nil {
 			log.Info("integration.sync_job.event_registered", map[string]interface{}{

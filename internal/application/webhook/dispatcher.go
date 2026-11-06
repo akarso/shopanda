@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 // Dispatcher enqueues outbound webhook deliveries for subscribed endpoints.
@@ -65,14 +66,20 @@ func (d *Dispatcher) handle(ctx context.Context, evt event.Event) error {
 		if !endpoint.Subscribed(evt.Name) {
 			continue
 		}
-		job, err := jobs.NewJob(id.New(), domainwebhook.DeliverJobType, map[string]interface{}{
+		payload := map[string]interface{}{
 			"endpoint_id":     endpoint.ID,
 			"event_id":        evt.ID,
 			"event_name":      evt.Name,
 			"event_source":    evt.Source,
 			"event_timestamp": evt.Timestamp.UTC().Format(time.RFC3339),
 			"event_data_json": string(dataJSON),
-		})
+		}
+		if rid := requestctx.RequestID(ctx); rid != "" {
+			payload["request_id"] = rid
+		} else if rid := evt.Meta["request_id"]; rid != "" {
+			payload["request_id"] = rid
+		}
+		job, err := jobs.NewJob(id.New(), domainwebhook.DeliverJobType, payload)
 		if err != nil {
 			return fmt.Errorf("webhook dispatch: new job: %w", err)
 		}

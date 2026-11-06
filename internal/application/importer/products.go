@@ -735,7 +735,7 @@ func (imp *ProductImporter) publishProductCreated(ctx context.Context, product *
 		Status:    product.Status,
 	})
 	if err := imp.bus.Publish(ctx, evt); err != nil {
-		imp.bus.PublishAsync(evt)
+		imp.bus.PublishAsync(ctx, evt)
 	}
 }
 

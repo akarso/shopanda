@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 
 ## Status
 
-**Done.** Site-ready gate met (PR-1084–1088): namespaced plugin migrations + `Migrator` / `app migrate`, and on-demand sync via `Manual` + `Enqueue` + `pluginsdk`. Independent of Phase 12 catalog work.
+**Done.** Site-ready gate met (PR-1084–1088): namespaced plugin migrations + `Migrator` / `app migrate`, and on-demand sync via `Manual` + `Enqueue` + `pluginsdk`. PR-1089 adds sync job observability (`request_id`, Attempts, JobResult, CountsByType). Independent of Phase 12 catalog work.
 
 ## Relationship
 
@@ -32,4 +32,4 @@ See [`ROADMAP.md`](ROADMAP.md) for tracks, sequencing, and PR specs under [`prs/
 | Phase 8 | Integrator platform — `RegisterSyncJob`, outbound warehouse/PIM | Shipped (PR-840–843) |
 | Phase 11 | Jobs admin (list / retry / cancel) + queue reachability | Shipped |
 | Phase 12 | Product types & composition | In progress (unrelated catalog work) |
-| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **In progress** (Track A done; PR-1087 next; do before a real site) |
+| **Phase 13** | Plugin-owned migrations + on-demand sync enqueue | **Done** (PR-1084–1089) |

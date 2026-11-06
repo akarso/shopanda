@@ -289,6 +289,16 @@ func TestInjectRequestID_NoCtxID(t *testing.T) {
 	}
 }
 
+func TestInjectRequestID_OverwritesEmptyOrNonString(t *testing.T) {
+	ctx := requestctx.WithRequestID(context.Background(), "req-http")
+	for _, existing := range []interface{}{"", nil, 42} {
+		out := plugin.InjectRequestID(ctx, map[string]interface{}{"request_id": existing})
+		if out["request_id"] != "req-http" {
+			t.Fatalf("existing=%#v → %#v, want req-http", existing, out)
+		}
+	}
+}
+
 func TestApp_Integration_Enqueue_CronJobRunNow(t *testing.T) {
 	app := &plugin.App{
 		Logger:    logger.NewWithWriter(io.Discard, "error"),

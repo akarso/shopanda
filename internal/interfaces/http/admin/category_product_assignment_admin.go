@@ -115,7 +115,7 @@ func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx con
 	})
 	err := h.bus.Publish(ctx, productEvt)
 	if err != nil {
-		h.bus.PublishAsync(productEvt)
+		h.bus.PublishAsync(ctx, productEvt)
 	}
 
 	// Reuses EventCategoryUpdated (as the product side reuses
@@ -131,7 +131,7 @@ func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx con
 		Slug:       category.Slug,
 	})
 	if catErr := h.bus.Publish(ctx, categoryEvt); catErr != nil {
-		h.bus.PublishAsync(categoryEvt)
+		h.bus.PublishAsync(ctx, categoryEvt)
 		if err == nil {
 			err = catErr
 		}

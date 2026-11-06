@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 )
@@ -85,7 +86,7 @@ func (s *Service) CountsByStatus(ctx context.Context) (map[domainjobs.Status]int
 
 // CountsByType returns per-status counts for one registered job type.
 func (s *Service) CountsByType(ctx context.Context, jobType string) (map[domainjobs.Status]int, error) {
-	if jobType == "" {
+	if strings.TrimSpace(jobType) == "" {
 		return nil, fmt.Errorf("jobs: counts by type: empty type")
 	}
 	return s.reader.CountsByType(ctx, jobType)

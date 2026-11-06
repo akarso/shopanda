@@ -218,6 +218,27 @@ func TestService_CountsByStatus(t *testing.T) {
 	}
 }
 
+func TestService_CountsByType_EmptyOrWhitespaceErrors(t *testing.T) {
+	svc, _ := jobsApp.NewService(&fakeReader{}, &fakeAdmin{})
+	for _, typ := range []string{"", " ", "\t"} {
+		if _, err := svc.CountsByType(context.Background(), typ); err == nil {
+			t.Fatalf("CountsByType(%q): want error", typ)
+		}
+	}
+}
+
+func TestService_CountsByType_PassesThrough(t *testing.T) {
+	want := map[domainjobs.Status]int{domainjobs.StatusPending: 2}
+	svc, _ := jobsApp.NewService(&fakeReader{countsResult: want}, &fakeAdmin{})
+	got, err := svc.CountsByType(context.Background(), "integration.sync.acme.export.order")
+	if err != nil {
+		t.Fatalf("CountsByType: %v", err)
+	}
+	if got[domainjobs.StatusPending] != 2 {
+		t.Fatalf("got = %#v, want pending=2", got)
+	}
+}
+
 func TestService_Retry_EmptyIDErrors(t *testing.T) {
 	svc, _ := jobsApp.NewService(&fakeReader{}, &fakeAdmin{})
 	if err := svc.Retry(context.Background(), ""); err == nil {

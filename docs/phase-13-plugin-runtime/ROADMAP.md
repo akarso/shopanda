@@ -73,6 +73,7 @@ After the gate:
 | --- | --- | --- |
 | PR-1087 | `manual` trigger + `Enqueue` + queue bind | **done** — `extapi.Manual()`; `Integration.Enqueue`; `BindQueue` after resolve (serve/worker/scheduler/CLIs). Unknown name / unbound queue fail clearly. |
 | PR-1088 | SDK + docs + example | **done** — `pluginsdk` `RegisterManual` / `Enqueue`; docs; `plugins report` `trigger=…`; example uses `RegisterOnEvent`. |
+| PR-1089 | Sync job observability | **done** — `request_id` on Enqueue + event Publish→OnAsync; `Attempts`; `JobResult`/duration; `CountsByType`; guide. |
 
 ---
 
@@ -120,4 +121,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | `RegisterSyncJob` cron/event | Shipped |
 | [Phase 11](../phase-11-jobs-search-cache/ROADMAP.md) | Jobs admin for any queued type | Shipped |
 | [Phase 12](../phase-12-product-composition/ROADMAP.md) | Catalog types & composition | In progress — no dependency |
-| **Phase 13** | Plugin schema + on-demand sync | **Done** (PR-1084–1088) |
+| **Phase 13** | Plugin schema + on-demand sync | **Done** (PR-1084–1089) |

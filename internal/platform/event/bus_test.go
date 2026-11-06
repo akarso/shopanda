@@ -13,6 +13,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/internal/platform/runtime"
 )
 
@@ -253,7 +254,7 @@ func TestBus_PublishAsync_SkipsSyncRunsAsync(t *testing.T) {
 		return nil
 	})
 
-	bus.PublishAsync(event.New("test.publish_async", "test", nil))
+	bus.PublishAsync(context.Background(), event.New("test.publish_async", "test", nil))
 
 	select {
 	case <-done:
@@ -288,7 +289,7 @@ func TestBus_PublishAsync_AfterFailedPublish_StillRunsAsyncHandlers(t *testing.T
 	if err := bus.Publish(context.Background(), evt); err == nil {
 		t.Fatal("expected Publish to return the sync handler's error")
 	}
-	bus.PublishAsync(evt)
+	bus.PublishAsync(context.Background(), evt)
 
 	select {
 	case <-done:
@@ -296,6 +297,51 @@ func TestBus_PublishAsync_AfterFailedPublish_StillRunsAsyncHandlers(t *testing.T
 	case <-time.After(2 * time.Second):
 		t.Fatal("async handler did not run within timeout after PublishAsync fallback")
 	}
+}
+
+// TestBus_PublishAsync_Fallback_PropagatesRequestID pins the sync-failure
+// fallback path: Publish stamps only its local evt copy, so PublishAsync
+// must stamp from ctx itself or OnAsync enqueue loses correlation.
+func TestBus_PublishAsync_Fallback_PropagatesRequestID(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan resultRID, 1)
+
+	bus.On("test.fallback.rid", func(_ context.Context, _ event.Event) error {
+		return errors.New("sync boom")
+	})
+	bus.OnAsync("test.fallback.rid", func(ctx context.Context, evt event.Event) error {
+		done <- resultRID{
+			rid:  requestctx.RequestID(ctx),
+			meta: evt.Meta["request_id"],
+		}
+		return nil
+	})
+
+	publishCtx := requestctx.WithRequestID(context.Background(), "req-fallback")
+	evt := event.New("test.fallback.rid", "test", nil)
+	if err := bus.Publish(publishCtx, evt); err == nil {
+		t.Fatal("expected Publish sync error")
+	}
+	// Caller still holds the original evt (empty Meta) — PublishAsync must
+	// stamp from the same request context.
+	if evt.Meta["request_id"] != "" {
+		t.Fatalf("caller evt Meta mutated: %#v", evt.Meta)
+	}
+	bus.PublishAsync(publishCtx, evt)
+
+	select {
+	case got := <-done:
+		if got.rid != "req-fallback" || got.meta != "req-fallback" {
+			t.Fatalf("got = %+v, want req-fallback on ctx and Meta", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not run")
+	}
+}
+
+type resultRID struct {
+	rid  string
+	meta string
 }
 
 func TestBus_AsyncHandler(t *testing.T) {
@@ -453,6 +499,49 @@ func TestBus_AsyncHandler_IgnoresPublishCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("async handler did not run within timeout")
+	}
+}
+
+// TestBus_Publish_PropagatesRequestIDToAsyncHandler pins HTTP→OnAsync
+// correlation: async handlers must see request_id without inheriting the
+// Publish request context's cancellation.
+func TestBus_Publish_PropagatesRequestIDToAsyncHandler(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	type result struct {
+		rid    string
+		ctxErr error
+		meta   string
+	}
+	done := make(chan result, 1)
+
+	bus.OnAsync("test.reqid", func(ctx context.Context, evt event.Event) error {
+		done <- result{
+			rid:    requestctx.RequestID(ctx),
+			ctxErr: ctx.Err(),
+			meta:   evt.Meta["request_id"],
+		}
+		return nil
+	})
+
+	publishCtx, cancel := context.WithCancel(requestctx.WithRequestID(context.Background(), "req-from-http"))
+	cancel()
+	if err := bus.Publish(publishCtx, event.New("test.reqid", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	select {
+	case got := <-done:
+		if got.ctxErr != nil {
+			t.Errorf("async ctx.Err() = %v, want nil", got.ctxErr)
+		}
+		if got.rid != "req-from-http" {
+			t.Errorf("RequestID(ctx) = %q, want req-from-http", got.rid)
+		}
+		if got.meta != "req-from-http" {
+			t.Errorf("Meta request_id = %q, want req-from-http", got.meta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not run")
 	}
 }
 

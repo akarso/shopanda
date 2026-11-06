@@ -378,11 +378,11 @@ func (h *DownloadableFileAdminHandler) publishProductUpdated(ctx context.Context
 	}
 	evt := event.New(catalog.EventProductUpdated, "downloadable.file", data)
 	if strings.TrimSpace(data.Slug) == "" {
-		h.bus.PublishAsync(evt)
+		h.bus.PublishAsync(ctx, evt)
 		return
 	}
 	if err := h.bus.Publish(ctx, evt); err != nil {
-		h.bus.PublishAsync(evt)
+		h.bus.PublishAsync(ctx, evt)
 	}
 }
 

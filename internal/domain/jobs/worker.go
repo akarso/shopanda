@@ -156,6 +156,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 			"job_type": job.Type,
 		})
 		w.metrics.JobFailure(unknownJobType)
+		w.metrics.JobResult(unknownJobType, "failed", 0)
 		// A real error, not nil: this is exactly the failure an operator
 		// most needs last_error for — a misconfigured or typo'd job type —
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
@@ -192,23 +193,26 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		return true
 	}
 
-	w.metrics.JobResult(job.Type, "success", duration)
 	w.recordComplete(ctx, job.ID, job.Type, job.Payload, duration)
 	return true
 }
 
-// mergeJobRequestID copies payload.request_id (sync envelope inner payload)
-// onto log fields when present.
+// mergeJobRequestID copies request_id onto log fields when present. Prefers
+// a top-level envelope key (e.g. webhook.deliver), then sync-envelope
+// payload.request_id.
 func mergeJobRequestID(fields map[string]interface{}, envelope map[string]interface{}) {
 	if fields == nil || envelope == nil {
+		return
+	}
+	if rid, _ := envelope["request_id"].(string); rid != "" {
+		fields["request_id"] = rid
 		return
 	}
 	inner, _ := envelope["payload"].(map[string]interface{})
 	if inner == nil {
 		return
 	}
-	rid, _ := inner["request_id"].(string)
-	if rid != "" {
+	if rid, _ := inner["request_id"].(string); rid != "" {
 		fields["request_id"] = rid
 	}
 }
@@ -248,16 +252,23 @@ func (w *Worker) recordComplete(ctx context.Context, jobID, jobType string, enve
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
 	if err := w.queue.Complete(outcomeCtx, jobID); err != nil {
-		w.log.Error("worker.job.complete_failed", err, map[string]interface{}{
-			"job_id": jobID,
-		})
+		failFields := map[string]interface{}{
+			"job_id":      jobID,
+			"job_type":    jobType,
+			"duration_ms": duration.Milliseconds(),
+		}
+		mergeJobRequestID(failFields, envelope)
+		w.log.Error("worker.job.complete_failed", err, failFields)
 		// The handler itself succeeded, but the job may now be redelivered
 		// (e.g. duplicate webhook sends) since the queue never learned it
 		// finished — record it as a failure so dashboards aren't silent
-		// about a real, actionable problem.
+		// about a real, actionable problem. JobResult is recorded here
+		// (not before Complete) so success-rate metrics stay honest.
 		w.metrics.JobFailure(jobType)
+		w.metrics.JobResult(jobType, "failed", duration)
 		return
 	}
+	w.metrics.JobResult(jobType, "success", duration)
 	doneFields := map[string]interface{}{
 		"job_id":      jobID,
 		"job_type":    jobType,
