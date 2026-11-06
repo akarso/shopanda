@@ -185,7 +185,7 @@ func TestDispatcher_StampsRequestID(t *testing.T) {
 		}
 	})
 
-	t.Run("from_meta_via_publish_async", func(t *testing.T) {
+	t.Run("from_publish_async_ctx", func(t *testing.T) {
 		queue := &recordingQueue{enqueued: make(chan jobs.Job, 1)}
 		dispatcher := webhookApp.NewDispatcher(repo, queue, logger.New("error"))
 		bus := event.NewBus(logger.New("error"))
