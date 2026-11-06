@@ -43,6 +43,10 @@ func (f *fakeJobReader) CountsByStatus(context.Context) (map[domainjobs.Status]i
 	return f.countsResult, f.countsErr
 }
 
+func (f *fakeJobReader) CountsByType(context.Context, string) (map[domainjobs.Status]int, error) {
+	return f.countsResult, f.countsErr
+}
+
 type fakeJobAdmin struct {
 	retryErr  error
 	cancelErr error

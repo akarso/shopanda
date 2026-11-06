@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -123,6 +124,28 @@ func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+// InjectRequestID shallow-copies payload and, when ctx carries a request ID
+// and the key is not already set, stores it as "request_id". Callers that
+// already set request_id keep their value. Empty / missing ctx IDs are a no-op.
+func InjectRequestID(ctx context.Context, payload map[string]interface{}) map[string]interface{} {
+	out := shallowCopyStringMap(payload)
+	if out == nil {
+		out = map[string]interface{}{}
+	}
+	if ctx == nil {
+		return out
+	}
+	rid := requestctx.RequestID(ctx)
+	if rid == "" {
+		return out
+	}
+	if _, exists := out["request_id"]; exists {
+		return out
+	}
+	out["request_id"] = rid
+	return out
+}
+
 func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, payload map[string]interface{}) error {
 	if a == nil {
 		return fmt.Errorf("plugin: app is nil")
@@ -153,6 +176,7 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	payload = InjectRequestID(ctx, payload)
 	job, err := NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload)
 	if err != nil {
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
@@ -161,11 +185,15 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
 	if a.Logger != nil {
-		a.Logger.Info("integration.sync_job.enqueued", map[string]interface{}{
+		fields := map[string]interface{}{
 			"job_id":   job.ID,
 			"job_type": job.Type,
 			"trigger":  extapi.SyncTriggerManual,
-		})
+		}
+		if rid, _ := payload["request_id"].(string); rid != "" {
+			fields["request_id"] = rid
+		}
+		a.Logger.Info("integration.sync_job.enqueued", fields)
 	}
 	return nil
 }

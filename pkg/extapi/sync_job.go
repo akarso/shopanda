@@ -25,9 +25,11 @@ type SyncJobContext struct {
 	Plugin  string
 	Name    string
 	Trigger string
-	Payload map[string]interface{}
-	DB      *sql.DB
-	Logger  SyncLogger
+	// Attempts is the queue row's attempt counter at dequeue (same as jobs.Job.Attempts).
+	Attempts int
+	Payload  map[string]interface{}
+	DB       *sql.DB
+	Logger   SyncLogger
 }
 
 // SyncJobHandler executes one queued sync job. Implementations must be idempotent.

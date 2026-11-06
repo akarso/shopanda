@@ -83,6 +83,14 @@ func (s *Service) CountsByStatus(ctx context.Context) (map[domainjobs.Status]int
 	return s.reader.CountsByStatus(ctx)
 }
 
+// CountsByType returns per-status counts for one registered job type.
+func (s *Service) CountsByType(ctx context.Context, jobType string) (map[domainjobs.Status]int, error) {
+	if jobType == "" {
+		return nil, fmt.Errorf("jobs: counts by type: empty type")
+	}
+	return s.reader.CountsByType(ctx, jobType)
+}
+
 // Retry resets a failed job back to pending. See domainjobs.Admin for the
 // full error contract (not-found vs. wrong-status).
 func (s *Service) Retry(ctx context.Context, id string) error {

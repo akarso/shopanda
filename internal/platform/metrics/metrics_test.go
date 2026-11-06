@@ -14,6 +14,7 @@ func TestNoop_DoesNotPanic(t *testing.T) {
 	rec.HTTPRequest("GET /api/v1/products/{id}", "GET", "2xx", 10*time.Millisecond)
 	rec.CheckoutResult(metrics.OutcomeSuccess)
 	rec.JobFailure("webhook.deliver")
+	rec.JobResult("webhook.deliver", metrics.OutcomeSuccess, time.Millisecond)
 	rec.WebhookDelivery(metrics.OutcomeFailed)
 	rec.RateLimitBackendError("default", "error")
 	rec.FPCRequest("/products/{slug}", metrics.FPCOutcomeHit)
@@ -30,6 +31,8 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 	rec.CheckoutResult(metrics.OutcomeSuccess)
 	rec.CheckoutResult(metrics.OutcomeFailed)
 	rec.JobFailure("webhook.deliver")
+	rec.JobResult("webhook.deliver", metrics.OutcomeSuccess, 25*time.Millisecond)
+	rec.JobResult("webhook.deliver", metrics.OutcomeFailed, 5*time.Millisecond)
 	rec.WebhookDelivery(metrics.OutcomeSuccess)
 	rec.RateLimitBackendError("default", "error")
 	rec.FPCRequest("/products/{slug}", metrics.FPCOutcomeHit)
@@ -53,6 +56,9 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 		`shopanda_checkout_result_total{outcome="success"} 1`,
 		`shopanda_checkout_result_total{outcome="failed"} 1`,
 		`shopanda_job_failures_total{job_type="webhook.deliver"} 1`,
+		`shopanda_job_results_total{job_type="webhook.deliver",outcome="success"} 1`,
+		`shopanda_job_results_total{job_type="webhook.deliver",outcome="failed"} 1`,
+		"shopanda_job_duration_seconds",
 		`shopanda_webhook_deliveries_total{outcome="success"} 1`,
 		`shopanda_ratelimit_backend_errors_total{limiter="default",reason="error"} 1`,
 		`shopanda_fpc_requests_total{outcome="hit",route="/products/{slug}"} 1`,

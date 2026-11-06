@@ -20,6 +20,10 @@ on every Shopanda upgrade.
 | Job type | **`integration.sync.{slug}.{name}` only** |
 | Bind | Composition root binds queue after resolve; `Enqueue` before bind fails clearly |
 | Free-form types | **Out of scope** (no `myproduct.generate`) |
+| Correlation | `Enqueue(ctx,…)` injects `request_id` from context into payload when unset; worker logs include it — see [SYNC_JOB_OBSERVABILITY.md](SYNC_JOB_OBSERVABILITY.md) |
+| Attempts | `extapi.SyncJobContext.Attempts` at dequeue |
+| Depth | `jobs.Reader.CountsByType` (Postgres queue) |
+| Metrics | `shopanda_job_results_total` / `shopanda_job_duration_seconds` (+ legacy `shopanda_job_failures_total`) |
 
 ## HTTP
 

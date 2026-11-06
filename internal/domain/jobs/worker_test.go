@@ -107,6 +107,8 @@ func (m *mockMetrics) JobFailure(jobType string) {
 	m.failures = append(m.failures, jobType)
 }
 
+func (m *mockMetrics) JobResult(string, string, time.Duration) {}
+
 // --- tests ---
 
 func TestWorker_ProcessesJob(t *testing.T) {

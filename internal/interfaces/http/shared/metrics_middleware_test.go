@@ -27,6 +27,7 @@ func (f *fakeRecorder) HTTPRequest(route, method, statusClass string, d time.Dur
 }
 func (f *fakeRecorder) CheckoutResult(string)                   {}
 func (f *fakeRecorder) JobFailure(string)                       {}
+func (f *fakeRecorder) JobResult(string, string, time.Duration) {}
 func (f *fakeRecorder) WebhookDelivery(string)                  {}
 func (f *fakeRecorder) RateLimitBackendError(string, string)    {}
 func (f *fakeRecorder) FPCRequest(string, string)               {}

@@ -87,6 +87,7 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 }
 
 func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger) error {
+	payload = plugin.InjectRequestID(ctx, payload)
 	job, err := plugin.NewSyncJobEnvelope(reg, trigger, payload)
 	if err != nil {
 		return err
@@ -95,11 +96,15 @@ func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobReg
 		return err
 	}
 	if log != nil {
-		log.Info("integration.sync_job.enqueued", map[string]interface{}{
+		fields := map[string]interface{}{
 			"job_id":   job.ID,
 			"job_type": job.Type,
 			"trigger":  trigger,
-		})
+		}
+		if rid, _ := payload["request_id"].(string); rid != "" {
+			fields["request_id"] = rid
+		}
+		log.Info("integration.sync_job.enqueued", fields)
 	}
 	return nil
 }
@@ -129,13 +134,14 @@ func (h *syncJobHandler) Handle(ctx context.Context, job jobs.Job) error {
 	name, _ := job.Payload["name"].(string)
 
 	req := extapi.SyncJobContext{
-		JobID:   job.ID,
-		Plugin:  pluginSlug,
-		Name:    name,
-		Trigger: trigger,
-		Payload: payload,
-		DB:      h.db,
-		Logger:  h.log,
+		JobID:    job.ID,
+		Plugin:   pluginSlug,
+		Name:     name,
+		Trigger:  trigger,
+		Attempts: job.Attempts,
+		Payload:  payload,
+		DB:       h.db,
+		Logger:   h.log,
 	}
 	return h.handler(ctx, req)
 }

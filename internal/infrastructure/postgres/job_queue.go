@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -298,6 +299,34 @@ func (q *JobQueue) CountsByStatus(ctx context.Context) (map[jobs.Status]int, err
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("job_queue: counts by status rows: %w", err)
+	}
+	return out, nil
+}
+
+// CountsByType returns per-status counts for one job type.
+func (q *JobQueue) CountsByType(ctx context.Context, jobType string) (map[jobs.Status]int, error) {
+	if strings.TrimSpace(jobType) == "" {
+		return nil, fmt.Errorf("job_queue: counts by type: job type required")
+	}
+	const query = `SELECT status, count(*) FROM jobs WHERE type = $1 GROUP BY status`
+
+	rows, err := q.db.QueryContext(ctx, query, jobType)
+	if err != nil {
+		return nil, fmt.Errorf("job_queue: counts by type: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[jobs.Status]int)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("job_queue: counts by type scan: %w", err)
+		}
+		out[jobs.Status(status)] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("job_queue: counts by type rows: %w", err)
 	}
 	return out, nil
 }

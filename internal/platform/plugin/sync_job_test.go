@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -221,6 +222,70 @@ func TestApp_Integration_Enqueue_PayloadShape(t *testing.T) {
 	inner, _ := got.Payload["payload"].(map[string]interface{})
 	if inner["order_id"] != "ord-1" {
 		t.Fatalf("inner payload = %#v (want shallow copy)", inner)
+	}
+}
+
+func TestApp_Integration_Enqueue_InjectsRequestID(t *testing.T) {
+	app := &plugin.App{
+		Logger:    logger.NewWithWriter(io.Discard, "error"),
+		Bootstrap: &plugin.Bootstrap{},
+	}
+	queue := &memQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "webhook.ingest",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := requestctx.WithRequestID(context.Background(), "req-from-http")
+	if err := app.Integration("acme").Enqueue(ctx, "webhook.ingest", map[string]interface{}{"k": 1}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	inner, _ := queue.snapshot()[0].Payload["payload"].(map[string]interface{})
+	if inner["request_id"] != "req-from-http" {
+		t.Fatalf("inner = %#v, want request_id injected", inner)
+	}
+}
+
+func TestApp_Integration_Enqueue_PreservesExplicitRequestID(t *testing.T) {
+	app := &plugin.App{
+		Logger:    logger.NewWithWriter(io.Discard, "error"),
+		Bootstrap: &plugin.Bootstrap{},
+	}
+	queue := &memQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "webhook.ingest",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := requestctx.WithRequestID(context.Background(), "req-from-http")
+	if err := app.Integration("acme").Enqueue(ctx, "webhook.ingest", map[string]interface{}{
+		"request_id": "already-set",
+	}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	inner, _ := queue.snapshot()[0].Payload["payload"].(map[string]interface{})
+	if inner["request_id"] != "already-set" {
+		t.Fatalf("explicit request_id overwritten: %#v", inner)
+	}
+}
+
+func TestInjectRequestID_NoCtxID(t *testing.T) {
+	out := plugin.InjectRequestID(context.Background(), map[string]interface{}{"a": 1})
+	if _, ok := out["request_id"]; ok {
+		t.Fatalf("unexpected request_id: %#v", out)
+	}
+	if out["a"] != 1 {
+		t.Fatalf("payload mutated: %#v", out)
 	}
 }
 
