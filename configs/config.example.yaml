@@ -122,8 +122,12 @@ media:
 
   local:
     # Filesystem path where uploads are stored.
-    base_path: "./public/media"
-    # URL path for serving media files.
+    # Prefer a non-webroot path (not under a directory nginx/Caddy FileServers).
+    # Private blobs (private/downloads/, private/blobs/) share this root — do NOT
+    # statically publish base_path or base_url.
+    base_path: "./var/media"
+    # URL path used when building permanent Storage.URL() for public uploads only.
+    # Never FileServer this path for private/blobs or private/downloads keys.
     base_url: "/media"
     # HMAC secret for SignedURL (GET /api/v1/media/local-signed/{token}).
     # Required (≥32 bytes) whenever media.storage=local outside SHOPANDA_DEV_MODE.

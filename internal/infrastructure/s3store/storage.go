@@ -215,7 +215,26 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
 	defer cancel()
 
-	contentType := mimeFromPath(key)
+	return s.putObject(ctx, key, file, mimeFromPath(key))
+}
+
+// SaveWithContentType uploads with an explicit MIME type when non-empty;
+// otherwise falls back to mimeFromPath(key).
+func (s *Storage) SaveWithContentType(path string, file io.Reader, contentType string) error {
+	key, err := validateKey(path)
+	if err != nil {
+		return fmt.Errorf("s3store: invalid key %q: %w", path, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
+	defer cancel()
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		ct = mimeFromPath(key)
+	}
+	return s.putObject(ctx, key, file, ct)
+}
+
+func (s *Storage) putObject(ctx context.Context, key string, file io.Reader, contentType string) error {
 	private := domainMedia.IsPrivatePath(key)
 
 	input := &s3.PutObjectInput{
@@ -309,7 +328,7 @@ func (s *Storage) SignedURL(ctx context.Context, path string, opts domainMedia.S
 		Bucket:                     aws.String(s.bucket),
 		Key:                        aws.String(key),
 		ResponseCacheControl:       aws.String(privateCacheControl),
-		ResponseContentDisposition: aws.String(domainMedia.ContentDispositionAttachment(opts.Filename)),
+		ResponseContentDisposition: aws.String(domainMedia.ContentDispositionValue(opts.Disposition, opts.Filename)),
 	}
 	if ctx == nil {
 		ctx = context.Background()

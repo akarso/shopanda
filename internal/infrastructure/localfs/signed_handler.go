@@ -23,7 +23,7 @@ func (s *Storage) Handler() http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		path, filename, err := s.ParseToken(token)
+		path, filename, disp, err := s.ParseToken(token)
 		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -43,7 +43,7 @@ func (s *Storage) Handler() http.Handler {
 		if st, err := f.Stat(); err == nil {
 			mod = st.ModTime()
 		}
-		w.Header().Set("Content-Disposition", media.ContentDispositionAttachment(filename))
+		w.Header().Set("Content-Disposition", media.ContentDispositionValue(disp, filename))
 		// ServeContent sets Content-Type from filename (or octet-stream) and streams.
 		http.ServeContent(w, r, filename, mod, f)
 	})
