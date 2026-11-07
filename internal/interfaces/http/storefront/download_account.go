@@ -216,6 +216,12 @@ func validateSignedRedirectURL(raw string, storage media.Storage) error {
 		if storageName != "s3" {
 			return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 		}
+	case "":
+		// Local filesystem SignedURLStorage returns same-origin relative paths.
+		if storageName == "local" && isSafeLocalSignedPath(u.Path) && u.Host == "" && u.RawQuery == "" && u.Fragment == "" {
+			return nil
+		}
+		return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 	default:
 		return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 	}
@@ -233,6 +239,25 @@ func validateSignedRedirectURL(raw string, storage media.Storage) error {
 		}
 	}
 	return fmt.Errorf("signed URL host %q not allowed", host)
+}
+
+// isSafeLocalSignedPath accepts only "/api/v1/media/local-signed/{single-segment}".
+// Rejects "..", encoded dots, extra slashes, and empty tokens so Redirect
+// cannot be steered off the signed handler via path normalization.
+func isSafeLocalSignedPath(p string) bool {
+	const prefix = "/api/v1/media/local-signed/"
+	if !strings.HasPrefix(p, prefix) {
+		return false
+	}
+	rest := p[len(prefix):]
+	if rest == "" || strings.Contains(rest, "/") || strings.Contains(rest, `\`) {
+		return false
+	}
+	lower := strings.ToLower(rest)
+	if strings.Contains(rest, "..") || strings.Contains(lower, "%2e") {
+		return false
+	}
+	return true
 }
 
 func signedRedirectAllowedHosts(storage media.Storage) []string {

@@ -1,38 +1,80 @@
 package localfs
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/platform/config"
 )
 
 // Compile-time checks.
 var (
-	_ media.Storage         = (*Storage)(nil)
-	_ media.ReadableStorage = (*Storage)(nil)
+	_ media.Storage          = (*Storage)(nil)
+	_ media.ReadableStorage  = (*Storage)(nil)
+	_ media.SignedURLStorage = (*Storage)(nil)
 )
 
-// Storage implements media.Storage using the local filesystem.
+// SignedPathPrefix is the HTTP path prefix for HMAC local signed GETs.
+// Relative SignedURL values use this prefix (no host) so redirects stay on-app.
+const SignedPathPrefix = "/api/v1/media/local-signed/"
+
+// MaxSignedTokenBytes caps inbound token size before base64/HMAC work (DoS).
+const MaxSignedTokenBytes = 4096
+
+// maxSignedPathBytes / maxSignedFilenameRunes bound token payload size.
+const (
+	maxSignedPathBytes     = 1024
+	maxSignedFilenameRunes = 255
+	signedExpirySkew       = 30 * time.Second
+)
+
+// Storage implements media.Storage using the local filesystem and
+// SignedURLStorage via an HMAC token served by Handler.
 type Storage struct {
 	basePath string
 	baseURL  string
+	secret   []byte
 }
 
-// New creates a local filesystem Storage.
-// basePath is the directory root (e.g. "./public/media").
-// baseURL is the URL prefix (e.g. "/media").
-func New(basePath, baseURL string) *Storage {
+// NewWithSecret creates Storage with an explicit HMAC secret for SignedURL.
+// secret must be at least config.MinLocalSignSecretBytes long.
+func NewWithSecret(basePath, baseURL string, secret []byte) (*Storage, error) {
 	if basePath == "" {
-		panic("localfs.New: empty basePath")
+		return nil, fmt.Errorf("localfs: empty basePath")
 	}
 	if baseURL == "" {
-		panic("localfs.New: empty baseURL")
+		return nil, fmt.Errorf("localfs: empty baseURL")
 	}
-	return &Storage{basePath: basePath, baseURL: baseURL}
+	if len(secret) < config.MinLocalSignSecretBytes {
+		return nil, fmt.Errorf("localfs: sign secret must be at least %d bytes", config.MinLocalSignSecretBytes)
+	}
+	return &Storage{
+		basePath: basePath,
+		baseURL:  baseURL,
+		secret:   append([]byte(nil), secret...),
+	}, nil
+}
+
+// NewEphemeral is for SHOPANDA_DEV_MODE only when sign_secret is unset.
+// URLs invalidate on process restart and across replicas.
+func NewEphemeral(basePath, baseURL string) (*Storage, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("localfs: generate sign secret: %w", err)
+	}
+	return NewWithSecret(basePath, baseURL, secret)
 }
 
 // Name returns "local".
@@ -52,11 +94,10 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
 		return "", fmt.Errorf("localfs: path escapes base directory")
 	}
-	return full, nil
+	return abs, nil
 }
 
 // Save writes file contents to basePath/path.
-// Intermediate directories are created as needed.
 func (s *Storage) Save(path string, file io.Reader) error {
 	full, err := s.resolveSafePath(path)
 	if err != nil {
@@ -112,6 +153,19 @@ func (s *Storage) Read(path string) ([]byte, error) {
 	return data, nil
 }
 
+// Open returns a read-only file for streaming signed GETs.
+func (s *Storage) Open(path string) (*os.File, error) {
+	full, err := s.resolveSafePath(path)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: open: %w", err)
+	}
+	return f, nil
+}
+
 // URL returns baseURL/path. Returns empty string if path escapes the storage root.
 func (s *Storage) URL(path string) string {
 	cleaned := filepath.Clean(path)
@@ -120,4 +174,106 @@ func (s *Storage) URL(path string) string {
 		return ""
 	}
 	return s.baseURL + "/" + filepath.ToSlash(rel)
+}
+
+// Head verifies the object exists (SignedURLStorage).
+func (s *Storage) Head(_ context.Context, path string) error {
+	full, err := s.resolveSafePath(path)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("localfs: head %q: %w", path, os.ErrNotExist)
+		}
+		return fmt.Errorf("localfs: head %q: %w", path, err)
+	}
+	return nil
+}
+
+// SignedURL returns a relative HMAC URL under SignedPathPrefix.
+func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOptions) (string, error) {
+	if _, err := s.resolveSafePath(path); err != nil {
+		return "", err
+	}
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = 60 * time.Second
+	}
+	exp := time.Now().UTC().Add(ttl).Unix()
+	token, err := s.sign(path, opts.Filename, exp)
+	if err != nil {
+		return "", err
+	}
+	return SignedPathPrefix + token, nil
+}
+
+// SignedURLHosts returns nil — local signed URLs are relative (same origin).
+func (s *Storage) SignedURLHosts() []string { return nil }
+
+func (s *Storage) sign(path, filename string, exp int64) (string, error) {
+	if len(path) > maxSignedPathBytes {
+		return "", fmt.Errorf("localfs: path too long")
+	}
+	filename = truncateFilenameForSign(filename)
+	payload := make([]byte, 8+2+len(path)+len(filename))
+	binary.BigEndian.PutUint64(payload[:8], uint64(exp))
+	binary.BigEndian.PutUint16(payload[8:10], uint16(len(path)))
+	copy(payload[10:], path)
+	copy(payload[10+len(path):], filename)
+	mac := hmac.New(sha256.New, s.secret)
+	_, _ = mac.Write(payload)
+	raw := append(payload, mac.Sum(nil)...)
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// ParseToken validates token and returns storage path + optional filename.
+func (s *Storage) ParseToken(token string) (path, filename string, err error) {
+	if len(token) > MaxSignedTokenBytes {
+		return "", "", fmt.Errorf("localfs: token too long")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", "", fmt.Errorf("localfs: token decode: %w", err)
+	}
+	const macLen = sha256.Size
+	if len(raw) < 8+2+macLen {
+		return "", "", fmt.Errorf("localfs: token too short")
+	}
+	payload := raw[:len(raw)-macLen]
+	sum := raw[len(raw)-macLen:]
+	mac := hmac.New(sha256.New, s.secret)
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(sum, mac.Sum(nil)) {
+		return "", "", fmt.Errorf("localfs: bad mac")
+	}
+	exp := int64(binary.BigEndian.Uint64(payload[:8]))
+	now := time.Now().UTC().Unix()
+	if now > exp+int64(signedExpirySkew.Seconds()) {
+		return "", "", fmt.Errorf("localfs: token expired")
+	}
+	pathLen := int(binary.BigEndian.Uint16(payload[8:10]))
+	if 10+pathLen > len(payload) {
+		return "", "", fmt.Errorf("localfs: bad path length")
+	}
+	path = string(payload[10 : 10+pathLen])
+	filename = string(payload[10+pathLen:])
+	if strings.Contains(path, "..") || strings.Contains(path, `\`) {
+		return "", "", fmt.Errorf("localfs: invalid path in token")
+	}
+	if _, err := s.resolveSafePath(path); err != nil {
+		return "", "", err
+	}
+	return path, filename, nil
+}
+
+// truncateFilenameForSign hard-caps by Unicode runes so the token payload
+// never splits a multi-byte character. Disposition sanitization stays in the
+// HTTP handler (ContentDispositionAttachment).
+func truncateFilenameForSign(filename string) string {
+	if utf8.RuneCountInString(filename) <= maxSignedFilenameRunes {
+		return filename
+	}
+	return string([]rune(filename)[:maxSignedFilenameRunes])
 }

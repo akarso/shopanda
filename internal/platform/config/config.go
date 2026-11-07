@@ -462,9 +462,14 @@ type ThumbnailConfig struct {
 	Fit    string `yaml:"fit"`
 }
 
+// MinLocalSignSecretBytes is the minimum length for media.local.sign_secret
+// when set (HMAC key material for local SignedURL).
+const MinLocalSignSecretBytes = 32
+
 type LocalStorageConfig struct {
-	BasePath string `yaml:"base_path"`
-	BaseURL  string `yaml:"base_url"`
+	BasePath   string `yaml:"base_path"`
+	BaseURL    string `yaml:"base_url"`
+	SignSecret string `yaml:"sign_secret"` // HMAC for local SignedURL; env SHOPANDA_MEDIA_LOCAL_SIGN_SECRET
 }
 
 // S3StorageConfig holds settings for S3-compatible storage backends.
@@ -1069,6 +1074,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
 		cfg.Media.Local.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET"); v != "" {
+		cfg.Media.Local.SignSecret = v
+	}
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_ENDPOINT"); v != "" {
 		cfg.Media.S3.Endpoint = v
 	}
@@ -1465,6 +1473,11 @@ func flatten(cfg *Config) map[string]string {
 	m["media.storage"] = cfg.Media.Storage
 	m["media.local.base_path"] = cfg.Media.Local.BasePath
 	m["media.local.base_url"] = cfg.Media.Local.BaseURL
+	if cfg.Media.Local.SignSecret != "" {
+		m["media.local.sign_secret"] = "***"
+	} else {
+		m["media.local.sign_secret"] = ""
+	}
 	for name, tc := range cfg.Media.Thumbnails {
 		prefix := "media.thumbnails." + name
 		m[prefix+".width"] = strconv.Itoa(tc.Width)

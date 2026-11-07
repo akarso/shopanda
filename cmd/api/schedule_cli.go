@@ -269,6 +269,9 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if err != nil {
 		return err
 	}
+	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
+		return err
+	}
 	schedulerStore, err := postgres.NewSchedulerStore(conn)
 	if err != nil {
 		return fmt.Errorf("scheduler store: %w", err)

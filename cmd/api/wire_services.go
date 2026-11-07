@@ -174,6 +174,7 @@ type serveRuntime struct {
 	categoryProductAssignmentAdmin *admin.CategoryProductAssignmentAdminHandler
 	searchHandler                  *storefront.SearchHandler
 	mediaHandler                   *admin.MediaHandler
+	mediaStorage                   media.Storage
 	configAdmin                    *admin.ConfigAdminHandler
 	schemaHandler                  *admin.SchemaHandler
 	pageHandler                    *storefront.PageHandler
@@ -423,8 +424,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 	)
 
-	// Media storage.
-	mediaStorage, err := resolveMediaStorage(pluginApp, cfg)
+	// Media storage (resolve + bind so BoundMediaStorage matches this instance).
+	mediaStorage, err := resolveAndBindMediaStorage(pluginApp, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,6 +1174,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		categoryProductAssignmentAdmin: categoryProductAssignmentAdmin,
 		searchHandler:                  searchHandler,
 		mediaHandler:                   mediaHandler,
+		mediaStorage:                   mediaStorage,
 		configAdmin:                    configAdmin,
 		schemaHandler:                  schemaHandler,
 		pageHandler:                    pageHandler,

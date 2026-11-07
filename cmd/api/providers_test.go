@@ -177,8 +177,9 @@ func TestResolveMediaStorage_FromLocalPlugin(t *testing.T) {
 		Media: config.MediaConfig{
 			Storage: "local",
 			Local: config.LocalStorageConfig{
-				BasePath: "./public/media",
-				BaseURL:  "/media",
+				BasePath:   "./public/media",
+				BaseURL:    "/media",
+				SignSecret: "unit-test-sign-secret-32-bytes!!",
 			},
 		},
 	}

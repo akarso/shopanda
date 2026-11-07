@@ -106,6 +106,30 @@ func (a *App) RegisterMediaStorage(storage media.Storage) {
 	a.mediaStorage = storage
 }
 
+// BindMediaStorage attaches the composition-root-resolved media.Storage for
+// product plugins and late readers. Distinct from RegisterMediaStorage (plugin
+// provider slot during Init): Init-time MediaStorage() only sees registered
+// backends, while BoundMediaStorage() returns the single instance the root
+// resolved (plugin-registered or fallback local/S3). When a plugin already
+// RegisterMediaStorage'd, storage must be that same instance. Idempotent when
+// the same instance is already bound.
+func (a *App) BindMediaStorage(storage media.Storage) error {
+	if a == nil {
+		return fmt.Errorf("plugin: BindMediaStorage: app is nil")
+	}
+	if storage == nil {
+		return fmt.Errorf("plugin: BindMediaStorage: storage must not be nil")
+	}
+	if a.mediaStorage != nil && a.mediaStorage != storage {
+		return fmt.Errorf("plugin: BindMediaStorage: storage must match plugin-registered media")
+	}
+	if a.boundMedia != nil && a.boundMedia != storage {
+		return fmt.Errorf("plugin: BindMediaStorage: media already bound to a different instance")
+	}
+	a.boundMedia = storage
+	return nil
+}
+
 // RegisterTaxCalculator registers the active tax calculation implementation.
 func (a *App) RegisterTaxCalculator(calculator tax.Calculator) {
 	if calculator == nil {
@@ -174,6 +198,17 @@ func (a *App) MediaStorage() (media.Storage, bool) {
 		return nil, false
 	}
 	return a.mediaStorage, true
+}
+
+// BoundMediaStorage returns the composition-root media storage after
+// BindMediaStorage. It does not fall back to RegisterMediaStorage — same
+// fail-closed shape as Integration.Enqueue requiring BindQueue — so Init-time
+// readers cannot silently use a different instance than the root resolved.
+func (a *App) BoundMediaStorage() (media.Storage, bool) {
+	if a == nil || a.boundMedia == nil {
+		return nil, false
+	}
+	return a.boundMedia, true
 }
 
 // TaxCalculator returns the registered tax calculator, if any.

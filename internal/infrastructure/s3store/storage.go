@@ -204,8 +204,8 @@ func awsDNSSuffix(region string) string {
 func (s *Storage) Name() string { return "s3" }
 
 // Save uploads file to the S3 bucket at the given path.
-// Paths under media.PrivateDownloadsPrefix get private, no-store Cache-Control
-// and never receive a public ACL (even when PublicACL is configured).
+// Paths under media.IsPrivatePath (downloads + blobs) get private, no-store
+// Cache-Control and never receive a public ACL (even when PublicACL is configured).
 func (s *Storage) Save(path string, file io.Reader) error {
 	key, err := validateKey(path)
 	if err != nil {
@@ -216,7 +216,7 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	defer cancel()
 
 	contentType := mimeFromPath(key)
-	private := domainMedia.IsPrivateDownloadsPath(key)
+	private := domainMedia.IsPrivatePath(key)
 
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),

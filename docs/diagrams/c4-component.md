@@ -148,7 +148,8 @@ C4Component
             Component(coreSQSQueue, "SQS Queue Core Plugin", "Go", "Registers SQS job queue when queue.driver=sqs")
             Component(coreGraphQL, "GraphQL API Core Plugin", "Go", "Read-only catalog API when plugins.graphql.enabled")
             Component(coreStripe, "Stripe Core Plugin", "Go", "Registers Stripe payment provider when payment.stripe.enabled")
-            Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when storage.driver=s3")
+            Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when media.storage=s3")
+            Component(coreLocalStorage, "Local Storage Core Plugin", "Go", "Registers localfs SignedURLStorage when media.storage=local; HMAC GET route after BindMediaStorage")
         }
 
         Boundary(externalPlugins, "External Plugins (compile-time register)") {

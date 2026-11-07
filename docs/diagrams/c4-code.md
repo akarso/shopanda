@@ -523,7 +523,12 @@ classDiagram
     class LocalStorage {
         -basePath string
         -baseURL string
+        -secret []byte
+        +Head(ctx, path) error
+        +SignedURL(ctx, path, opts) string
+        +Handler() http.Handler
         +Read(path) []byte
+        +Open(path) *os.File
     }
     class S3Storage {
         -bucket string
@@ -746,8 +751,9 @@ classDiagram
     Storage <|.. LocalStorage : implements
     ReadableStorage <|.. LocalStorage : implements
     SignedURLStorage <|.. S3Storage : implements
+    SignedURLStorage <|.. LocalStorage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
-    note for SignedURLStorage "PR-1077: Head before claim; presign with private no-store +\nattachment disposition; never permanent Storage.URL for grants"
+    note for SignedURLStorage "PR-1077/PR-1090: Head before claim; S3 presign or local HMAC GET\n(/api/v1/media/local-signed/{token}); private no-store + attachment;\nIsPrivatePath covers downloads+blobs; never permanent Storage.URL for grants"
 
     Cache <|.. PostgresCacheStore : implements
     StoreRepository <|.. PostgresStoreRepo : implements
