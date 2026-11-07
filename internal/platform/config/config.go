@@ -462,6 +462,10 @@ type ThumbnailConfig struct {
 	Fit    string `yaml:"fit"`
 }
 
+// MinLocalSignSecretBytes is the minimum length for media.local.sign_secret
+// when set (HMAC key material for local SignedURL).
+const MinLocalSignSecretBytes = 32
+
 type LocalStorageConfig struct {
 	BasePath   string `yaml:"base_path"`
 	BaseURL    string `yaml:"base_url"`

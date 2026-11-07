@@ -15,9 +15,9 @@ import (
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
-	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -252,7 +252,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("DELETE /api/v1/admin/media/{assetId}", requireMediaWrite(rt.mediaHandler.Delete()))
-	if local, ok := rt.mediaStorage.(media.LocalSignedHandler); ok {
+	// Register the HMAC GET route only for concrete *localfs.Storage so a
+	// SignedURL-advertising wrapper cannot leave the path permanently 404.
+	if local, ok := rt.mediaStorage.(*localfs.Storage); ok {
 		router.Handle("GET /api/v1/media/local-signed/{token}", local.Handler())
 	}
 	router.Handle("GET /api/v1/admin/config", requireSettingsRead(rt.configAdmin.Get()))

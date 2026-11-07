@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -50,15 +49,6 @@ func AsSignedURLStorage(s Storage) (SignedURLStorage, bool) {
 	}
 	signer, ok := s.(SignedURLStorage)
 	return signer, ok
-}
-
-// LocalSignedHandler is the local filesystem HMAC signed-GET surface.
-// Composition roots type-assert the resolved media.Storage to this interface
-// (not a duck-typed Handler() alone) so wrappers cannot advertise SignedURL
-// paths without registering the matching route.
-type LocalSignedHandler interface {
-	SignedURLStorage
-	Handler() http.Handler
 }
 
 // SanitizeContentDispositionFilename returns an ASCII-safe filename for the

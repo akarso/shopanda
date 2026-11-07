@@ -126,10 +126,13 @@ media:
     # URL path for serving media files.
     base_url: "/media"
     # HMAC secret for SignedURL (GET /api/v1/media/local-signed/{token}).
-    # Required whenever media.storage=local outside SHOPANDA_DEV_MODE.
-    # Multi-replica / rolling-restart local deploys MUST set a shared secret
-    # (empty secret mints a per-process key → ClaimDelivery then 403 on another pod).
-    # Set via SHOPANDA_MEDIA_LOCAL_SIGN_SECRET (do not commit real values).
+    # Required (≥32 bytes) whenever media.storage=local outside SHOPANDA_DEV_MODE.
+    # Default media.storage is local — a copy of this file without DEV or the env
+    # below fails config Load. Multi-replica local deploys MUST share one secret.
+    # Set via env only (do not commit real values):
+    #   export SHOPANDA_MEDIA_LOCAL_SIGN_SECRET="$(openssl rand -base64 32)"
+    # Local docker/dev: SHOPANDA_DEV_MODE=true allows an empty secret (ephemeral
+    # per-process key — not for HA).
     # sign_secret: ""
 
   # S3-compatible storage (AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2).

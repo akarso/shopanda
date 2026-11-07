@@ -12,8 +12,8 @@ import (
 
 // resolveAndBindMediaStorage resolves the active media.Storage (plugin-
 // registered when present) and binds it for BoundMediaStorage readers.
-// Call from every process that product plugins may use for media (serve,
-// worker, scheduler, CLIs) — same pattern as resolveAndBindJobQueue.
+// Call from the same processes as resolveAndBindJobQueue (serve, worker,
+// scheduler, schedule-trigger, search-reindex).
 func resolveAndBindMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, error) {
 	st, err := resolveMediaStorage(app, cfg)
 	if err != nil {

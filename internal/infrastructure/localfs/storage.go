@@ -13,16 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/platform/config"
 )
 
 // Compile-time checks.
 var (
-	_ media.Storage            = (*Storage)(nil)
-	_ media.ReadableStorage    = (*Storage)(nil)
-	_ media.SignedURLStorage   = (*Storage)(nil)
-	_ media.LocalSignedHandler = (*Storage)(nil)
+	_ media.Storage          = (*Storage)(nil)
+	_ media.ReadableStorage  = (*Storage)(nil)
+	_ media.SignedURLStorage = (*Storage)(nil)
 )
 
 // SignedPathPrefix is the HTTP path prefix for HMAC local signed GETs.
@@ -32,10 +33,10 @@ const SignedPathPrefix = "/api/v1/media/local-signed/"
 // MaxSignedTokenBytes caps inbound token size before base64/HMAC work (DoS).
 const MaxSignedTokenBytes = 4096
 
-// maxSignedPathBytes / maxSignedFilenameBytes bound token payload size.
+// maxSignedPathBytes / maxSignedFilenameRunes bound token payload size.
 const (
 	maxSignedPathBytes     = 1024
-	maxSignedFilenameBytes = 255
+	maxSignedFilenameRunes = 255
 	signedExpirySkew       = 30 * time.Second
 )
 
@@ -48,7 +49,7 @@ type Storage struct {
 }
 
 // NewWithSecret creates Storage with an explicit HMAC secret for SignedURL.
-// secret must be non-empty (validate config in production; tests pass a fixed key).
+// secret must be at least config.MinLocalSignSecretBytes long.
 func NewWithSecret(basePath, baseURL string, secret []byte) (*Storage, error) {
 	if basePath == "" {
 		return nil, fmt.Errorf("localfs: empty basePath")
@@ -56,8 +57,8 @@ func NewWithSecret(basePath, baseURL string, secret []byte) (*Storage, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("localfs: empty baseURL")
 	}
-	if len(secret) == 0 {
-		return nil, fmt.Errorf("localfs: sign secret required")
+	if len(secret) < config.MinLocalSignSecretBytes {
+		return nil, fmt.Errorf("localfs: sign secret must be at least %d bytes", config.MinLocalSignSecretBytes)
 	}
 	return &Storage{
 		basePath: basePath,
@@ -215,9 +216,7 @@ func (s *Storage) sign(path, filename string, exp int64) (string, error) {
 	if len(path) > maxSignedPathBytes {
 		return "", fmt.Errorf("localfs: path too long")
 	}
-	if len(filename) > maxSignedFilenameBytes {
-		filename = filename[:maxSignedFilenameBytes]
-	}
+	filename = truncateFilenameForSign(filename)
 	payload := make([]byte, 8+2+len(path)+len(filename))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp))
 	binary.BigEndian.PutUint16(payload[8:10], uint16(len(path)))
@@ -267,4 +266,14 @@ func (s *Storage) ParseToken(token string) (path, filename string, err error) {
 		return "", "", err
 	}
 	return path, filename, nil
+}
+
+// truncateFilenameForSign hard-caps by Unicode runes so the token payload
+// never splits a multi-byte character. Disposition sanitization stays in the
+// HTTP handler (ContentDispositionAttachment).
+func truncateFilenameForSign(filename string) string {
+	if utf8.RuneCountInString(filename) <= maxSignedFilenameRunes {
+		return filename
+	}
+	return string([]rune(filename)[:maxSignedFilenameRunes])
 }

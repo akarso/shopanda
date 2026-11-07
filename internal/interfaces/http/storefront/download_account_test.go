@@ -603,7 +603,7 @@ func TestDownloadAccount_Deliver_PresignDoesNotFallThroughToNotConfigured(t *tes
 
 func TestDownloadAccount_Deliver_LocalSignedRedirectAndGET(t *testing.T) {
 	dir := t.TempDir()
-	st, err := localfs.NewWithSecret(dir, "/media", []byte("e2e-local-sign-secret-32bytes!!"))
+	st, err := localfs.NewWithSecret(dir, "/media", []byte("e2e-local-sign-secret-32-bytes!!"))
 	if err != nil {
 		t.Fatal(err)
 	}

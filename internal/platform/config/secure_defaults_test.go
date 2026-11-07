@@ -515,3 +515,56 @@ func TestIsLoopbackHost_UnresolvableHostnameNotTrusted(t *testing.T) {
 		t.Error("an arbitrary unresolvable hostname must not be treated as loopback")
 	}
 }
+
+func TestLoad_RejectsEmptyLocalSignSecretWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET", "")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-for-secure-defaults-tests
+  sslmode: require
+media:
+  storage: local
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sign_secret") {
+		t.Fatalf("err=%v, want sign_secret required", err)
+	}
+}
+
+func TestLoad_AllowsEmptyLocalSignSecretWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET", "")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: changeme
+  sslmode: disable
+media:
+  storage: local
+`)
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_RejectsShortLocalSignSecret(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET", "tooshort")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-for-secure-defaults-tests
+  sslmode: require
+media:
+  storage: local
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "at least") {
+		t.Fatalf("err=%v, want minimum length rejection", err)
+	}
+}

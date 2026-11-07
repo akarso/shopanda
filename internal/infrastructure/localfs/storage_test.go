@@ -13,7 +13,7 @@ import (
 
 func mustLocal(t *testing.T, basePath, baseURL string) *localfs.Storage {
 	t.Helper()
-	s, err := localfs.NewWithSecret(basePath, baseURL, []byte("unit-test-sign-secret-32b!!"))
+	s, err := localfs.NewWithSecret(basePath, baseURL, []byte("unit-test-sign-secret-32-bytes!!"))
 	if err != nil {
 		t.Fatal(err)
 	}

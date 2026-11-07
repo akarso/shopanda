@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
@@ -14,12 +15,11 @@ import (
 
 func TestStorage_SignedURLStorage(t *testing.T) {
 	t.Parallel()
-	s, err := localfs.NewWithSecret(t.TempDir(), "/media", []byte("test-secret-32-bytes-long!!!!"))
+	s, err := localfs.NewWithSecret(t.TempDir(), "/media", []byte("test-secret-32-bytes-long-enough!"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var _ media.SignedURLStorage = s
-	var _ media.LocalSignedHandler = s
 
 	ctx := context.Background()
 	path := "private/downloads/file.bin"
@@ -59,7 +59,6 @@ func TestStorage_SignedURLStorage(t *testing.T) {
 		t.Fatalf("bad token status = %d", rec.Code)
 	}
 
-	// Oversized token rejected before decode work.
 	huge := strings.Repeat("A", localfs.MaxSignedTokenBytes+1)
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, localfs.SignedPathPrefix+huge, nil))
@@ -68,9 +67,41 @@ func TestStorage_SignedURLStorage(t *testing.T) {
 	}
 }
 
-func TestNewWithSecret_RequiresSecret(t *testing.T) {
+func TestNewWithSecret_RequiresMinLength(t *testing.T) {
 	t.Parallel()
 	if _, err := localfs.NewWithSecret(t.TempDir(), "/media", nil); err == nil {
-		t.Fatal("want error")
+		t.Fatal("want error for nil secret")
+	}
+	if _, err := localfs.NewWithSecret(t.TempDir(), "/media", []byte("short")); err == nil {
+		t.Fatal("want error for short secret")
+	}
+}
+
+func TestSignedURL_TruncatesFilenameOnRunes(t *testing.T) {
+	t.Parallel()
+	s, err := localfs.NewWithSecret(t.TempDir(), "/media", []byte("test-secret-32-bytes-long-enough!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "private/downloads/x.bin"
+	if err := s.Save(path, strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	// 300 multi-byte runes — byte truncation at 255 would split a rune.
+	long := strings.Repeat("語", 300)
+	url, err := s.SignedURL(context.Background(), path, media.SignURLOptions{TTL: time.Minute, Filename: long})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.TrimPrefix(url, localfs.SignedPathPrefix)
+	_, filename, err := s.ParseToken(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := utf8.RuneCountInString(filename); got != 255 {
+		t.Fatalf("rune count = %d, want 255", got)
+	}
+	if !utf8.ValidString(filename) {
+		t.Fatal("filename is not valid UTF-8")
 	}
 }
