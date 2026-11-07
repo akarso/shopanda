@@ -240,7 +240,15 @@ func (stubMedia) Save(string, io.Reader) error { return nil }
 func (stubMedia) Delete(string) error          { return nil }
 func (stubMedia) URL(string) string            { return "" }
 
+type stubMediaOther struct{}
+
+func (stubMediaOther) Name() string                 { return "other" }
+func (stubMediaOther) Save(string, io.Reader) error { return nil }
+func (stubMediaOther) Delete(string) error          { return nil }
+func (stubMediaOther) URL(string) string            { return "" }
+
 var _ media.Storage = stubMedia{}
+var _ media.Storage = stubMediaOther{}
 
 func TestApp_RegisterMediaStorage(t *testing.T) {
 	app := &plugin.App{}
@@ -249,6 +257,35 @@ func TestApp_RegisterMediaStorage(t *testing.T) {
 	got, ok := app.MediaStorage()
 	if !ok || got != s {
 		t.Fatalf("MediaStorage() = (%v, %v)", got, ok)
+	}
+}
+
+func TestApp_BindMediaStorage_PrefersBound(t *testing.T) {
+	boundOnly := &plugin.App{}
+	s := &stubMedia{}
+	if err := boundOnly.BindMediaStorage(s); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := boundOnly.BoundMediaStorage()
+	if !ok || got != s {
+		t.Fatalf("Bound-only BoundMediaStorage() = (%v, %v)", got, ok)
+	}
+	if _, ok := boundOnly.MediaStorage(); ok {
+		t.Fatal("MediaStorage() should be empty when only BindMediaStorage ran")
+	}
+
+	registered := &plugin.App{}
+	r := &stubMedia{}
+	registered.RegisterMediaStorage(r)
+	got, ok = registered.BoundMediaStorage()
+	if !ok || got != r {
+		t.Fatalf("register-only BoundMediaStorage() = (%v, %v)", got, ok)
+	}
+	if err := registered.BindMediaStorage(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := registered.BindMediaStorage(stubMediaOther{}); err == nil {
+		t.Fatal("expected mismatch error")
 	}
 }
 

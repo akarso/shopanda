@@ -16,10 +16,39 @@ import (
 // ReadableStorage — never permanent Storage.URL().
 const PrivateDownloadsPrefix = "private/downloads/"
 
+// PrivateBlobsPrefix is the recommended key prefix for plugin-owned private
+// objects (customer uploads, generated artwork, etc.). Same delivery rules as
+// PrivateDownloadsPrefix: SignedURLStorage (or ReadableStorage stream), never
+// permanent Storage.URL().
+const PrivateBlobsPrefix = "private/blobs/"
+
 // IsPrivateDownloadsPath reports whether path is under PrivateDownloadsPrefix.
 func IsPrivateDownloadsPath(path string) bool {
 	p := strings.TrimLeft(strings.TrimSpace(path), "/")
 	return strings.HasPrefix(p, PrivateDownloadsPrefix)
+}
+
+// IsPrivateBlobsPath reports whether path is under PrivateBlobsPrefix.
+func IsPrivateBlobsPath(path string) bool {
+	p := strings.TrimLeft(strings.TrimSpace(path), "/")
+	return strings.HasPrefix(p, PrivateBlobsPrefix)
+}
+
+// IsPrivatePath reports whether path is under a known private prefix.
+func IsPrivatePath(path string) bool {
+	return IsPrivateDownloadsPath(path) || IsPrivateBlobsPath(path)
+}
+
+// AsSignedURLStorage returns SignedURLStorage when s implements it.
+// Product plugins that need private short-lived URLs should require this
+// (local and S3 core backends both implement it) instead of inventing a
+// second store.
+func AsSignedURLStorage(s Storage) (SignedURLStorage, bool) {
+	if s == nil {
+		return nil, false
+	}
+	signer, ok := s.(SignedURLStorage)
+	return signer, ok
 }
 
 // SanitizeContentDispositionFilename returns an ASCII-safe filename for the

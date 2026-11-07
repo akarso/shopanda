@@ -464,7 +464,9 @@ type Storage interface {
 }
 ```
 
-The built-in local filesystem backend and the S3-compatible backend are good references. Both are **core plugins** (`plugins/core/storagelocal`, `plugins/core/storages3`) selected by `storage.driver`.
+For **private** blobs (download grants, customer uploads, plugin artwork), prefer `media.SignedURLStorage` (`Head` + `SignedURL`) and never return permanent `URL()` to clients. Local and S3 core backends both implement it. Use `media.AsSignedURLStorage`, key prefixes `private/downloads/` / `private/blobs/`, and `app.BoundMediaStorage()` after the composition root binds (same pattern as `BindQueue` / `BoundQueue` for jobs). Local signed GETs are served at `GET /api/v1/media/local-signed/{token}` (HMAC; optional `media.local.sign_secret` / `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET`).
+
+The built-in local filesystem backend and the S3-compatible backend are good references. Both are **core plugins** (`plugins/core/storagelocal`, `plugins/core/storages3`) selected by `media.storage`.
 
 ### Storage backend skeleton
 

@@ -216,6 +216,12 @@ func validateSignedRedirectURL(raw string, storage media.Storage) error {
 		if storageName != "s3" {
 			return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 		}
+	case "":
+		// Local filesystem SignedURLStorage returns same-origin relative paths.
+		if storageName == "local" && strings.HasPrefix(u.Path, "/api/v1/media/local-signed/") {
+			return nil
+		}
+		return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 	default:
 		return fmt.Errorf("signed URL scheme %q not allowed", u.Scheme)
 	}

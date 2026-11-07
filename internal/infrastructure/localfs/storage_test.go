@@ -12,8 +12,9 @@ import (
 
 // Compile-time interface checks.
 var (
-	_ media.Storage         = (*localfs.Storage)(nil)
-	_ media.ReadableStorage = (*localfs.Storage)(nil)
+	_ media.Storage          = (*localfs.Storage)(nil)
+	_ media.ReadableStorage  = (*localfs.Storage)(nil)
+	_ media.SignedURLStorage = (*localfs.Storage)(nil)
 )
 
 func TestStorage_Name(t *testing.T) {

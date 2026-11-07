@@ -63,7 +63,8 @@ type App struct {
 	boundQueue       jobs.Queue // composition-root bind for Integration.Enqueue
 	paymentRegistry  *payment.ProviderRegistry
 	shippingRegistry *shipping.ProviderRegistry
-	mediaStorage     media.Storage
+	mediaStorage     media.Storage // plugin-registered backend (RegisterMediaStorage)
+	boundMedia       media.Storage // composition-root bind after resolve
 	taxCalculator    tax.Calculator
 	mailSender       mail.Mailer
 

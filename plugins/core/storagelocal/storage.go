@@ -28,6 +28,14 @@ func (p *StoragePlugin) Init(app *plugin.App) error {
 	if app.Config.Media.Local.BaseURL == "" {
 		return fmt.Errorf("local storage: empty base_url")
 	}
-	app.RegisterMediaStorage(localfs.New(app.Config.Media.Local.BasePath, app.Config.Media.Local.BaseURL))
+	var secret []byte
+	if app.Config.Media.Local.SignSecret != "" {
+		secret = []byte(app.Config.Media.Local.SignSecret)
+	}
+	app.RegisterMediaStorage(localfs.NewWithSecret(
+		app.Config.Media.Local.BasePath,
+		app.Config.Media.Local.BaseURL,
+		secret,
+	))
 	return nil
 }

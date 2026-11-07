@@ -251,6 +251,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("DELETE /api/v1/admin/media/{assetId}", requireMediaWrite(rt.mediaHandler.Delete()))
+	if local, ok := rt.mediaStorage.(interface{ Handler() http.Handler }); ok {
+		router.Handle("GET /api/v1/media/local-signed/{token}", local.Handler())
+	}
 	router.Handle("GET /api/v1/admin/config", requireSettingsRead(rt.configAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/config", requireSettingsWrite(rt.configAdmin.Update()))
 	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(rt.configAdmin.TestEmail()))

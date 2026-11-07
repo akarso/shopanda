@@ -14,14 +14,12 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
-	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
-	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
@@ -101,21 +99,6 @@ func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (sea
 		return pgSearch, nil
 	default:
 		return nil, fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
-	}
-}
-
-func resolveMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, error) {
-	if st, ok := app.MediaStorage(); ok {
-		return st, nil
-	}
-
-	switch cfg.Media.Storage {
-	case "s3":
-		return nil, fmt.Errorf("media: s3 storage configured but no storage plugin registered (core plugin init failed?)")
-	case "local":
-		return localfs.New(cfg.Media.Local.BasePath, cfg.Media.Local.BaseURL), nil
-	default:
-		return nil, fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
 	}
 }
 
