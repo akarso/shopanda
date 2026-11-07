@@ -91,7 +91,31 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("localfs: resolve base: %w", err)
 	}
-	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
+	if realBase, err := filepath.EvalSymlinks(base); err == nil {
+		base = realBase
+	}
+	// Containment against the real base. For missing targets (Save), resolve
+	// the parent and re-join the final name so a symlink parent cannot escape.
+	check := abs
+	if _, err := os.Lstat(abs); err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("localfs: resolve path: %w", err)
+		}
+		parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "", fmt.Errorf("localfs: resolve parent: %w", err)
+			}
+			// Parent missing: ensure cleaned abs still under base via prefix.
+			parent = filepath.Dir(abs)
+		}
+		check = filepath.Join(parent, filepath.Base(abs))
+	} else {
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			check = real
+		}
+	}
+	if check != base && !strings.HasPrefix(check, base+string(os.PathSeparator)) {
 		return "", fmt.Errorf("localfs: path escapes base directory")
 	}
 	return abs, nil
@@ -99,16 +123,30 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 
 // Save writes file contents to basePath/path.
 func (s *Storage) Save(path string, file io.Reader) error {
+	return s.SaveWithContentType(path, file, "")
+}
+
+// SaveWithContentType writes file contents. contentType is ignored locally
+// (MIME comes from ServeContent / filename on signed GET); private keys use
+// restrictive directory/file modes.
+func (s *Storage) SaveWithContentType(path string, file io.Reader, _ string) error {
 	full, err := s.resolveSafePath(path)
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	dirMode := os.FileMode(0o755)
+	fileMode := os.FileMode(0o644)
+	if media.IsPrivatePath(path) {
+		dirMode = 0o700
+		fileMode = 0o600
+	}
+
+	if err := os.MkdirAll(filepath.Dir(full), dirMode); err != nil {
 		return fmt.Errorf("localfs: mkdir: %w", err)
 	}
 
-	f, err := os.Create(full)
+	f, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
 	if err != nil {
 		return fmt.Errorf("localfs: create file: %w", err)
 	}
@@ -122,6 +160,7 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("localfs: close file: %w", err)
 	}
+	_ = os.Chmod(full, fileMode)
 
 	return nil
 }
@@ -202,7 +241,7 @@ func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOp
 		ttl = 60 * time.Second
 	}
 	exp := time.Now().UTC().Add(ttl).Unix()
-	token, err := s.sign(path, opts.Filename, exp)
+	token, err := s.sign(path, opts.Filename, exp, media.NormalizeDisposition(opts.Disposition))
 	if err != nil {
 		return "", err
 	}
@@ -212,60 +251,69 @@ func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOp
 // SignedURLHosts returns nil — local signed URLs are relative (same origin).
 func (s *Storage) SignedURLHosts() []string { return nil }
 
-func (s *Storage) sign(path, filename string, exp int64) (string, error) {
+func (s *Storage) sign(path, filename string, exp int64, disp media.Disposition) (string, error) {
 	if len(path) > maxSignedPathBytes {
 		return "", fmt.Errorf("localfs: path too long")
 	}
 	filename = truncateFilenameForSign(filename)
-	payload := make([]byte, 8+2+len(path)+len(filename))
+	dispByte := byte(0)
+	if disp == media.DispositionInline {
+		dispByte = 1
+	}
+	payload := make([]byte, 8+2+len(path)+len(filename)+1)
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp))
 	binary.BigEndian.PutUint16(payload[8:10], uint16(len(path)))
 	copy(payload[10:], path)
 	copy(payload[10+len(path):], filename)
+	payload[len(payload)-1] = dispByte
 	mac := hmac.New(sha256.New, s.secret)
 	_, _ = mac.Write(payload)
 	raw := append(payload, mac.Sum(nil)...)
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// ParseToken validates token and returns storage path + optional filename.
-func (s *Storage) ParseToken(token string) (path, filename string, err error) {
+// ParseToken validates token and returns storage path, filename, and disposition.
+func (s *Storage) ParseToken(token string) (path, filename string, disp media.Disposition, err error) {
 	if len(token) > MaxSignedTokenBytes {
-		return "", "", fmt.Errorf("localfs: token too long")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token too long")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return "", "", fmt.Errorf("localfs: token decode: %w", err)
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token decode: %w", err)
 	}
 	const macLen = sha256.Size
-	if len(raw) < 8+2+macLen {
-		return "", "", fmt.Errorf("localfs: token too short")
+	if len(raw) < 8+2+1+macLen {
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token too short")
 	}
 	payload := raw[:len(raw)-macLen]
 	sum := raw[len(raw)-macLen:]
 	mac := hmac.New(sha256.New, s.secret)
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(sum, mac.Sum(nil)) {
-		return "", "", fmt.Errorf("localfs: bad mac")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: bad mac")
 	}
 	exp := int64(binary.BigEndian.Uint64(payload[:8]))
 	now := time.Now().UTC().Unix()
 	if now > exp+int64(signedExpirySkew.Seconds()) {
-		return "", "", fmt.Errorf("localfs: token expired")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token expired")
 	}
 	pathLen := int(binary.BigEndian.Uint16(payload[8:10]))
-	if 10+pathLen > len(payload) {
-		return "", "", fmt.Errorf("localfs: bad path length")
+	if 10+pathLen >= len(payload) {
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: bad path length")
 	}
 	path = string(payload[10 : 10+pathLen])
-	filename = string(payload[10+pathLen:])
+	filename = string(payload[10+pathLen : len(payload)-1])
+	disp = media.DispositionAttachment
+	if payload[len(payload)-1] == 1 {
+		disp = media.DispositionInline
+	}
 	if strings.Contains(path, "..") || strings.Contains(path, `\`) {
-		return "", "", fmt.Errorf("localfs: invalid path in token")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: invalid path in token")
 	}
 	if _, err := s.resolveSafePath(path); err != nil {
-		return "", "", err
+		return "", "", media.DispositionAttachment, err
 	}
-	return path, filename, nil
+	return path, filename, disp, nil
 }
 
 // truncateFilenameForSign hard-caps by Unicode runes so the token payload

@@ -206,8 +206,8 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_MEDIA_STORAGE` | No | `local` | Media storage driver |
-| `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./public/media` | Local upload path |
-| `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Public media base URL |
+| `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./var/media` | Local upload path (prefer non-webroot; never FileServer this directory — private/blobs and private/downloads share it) |
+| `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Base used for permanent `Storage.URL()` of public uploads only — do not statically publish private keys |
 | `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET` | Yes when `media.storage=local` and not `SHOPANDA_DEV_MODE` | empty | Shared HMAC secret (≥32 bytes) for local signed download URLs. Required for any multi-replica or rolling-restart local deploy; empty only allowed in DEV (ephemeral per-process key). Generate e.g. `openssl rand -base64 32`; do not leave empty outside DEV. |
 
 ### Cache
