@@ -10,6 +10,16 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 )
 
+
+func mustLocal(t *testing.T, basePath, baseURL string) *localfs.Storage {
+	t.Helper()
+	s, err := localfs.NewWithSecret(basePath, baseURL, []byte("unit-test-sign-secret-32b!!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // Compile-time interface checks.
 var (
 	_ media.Storage          = (*localfs.Storage)(nil)
@@ -18,7 +28,7 @@ var (
 )
 
 func TestStorage_Name(t *testing.T) {
-	s := localfs.New(t.TempDir(), "/media")
+	s := mustLocal(t, t.TempDir(), "/media")
 	if s.Name() != "local" {
 		t.Errorf("Name() = %q, want %q", s.Name(), "local")
 	}
@@ -26,7 +36,7 @@ func TestStorage_Name(t *testing.T) {
 
 func TestStorage_SaveAndURL(t *testing.T) {
 	dir := t.TempDir()
-	s := localfs.New(dir, "/media")
+	s := mustLocal(t, dir, "/media")
 
 	content := "hello world"
 	if err := s.Save("products/test.txt", strings.NewReader(content)); err != nil {
@@ -51,7 +61,7 @@ func TestStorage_SaveAndURL(t *testing.T) {
 
 func TestStorage_Delete(t *testing.T) {
 	dir := t.TempDir()
-	s := localfs.New(dir, "/media")
+	s := mustLocal(t, dir, "/media")
 
 	// Save then delete.
 	if err := s.Save("delete-me.txt", strings.NewReader("x")); err != nil {
@@ -69,7 +79,7 @@ func TestStorage_Delete(t *testing.T) {
 }
 
 func TestStorage_Delete_NonExistent(t *testing.T) {
-	s := localfs.New(t.TempDir(), "/media")
+	s := mustLocal(t, t.TempDir(), "/media")
 	// Deleting a non-existent file should not error.
 	if err := s.Delete("no-such-file.txt"); err != nil {
 		t.Fatalf("Delete non-existent: %v", err)
@@ -78,7 +88,7 @@ func TestStorage_Delete_NonExistent(t *testing.T) {
 
 func TestStorage_Save_DirectoryTraversal(t *testing.T) {
 	dir := t.TempDir()
-	s := localfs.New(dir, "/media")
+	s := mustLocal(t, dir, "/media")
 
 	err := s.Save("../../etc/passwd", strings.NewReader("pwned"))
 	if err == nil {
@@ -91,7 +101,7 @@ func TestStorage_Save_DirectoryTraversal(t *testing.T) {
 
 func TestStorage_Delete_DirectoryTraversal(t *testing.T) {
 	dir := t.TempDir()
-	s := localfs.New(dir, "/media")
+	s := mustLocal(t, dir, "/media")
 
 	err := s.Delete("../../etc/passwd")
 	if err == nil {
@@ -104,7 +114,7 @@ func TestStorage_Delete_DirectoryTraversal(t *testing.T) {
 
 func TestStorage_Read(t *testing.T) {
 	dir := t.TempDir()
-	s := localfs.New(dir, "/media")
+	s := mustLocal(t, dir, "/media")
 
 	content := []byte("%PDF-from-disk")
 	if err := s.Save("invoices/inv-1/invoice-1.pdf", strings.NewReader(string(content))); err != nil {
@@ -121,7 +131,7 @@ func TestStorage_Read(t *testing.T) {
 }
 
 func TestStorage_Read_DirectoryTraversal(t *testing.T) {
-	s := localfs.New(t.TempDir(), "/media")
+	s := mustLocal(t, t.TempDir(), "/media")
 
 	_, err := s.Read("../../etc/passwd")
 	if err == nil {

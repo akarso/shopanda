@@ -19,14 +19,25 @@ import (
 
 // Compile-time checks.
 var (
-	_ media.Storage          = (*Storage)(nil)
-	_ media.ReadableStorage  = (*Storage)(nil)
-	_ media.SignedURLStorage = (*Storage)(nil)
+	_ media.Storage            = (*Storage)(nil)
+	_ media.ReadableStorage    = (*Storage)(nil)
+	_ media.SignedURLStorage   = (*Storage)(nil)
+	_ media.LocalSignedHandler = (*Storage)(nil)
 )
 
 // SignedPathPrefix is the HTTP path prefix for HMAC local signed GETs.
 // Relative SignedURL values use this prefix (no host) so redirects stay on-app.
 const SignedPathPrefix = "/api/v1/media/local-signed/"
+
+// MaxSignedTokenBytes caps inbound token size before base64/HMAC work (DoS).
+const MaxSignedTokenBytes = 4096
+
+// maxSignedPathBytes / maxSignedFilenameBytes bound token payload size.
+const (
+	maxSignedPathBytes     = 1024
+	maxSignedFilenameBytes = 255
+	signedExpirySkew       = 30 * time.Second
+)
 
 // Storage implements media.Storage using the local filesystem and
 // SignedURLStorage via an HMAC token served by Handler.
@@ -36,31 +47,33 @@ type Storage struct {
 	secret   []byte
 }
 
-// New creates a local filesystem Storage. A process-ephemeral signing secret
-// is generated when secret is nil/empty (URLs invalidate on restart).
-func New(basePath, baseURL string) *Storage {
-	return NewWithSecret(basePath, baseURL, nil)
-}
-
 // NewWithSecret creates Storage with an explicit HMAC secret for SignedURL.
-func NewWithSecret(basePath, baseURL string, secret []byte) *Storage {
+// secret must be non-empty (validate config in production; tests pass a fixed key).
+func NewWithSecret(basePath, baseURL string, secret []byte) (*Storage, error) {
 	if basePath == "" {
-		panic("localfs.New: empty basePath")
+		return nil, fmt.Errorf("localfs: empty basePath")
 	}
 	if baseURL == "" {
-		panic("localfs.New: empty baseURL")
+		return nil, fmt.Errorf("localfs: empty baseURL")
 	}
 	if len(secret) == 0 {
-		secret = make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
-			panic("localfs.New: generate sign secret: " + err.Error())
-		}
+		return nil, fmt.Errorf("localfs: sign secret required")
 	}
 	return &Storage{
 		basePath: basePath,
 		baseURL:  baseURL,
 		secret:   append([]byte(nil), secret...),
+	}, nil
+}
+
+// NewEphemeral is for SHOPANDA_DEV_MODE only when sign_secret is unset.
+// URLs invalidate on process restart and across replicas.
+func NewEphemeral(basePath, baseURL string) (*Storage, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("localfs: generate sign secret: %w", err)
 	}
+	return NewWithSecret(basePath, baseURL, secret)
 }
 
 // Name returns "local".
@@ -84,7 +97,6 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 }
 
 // Save writes file contents to basePath/path.
-// Intermediate directories are created as needed.
 func (s *Storage) Save(path string, file io.Reader) error {
 	full, err := s.resolveSafePath(path)
 	if err != nil {
@@ -140,6 +152,19 @@ func (s *Storage) Read(path string) ([]byte, error) {
 	return data, nil
 }
 
+// Open returns a read-only file for streaming signed GETs.
+func (s *Storage) Open(path string) (*os.File, error) {
+	full, err := s.resolveSafePath(path)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: open: %w", err)
+	}
+	return f, nil
+}
+
 // URL returns baseURL/path. Returns empty string if path escapes the storage root.
 func (s *Storage) URL(path string) string {
 	cleaned := filepath.Clean(path)
@@ -167,7 +192,6 @@ func (s *Storage) Head(_ context.Context, path string) error {
 }
 
 // SignedURL returns a relative HMAC URL under SignedPathPrefix.
-// Callers must not log the URL. Prefer this over permanent URL() for private blobs.
 func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOptions) (string, error) {
 	if _, err := s.resolveSafePath(path); err != nil {
 		return "", err
@@ -188,9 +212,11 @@ func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOp
 func (s *Storage) SignedURLHosts() []string { return nil }
 
 func (s *Storage) sign(path, filename string, exp int64) (string, error) {
-	// payload: exp(8) | pathLen(2) | path | filename
-	if len(path) > 65535 {
+	if len(path) > maxSignedPathBytes {
 		return "", fmt.Errorf("localfs: path too long")
+	}
+	if len(filename) > maxSignedFilenameBytes {
+		filename = filename[:maxSignedFilenameBytes]
 	}
 	payload := make([]byte, 8+2+len(path)+len(filename))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp))
@@ -205,6 +231,9 @@ func (s *Storage) sign(path, filename string, exp int64) (string, error) {
 
 // ParseToken validates token and returns storage path + optional filename.
 func (s *Storage) ParseToken(token string) (path, filename string, err error) {
+	if len(token) > MaxSignedTokenBytes {
+		return "", "", fmt.Errorf("localfs: token too long")
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		return "", "", fmt.Errorf("localfs: token decode: %w", err)
@@ -221,7 +250,8 @@ func (s *Storage) ParseToken(token string) (path, filename string, err error) {
 		return "", "", fmt.Errorf("localfs: bad mac")
 	}
 	exp := int64(binary.BigEndian.Uint64(payload[:8]))
-	if time.Now().UTC().Unix() > exp {
+	now := time.Now().UTC().Unix()
+	if now > exp+int64(signedExpirySkew.Seconds()) {
 		return "", "", fmt.Errorf("localfs: token expired")
 	}
 	pathLen := int(binary.BigEndian.Uint16(payload[8:10]))
@@ -230,16 +260,11 @@ func (s *Storage) ParseToken(token string) (path, filename string, err error) {
 	}
 	path = string(payload[10 : 10+pathLen])
 	filename = string(payload[10+pathLen:])
+	if strings.Contains(path, "..") || strings.Contains(path, `\`) {
+		return "", "", fmt.Errorf("localfs: invalid path in token")
+	}
 	if _, err := s.resolveSafePath(path); err != nil {
 		return "", "", err
 	}
 	return path, filename, nil
-}
-
-// ExpiredTokenForTest builds an already-expired token (tests).
-func (s *Storage) ExpiredTokenForTest(path, filename string) (string, error) {
-	if _, err := s.resolveSafePath(path); err != nil {
-		return "", err
-	}
-	return s.sign(path, filename, time.Now().UTC().Add(-time.Minute).Unix())
 }

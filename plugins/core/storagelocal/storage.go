@@ -2,8 +2,10 @@ package storagelocal
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
+	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
@@ -28,14 +30,20 @@ func (p *StoragePlugin) Init(app *plugin.App) error {
 	if app.Config.Media.Local.BaseURL == "" {
 		return fmt.Errorf("local storage: empty base_url")
 	}
-	var secret []byte
-	if app.Config.Media.Local.SignSecret != "" {
-		secret = []byte(app.Config.Media.Local.SignSecret)
+	secret := []byte(strings.TrimSpace(app.Config.Media.Local.SignSecret))
+	var st *localfs.Storage
+	var err error
+	if len(secret) == 0 {
+		if !config.DevModeEnabled() {
+			return fmt.Errorf("local storage: media.local.sign_secret required when media.storage=local")
+		}
+		st, err = localfs.NewEphemeral(app.Config.Media.Local.BasePath, app.Config.Media.Local.BaseURL)
+	} else {
+		st, err = localfs.NewWithSecret(app.Config.Media.Local.BasePath, app.Config.Media.Local.BaseURL, secret)
 	}
-	app.RegisterMediaStorage(localfs.NewWithSecret(
-		app.Config.Media.Local.BasePath,
-		app.Config.Media.Local.BaseURL,
-		secret,
-	))
+	if err != nil {
+		return fmt.Errorf("local storage: %w", err)
+	}
+	app.RegisterMediaStorage(st)
 	return nil
 }

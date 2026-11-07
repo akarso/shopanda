@@ -80,6 +80,11 @@ func normalizeAndValidate(cfg *Config) error {
 	default:
 		return fmt.Errorf("config: unsupported media.storage: %q (allowed: local, s3)", cfg.Media.Storage)
 	}
+	// Local SignedURLStorage HMAC must be shared across replicas. Empty secret
+	// is only allowed with SHOPANDA_DEV_MODE (ephemeral per-process key).
+	if cfg.Media.Storage == "local" && strings.TrimSpace(cfg.Media.Local.SignSecret) == "" && !DevModeEnabled() {
+		return fmt.Errorf("config: media.local.sign_secret is required when media.storage=local (set SHOPANDA_MEDIA_LOCAL_SIGN_SECRET); an empty secret breaks multi-replica download redirects after ClaimDelivery")
+	}
 
 	if err := normalizeAuthJWT(&cfg.Auth); err != nil {
 		return err

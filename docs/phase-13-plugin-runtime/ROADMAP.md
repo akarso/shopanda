@@ -77,6 +77,16 @@ After the gate:
 
 ---
 
+## Track C — Media bind for product plugins (PR-1090)
+
+**Goal:** local SignedURL parity + fail-closed media bind so product plugins do not invent HMAC shims or second local roots.
+
+| PR | Title | Short description |
+| --- | --- | --- |
+| PR-1090 | Local SignedURLStorage + BindMediaStorage | **done** — HMAC local signed GET; required `sign_secret` outside DEV; `IsPrivatePath` on S3 Save; `BindMediaStorage` on serve/worker/scheduler/CLIs; relative redirect allowlist. See [`prs/PR-1090.md`](prs/PR-1090.md). |
+
+---
+
 ## Explicitly out of scope
 
 | Deferred | Why not now |
@@ -109,6 +119,8 @@ After the gate:
 | 1086 | A | [oss] | **done** — `Migrator` + `app migrate` applies plugin SQL (no InitAll) |
 | 1087 | B | [oss] | **done** — Manual sync trigger + `Enqueue` + queue bind |
 | 1088 | B | [oss] | **done** — SDK, docs, example, plugins report |
+| 1089 | B | [oss] | **done** — Sync job observability |
+| 1090 | C | [oss] | **done** — Local SignedURLStorage + BindMediaStorage |
 
 PR specs: [`prs/`](prs/).
 
@@ -121,4 +133,4 @@ PR specs: [`prs/`](prs/).
 | [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | `RegisterSyncJob` cron/event | Shipped |
 | [Phase 11](../phase-11-jobs-search-cache/ROADMAP.md) | Jobs admin for any queued type | Shipped |
 | [Phase 12](../phase-12-product-composition/ROADMAP.md) | Catalog types & composition | In progress — no dependency |
-| **Phase 13** | Plugin schema + on-demand sync | **Done** (PR-1084–1089) |
+| **Phase 13** | Plugin schema + on-demand sync (+ media bind) | **Done** (PR-1084–1090) |

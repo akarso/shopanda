@@ -277,12 +277,15 @@ func TestApp_BindMediaStorage_PrefersBound(t *testing.T) {
 	registered := &plugin.App{}
 	r := &stubMedia{}
 	registered.RegisterMediaStorage(r)
-	got, ok = registered.BoundMediaStorage()
-	if !ok || got != r {
-		t.Fatalf("register-only BoundMediaStorage() = (%v, %v)", got, ok)
+	if _, ok = registered.BoundMediaStorage(); ok {
+		t.Fatal("BoundMediaStorage must be empty before BindMediaStorage")
 	}
 	if err := registered.BindMediaStorage(r); err != nil {
 		t.Fatal(err)
+	}
+	got, ok = registered.BoundMediaStorage()
+	if !ok || got != r {
+		t.Fatalf("after bind BoundMediaStorage() = (%v, %v)", got, ok)
 	}
 	if err := registered.BindMediaStorage(stubMediaOther{}); err == nil {
 		t.Fatal("expected mismatch error")

@@ -14,8 +14,12 @@ import (
 
 func TestStorage_SignedURLStorage(t *testing.T) {
 	t.Parallel()
-	s := localfs.NewWithSecret(t.TempDir(), "/media", []byte("test-secret-32-bytes-long!!!!"))
+	s, err := localfs.NewWithSecret(t.TempDir(), "/media", []byte("test-secret-32-bytes-long!!!!"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var _ media.SignedURLStorage = s
+	var _ media.LocalSignedHandler = s
 
 	ctx := context.Background()
 	path := "private/downloads/file.bin"
@@ -45,6 +49,9 @@ func TestStorage_SignedURLStorage(t *testing.T) {
 	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
 		t.Fatalf("Cache-Control = %q", cc)
 	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Fatalf("Content-Disposition = %q", cd)
+	}
 
 	rec = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, localfs.SignedPathPrefix+"bogus", nil))
@@ -52,13 +59,18 @@ func TestStorage_SignedURLStorage(t *testing.T) {
 		t.Fatalf("bad token status = %d", rec.Code)
 	}
 
-	expired, err := s.ExpiredTokenForTest(path, "file.bin")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Oversized token rejected before decode work.
+	huge := strings.Repeat("A", localfs.MaxSignedTokenBytes+1)
 	rec = httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, localfs.SignedPathPrefix+expired, nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, localfs.SignedPathPrefix+huge, nil))
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expired status = %d", rec.Code)
+		t.Fatalf("huge token status = %d", rec.Code)
+	}
+}
+
+func TestNewWithSecret_RequiresSecret(t *testing.T) {
+	t.Parallel()
+	if _, err := localfs.NewWithSecret(t.TempDir(), "/media", nil); err == nil {
+		t.Fatal("want error")
 	}
 }

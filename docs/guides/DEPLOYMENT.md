@@ -208,6 +208,7 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | `SHOPANDA_MEDIA_STORAGE` | No | `local` | Media storage driver |
 | `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./public/media` | Local upload path |
 | `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Public media base URL |
+| `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET` | Yes when `media.storage=local` and not `SHOPANDA_DEV_MODE` | empty | Shared HMAC secret for local signed download URLs. Required for any multi-replica or rolling-restart local deploy; empty only allowed in DEV (ephemeral per-process key). |
 
 ### Cache
 

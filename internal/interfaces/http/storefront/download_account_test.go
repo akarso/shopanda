@@ -19,6 +19,7 @@ import (
 	downloadapp "github.com/akarso/shopanda/internal/application/download"
 	domain "github.com/akarso/shopanda/internal/domain/download"
 	"github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -599,3 +600,86 @@ func TestDownloadAccount_Deliver_PresignDoesNotFallThroughToNotConfigured(t *tes
 		t.Fatalf("must not fall through to not-configured message: %s", rr.Body.String())
 	}
 }
+
+func TestDownloadAccount_Deliver_LocalSignedRedirectAndGET(t *testing.T) {
+	dir := t.TempDir()
+	st, err := localfs.NewWithSecret(dir, "/media", []byte("e2e-local-sign-secret-32bytes!!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "private/downloads/asset-1/guide.pdf"
+	if err := st.Save(path, strings.NewReader("%PDF-local")); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
+	svc := downloadapp.NewService(repo, nil)
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "cust-1", "asset-1", time.Now().UTC().Add(time.Hour), 2)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	asset := &media.Asset{
+		ID: "asset-1", Path: path, Filename: "guide.pdf",
+		MimeType: "application/pdf", Size: 10, CreatedAt: time.Now().UTC(),
+	}
+	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, st, nil)
+
+	rr := postDownload(h.Deliver(), g.ID, "cust-1")
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, localfs.SignedPathPrefix) {
+		t.Fatalf("Location = %q", loc)
+	}
+	stored, _ := repo.FindByID(context.Background(), g.ID)
+	if stored.DownloadCount != 1 {
+		t.Fatalf("download_count = %d after claim", stored.DownloadCount)
+	}
+
+	get := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, loc, nil)
+	st.Handler().ServeHTTP(get, req)
+	if get.Code != http.StatusOK {
+		t.Fatalf("signed GET status = %d body=%s", get.Code, get.Body.String())
+	}
+	if get.Body.String() != "%PDF-local" {
+		t.Fatalf("body = %q", get.Body.String())
+	}
+	if cc := get.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
+	if cd := get.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, "guide.pdf") {
+		t.Fatalf("Content-Disposition = %q", cd)
+	}
+}
+
+func TestDownloadAccount_Deliver_RejectsLocalPathTraversalRedirect(t *testing.T) {
+	repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
+	svc := downloadapp.NewService(repo, nil)
+	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "cust-1", "asset-1", time.Now().UTC().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	asset := &media.Asset{ID: "asset-1", Path: "files/a.pdf", Filename: "g.pdf", CreatedAt: time.Now().UTC()}
+	storage := &memSignedStorage{
+		memReadableStorage: memReadableStorage{files: map[string][]byte{"files/a.pdf": []byte("x")}},
+		url:                "/api/v1/media/local-signed/../admin",
+	}
+	// Force Name()=local path in validate: override via localNamedSigned wrapper.
+	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: *storage}, nil)
+	rr := postDownload(h.Deliver(), g.ID, "cust-1")
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	stored, _ := repo.FindByID(context.Background(), g.ID)
+	if stored.DownloadCount != 0 {
+		t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
+	}
+}
+
+type localNamedSigned struct {
+	memSignedStorage
+}
+
+func (s *localNamedSigned) Name() string { return "local" }

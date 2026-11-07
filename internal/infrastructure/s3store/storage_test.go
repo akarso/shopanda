@@ -392,6 +392,23 @@ func TestSave_PrivateDownloadsPrefix(t *testing.T) {
 	}
 }
 
+func TestSave_PrivateBlobsPrefix(t *testing.T) {
+	mock := &mockS3{}
+	st := newWithClient(mock, "bucket", "https://cdn.example.com")
+	st.publicACL = true
+
+	err := st.Save("private/blobs/plugin/art.bin", strings.NewReader("data"))
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if mock.putCC[0] != "private, no-store" {
+		t.Fatalf("Cache-Control = %q, want private, no-store", mock.putCC[0])
+	}
+	if mock.putACL[0] != "" {
+		t.Fatalf("ACL = %q, want empty even when publicACL configured", mock.putACL[0])
+	}
+}
+
 func TestSave_Error(t *testing.T) {
 	mock := &mockS3{putErr: errors.New("access denied")}
 	st := newWithClient(mock, "bucket", "https://cdn.example.com")

@@ -589,6 +589,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
+		return err
+	}
 	// PR-1030: the standalone scheduler process is the one that's actually
 	// running in production (RUNTIME_MODES.md), so it's the one that must
 	// write its registrations and read enable/disable overrides through
@@ -875,6 +878,9 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	}
 	jobQueue, err := resolveAndBindJobQueue(app, conn, cfg)
 	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if _, err := resolveAndBindMediaStorage(app, cfg); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second).WithMetrics(metricsRecorder)
@@ -1216,6 +1222,10 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 
 	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
+	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
 		conn.Close()
 		return nil, nil, nil, err
 	}

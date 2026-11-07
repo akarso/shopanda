@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 )
@@ -18,7 +19,7 @@ func (s *Storage) Handler() http.Handler {
 			token = strings.TrimPrefix(r.URL.Path, SignedPathPrefix)
 			token = strings.Trim(token, "/")
 		}
-		if token == "" || strings.Contains(token, "/") {
+		if token == "" || strings.Contains(token, "/") || len(token) > MaxSignedTokenBytes {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -27,7 +28,7 @@ func (s *Storage) Handler() http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		data, err := s.Read(path)
+		f, err := s.Open(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) || media.IsNotFound(err) {
 				http.NotFound(w, r)
@@ -36,11 +37,14 @@ func (s *Storage) Handler() http.Handler {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		if filename != "" {
-			w.Header().Set("Content-Disposition", media.ContentDispositionAttachment(filename))
+		defer f.Close()
+
+		mod := time.Time{}
+		if st, err := f.Stat(); err == nil {
+			mod = st.ModTime()
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(data)
+		w.Header().Set("Content-Disposition", media.ContentDispositionAttachment(filename))
+		// ServeContent sets Content-Type from filename (or octet-stream) and streams.
+		http.ServeContent(w, r, filename, mod, f)
 	})
 }

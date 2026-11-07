@@ -200,21 +200,15 @@ func (a *App) MediaStorage() (media.Storage, bool) {
 	return a.mediaStorage, true
 }
 
-// BoundMediaStorage returns the composition-root media storage when
-// BindMediaStorage has run, otherwise the plugin RegisterMediaStorage
-// instance. Prefer this in product plugins so Init-order and fallback
-// resolve paths cannot split readers onto a second local root.
+// BoundMediaStorage returns the composition-root media storage after
+// BindMediaStorage. It does not fall back to RegisterMediaStorage — same
+// fail-closed shape as Integration.Enqueue requiring BindQueue — so Init-time
+// readers cannot silently use a different instance than the root resolved.
 func (a *App) BoundMediaStorage() (media.Storage, bool) {
-	if a == nil {
+	if a == nil || a.boundMedia == nil {
 		return nil, false
 	}
-	if a.boundMedia != nil {
-		return a.boundMedia, true
-	}
-	if a.mediaStorage != nil {
-		return a.mediaStorage, true
-	}
-	return nil, false
+	return a.boundMedia, true
 }
 
 // TaxCalculator returns the registered tax calculator, if any.

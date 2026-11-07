@@ -125,6 +125,12 @@ media:
     base_path: "./public/media"
     # URL path for serving media files.
     base_url: "/media"
+    # HMAC secret for SignedURL (GET /api/v1/media/local-signed/{token}).
+    # Required whenever media.storage=local outside SHOPANDA_DEV_MODE.
+    # Multi-replica / rolling-restart local deploys MUST set a shared secret
+    # (empty secret mints a per-process key → ClaimDelivery then 403 on another pod).
+    # Set via SHOPANDA_MEDIA_LOCAL_SIGN_SECRET (do not commit real values).
+    # sign_secret: ""
 
   # S3-compatible storage (AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2).
   # Used when storage: "s3".
