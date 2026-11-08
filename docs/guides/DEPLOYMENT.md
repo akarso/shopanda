@@ -206,8 +206,8 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_MEDIA_STORAGE` | No | `local` | Media storage driver |
-| `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./public/media` | Local upload path |
-| `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Public media base URL |
+| `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./var/media` | Local upload path (prefer non-webroot; never FileServer this directory — private/blobs and private/downloads share it) |
+| `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Base used for permanent `Storage.URL()` of public uploads only — do not statically publish private keys |
 | `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET` | Yes when `media.storage=local` and not `SHOPANDA_DEV_MODE` | empty | Shared HMAC secret (≥32 bytes) for local signed download URLs. Required for any multi-replica or rolling-restart local deploy; empty only allowed in DEV (ephemeral per-process key). Generate e.g. `openssl rand -base64 32`; do not leave empty outside DEV. |
 
 ### Cache
@@ -438,7 +438,7 @@ Before relying on the store in production:
 
 ### Persist uploaded media
 
-If you use local media storage in containers, add a volume for `/app/public/media`. The default compose file does not yet mount that path.
+If you use local media storage in containers, add a volume for `/app/var/media` (config default `SHOPANDA_MEDIA_LOCAL_BASE_PATH=./var/media`). The default compose file does not yet mount that path. Do **not** FileServer this directory — `private/downloads/` and `private/blobs/` live under the same root. After the first private write, the process may `chmod` the media root to `0700` (including ancestors); plan operator access accordingly.
 
 Recommended override:
 
@@ -446,13 +446,17 @@ Recommended override:
 services:
   app:
     volumes:
-      - media:/app/public/media
+      - media:/app/var/media
 
 volumes:
   media:
 ```
 
 Without this, uploaded files disappear when the application container is replaced.
+
+### Local signed URL rollout (HMAC v1)
+
+`GET /api/v1/media/local-signed/{token}` tokens are versioned. **New pods sign v1; old pods only verify v0.** On a mixed fleet, a new pod can mint a Location that an old pod rejects with 403 after `ClaimDelivery`. Roll out so every process that serves `local-signed` is upgraded **before** (or together with) processes that only sign, or accept brief post-claim 403s until the fleet is uniform. Shared `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET` is still required across replicas.
 
 ### Background processes in Compose
 
@@ -605,7 +609,7 @@ If you already ran `./install.sh`, you can copy the generated repo-root `.env` i
 
 Use the same `/etc/shopanda/shopanda.env` for `serve`, `worker`, and `scheduler` unless you intentionally need per-process overrides. Separate env files are usually unnecessary.
 
-The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/srv/shopanda/public/media` when local media storage is enabled.
+The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/srv/shopanda/var/media` (or your configured `SHOPANDA_MEDIA_LOCAL_BASE_PATH`) when local media storage is enabled.
 
 ### First-time setup
 
@@ -840,7 +844,7 @@ psql "$DATABASE_URL" < shopanda-2026-04-22.sql
 If you use local media storage, back up the media path as well:
 
 ```bash
-tar -czf shopanda-media-$(date +%F).tar.gz ./public/media
+tar -czf shopanda-media-$(date +%F).tar.gz ./var/media
 ```
 
 If you use S3-compatible storage, rely on bucket-level lifecycle and backup policies instead.

@@ -91,7 +91,31 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("localfs: resolve base: %w", err)
 	}
-	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
+	if realBase, err := filepath.EvalSymlinks(base); err == nil {
+		base = realBase
+	}
+	// Containment against the real base. For missing targets (Save), resolve
+	// the parent and re-join the final name so a symlink parent cannot escape.
+	check := abs
+	if _, err := os.Lstat(abs); err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("localfs: resolve path: %w", err)
+		}
+		parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "", fmt.Errorf("localfs: resolve parent: %w", err)
+			}
+			// Parent missing: ensure cleaned abs still under base via prefix.
+			parent = filepath.Dir(abs)
+		}
+		check = filepath.Join(parent, filepath.Base(abs))
+	} else {
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			check = real
+		}
+	}
+	if check != base && !strings.HasPrefix(check, base+string(os.PathSeparator)) {
 		return "", fmt.Errorf("localfs: path escapes base directory")
 	}
 	return abs, nil
@@ -99,16 +123,37 @@ func (s *Storage) resolveSafePath(path string) (string, error) {
 
 // Save writes file contents to basePath/path.
 func (s *Storage) Save(path string, file io.Reader) error {
+	return s.SaveWithContentType(path, file, "")
+}
+
+// SaveWithContentType writes file contents. contentType is ignored locally
+// (MIME comes from ServeContent / filename on signed GET); private keys use
+// restrictive directory/file modes (including chmod of existing ancestors).
+func (s *Storage) SaveWithContentType(path string, file io.Reader, _ string) error {
 	full, err := s.resolveSafePath(path)
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return fmt.Errorf("localfs: mkdir: %w", err)
+	dirMode := os.FileMode(0o755)
+	fileMode := os.FileMode(0o644)
+	private := media.IsPrivatePath(path)
+	if private {
+		dirMode = 0o700
+		fileMode = 0o600
 	}
 
-	f, err := os.Create(full)
+	dir := filepath.Dir(full)
+	if err := os.MkdirAll(dir, dirMode); err != nil {
+		return fmt.Errorf("localfs: mkdir: %w", err)
+	}
+	if private {
+		if err := chmodAncestors(dir, s.basePath, 0o700); err != nil {
+			return fmt.Errorf("localfs: chmod private dirs: %w", err)
+		}
+	}
+
+	f, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
 	if err != nil {
 		return fmt.Errorf("localfs: create file: %w", err)
 	}
@@ -122,7 +167,39 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("localfs: close file: %w", err)
 	}
+	_ = os.Chmod(full, fileMode)
 
+	return nil
+}
+
+// chmodAncestors walks from dir up to basePath (inclusive of dir, exclusive of
+// parent-of-base) and applies mode. Used so private writes under a legacy
+// 0755 tree still tighten permissions after upgrade.
+func chmodAncestors(dir, basePath string, mode os.FileMode) error {
+	baseAbs, err := filepath.Abs(basePath)
+	if err != nil {
+		return err
+	}
+	if real, err := filepath.EvalSymlinks(baseAbs); err == nil {
+		baseAbs = real
+	}
+	cur, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for {
+		if err := os.Chmod(cur, mode); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if cur == baseAbs {
+			break
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || !strings.HasPrefix(cur, baseAbs+string(os.PathSeparator)) && cur != baseAbs {
+			break
+		}
+		cur = parent
+	}
 	return nil
 }
 
@@ -202,7 +279,7 @@ func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOp
 		ttl = 60 * time.Second
 	}
 	exp := time.Now().UTC().Add(ttl).Unix()
-	token, err := s.sign(path, opts.Filename, exp)
+	token, err := s.sign(path, opts.Filename, exp, media.NormalizeDisposition(opts.Disposition))
 	if err != nil {
 		return "", err
 	}
@@ -212,10 +289,36 @@ func (s *Storage) SignedURL(_ context.Context, path string, opts media.SignURLOp
 // SignedURLHosts returns nil — local signed URLs are relative (same origin).
 func (s *Storage) SignedURLHosts() []string { return nil }
 
-func (s *Storage) sign(path, filename string, exp int64) (string, error) {
+// signedTokenVersionV1 prefixes the HMAC payload. v0 (no version byte) remains
+// parseable for rolling deploys; unix exp's high byte is 0 for decades.
+const signedTokenVersionV1 byte = 1
+
+func (s *Storage) sign(path, filename string, exp int64, disp media.Disposition) (string, error) {
 	if len(path) > maxSignedPathBytes {
 		return "", fmt.Errorf("localfs: path too long")
 	}
+	filename = truncateFilenameForSign(filename)
+	dispByte := byte(0)
+	if disp == media.DispositionInline {
+		dispByte = 1
+	}
+	// v1: version(1) + exp(8) + pathLen(2) + path + filename + disp(1)
+	payload := make([]byte, 1+8+2+len(path)+len(filename)+1)
+	payload[0] = signedTokenVersionV1
+	binary.BigEndian.PutUint64(payload[1:9], uint64(exp))
+	binary.BigEndian.PutUint16(payload[9:11], uint16(len(path)))
+	copy(payload[11:], path)
+	copy(payload[11+len(path):], filename)
+	payload[len(payload)-1] = dispByte
+	mac := hmac.New(sha256.New, s.secret)
+	_, _ = mac.Write(payload)
+	raw := append(payload, mac.Sum(nil)...)
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// signV0ForTest builds a pre-versioning token (exp+pathLen+path+filename+mac).
+// Used only by compat tests in this package.
+func (s *Storage) signV0ForTest(path, filename string, exp int64) (string, error) {
 	filename = truncateFilenameForSign(filename)
 	payload := make([]byte, 8+2+len(path)+len(filename))
 	binary.BigEndian.PutUint64(payload[:8], uint64(exp))
@@ -228,44 +331,77 @@ func (s *Storage) sign(path, filename string, exp int64) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-// ParseToken validates token and returns storage path + optional filename.
-func (s *Storage) ParseToken(token string) (path, filename string, err error) {
+// ParseToken validates token and returns storage path, filename, and disposition.
+// Accepts v1 (versioned + disposition) and legacy v0 (attachment, full filename).
+func (s *Storage) ParseToken(token string) (path, filename string, disp media.Disposition, err error) {
 	if len(token) > MaxSignedTokenBytes {
-		return "", "", fmt.Errorf("localfs: token too long")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token too long")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return "", "", fmt.Errorf("localfs: token decode: %w", err)
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token decode: %w", err)
 	}
 	const macLen = sha256.Size
 	if len(raw) < 8+2+macLen {
-		return "", "", fmt.Errorf("localfs: token too short")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: token too short")
 	}
 	payload := raw[:len(raw)-macLen]
 	sum := raw[len(raw)-macLen:]
 	mac := hmac.New(sha256.New, s.secret)
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(sum, mac.Sum(nil)) {
-		return "", "", fmt.Errorf("localfs: bad mac")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: bad mac")
 	}
-	exp := int64(binary.BigEndian.Uint64(payload[:8]))
-	now := time.Now().UTC().Unix()
-	if now > exp+int64(signedExpirySkew.Seconds()) {
-		return "", "", fmt.Errorf("localfs: token expired")
+
+	var pathLen int
+	var rest []byte
+	disp = media.DispositionAttachment
+	if len(payload) >= 1+8+2+1 && payload[0] == signedTokenVersionV1 {
+		exp := int64(binary.BigEndian.Uint64(payload[1:9]))
+		if err := checkExpiry(exp); err != nil {
+			return "", "", media.DispositionAttachment, err
+		}
+		pathLen = int(binary.BigEndian.Uint16(payload[9:11]))
+		if 11+pathLen >= len(payload) {
+			return "", "", media.DispositionAttachment, fmt.Errorf("localfs: bad path length")
+		}
+		path = string(payload[11 : 11+pathLen])
+		rest = payload[11+pathLen:]
+		if len(rest) < 1 {
+			return "", "", media.DispositionAttachment, fmt.Errorf("localfs: missing disposition")
+		}
+		filename = string(rest[:len(rest)-1])
+		if rest[len(rest)-1] == 1 {
+			disp = media.DispositionInline
+		}
+	} else {
+		// Legacy v0: exp(8)+pathLen(2)+path+filename (attachment).
+		exp := int64(binary.BigEndian.Uint64(payload[:8]))
+		if err := checkExpiry(exp); err != nil {
+			return "", "", media.DispositionAttachment, err
+		}
+		pathLen = int(binary.BigEndian.Uint16(payload[8:10]))
+		if 10+pathLen > len(payload) {
+			return "", "", media.DispositionAttachment, fmt.Errorf("localfs: bad path length")
+		}
+		path = string(payload[10 : 10+pathLen])
+		filename = string(payload[10+pathLen:])
 	}
-	pathLen := int(binary.BigEndian.Uint16(payload[8:10]))
-	if 10+pathLen > len(payload) {
-		return "", "", fmt.Errorf("localfs: bad path length")
-	}
-	path = string(payload[10 : 10+pathLen])
-	filename = string(payload[10+pathLen:])
 	if strings.Contains(path, "..") || strings.Contains(path, `\`) {
-		return "", "", fmt.Errorf("localfs: invalid path in token")
+		return "", "", media.DispositionAttachment, fmt.Errorf("localfs: invalid path in token")
 	}
 	if _, err := s.resolveSafePath(path); err != nil {
-		return "", "", err
+		return "", "", media.DispositionAttachment, err
 	}
-	return path, filename, nil
+	return path, filename, disp, nil
+}
+
+func checkExpiry(exp int64) error {
+	now := time.Now().UTC().Unix()
+	if now > exp+int64(signedExpirySkew.Seconds()) {
+		return fmt.Errorf("localfs: token expired")
+	}
+	return nil
 }
 
 // truncateFilenameForSign hard-caps by Unicode runes so the token payload

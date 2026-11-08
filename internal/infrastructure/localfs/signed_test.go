@@ -94,7 +94,7 @@ func TestSignedURL_TruncatesFilenameOnRunes(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := strings.TrimPrefix(url, localfs.SignedPathPrefix)
-	_, filename, err := s.ParseToken(token)
+	_, filename, _, err := s.ParseToken(token)
 	if err != nil {
 		t.Fatal(err)
 	}
