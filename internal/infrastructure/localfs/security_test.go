@@ -36,13 +36,21 @@ func TestSave_PrivateModesAndAncestorChmod(t *testing.T) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("file mode = %o, want 0600", fi.Mode().Perm())
 	}
-	dir := filepath.Dir(full)
-	di, err := os.Stat(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if di.Mode().Perm() != 0o700 {
-		t.Fatalf("dir mode = %o, want 0700", di.Mode().Perm())
+	// Leaf dir, intermediate parent, and media root must all tighten to 0700
+	// (chmodAncestors walks up to basePath, including the root).
+	for _, dir := range []string{
+		filepath.Dir(full),                                  // .../11
+		filepath.Dir(filepath.Dir(full)),                    // .../2026
+		filepath.Join(root, "private", "blobs", "metaldogs"), // intermediate
+		root, // media basePath
+	} {
+		di, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if di.Mode().Perm() != 0o700 {
+			t.Fatalf("%s mode = %o, want 0700", dir, di.Mode().Perm())
+		}
 	}
 	// Public key keeps looser modes.
 	pub := "uploads/x.jpg"
