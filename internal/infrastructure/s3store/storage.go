@@ -311,7 +311,8 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 
 // SignedURL returns a short-lived pre-signed GET URL for path (PR-1077).
 // Overrides response Cache-Control to private, no-store and sets
-// Content-Disposition attachment so intermediaries do not cache grant bytes.
+// Content-Disposition from SignURLOptions (attachment by default; inline when
+// requested) so intermediaries do not cache private bytes.
 func (s *Storage) SignedURL(ctx context.Context, path string, opts domainMedia.SignURLOptions) (string, error) {
 	if s.presigner == nil {
 		return "", fmt.Errorf("s3store: signed URLs not available")

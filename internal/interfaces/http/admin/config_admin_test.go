@@ -81,7 +81,7 @@ func testConfigAdminHandler(repo domainCfg.Repository, testEmail admin.SMTPTestF
 	cfg.Mail.SMTP.Port = 2525
 	cfg.Mail.SMTP.From = "ops@example.com"
 	cfg.Media.Storage = "local"
-	cfg.Media.Local.BasePath = "./public/media"
+	cfg.Media.Local.BasePath = "./var/media"
 	cfg.Media.Local.BaseURL = "/media"
 	return admin.NewConfigAdminHandler(repo, cfg, testEmail, adminapp.NewAuditor(logger.NewWithWriter(io.Discard, "error")), nil)
 }
@@ -652,7 +652,7 @@ func testConfigAdminHandlerWithAudit(repo domainCfg.Repository, sink logger.Logg
 	cfg.Mail.SMTP.Port = 2525
 	cfg.Mail.SMTP.From = "ops@example.com"
 	cfg.Media.Storage = "local"
-	cfg.Media.Local.BasePath = "./public/media"
+	cfg.Media.Local.BasePath = "./var/media"
 	cfg.Media.Local.BaseURL = "/media"
 	return admin.NewConfigAdminHandler(repo, cfg, func(context.Context, admin.SMTPTestConfig, string) error { return nil }, adminapp.NewAuditor(sink), nil)
 }

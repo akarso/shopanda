@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -22,15 +23,28 @@ const PrivateDownloadsPrefix = "private/downloads/"
 // permanent Storage.URL().
 const PrivateBlobsPrefix = "private/blobs/"
 
+// NormalizeStorageKey trims, strips leading ./, and path.Cleans a storage key
+// so private-prefix checks are not bypassed by ./private/blobs/... forms.
+func NormalizeStorageKey(key string) string {
+	p := strings.TrimSpace(key)
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimLeft(p, "/")
+	p = path.Clean(p)
+	if p == "." {
+		return ""
+	}
+	return p
+}
+
 // IsPrivateDownloadsPath reports whether path is under PrivateDownloadsPrefix.
 func IsPrivateDownloadsPath(path string) bool {
-	p := strings.TrimLeft(strings.TrimSpace(path), "/")
+	p := NormalizeStorageKey(path)
 	return strings.HasPrefix(p, PrivateDownloadsPrefix)
 }
 
 // IsPrivateBlobsPath reports whether path is under PrivateBlobsPrefix.
 func IsPrivateBlobsPath(path string) bool {
-	p := strings.TrimLeft(strings.TrimSpace(path), "/")
+	p := NormalizeStorageKey(path)
 	return strings.HasPrefix(p, PrivateBlobsPrefix)
 }
 
