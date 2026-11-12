@@ -75,6 +75,47 @@ func (r *StockRepo) getStock(ctx context.Context, variantID string, forUpdate bo
 	return s, nil
 }
 
+// GetStocks returns stock rows for variantIDs keyed by variant ID.
+// IDs with no row are omitted; callers treat a missing key as quantity 0.
+// Empty or duplicate ids are ignored. Duplicate ids are read once.
+func (r *StockRepo) GetStocks(ctx context.Context, variantIDs []string) (map[string]inventory.StockEntry, error) {
+	ids := make([]string, 0, len(variantIDs))
+	seen := make(map[string]struct{}, len(variantIDs))
+	for _, id := range variantIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	out := make(map[string]inventory.StockEntry, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	const q = `SELECT variant_id, quantity, updated_at FROM stock WHERE variant_id = ANY($1)`
+	rows, err := r.query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("stock_repo: get stocks: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var s inventory.StockEntry
+		if err := rows.Scan(&s.VariantID, &s.Quantity, &s.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("stock_repo: get stocks: scan: %w", err)
+		}
+		out[s.VariantID] = s
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock_repo: get stocks: rows: %w", err)
+	}
+	return out, nil
+}
+
 // SetStock upserts the stock quantity for a variant.
 func (r *StockRepo) SetStock(ctx context.Context, entry *inventory.StockEntry) error {
 	if entry == nil {

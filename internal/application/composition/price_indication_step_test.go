@@ -329,3 +329,31 @@ func TestPriceIndicationStep_DisabledByConfig(t *testing.T) {
 		t.Fatal("expected no blocks when omnibus disabled")
 	}
 }
+
+func TestPriceIndicationStep_UsesMetaOffer(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Widget"}
+	amount := int64(3999)
+	lowestSnap := &pricing.PriceSnapshot{
+		ID:         "snap1",
+		VariantID:  "v-cheap",
+		Amount:     shared.MustNewMoney(2999, "EUR"),
+		RecordedAt: time.Now().UTC().AddDate(0, 0, -10),
+	}
+	prices := &mockPriceRepo{err: context.Canceled}
+	variants := &mockVariantRepo{err: context.Canceled}
+	s := composition.NewPriceIndicationStep(variants, prices, &mockPriceHistoryRepo{snapshot: lowestSnap}, nil)
+	ctx := composition.NewProductContext(&prod)
+	ctx.Currency = "EUR"
+	ctx.Meta[composition.MetaOffer] = composition.PublicOffer{
+		VariantID: "v-cheap", Amount: &amount, Currency: "EUR", InStock: true,
+	}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(ctx.Blocks) != 1 {
+		t.Fatalf("blocks = %d, want the indication from meta.offer", len(ctx.Blocks))
+	}
+	if prices.capturedVariant != "" || variants.capturedCtx != nil {
+		t.Fatal("price indication queried variants or prices after meta.offer was set")
+	}
+}

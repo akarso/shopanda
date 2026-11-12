@@ -335,7 +335,13 @@ paths:
     get:
       operationId: listProducts
       tags: [Products]
+      x-public-offer:
+        $ref: "#/components/schemas/PublicOffer"
       summary: List products (paginated, via composition pipeline)
+      description: >-
+        meta.offers maps each product id to PublicOffer. amount is minor units
+        or null when this currency has no price. in_stock is on-hand quantity
+        greater than zero, not the cart purchasable gate. See the headless guide.
       parameters:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
@@ -366,13 +372,25 @@ paths:
                     has_more: true
                     depth_limited: false
                     next_after: "eyJvIjoxMH0"
+                    offers:
+                      p1:
+                        variant_id: v1
+                        amount: 1999
+                        currency: EUR
+                        in_stock: true
                 error: null
 
   /api/v1/products/{id}:
     get:
       operationId: getProduct
       tags: [Products]
+      x-public-offer:
+        $ref: "#/components/schemas/PublicOffer"
       summary: Get product detail (PDP composition pipeline)
+      description: >-
+        meta.offer is a PublicOffer. amount is minor units or null. A
+        dynamic-price bundle sums required components. A dynamic-stock bundle
+        rolls stock up from those components. in_stock is on-hand quantity.
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/StorefrontFieldNames"
@@ -395,7 +413,12 @@ paths:
                     CreatedAt: "2026-01-01T00:00:00Z"
                     UpdatedAt: "2026-01-01T00:00:00Z"
                   blocks: []
-                  meta: {}
+                  meta:
+                    offer:
+                      variant_id: v1
+                      amount: 1999
+                      currency: EUR
+                      in_stock: true
                 error: null
         "404":
           $ref: "#/components/responses/NotFound"
@@ -405,7 +428,12 @@ paths:
     get:
       operationId: listVariants
       tags: [Variants]
+      x-public-offer:
+        $ref: "#/components/schemas/PublicOffer"
       summary: List variants for a product
+      description: >-
+        offers maps each variant id to PublicOffer. Admin GET does not include
+        offers. in_stock is on-hand quantity greater than zero.
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/Offset"
@@ -430,6 +458,11 @@ paths:
                       sku: WDG-RED
                       name: Red Widget
                       attributes: {}
+                  offers:
+                    v1:
+                      amount: 1999
+                      currency: EUR
+                      in_stock: true
                   offset: 0
                   limit: 50
                 error: null
@@ -438,7 +471,11 @@ paths:
     get:
       operationId: getVariant
       tags: [Variants]
+      x-public-offer:
+        $ref: "#/components/schemas/PublicOffer"
       summary: Get a single variant
+      description: >-
+        offer is a PublicOffer for that variant. Admin GET does not include it.
       parameters:
         - $ref: "#/components/parameters/ProductId"
         - $ref: "#/components/parameters/VariantId"
@@ -457,6 +494,10 @@ paths:
                     sku: WDG-RED
                     name: Red Widget
                     attributes: {}
+                  offer:
+                    amount: 1999
+                    currency: EUR
+                    in_stock: true
                 error: null
         "404":
           $ref: "#/components/responses/NotFound"
@@ -518,7 +559,13 @@ paths:
     get:
       operationId: categoryProducts
       tags: [Categories]
+      x-public-offer:
+        $ref: "#/components/schemas/PublicOffer"
       summary: List products in a category
+      description: >-
+        meta.offers maps each product id to PublicOffer, the same card snapshot
+        as GET /api/v1/products. This route does not run the rest of the listing
+        pipeline.
       parameters:
         - $ref: "#/components/parameters/CategoryId"
         - $ref: "#/components/parameters/Offset"
@@ -542,6 +589,12 @@ paths:
                     truncated: false
                     has_more: false
                     depth_limited: false
+                    offers:
+                      p1:
+                        variant_id: v1
+                        amount: 1999
+                        currency: EUR
+                        in_stock: true
                 error: null
 
   # ── Search ─────────────────────────────────────────────
@@ -550,6 +603,9 @@ paths:
       operationId: searchProducts
       tags: [Search]
       summary: Full-text product search
+      description: >-
+        Hits are id, name, slug, description, and attributes. Price and stock
+        are catalog offers, not search fields.
       parameters:
         - name: q
           in: query
@@ -3859,6 +3915,28 @@ components:
           description: Response payload (null on error)
         error:
           $ref: "#/components/schemas/ErrorBody"
+
+    PublicOffer:
+      type: object
+      description: >-
+        Catalog price and on-hand availability. amount is minor units of
+        currency, or null when this currency has no price. 0 is a free price.
+        variant_id is set only when amount is set. in_stock is on-hand quantity
+        greater than zero, or a dynamic-stock bundle rollup. It is not the cart
+        purchasable gate.
+      properties:
+        variant_id:
+          type: string
+        amount:
+          type: integer
+          format: int64
+          nullable: true
+        currency:
+          type: string
+          description: ISO 4217 code of the resolved amount.
+        in_stock:
+          type: boolean
+      required: [amount, in_stock]
 
     ClaimRegisterRequest:
       type: object

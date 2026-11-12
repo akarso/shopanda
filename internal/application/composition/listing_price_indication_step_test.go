@@ -220,3 +220,32 @@ func TestListingPriceIndicationStep_UsesBatchReads(t *testing.T) {
 		runBatchReadTest(t, "")
 	})
 }
+
+func TestListingPriceIndicationStep_UsesMetaOffers(t *testing.T) {
+	amount := int64(3999)
+	lowestSnap := &pricing.PriceSnapshot{
+		ID:         "snap1",
+		VariantID:  "v-cheap",
+		Amount:     shared.MustNewMoney(2999, "EUR"),
+		RecordedAt: time.Now().UTC().AddDate(0, 0, -10),
+	}
+	prices := &mockPriceRepo{err: context.Canceled}
+	variants := &mockVariantRepo{err: context.Canceled}
+	s := composition.NewListingPriceIndicationStep(variants, prices, &mockPriceHistoryRepo{snapshot: lowestSnap}, nil)
+	prod := &catalog.Product{ID: "p1", Name: "Widget"}
+	ctx := composition.NewListingContext([]*catalog.Product{prod})
+	ctx.Currency = "EUR"
+	ctx.Meta[composition.MetaOffers] = map[string]composition.PublicOffer{
+		"p1": {VariantID: "v-cheap", Amount: &amount, Currency: "EUR", InStock: false},
+	}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	indications := composition.PriceIndicationsFromMeta(ctx.Meta)
+	if indications == nil || indications["p1"]["lowest_30d_price"] != "29.99" {
+		t.Fatalf("indications = %#v", indications)
+	}
+	if prices.capturedVariant != "" || variants.capturedCtx != nil {
+		t.Fatal("listing price indication queried variants or prices after meta.offers was set")
+	}
+}

@@ -717,6 +717,7 @@ Practical rules:
 - `frontend.enabled: false` (or `mode: headless`) — API only
 - Product/category GET (and nested `/variants`, `/reviews`) accept **id or slug**
 - Storefront product/category JSON keeps Go names by default; `?fields=snake` or `X-Shopanda-Field-Names: snake` opt in
+- Price and on-hand availability are siblings of the catalog entity: `meta.offers` on product and category lists, `meta.offer` on product detail, `offers` / `offer` on public variant reads. Search hits do not include them. `amount` is minor units. See [HEADLESS.md](HEADLESS.md#price-and-availability).
 - Set `http.cors.allowed_origins` only if the browser talks to the API cross-origin; prefer a same-origin proxy. `*` is anonymous (no credentials). `allow_credentials` needs an explicit origin list.
 - Ignore `/fragments/*` (SSR full-page-cache holes)
 - Same-origin configurator + SSR checkout: `POST/PUT/DELETE /storefront/cart/items` (CSRF header), not `/api/v1/carts`. See [HEADLESS.md](HEADLESS.md#same-origin-storefront-js-hybrid).

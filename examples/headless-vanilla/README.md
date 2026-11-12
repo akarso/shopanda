@@ -30,7 +30,7 @@ Same-origin or a BFF/proxy is the safer default. CORS is only required when the 
 | Action | Endpoint |
 | --- | --- |
 | Resolve slug | `GET /{path}` rewrite, then `GET /api/v1/products/{id}` (id or slug both work) |
-| Product | `GET /api/v1/products/{idOrSlug}` (nested `/variants` and `/reviews` accept the same key) |
+| Product | `GET /api/v1/products/{idOrSlug}` (nested `/variants` and `/reviews` accept the same key). `meta.offer` and public variant `offers` carry price and on-hand `in_stock`. |
 | Search | `GET /api/v1/search?q=` |
 | Cart | `POST /api/v1/carts`, `POST /api/v1/carts/{id}/items` |
 | Login | `POST /api/v1/auth/login` → Bearer token |

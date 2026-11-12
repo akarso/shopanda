@@ -77,6 +77,7 @@ func (h *ProductHandler) List() http.HandlerFunc {
 
 		ctx := composition.NewListingContext(ptrs)
 		ctx.Ctx = r.Context()
+		fillCompositionStore(r.Context(), &ctx.StoreID, &ctx.Currency, &ctx.Country)
 		if err := h.plp.Execute(ctx); err != nil {
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
@@ -139,15 +140,7 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 
 		ctx := composition.NewProductContext(product)
 		ctx.Ctx = r.Context()
-		if s := store.FromContext(r.Context()); s != nil {
-			ctx.StoreID = s.ID
-			if ctx.Currency == "" {
-				ctx.Currency = s.Currency
-			}
-			if ctx.Country == "" {
-				ctx.Country = s.Country
-			}
-		}
+		fillCompositionStore(r.Context(), &ctx.StoreID, &ctx.Currency, &ctx.Country)
 		if err := h.pdp.Execute(ctx); err != nil {
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
@@ -175,4 +168,39 @@ func (h *ProductHandler) overlayProductTranslation(ctx context.Context, p *catal
 	if v, ok := fields["description"]; ok {
 		p.Description = v
 	}
+}
+
+// fillCompositionStore copies the request store onto a composition context
+// when those fields are still empty.
+func fillCompositionStore(ctx context.Context, storeID, currency, country *string) {
+	s := store.FromContext(ctx)
+	if s == nil {
+		return
+	}
+	if storeID != nil && *storeID == "" {
+		*storeID = s.ID
+	}
+	if currency != nil && *currency == "" {
+		*currency = s.Currency
+	}
+	if country != nil && *country == "" {
+		*country = s.Country
+	}
+}
+
+// publicCatalogOffer reports whether this request should include a storefront
+// price. Operator scope (admin, export, import) sets BypassProductVisibility
+// and keeps the catalog payload without an offer.
+func publicCatalogOffer(r *http.Request) bool {
+	return r != nil && !catalog.BypassProductVisibility(r.Context())
+}
+
+// requestStoreScope is the store id and currency for a public price lookup.
+// An empty currency later defaults to EUR inside the offer resolver.
+func requestStoreScope(ctx context.Context) (storeID, currency string) {
+	s := store.FromContext(ctx)
+	if s == nil {
+		return "", ""
+	}
+	return s.ID, s.Currency
 }

@@ -6,6 +6,7 @@ import (
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
+	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -17,6 +18,12 @@ type CategoryHandler struct {
 	products        catalog.ProductRepository
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
+	offers          productOfferLoader
+}
+
+// productOfferLoader attaches card price and availability to category product lists.
+type productOfferLoader interface {
+	ProductOffers(ctx context.Context, products []*catalog.Product, storeID, currency string) (map[string]composition.PublicOffer, error)
 }
 
 // NewCategoryHandler creates a CategoryHandler with the given dependencies.
@@ -36,6 +43,13 @@ func NewCategoryHandler(
 // WithVisibilityFacts enables four-axis visibility gating (PR-1057).
 func (h *CategoryHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *CategoryHandler {
 	h.visibilityFacts = facts
+	return h
+}
+
+// WithOffers attaches card price and availability on public category product
+// lists. Operator scope (admin reads) does not resolve an offer.
+func (h *CategoryHandler) WithOffers(loader productOfferLoader) *CategoryHandler {
+	h.offers = loader
 	return h
 }
 
@@ -137,9 +151,27 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			return
 		}
 
+		meta := visibilityListMeta(page)
+		if h.offers != nil && publicCatalogOffer(r) {
+			ptrs := make([]*catalog.Product, len(page.Products))
+			for i := range page.Products {
+				ptrs[i] = &page.Products[i]
+			}
+			storeID, currency := requestStoreScope(r.Context())
+			offers, err := h.offers.ProductOffers(r.Context(), ptrs, storeID, currency)
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
+			if offers == nil {
+				offers = map[string]composition.PublicOffer{}
+			}
+			meta[composition.MetaOffers] = offers
+		}
+
 		writeCatalogJSON(w, http.StatusOK, map[string]interface{}{
 			"products": productsValuePublicJSON(page.Products, wantSnakeFieldNames(r)),
-			"meta":     visibilityListMeta(page),
+			"meta":     meta,
 		})
 	}
 }
