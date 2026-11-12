@@ -450,7 +450,20 @@ func ensureTestJWTSecret(t *testing.T) {
 	t.Helper()
 	// Always override — a weak leftover env must not break unrelated Load tests.
 	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
+	ensureTestLocalSignSecret(t)
 	ensureTestDevMode(t)
+}
+
+// ensureTestLocalSignSecret satisfies the media.local.sign_secret gate when
+// tests clear SHOPANDA_DEV_MODE to assert other secure-default failures.
+// Does not override an explicitly set value (including empty) so sign_secret
+// gate tests can clear or shorten the secret themselves.
+func ensureTestLocalSignSecret(t *testing.T) {
+	t.Helper()
+	if _, set := os.LookupEnv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET"); set {
+		return
+	}
+	t.Setenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET", "unit-test-media-local-sign-secret-32b")
 }
 
 func ensureTestDevMode(t *testing.T) {

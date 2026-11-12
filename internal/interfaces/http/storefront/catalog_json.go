@@ -33,13 +33,13 @@ func productResponse(ctx *composition.ProductContext, snake bool) map[string]int
 		return map[string]interface{}{
 			"product": productPublicJSON(ctx.Product),
 			"blocks":  ctx.Blocks,
-			"meta":    ctx.Meta,
+			"meta":    composition.PublicMeta(ctx.Meta),
 		}
 	}
 	return map[string]interface{}{
 		"product": ctx.Product,
 		"blocks":  ctx.Blocks,
-		"meta":    ctx.Meta,
+		"meta":    composition.PublicMeta(ctx.Meta),
 	}
 }
 

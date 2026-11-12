@@ -464,7 +464,9 @@ type Storage interface {
 }
 ```
 
-The built-in local filesystem backend and the S3-compatible backend are good references. Both are **core plugins** (`plugins/core/storagelocal`, `plugins/core/storages3`) selected by `storage.driver`.
+For **private** blobs (download grants, customer uploads, plugin artwork), prefer `media.SignedURLStorage` (`Head` + `SignedURL`) and never return permanent `URL()` to clients. Local and S3 core backends both implement it. Use `media.AsSignedURLStorage`, key prefixes `private/downloads/` / `private/blobs/` (`media.IsPrivatePath`), and `app.BoundMediaStorage()` after the composition root binds (same pattern as `BindQueue` / `BoundQueue` for jobs — no Register fallback). Local signed GETs are served at `GET /api/v1/media/local-signed/{token}` (HMAC; composition root registers `*localfs.Storage` only). `SignURLOptions.Disposition` selects attachment (default, grants) or inline (previews). Private local paths use `0700`/`0600` modes. Prefer `media.local.base_path` outside any static web root (`./var/media` default; `install.sh` matches) and never FileServer it. A private `Save` may `chmod` the media root and ancestors to `0700`. `media.local.sign_secret` / `SHOPANDA_MEDIA_LOCAL_SIGN_SECRET` is **required** (≥32 bytes) when `media.storage=local` outside `SHOPANDA_DEV_MODE`; HA local deploys must share one secret across replicas. BindMedia runs on the same processes as BindQueue (serve, worker, scheduler, schedule-trigger, search-reindex) — not every CLI bootstrap.
+
+The built-in local filesystem backend and the S3-compatible backend are good references. Both are **core plugins** (`plugins/core/storagelocal`, `plugins/core/storages3`) selected by `media.storage`.
 
 ### Storage backend skeleton
 
@@ -715,6 +717,7 @@ Practical rules:
 - `frontend.enabled: false` (or `mode: headless`) — API only
 - Product/category GET (and nested `/variants`, `/reviews`) accept **id or slug**
 - Storefront product/category JSON keeps Go names by default; `?fields=snake` or `X-Shopanda-Field-Names: snake` opt in
+- Price and on-hand availability are siblings of the catalog entity: `meta.offers` on product and category lists, `meta.offer` on product detail, `offers` / `offer` on public variant reads. Search hits do not include them. `amount` is minor units. See [HEADLESS.md](HEADLESS.md#price-and-availability).
 - Set `http.cors.allowed_origins` only if the browser talks to the API cross-origin; prefer a same-origin proxy. `*` is anonymous (no credentials). `allow_credentials` needs an explicit origin list.
 - Ignore `/fragments/*` (SSR full-page-cache holes)
 - Same-origin configurator + SSR checkout: `POST/PUT/DELETE /storefront/cart/items` (CSRF header), not `/api/v1/carts`. See [HEADLESS.md](HEADLESS.md#same-origin-storefront-js-hybrid).

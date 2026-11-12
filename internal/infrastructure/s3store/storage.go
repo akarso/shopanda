@@ -204,8 +204,8 @@ func awsDNSSuffix(region string) string {
 func (s *Storage) Name() string { return "s3" }
 
 // Save uploads file to the S3 bucket at the given path.
-// Paths under media.PrivateDownloadsPrefix get private, no-store Cache-Control
-// and never receive a public ACL (even when PublicACL is configured).
+// Paths under media.IsPrivatePath (downloads + blobs) get private, no-store
+// Cache-Control and never receive a public ACL (even when PublicACL is configured).
 func (s *Storage) Save(path string, file io.Reader) error {
 	key, err := validateKey(path)
 	if err != nil {
@@ -215,8 +215,27 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
 	defer cancel()
 
-	contentType := mimeFromPath(key)
-	private := domainMedia.IsPrivateDownloadsPath(key)
+	return s.putObject(ctx, key, file, mimeFromPath(key))
+}
+
+// SaveWithContentType uploads with an explicit MIME type when non-empty;
+// otherwise falls back to mimeFromPath(key).
+func (s *Storage) SaveWithContentType(path string, file io.Reader, contentType string) error {
+	key, err := validateKey(path)
+	if err != nil {
+		return fmt.Errorf("s3store: invalid key %q: %w", path, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
+	defer cancel()
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		ct = mimeFromPath(key)
+	}
+	return s.putObject(ctx, key, file, ct)
+}
+
+func (s *Storage) putObject(ctx context.Context, key string, file io.Reader, contentType string) error {
+	private := domainMedia.IsPrivatePath(key)
 
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
@@ -292,7 +311,8 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 
 // SignedURL returns a short-lived pre-signed GET URL for path (PR-1077).
 // Overrides response Cache-Control to private, no-store and sets
-// Content-Disposition attachment so intermediaries do not cache grant bytes.
+// Content-Disposition from SignURLOptions (attachment by default; inline when
+// requested) so intermediaries do not cache private bytes.
 func (s *Storage) SignedURL(ctx context.Context, path string, opts domainMedia.SignURLOptions) (string, error) {
 	if s.presigner == nil {
 		return "", fmt.Errorf("s3store: signed URLs not available")
@@ -309,7 +329,7 @@ func (s *Storage) SignedURL(ctx context.Context, path string, opts domainMedia.S
 		Bucket:                     aws.String(s.bucket),
 		Key:                        aws.String(key),
 		ResponseCacheControl:       aws.String(privateCacheControl),
-		ResponseContentDisposition: aws.String(domainMedia.ContentDispositionAttachment(opts.Filename)),
+		ResponseContentDisposition: aws.String(domainMedia.ContentDispositionValue(opts.Disposition, opts.Filename)),
 	}
 	if ctx == nil {
 		ctx = context.Background()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/akarso/shopanda/internal/testutil"
 
+	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -174,6 +177,170 @@ func TestVariantHandler_List_OK(t *testing.T) {
 	}
 	if len(resp.Data.Variants) != 2 {
 		t.Errorf("len(variants) = %d, want 2", len(resp.Data.Variants))
+	}
+}
+
+func int64Ptr(n int64) *int64 { return &n }
+
+type stubVariantOffers struct {
+	storeID  string
+	currency string
+	offers   map[string]composition.PublicOffer
+	calls    int
+	err      error
+}
+
+func (s *stubVariantOffers) VariantOffers(_ context.Context, _ *catalog.Product, variants []catalog.Variant, storeID, currency string) (map[string]composition.PublicOffer, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.storeID = storeID
+	s.currency = currency
+	if s.offers != nil {
+		return s.offers, nil
+	}
+	amount := int64(1500)
+	out := make(map[string]composition.PublicOffer, len(variants))
+	for _, variant := range variants {
+		copied := amount
+		out[variant.ID] = composition.PublicOffer{Amount: &copied, Currency: currency, InStock: variant.ID == "v1"}
+	}
+	return out, nil
+}
+
+func TestVariantHandler_List_IncludesOffers(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{
+		listByProductFn: func(_ context.Context, pid string, _, _ int) ([]catalog.Variant, error) {
+			return []catalog.Variant{{ID: "v1", ProductID: pid, SKU: "SKU-1"}}, nil
+		},
+	}
+	loader := &stubVariantOffers{}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus()).WithOffers(loader)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/prod-1/variants", nil)
+	req = req.WithContext(store.WithStore(req.Context(), &store.Store{ID: "store-1", Currency: "PLN"}))
+	newVariantRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if loader.storeID != "store-1" || loader.currency != "PLN" {
+		t.Fatalf("scope = %q %q", loader.storeID, loader.currency)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	offers := data["offers"].(map[string]interface{})
+	offer := offers["v1"].(map[string]interface{})
+	if offer["amount"].(float64) != 1500 || offer["currency"] != "PLN" || offer["in_stock"] != true {
+		t.Fatalf("offer = %#v", offer)
+	}
+}
+
+func TestVariantHandler_Get_IncludesOffer(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1"}, nil
+	}}
+	loader := &stubVariantOffers{offers: map[string]composition.PublicOffer{
+		"v1": {Amount: int64Ptr(900), Currency: "EUR", InStock: false},
+	}}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus()).WithOffers(loader)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/prod-1/variants/v1", nil)
+	newVariantRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	offer := data["offer"].(map[string]interface{})
+	if offer["amount"].(float64) != 900 || offer["in_stock"] != false {
+		t.Fatalf("offer = %#v", offer)
+	}
+}
+
+func TestVariantHandler_Get_OmitsMissingOffer(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1"}, nil
+	}}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus()).WithOffers(&stubVariantOffers{
+		offers: map[string]composition.PublicOffer{},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/prod-1/variants/v1", nil)
+	newVariantRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	if _, ok := data["offer"]; ok {
+		t.Fatalf("missing loader entry was encoded as an offer: %#v", data["offer"])
+	}
+}
+
+func TestVariantHandler_AdminList_OmitsOffers(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{listByProductFn: func(_ context.Context, productID string, _, _ int) ([]catalog.Variant, error) {
+		return []catalog.Variant{{ID: "v1", ProductID: productID, SKU: "SKU-1"}}, nil
+	}}
+	loader := &stubVariantOffers{offers: map[string]composition.PublicOffer{
+		"v1": {Amount: int64Ptr(1500), Currency: "EUR", InStock: true},
+	}}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus()).WithOffers(loader)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/products/prod-1/variants", nil)
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	newVariantRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if loader.calls != 0 {
+		t.Fatalf("admin list resolved offers %d times", loader.calls)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	if _, ok := data["offers"]; ok {
+		t.Fatalf("admin list included offers: %#v", data["offers"])
+	}
+}
+
+func TestVariantHandler_List_OfferError(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{listByProductFn: func(_ context.Context, productID string, _, _ int) ([]catalog.Variant, error) {
+		return []catalog.Variant{{ID: "v1", ProductID: productID}}, nil
+	}}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus()).WithOffers(&stubVariantOffers{
+		err: errors.New("stock read failed"),
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/prod-1/variants", nil)
+	newVariantRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("stock read failed")) {
+		t.Fatalf("body leaked the loader error: %s", rec.Body.String())
 	}
 }
 

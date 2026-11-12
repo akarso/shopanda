@@ -17,6 +17,7 @@ import (
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -251,6 +252,11 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(rt.mediaHandler.Upload()))
 	router.Handle("DELETE /api/v1/admin/media/{assetId}", requireMediaWrite(rt.mediaHandler.Delete()))
+	// Register the HMAC GET route only for concrete *localfs.Storage so a
+	// SignedURL-advertising wrapper cannot leave the path permanently 404.
+	if local, ok := rt.mediaStorage.(*localfs.Storage); ok {
+		router.Handle("GET /api/v1/media/local-signed/{token}", local.Handler())
+	}
 	router.Handle("GET /api/v1/admin/config", requireSettingsRead(rt.configAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/config", requireSettingsWrite(rt.configAdmin.Update()))
 	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(rt.configAdmin.TestEmail()))

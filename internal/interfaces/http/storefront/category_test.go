@@ -10,9 +10,11 @@ import (
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
+	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/domain/store"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
@@ -397,6 +399,141 @@ func TestCategoryHandler_Products_OK(t *testing.T) {
 	}
 	if len(envelope.Data.Products) == 0 {
 		t.Fatal("response missing 'products' in data")
+	}
+}
+
+type stubProductOffers struct {
+	storeID  string
+	currency string
+	err      error
+	calls    int
+}
+
+func (s *stubProductOffers) ProductOffers(_ context.Context, products []*catalog.Product, storeID, currency string) (map[string]composition.PublicOffer, error) {
+	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.storeID = storeID
+	s.currency = currency
+	amount := int64(700)
+	out := make(map[string]composition.PublicOffer, len(products))
+	for _, product := range products {
+		if product == nil {
+			continue
+		}
+		copied := amount
+		out[product.ID] = composition.PublicOffer{VariantID: "v1", Amount: &copied, Currency: currency, InStock: true}
+	}
+	return out, nil
+}
+
+func TestCategoryHandler_Products_IncludesOffers(t *testing.T) {
+	cat := &catalog.Category{ID: "cat-1", Name: "Books", Slug: "books"}
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return cat, nil
+			}
+			return nil, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByCategoryIDFn: func(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+			return []catalog.Product{{ID: "p-1", Name: "Go Book", Slug: "go-book"}}, nil
+		},
+	}
+	loader := &stubProductOffers{}
+	h := storefront.NewCategoryHandler(cats, prods).WithOffers(loader)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/cat-1/products", nil)
+	req = req.WithContext(store.WithStore(req.Context(), &store.Store{ID: "store-1", Currency: "EUR"}))
+	newCategoryRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if loader.storeID != "store-1" || loader.currency != "EUR" {
+		t.Fatalf("scope = %q %q", loader.storeID, loader.currency)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	meta := data["meta"].(map[string]interface{})
+	offers := meta["offers"].(map[string]interface{})
+	offer := offers["p-1"].(map[string]interface{})
+	if offer["amount"].(float64) != 700 || offer["in_stock"] != true {
+		t.Fatalf("offer = %#v", offer)
+	}
+}
+
+func TestCategoryHandler_Products_OfferError(t *testing.T) {
+	cat := &catalog.Category{ID: "cat-1", Name: "Books", Slug: "books"}
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return cat, nil
+			}
+			return nil, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByCategoryIDFn: func(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+			return []catalog.Product{{ID: "p-1", Name: "Go Book", Slug: "go-book"}}, nil
+		},
+	}
+	h := storefront.NewCategoryHandler(cats, prods).WithOffers(&stubProductOffers{err: errors.New("price read failed")})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/categories/cat-1/products", nil)
+	newCategoryRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCategoryHandler_AdminProducts_OmitsOffers(t *testing.T) {
+	cat := &catalog.Category{ID: "cat-1", Name: "Books", Slug: "books"}
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return cat, nil
+			}
+			return nil, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByCategoryIDFn: func(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+			return []catalog.Product{{ID: "p-1", Name: "Go Book", Slug: "go-book"}}, nil
+		},
+	}
+	loader := &stubProductOffers{}
+	h := storefront.NewCategoryHandler(cats, prods).WithOffers(loader)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/categories/cat-1/products", nil)
+	req = req.WithContext(catalog.WithOperatorProductReadScope(req.Context()))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/admin/categories/{id}/products", h.Products())
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if loader.calls != 0 {
+		t.Fatalf("admin category list resolved offers %d times", loader.calls)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	data := body["data"].(map[string]interface{})
+	if meta, ok := data["meta"].(map[string]interface{}); ok {
+		if _, exists := meta["offers"]; exists {
+			t.Fatalf("admin category list included offers: %#v", meta["offers"])
+		}
 	}
 }
 

@@ -150,7 +150,7 @@ Plugin-facing: `app.RegisterCompositionStep(pipeline, step)` (`internal/platform
 
 - The only **generic** same-request mechanism, reused for both PDP (`ProductContext`) and PLP (`ListingContext`).
 - `Apply(ctx *T) error` takes **no `context.Context`** — unlike every other mechanism above. Composition steps are meant to be response-shaping transforms over an already-fetched, in-memory struct, not steps that make their own blocking network calls. A step that needs an external call (e.g. a PIM enrichment lookup) manages its own timeout internally instead of relying on request cancellation — see `plugins/pimdemo/plugin.go`.
-- Concrete core steps live in `internal/application/composition/*_step.go`: SEO meta/JSON-LD/canonical, EU Omnibus price indication (product + listing variants), reviews aggregation, GPSR/WEEE compliance blocks.
+- Concrete core steps live in `internal/application/composition/*_step.go`: SEO meta/JSON-LD/canonical, catalog offer price and availability (product + listing), EU Omnibus price indication (product + listing variants), reviews aggregation, GPSR/WEEE compliance blocks. The product offer step runs before JSON-LD and price indication so those steps reuse `meta.offer`. JSON-LD emits an Offer only when that snapshot has an amount. Listing offer runs before listing price indication and writes `meta.offers`. Later plugin steps must not replace those keys.
 - **Use for:** enriching a storefront product/listing API response — extra fields, computed badges, external PIM/review data.
 
 ---

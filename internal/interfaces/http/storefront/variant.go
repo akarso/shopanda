@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
+	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -21,6 +23,12 @@ type VariantHandler struct {
 	bus             *event.Bus
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
+	offers          variantOfferLoader
+}
+
+// variantOfferLoader attaches a sellable price and availability to variant reads.
+type variantOfferLoader interface {
+	VariantOffers(ctx context.Context, product *catalog.Product, variants []catalog.Variant, storeID, currency string) (map[string]composition.PublicOffer, error)
 }
 
 // NewVariantHandler creates a VariantHandler.
@@ -32,6 +40,13 @@ func NewVariantHandler(products catalog.ProductRepository, variants catalog.Vari
 // Admin paths bypass via context.
 func (h *VariantHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *VariantHandler {
 	h.visibilityFacts = facts
+	return h
+}
+
+// WithOffers attaches per-variant price and availability on public reads.
+// Admin paths keep the catalog payload and do not resolve a storefront price.
+func (h *VariantHandler) WithOffers(loader variantOfferLoader) *VariantHandler {
+	h.offers = loader
 	return h
 }
 
@@ -91,11 +106,20 @@ func (h *VariantHandler) List() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+		body := map[string]interface{}{
 			"variants": variants,
 			"offset":   offset,
 			"limit":    limit,
-		})
+		}
+		if h.attachPublicOffers(r) {
+			offers, err := h.variantOffers(r, p, variants)
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
+			body["offers"] = offers
+		}
+		httpshared.JSON(w, http.StatusOK, body)
 	}
 }
 
@@ -151,10 +175,39 @@ func (h *VariantHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+		body := map[string]interface{}{
 			"variant": v,
-		})
+		}
+		if h.attachPublicOffers(r) {
+			offers, err := h.variantOffers(r, p, []catalog.Variant{*v})
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
+			if offer, ok := offers[v.ID]; ok {
+				body["offer"] = offer
+			}
+		}
+		httpshared.JSON(w, http.StatusOK, body)
 	}
+}
+
+// attachPublicOffers reports whether this request should include sellable
+// snapshots. Operator scope stays catalog-only.
+func (h *VariantHandler) attachPublicOffers(r *http.Request) bool {
+	return h != nil && h.offers != nil && publicCatalogOffer(r)
+}
+
+func (h *VariantHandler) variantOffers(r *http.Request, product *catalog.Product, variants []catalog.Variant) (map[string]composition.PublicOffer, error) {
+	storeID, currency := requestStoreScope(r.Context())
+	offers, err := h.offers.VariantOffers(r.Context(), product, variants, storeID, currency)
+	if err != nil {
+		return nil, err
+	}
+	if offers == nil {
+		offers = map[string]composition.PublicOffer{}
+	}
+	return offers, nil
 }
 
 // createVariantRequest is the JSON body for creating a variant.

@@ -81,7 +81,7 @@ func TestSearchHandler_OK(t *testing.T) {
 			}
 			return search.SearchResult{
 				Products: []search.Product{
-					{ID: "p1", Name: "Running Shoes", Slug: "running-shoes", Description: "Great", Attributes: map[string]interface{}{}},
+					{ID: "p1", Name: "Running Shoes", Slug: "running-shoes", Description: "Great", Attributes: map[string]interface{}{}, Price: 12999, InStock: true},
 				},
 				Total: 1,
 				Facets: map[string][]search.FacetValue{
@@ -108,6 +108,12 @@ func TestSearchHandler_OK(t *testing.T) {
 	p := products[0].(map[string]interface{})
 	if p["id"] != "p1" {
 		t.Errorf("id = %v, want p1", p["id"])
+	}
+	if _, ok := p["price"]; ok {
+		t.Errorf("price = %v, search hits must not invent a price", p["price"])
+	}
+	if _, ok := p["in_stock"]; ok {
+		t.Errorf("in_stock = %v, search hits must not invent availability", p["in_stock"])
 	}
 	total := data["total"].(float64)
 	if total != 1 {

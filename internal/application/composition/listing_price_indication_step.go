@@ -56,7 +56,12 @@ func (s *ListingPriceIndicationStep) Apply(ctx *ListingContext) error {
 	if len(productIDs) == 0 {
 		return nil
 	}
-	indications, err := buildListingPriceIndicationsBatch(ctx.Ctx, s.variants, s.prices, s.history, productIDs, ctx.StoreID, ctx.Currency)
+	var indications map[string]map[string]interface{}
+	if offers := OffersFromMeta(ctx.Meta); offers != nil {
+		indications, err = indicationsFromPublicOffers(ctx.Ctx, s.history, offers, productIDs, ctx.StoreID, ctx.Currency)
+	} else {
+		indications, err = buildListingPriceIndicationsBatch(ctx.Ctx, s.variants, s.prices, s.history, productIDs, ctx.StoreID, ctx.Currency)
+	}
 	if err != nil {
 		return err
 	}

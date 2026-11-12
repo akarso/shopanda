@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -16,10 +17,52 @@ import (
 // ReadableStorage — never permanent Storage.URL().
 const PrivateDownloadsPrefix = "private/downloads/"
 
+// PrivateBlobsPrefix is the recommended key prefix for plugin-owned private
+// objects (customer uploads, generated artwork, etc.). Same delivery rules as
+// PrivateDownloadsPrefix: SignedURLStorage (or ReadableStorage stream), never
+// permanent Storage.URL().
+const PrivateBlobsPrefix = "private/blobs/"
+
+// NormalizeStorageKey trims, strips leading ./, and path.Cleans a storage key
+// so private-prefix checks are not bypassed by ./private/blobs/... forms.
+func NormalizeStorageKey(key string) string {
+	p := strings.TrimSpace(key)
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimLeft(p, "/")
+	p = path.Clean(p)
+	if p == "." {
+		return ""
+	}
+	return p
+}
+
 // IsPrivateDownloadsPath reports whether path is under PrivateDownloadsPrefix.
 func IsPrivateDownloadsPath(path string) bool {
-	p := strings.TrimLeft(strings.TrimSpace(path), "/")
+	p := NormalizeStorageKey(path)
 	return strings.HasPrefix(p, PrivateDownloadsPrefix)
+}
+
+// IsPrivateBlobsPath reports whether path is under PrivateBlobsPrefix.
+func IsPrivateBlobsPath(path string) bool {
+	p := NormalizeStorageKey(path)
+	return strings.HasPrefix(p, PrivateBlobsPrefix)
+}
+
+// IsPrivatePath reports whether path is under a known private prefix.
+func IsPrivatePath(path string) bool {
+	return IsPrivateDownloadsPath(path) || IsPrivateBlobsPath(path)
+}
+
+// AsSignedURLStorage returns SignedURLStorage when s implements it.
+// Product plugins that need private short-lived URLs should require this
+// (local and S3 core backends both implement it) instead of inventing a
+// second store.
+func AsSignedURLStorage(s Storage) (SignedURLStorage, bool) {
+	if s == nil {
+		return nil, false
+	}
+	signer, ok := s.(SignedURLStorage)
+	return signer, ok
 }
 
 // SanitizeContentDispositionFilename returns an ASCII-safe filename for the
@@ -37,13 +80,22 @@ func SanitizeContentDispositionFilename(filename string) string {
 // with an ASCII filename= fallback and, when the name contains non-ASCII,
 // an RFC 5987 filename* parameter (UTF-8 percent-encoded).
 func ContentDispositionAttachment(filename string) string {
+	return contentDisposition("attachment", filename)
+}
+
+// ContentDispositionInline builds a Content-Disposition inline value (preview).
+func ContentDispositionInline(filename string) string {
+	return contentDisposition("inline", filename)
+}
+
+func contentDisposition(kind, filename string) string {
 	trimmed := strings.TrimSpace(filename)
 	encoded := stripContentDispositionUnsafe(trimmed)
 	ascii := asciiContentDispositionFilename(trimmed)
 	if ascii == "" {
 		ascii = "download"
 	}
-	disp := fmt.Sprintf(`attachment; filename="%s"`, ascii)
+	disp := fmt.Sprintf(`%s; filename="%s"`, kind, ascii)
 	if encoded == "" || !containsNonASCII(encoded) {
 		return disp
 	}
@@ -141,21 +193,51 @@ type ReadableStorage interface {
 	Read(path string) ([]byte, error)
 }
 
-// SignURLOptions configures a short-lived download URL (PR-1077).
+// Disposition selects Content-Disposition on a signed GET.
+type Disposition string
+
+const (
+	// DispositionAttachment forces download (default; grant delivery PR-1077).
+	DispositionAttachment Disposition = "attachment"
+	// DispositionInline allows browser/tab preview (customizer images).
+	DispositionInline Disposition = "inline"
+)
+
+// SignURLOptions configures a short-lived download or preview URL (PR-1077).
 type SignURLOptions struct {
 	// TTL is the signed URL lifetime. Callers typically use ~60s and may
 	// cap it to remaining grant expiry.
 	TTL time.Duration
-	// Filename is used for Content-Disposition: attachment on the signed GET.
+	// Filename is used for Content-Disposition on the signed GET.
 	Filename string
+	// Disposition is attachment (default when empty) or inline.
+	Disposition Disposition
+}
+
+// NormalizeDisposition returns attachment when d is empty or unknown.
+func NormalizeDisposition(d Disposition) Disposition {
+	switch d {
+	case DispositionInline:
+		return DispositionInline
+	default:
+		return DispositionAttachment
+	}
+}
+
+// ContentDispositionValue builds Content-Disposition for the given kind.
+func ContentDispositionValue(d Disposition, filename string) string {
+	if NormalizeDisposition(d) == DispositionInline {
+		return ContentDispositionInline(filename)
+	}
+	return ContentDispositionAttachment(filename)
 }
 
 // SignedURLStorage optionally provides object existence checks and short-lived
 // URLs for private delivery (PR-1077). Prefer this over ReadableStorage when
 // the backend supports it (e.g. S3). TTL must stay short so expiry/limit remain
 // enforceable. Implementations must set response Cache-Control to
-// private, no-store and Content-Disposition attachment on the signed GET —
-// never rely on permanent Storage.URL().
+// private, no-store and Content-Disposition from SignURLOptions (attachment
+// by default) — never rely on permanent Storage.URL().
 type SignedURLStorage interface {
 	Storage
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
@@ -84,6 +85,25 @@ func (s addListingBlockStep) Apply(ctx *composition.ListingContext) error {
 	return nil
 }
 
+type captureListingStoreStep struct {
+	storeID  string
+	currency string
+}
+
+func (s *captureListingStoreStep) Name() string { return "capture-store" }
+func (s *captureListingStoreStep) Apply(ctx *composition.ListingContext) error {
+	s.storeID = ctx.StoreID
+	s.currency = ctx.Currency
+	amount := int64(2599)
+	if ctx.Meta == nil {
+		ctx.Meta = map[string]interface{}{}
+	}
+	ctx.Meta[composition.MetaOffers] = map[string]composition.PublicOffer{
+		"p1": {VariantID: "v1", Amount: &amount, Currency: ctx.Currency, InStock: true},
+	}
+	return nil
+}
+
 type failStep struct{}
 
 func (failStep) Name() string                                { return "fail" }
@@ -134,6 +154,38 @@ func TestProductHandler_List_OK(t *testing.T) {
 	products := data["products"].([]interface{})
 	if len(products) != 2 {
 		t.Errorf("products len = %d, want 2", len(products))
+	}
+}
+
+func TestProductHandler_List_KeepsStoreOffer(t *testing.T) {
+	step := &captureListingStoreStep{}
+	plp := composition.NewPipeline[composition.ListingContext]()
+	plp.AddStep(step)
+	repo := &mockProductRepo{
+		listFn: func(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+			return []catalog.Product{{ID: "p1", Name: "Widget"}}, nil
+		},
+	}
+	h := storefront.NewProductHandler(repo, composition.NewPipeline[composition.ProductContext](), plp, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+	req = req.WithContext(store.WithStore(req.Context(), &store.Store{ID: "store-1", Currency: "PLN", Country: "PL"}))
+	newRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if step.storeID != "store-1" || step.currency != "PLN" {
+		t.Fatalf("store scope = %q %q, want store-1 PLN", step.storeID, step.currency)
+	}
+	body := parseBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	meta := data["meta"].(map[string]interface{})
+	offers := meta["offers"].(map[string]interface{})
+	offer := offers["p1"].(map[string]interface{})
+	if offer["amount"].(float64) != 2599 || offer["currency"] != "PLN" || offer["in_stock"] != true || offer["variant_id"] != "v1" {
+		t.Fatalf("offer = %#v", offer)
 	}
 }
 

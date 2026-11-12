@@ -62,7 +62,7 @@ C4Component
             Component(cartService, "CartService", "Go", "Cart management with pricing integration")
             Component(checkoutWorkflow, "CheckoutWorkflow", "Go", "6-step ordered flow: validate → price → reserve → order → ship → pay")
             Component(pricingPipeline, "PricingPipeline", "Go", "Step-based price calculation: BasePriceStep → plugin steps → FinalizeStep")
-            Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps")
+            Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps, including catalog offer price and availability")
             Component(importerService, "ProductImporter", "Go", "Bulk CSV product import with attribute mapping and validation")
             Component(exporterService, "ProductExporter", "Go", "Paginated product/variant export to CSV with dynamic attribute columns")
             Component(stockImporter, "StockImporter", "Go", "CSV stock quantity import: SKU lookup, validation, bulk SetStock")
@@ -148,7 +148,8 @@ C4Component
             Component(coreSQSQueue, "SQS Queue Core Plugin", "Go", "Registers SQS job queue when queue.driver=sqs")
             Component(coreGraphQL, "GraphQL API Core Plugin", "Go", "Read-only catalog API when plugins.graphql.enabled")
             Component(coreStripe, "Stripe Core Plugin", "Go", "Registers Stripe payment provider when payment.stripe.enabled")
-            Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when storage.driver=s3")
+            Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when media.storage=s3")
+            Component(coreLocalStorage, "Local Storage Core Plugin", "Go", "Registers localfs SignedURLStorage when media.storage=local; HMAC GET route after BindMediaStorage")
         }
 
         Boundary(externalPlugins, "External Plugins (compile-time register)") {

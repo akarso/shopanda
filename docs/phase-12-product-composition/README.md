@@ -25,7 +25,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**PR-1083 docs done; Phase 12 PR list closed** (PR-1048–1083). Do **not** read that as Track F’s original “search / CSV / GraphQL / GUI closeout” goal fully met without caveats: VAT sign-off for digital VAT (PR-1076) remains open; configurable storefront/admin is incomplete; assignment/grant settings have no CSV; the default storefront cannot sell `requires_linked_parent` (no assignment stamp on the default PDP). Next: those gaps and/or [Phase 13](../phase-13-plugin-runtime/README.md) (site-ready gate).
+**PR-1083 closed the original list** (PR-1048–1083). **PR-1084** is a follow-up: public catalog offers for price and on-hand availability. Do **not** read the closeout as Track F’s original “search / CSV / GraphQL / GUI closeout” goal fully met without caveats: VAT sign-off for digital VAT (PR-1076) remains open; configurable storefront/admin is incomplete; assignment/grant settings have no CSV; the default storefront cannot sell `requires_linked_parent` (no assignment stamp on the default PDP). Next: those gaps and/or [Phase 13](../phase-13-plugin-runtime/README.md) (site-ready gate).
 
 ## Relationship
 

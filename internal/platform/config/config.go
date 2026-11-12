@@ -462,9 +462,14 @@ type ThumbnailConfig struct {
 	Fit    string `yaml:"fit"`
 }
 
+// MinLocalSignSecretBytes is the minimum length for media.local.sign_secret
+// when set (HMAC key material for local SignedURL).
+const MinLocalSignSecretBytes = 32
+
 type LocalStorageConfig struct {
-	BasePath string `yaml:"base_path"`
-	BaseURL  string `yaml:"base_url"`
+	BasePath   string `yaml:"base_path"`
+	BaseURL    string `yaml:"base_url"`
+	SignSecret string `yaml:"sign_secret"` // HMAC for local SignedURL; env SHOPANDA_MEDIA_LOCAL_SIGN_SECRET
 }
 
 // S3StorageConfig holds settings for S3-compatible storage backends.
@@ -575,6 +580,7 @@ type PluginsConfig struct {
 	WarehouseDemo   WarehouseDemoPluginConfig   `yaml:"warehousedemo"`
 	PimDemo         PimDemoPluginConfig         `yaml:"pimdemo"`
 	B2B             B2BPluginConfig             `yaml:"b2b"`
+	MetalDogs       MetalDogsPluginConfig       `yaml:"metaldogs"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
@@ -659,6 +665,14 @@ type PimDemoPluginConfig struct {
 type B2BPluginConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	LicenseKey string `yaml:"license_key"`
+}
+
+// MetalDogsPluginConfig toggles the Metal Dogs product plugin in plugins/metaldogs.
+// Default enabled=false (dark); set plugins.metaldogs.enabled or
+// SHOPANDA_PLUGINS_METALDOGS_ENABLED to expose /api/customizer/* (not a
+// process probe — use /healthz and /readyz for orchestrators).
+type MetalDogsPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // CorePluginsConfig allows explicit enable/disable of core infrastructure plugins.
@@ -846,7 +860,7 @@ func defaults() Config {
 		Media: MediaConfig{
 			Storage: "local",
 			Local: LocalStorageConfig{
-				BasePath: "./public/media",
+				BasePath: "./var/media",
 				BaseURL:  "/media",
 			},
 			Thumbnails: map[string]ThumbnailConfig{
@@ -1069,6 +1083,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
 		cfg.Media.Local.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_SIGN_SECRET"); v != "" {
+		cfg.Media.Local.SignSecret = v
+	}
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_ENDPOINT"); v != "" {
 		cfg.Media.S3.Endpoint = v
 	}
@@ -1289,6 +1306,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_LICENSE_KEY"); v != "" {
 		cfg.Plugins.B2B.LicenseKey = v
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_METALDOGS_ENABLED"); v != "" {
+		cfg.Plugins.MetalDogs.Enabled = parseEnvBool(v)
+	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = parseEnvBool(v)
 	}
@@ -1465,6 +1485,11 @@ func flatten(cfg *Config) map[string]string {
 	m["media.storage"] = cfg.Media.Storage
 	m["media.local.base_path"] = cfg.Media.Local.BasePath
 	m["media.local.base_url"] = cfg.Media.Local.BaseURL
+	if cfg.Media.Local.SignSecret != "" {
+		m["media.local.sign_secret"] = "***"
+	} else {
+		m["media.local.sign_secret"] = ""
+	}
 	for name, tc := range cfg.Media.Thumbnails {
 		prefix := "media.thumbnails." + name
 		m[prefix+".width"] = strconv.Itoa(tc.Width)
@@ -1541,6 +1566,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.pimdemo.pim_api_key"] = redactSecret(cfg.Plugins.PimDemo.PimAPIKey)
 	m["plugins.pimdemo.cache_ttl"] = cfg.Plugins.PimDemo.CacheTTL
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
+	m["plugins.metaldogs.enabled"] = strconv.FormatBool(cfg.Plugins.MetalDogs.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
