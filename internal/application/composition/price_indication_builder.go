@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/shared"
 )
 
 const metaPriceIndications = "price_indications"
@@ -204,6 +205,61 @@ func lookupCurrentPrice(ctx context.Context, prices pricing.PriceRepository, var
 		}
 	}
 	return price, nil
+}
+
+// indicationsFromPublicOffers builds Omnibus blocks from listing offers so
+// the price and variant reads are not repeated. History is still one batch.
+func indicationsFromPublicOffers(
+	ctx context.Context,
+	history pricing.PriceHistoryRepository,
+	offers map[string]PublicOffer,
+	productIDs []string,
+	storeID, currency string,
+) (map[string]map[string]interface{}, error) {
+	if history == nil || len(productIDs) == 0 {
+		return nil, nil
+	}
+	currency = priceIndicationCurrency(currency)
+	current := make(map[string]*pricing.Price, len(productIDs))
+	variantIDs := make([]string, 0, len(productIDs))
+	for _, productID := range productIDs {
+		offer, ok := offers[productID]
+		if !ok || offer.Amount == nil || offer.VariantID == "" {
+			continue
+		}
+		cur := offer.Currency
+		if cur == "" {
+			cur = currency
+		}
+		money, err := shared.NewMoney(*offer.Amount, cur)
+		if err != nil {
+			return nil, fmt.Errorf("listing price indication: %w", err)
+		}
+		current[productID] = &pricing.Price{VariantID: offer.VariantID, Amount: money}
+		variantIDs = append(variantIDs, offer.VariantID)
+	}
+	if len(variantIDs) == 0 {
+		return nil, nil
+	}
+	since := time.Now().UTC().AddDate(0, 0, -30)
+	lowestByVariant, err := history.LowestSinceByVariants(ctx, variantIDs, currency, storeID, since)
+	if err != nil {
+		return nil, fmt.Errorf("listing price indication: batch history: %w", err)
+	}
+	indications := make(map[string]map[string]interface{}, len(current))
+	for productID, price := range current {
+		blk, err := buildPriceIndicationBlockFromSnapshot(price, lowestByVariant[price.VariantID], currency)
+		if err != nil {
+			return nil, err
+		}
+		if blk != nil {
+			indications[productID] = blk.Data
+		}
+	}
+	if len(indications) == 0 {
+		return nil, nil
+	}
+	return indications, nil
 }
 
 func formatMajorUnits(minor int64) string {

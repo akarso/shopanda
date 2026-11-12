@@ -157,3 +157,42 @@ func TestStockRepo_GetStock_EmptyVariantID(t *testing.T) {
 		t.Fatal("expected error for empty variantID")
 	}
 }
+
+func TestStockRepo_GetStocks(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM stock") })
+
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	ctx := context.Background()
+	empty, err := repo.GetStocks(ctx, nil)
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty = %+v", empty)
+	}
+
+	present := seedVariant(t, db)
+	missing := seedVariant(t, db)
+	entry, err := inventory.NewStockEntry(present, 4)
+	if err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+	if err := repo.SetStock(ctx, &entry); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	got, err := repo.GetStocks(ctx, []string{"", present, present, missing})
+	if err != nil {
+		t.Fatalf("GetStocks: %v", err)
+	}
+	if len(got) != 1 || got[present].Quantity != 4 {
+		t.Fatalf("got = %+v, want only %s quantity 4", got, present)
+	}
+	if _, ok := got[missing]; ok {
+		t.Fatalf("missing row was returned: %+v", got[missing])
+	}
+}

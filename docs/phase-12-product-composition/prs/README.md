@@ -38,6 +38,7 @@
 | PR-1081 | F | done | [CSV visibility columns + Phase 12 consistency tests](PR-1081.md) |
 | PR-1082 | F | done | [GraphQL read parity](PR-1082.md) |
 | PR-1083 | F | done | [RUNBOOK.md + admin GUI consolidation pass](PR-1083.md) |
+| PR-1084 | — | done | [Public catalog price and availability](PR-1084.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

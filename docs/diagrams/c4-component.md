@@ -62,7 +62,7 @@ C4Component
             Component(cartService, "CartService", "Go", "Cart management with pricing integration")
             Component(checkoutWorkflow, "CheckoutWorkflow", "Go", "6-step ordered flow: validate → price → reserve → order → ship → pay")
             Component(pricingPipeline, "PricingPipeline", "Go", "Step-based price calculation: BasePriceStep → plugin steps → FinalizeStep")
-            Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps")
+            Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps, including catalog offer price and availability")
             Component(importerService, "ProductImporter", "Go", "Bulk CSV product import with attribute mapping and validation")
             Component(exporterService, "ProductExporter", "Go", "Paginated product/variant export to CSV with dynamic attribute columns")
             Component(stockImporter, "StockImporter", "Go", "CSV stock quantity import: SKU lookup, validation, bulk SetStock")

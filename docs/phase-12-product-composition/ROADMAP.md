@@ -234,6 +234,9 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1081 | F | done |
 | 1082 | F | done |
 | 1083 | F | done |
+| 1084 | — | done |
+
+PR-1084 is a follow-up after the closeout: public catalog offers. Spec: [`prs/PR-1084.md`](prs/PR-1084.md).
 
 PR specs: [`prs/`](prs/).
 

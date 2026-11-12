@@ -29,7 +29,37 @@ frontend:
 
 Default product/category payloads keep **Go exported names** (`ID`, `Name`, `Slug`) so existing clients do not break.
 
-Opt in to snake_case maps (`id`, `name`, `slug`) with `?fields=snake` or header `X-Shopanda-Field-Names: snake`. Snake product maps omit merchant internals (`pricing_mode`, `stock_mode`, `explode_order_lines`). `blocks` and `meta` stay composition output either way. Search was already snake_case. Variant objects are still domain encoding.
+Opt in to snake_case maps (`id`, `name`, `slug`) with `?fields=snake` or header `X-Shopanda-Field-Names: snake`. Snake product maps omit merchant internals (`pricing_mode`, `stock_mode`, `explode_order_lines`). `blocks` and `meta` stay composition output either way. Search was already snake_case. Variant objects are still domain encoding. Price and availability are siblings, not fields on those entities — see below.
+
+## Price and availability
+
+Catalog reads attach a sibling offer. Search does not. `amount` is minor units of the request currency, the same scale as cart `unit_price`. `null` means this currency has no price. `0` is a real free price. `variant_id` is present only when `amount` is set.
+
+`in_stock` is on-hand quantity greater than zero, or a dynamic-stock bundle rollup. Checkout reservations already reduce on-hand quantity, so the flag does not subtract them again. It is not the cart's purchasable gate: the cart also checks visibility, a price in the cart currency, linked-parent rules, and downloadable files. A virtual or downloadable product with no stock row is out of stock, the same quantity rule the cart uses.
+
+Currency and store come from the request host. With no store, currency is EUR and the price is the global row. The price repository falls back from the store row to the global row in that one read.
+
+| Read | Where |
+| --- | --- |
+| `GET /api/v1/products` | `meta.offers[<product id>]` |
+| `GET /api/v1/categories/{id}/products` | `meta.offers[<product id>]` |
+| `GET /api/v1/products/{id}` | `meta.offer` |
+| `GET /api/v1/products/{id}/variants` | `offers[<variant id>]` |
+| `GET /api/v1/products/{id}/variants/{variantId}` | `offer` |
+
+```json
+{"variant_id":"v1","amount":1999,"currency":"EUR","in_stock":true}
+```
+
+Product detail computes that offer once. JSON-LD copies it and emits an Offer only when `amount` is set. The structured-data price is that card price: the cheapest of the considered variants. `availability` is the card's `in_stock`, which can come from a different variant. There is no `AggregateOffer`. A stock-only snapshot (amount null, in stock true) produces no Offer. Omnibus price indication still skips dynamic headlines. A product card uses the cheapest of the oldest 100 variants in that currency. A newer variant past that cap is not considered, and the response does not mark the cap. `in_stock` on the card is true when any of those variants has on-hand quantity, which may not be the cheapest one. A grouped parent has `amount: null` and `in_stock: false`. A dynamic-price bundle is the sum of required active components, not its own price row. A dynamic-stock bundle uses the component rollup, not its own stock row. Variant offers for a dynamic-price bundle resolve each requested variant. JSON-LD prices use the same two-decimal major-unit formatting as Omnibus (`amount / 100`).
+
+`GET /api/v1/products` passes the request store, currency, and country into the listing pipeline. Price indication on that list uses the store currency. Category product lists call the same offer resolver and do not run the rest of the listing pipeline, so they have no price indication and no plugin listing steps.
+
+Guest `GET` responses for products, categories, and search send `Cache-Control: public, max-age=300`. Nothing purges that cache when a price or stock row changes. Treat offers as advisory for up to five minutes.
+
+A failed batch read of variants, prices, or stock on a product page is logged and `meta.offer` is left out. The page still renders. The guest cache does not store a fake "no price, out of stock" offer. JSON-LD emits no Offer, and price indication does not read variants or prices again, so there is no Omnibus block for that product. A grouped parent or a product with no price row still has `meta.offer` and `amount: null`. The same batch failure on a product list or a category product list fails the request. A failure while resolving one dynamic bundle is logged once for that product. That card keeps `in_stock` when stock resolved, and `amount` stays null. A validation or not-found error from a bundle rollup is one warning with the product id, and the card shows no price. A cancelled request is not logged. Admin product and category reads run under operator scope and do not include offers. Plugin PDP and PLP steps run after the offer step and must not replace `meta.offer` or `meta.offers`.
+
+Search hits stay name, slug, description, and attributes. Use a catalog read for price and stock.
 
 ## Browser CORS
 
@@ -115,7 +145,7 @@ Headless claim flows require `frontend.claim_url` (env `SHOPANDA_FRONTEND_CLAIM_
 - Multi-step checkout (address → shipping → payment → confirm)
 - Guest shipping quotes before an order exists
 - Email verify / email change / some security step-up pages
-- Bundle/grouped PDP composition on public REST (admin APIs exist)
+- Bundle and grouped member lists on public REST (admin composition APIs exist). Price and stock for those parents are on `offer` / `offers`.
 
 Treat those as platform gaps, not theme work.
 

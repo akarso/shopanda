@@ -39,7 +39,6 @@ import (
 	"github.com/akarso/shopanda/internal/application/notification"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/application/pluginreport"
-	shippingApp "github.com/akarso/shopanda/internal/application/shipping"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
@@ -48,6 +47,7 @@ import (
 	schedulerApp "github.com/akarso/shopanda/internal/application/scheduler"
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
+	shippingApp "github.com/akarso/shopanda/internal/application/shipping"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
@@ -632,10 +632,22 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		repos.paymentRepo,
 	).WithLinkedLeaves(repos.productRepo, repos.bundleComponentRepo)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
+	catalogOffers := composition.OfferSources{
+		Variants:   repos.variantRepo,
+		Prices:     repos.priceRepo,
+		Stock:      repos.stockRepo,
+		Stocks:     repos.stockRepo,
+		Products:   repos.productRepo,
+		Components: repos.bundleComponentRepo,
+		Log:        log,
+	}
+	if err := catalogOffers.Validate(); err != nil {
+		return nil, err
+	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
-	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo).
-		WithBundleStockRollup(repos.productRepo, repos.bundleComponentRepo))
+	pdp.AddStep(composition.NewProductOfferStep(catalogOffers))
+	pdp.AddStep(composition.NewJSONLDProductStep())
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	pdp.AddStep(composition.NewPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
 	pdp.AddStep(composition.NewWeeeStep(repos.configRepo))
@@ -644,6 +656,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
+	plp.AddStep(composition.NewListingOfferStep(catalogOffers))
 	plp.AddStep(composition.NewListingPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
 	for _, s := range pluginApp.CompositionSteps("pdp") {
 		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
@@ -894,7 +907,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	productPriceAdmin.WithTxStarter(conn)
 	productPriceAdmin.WithHistory(repos.priceHistoryRepo) // catalog price change → price_history (same as CSV import)
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
-		WithVisibilityFacts(visibilityFacts)
+		WithVisibilityFacts(visibilityFacts).
+		WithOffers(catalogOffers)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
 	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService).
@@ -962,7 +976,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	shippingRates := storefront.NewShippingRatesHandler(shippingReg.Providers()...)
 	categoryHandler := storefront.NewCategoryHandler(repos.categoryRepo, repos.productRepo).
-		WithVisibilityFacts(visibilityFacts)
+		WithVisibilityFacts(visibilityFacts).
+		WithOffers(catalogOffers)
 	categoryAdmin := admin.NewCategoryAdminHandlerWithAuditor(repos.categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(repos.categoryRepo, repos.productRepo, repos.productRepo, sharedAuditor)
 	categoryProductAssignmentAdmin.SetBus(bus) // PR-1036: category assignment change → search index update

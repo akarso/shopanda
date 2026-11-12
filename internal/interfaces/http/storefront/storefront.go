@@ -604,6 +604,7 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 			return
 		}
 
+		ctx.Meta = composition.PublicMeta(ctx.Meta)
 		page := StorefrontProductPageData{
 			ProductContext: ctx,
 			Layout:         h.layoutForCacheablePage(r, nil),
