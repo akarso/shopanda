@@ -30,6 +30,20 @@ func NewValueService(registry *Registry, repo domainext.ValueRepository) *ValueS
 	return &ValueService{registry: registry, repo: repo}
 }
 
+// pluginMayWrite reports whether ctx carries a trusted write for code and, when
+// the field has a recorded owner, that the registrant is that owner. Unowned
+// fields (admin-created, or registered without a name) accept any registrant.
+// The registrant is still a plain string: this stops accidental and cross-plugin
+// writes, not in-process code that deliberately impersonates the owner's name.
+func (s *ValueService) pluginMayWrite(ctx context.Context, code string) bool {
+	registrant, ok := pluginWriteFor(ctx, code)
+	if !ok {
+		return false
+	}
+	owner := s.registry.Owner(code)
+	return owner == "" || owner == registrant
+}
+
 // List returns stored values for target, filtering private fields unless allowed.
 func (s *ValueService) List(ctx context.Context, target domainext.Target, includePrivate bool) ([]domainext.Value, error) {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
@@ -215,10 +229,10 @@ func (s *ValueService) validateBatchValues(ctx context.Context, target domainext
 		}
 		rowUpdatedBy := updatedBy
 		if field.Access.PluginOnlyWrite {
-			registrant, trusted := pluginWriteFor(ctx, code)
-			if !trusted {
+			if !s.pluginMayWrite(ctx, code) {
 				return nil, domainext.ErrForbiddenPluginOnlyField
 			}
+			registrant, _ := pluginWriteFor(ctx, code)
 			rowUpdatedBy = "plugin:" + registrant
 		}
 
@@ -299,7 +313,7 @@ func (s *ValueService) Delete(ctx context.Context, target domainext.Target, fiel
 		return domainext.ErrForbiddenPrivateField
 	}
 	if field.Access.PluginOnlyWrite {
-		if _, trusted := pluginWriteFor(ctx, fieldCode); !trusted {
+		if !s.pluginMayWrite(ctx, fieldCode) {
 			return domainext.ErrForbiddenPluginOnlyField
 		}
 	}

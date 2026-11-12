@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -26,6 +27,7 @@ type ListFilter struct {
 type Registry struct {
 	mu     sync.RWMutex
 	fields map[string]domainext.ExtensionField
+	owners map[string]string // code -> registering plugin; absent = unowned
 	order  []string
 }
 
@@ -33,6 +35,7 @@ type Registry struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		fields: make(map[string]domainext.ExtensionField),
+		owners: make(map[string]string),
 	}
 }
 
@@ -47,6 +50,41 @@ func (r *Registry) Register(def domainext.FieldDef) error {
 		return err
 	}
 	return r.registerField(field)
+}
+
+// RegisterOwned registers a field and records owner (the registering plugin).
+// Owned plugin-only fields are writable only by a trusted write naming that owner.
+func (r *Registry) RegisterOwned(def domainext.FieldDef, owner string) error {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return fmt.Errorf("extension: field owner must not be empty")
+	}
+	if r == nil {
+		return fmt.Errorf("extension: registry must not be nil")
+	}
+	field, err := domainext.NewExtensionField(def)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.fields[field.Code]; exists {
+		return ErrAlreadyRegistered
+	}
+	r.fields[field.Code] = field
+	r.owners[field.Code] = owner
+	r.order = append(r.order, field.Code)
+	return nil
+}
+
+// Owner returns the plugin that registered code, or "" when unowned/unknown.
+func (r *Registry) Owner(code string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.owners[code]
 }
 
 // LoadPersisted merges active definitions from repo into the registry.
@@ -123,6 +161,7 @@ func (r *Registry) Remove(code string) bool {
 		return false
 	}
 	delete(r.fields, code)
+	delete(r.owners, code)
 	for i, c := range r.order {
 		if c == code {
 			r.order = append(r.order[:i], r.order[i+1:]...)

@@ -535,13 +535,32 @@ func TestValueService_PluginOnlyWrite_TrustSurvivesWithoutCancel(t *testing.T) {
 	}
 }
 
-// Records current behavior: trust is per code, not per owning plugin (registry has no owners).
-func TestValueService_PluginOnlyWrite_AnyPluginMayNameAnyCode(t *testing.T) {
+func TestValueService_PluginOnlyWrite_OwnerIsEnforced(t *testing.T) {
 	reg := extensionapp.NewRegistry()
-	registerValueField(t, reg, pluginOnlyField("b.field"))
-	svc := extensionapp.NewValueService(reg, newMemValueRepo())
-	ctx := extensionapp.WithPluginWrite(context.Background(), "plugin-a", "b.field")
-	if _, err := svc.UpsertBatch(ctx, domainext.CartItemTarget("c", "v"), []domainext.ValueInput{{FieldCode: "b.field", Value: "x"}}, "x", false); err != nil {
-		t.Fatalf("documented limitation: err = %v", err)
+	if err := reg.RegisterOwned(pluginOnlyField("b.field"), "plugin-b"); err != nil {
+		t.Fatal(err)
+	}
+	registerValueField(t, reg, pluginOnlyField("free.field")) // unowned: any trusted registrant
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("c", "v")
+	in := func(code string) []domainext.ValueInput { return []domainext.ValueInput{{FieldCode: code, Value: "x"}} }
+
+	other := extensionapp.WithPluginWrite(context.Background(), "plugin-a", "b.field", "free.field")
+	if _, err := svc.UpsertBatch(other, target, in("b.field"), "x", false); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("other plugin write err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	if err := svc.Delete(other, target, "b.field", false); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("other plugin delete err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	if _, err := svc.UpsertBatch(other, target, in("free.field"), "x", false); err != nil {
+		t.Fatalf("unowned field must stay writable by any trusted registrant: %v", err)
+	}
+	owner := extensionapp.WithPluginWrite(context.Background(), "plugin-b", "b.field")
+	if _, err := svc.UpsertBatch(owner, target, in("b.field"), "x", false); err != nil {
+		t.Fatalf("owner write: %v", err)
+	}
+	if got := repo.values[valueKey(target, "b.field")].UpdatedBy; got != "plugin:plugin-b" {
+		t.Fatalf("UpdatedBy = %q", got)
 	}
 }

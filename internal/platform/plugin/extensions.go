@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -11,6 +12,7 @@ import (
 // Extensions exposes extension field registration to plugins during Init.
 type Extensions struct {
 	registry *extensionapp.Registry
+	owner    string // empty = unowned (legacy app.Extensions())
 }
 
 // RegisterField registers an extension field definition.
@@ -18,6 +20,9 @@ type Extensions struct {
 func (e *Extensions) RegisterField(def domainext.FieldDef) error {
 	if e == nil || e.registry == nil {
 		return fmt.Errorf("plugin: extension registry not configured")
+	}
+	if e.owner != "" {
+		return e.registry.RegisterOwned(def, e.owner)
 	}
 	return e.registry.Register(def)
 }
@@ -49,6 +54,19 @@ func (a *App) Extensions() *Extensions {
 	return &Extensions{registry: a.extensionRegistry}
 }
 
+// ExtensionsFor is like Extensions but records owner (the plugin name) on every
+// field it registers. Owned plugin-only fields can then be written only by a
+// trusted write naming that owner. Panics on a blank owner.
+func (a *App) ExtensionsFor(owner string) *Extensions {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		panic("plugin: extension owner must not be empty")
+	}
+	e := a.Extensions()
+	e.owner = owner
+	return e
+}
+
 // WithPluginWrite returns ctx marked as a trusted write by pluginName for the
 // given Access.PluginOnlyWrite field codes (only those). Pass the result to the
 // service call, e.g. cartService.AddItem(ctx, ...); values for other plugin-only
@@ -64,6 +82,9 @@ func (a *App) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes
 		}
 		if !field.Access.PluginOnlyWrite {
 			panic(fmt.Sprintf("plugin: WithPluginWrite: extension field %q is not PluginOnlyWrite", code))
+		}
+		if owner := registry.Owner(code); owner != "" && owner != strings.TrimSpace(pluginName) {
+			panic(fmt.Sprintf("plugin: WithPluginWrite: extension field %q is owned by %q, not %q", code, owner, pluginName))
 		}
 	}
 	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...)

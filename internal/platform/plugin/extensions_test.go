@@ -129,3 +129,40 @@ func TestApp_WithPluginWrite_PanicNamesRegistrationOrder(t *testing.T) {
 	}()
 	app.WithPluginWrite(context.Background(), "acme", "acme.locked")
 }
+
+func TestApp_ExtensionsFor_RecordsOwnerAndGuardsWithPluginWrite(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	def := func(code string) domainext.FieldDef {
+		return domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+			StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+	}
+	if err := app.ExtensionsFor("acme").RegisterField(def("acme.owned")); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Extensions().RegisterField(def("legacy.free")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.owned"); got != "acme" {
+		t.Fatalf("owner = %q", got)
+	}
+	app.WithPluginWrite(context.Background(), "acme", "acme.owned")   // owner: ok
+	app.WithPluginWrite(context.Background(), "anyone", "legacy.free") // unowned: ok
+
+	defer func() {
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "owned by") {
+			t.Fatalf("panic = %q, want owner mismatch message", msg)
+		}
+	}()
+	app.WithPluginWrite(context.Background(), "intruder", "acme.owned")
+}
+
+func TestApp_ExtensionsFor_BlankOwnerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	(&plugin.App{}).ExtensionsFor("  ")
+}

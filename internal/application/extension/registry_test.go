@@ -104,3 +104,32 @@ func TestRegistry_RegisterValidationError(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestRegistry_RegisterOwned_RecordsAndClearsOwner(t *testing.T) {
+	reg := extension.NewRegistry()
+	def := domainext.FieldDef{Code: "acme.owned", Label: "O", Type: domainext.FieldTypeString, Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored}
+	if err := reg.RegisterOwned(def, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.owned"); got != "acme" {
+		t.Fatalf("Owner = %q", got)
+	}
+	if got := reg.Owner("missing"); got != "" {
+		t.Fatalf("Owner(missing) = %q", got)
+	}
+	plain := def
+	plain.Code = "acme.plain"
+	if err := reg.Register(plain); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.plain"); got != "" {
+		t.Fatalf("unowned Owner = %q", got)
+	}
+	reg.Remove("acme.owned")
+	if got := reg.Owner("acme.owned"); got != "" {
+		t.Fatalf("Owner after Remove = %q", got)
+	}
+	if err := reg.RegisterOwned(def, "other"); err != nil || reg.Owner("acme.owned") != "other" {
+		t.Fatalf("re-register after Remove: err=%v owner=%q", err, reg.Owner("acme.owned"))
+	}
+}
