@@ -121,6 +121,7 @@ After the gate:
 | 1088 | B | [oss] | **done** — SDK, docs, example, plugins report |
 | 1089 | B | [oss] | **done** — Sync job observability |
 | 1090 | C | [oss] | **done** — Local SignedURLStorage + BindMediaStorage |
+| 1091 | C | [oss] | **done** — Enforce `Access.PluginOnlyWrite` on extension writes |
 
 PR specs: [`prs/`](prs/).
 

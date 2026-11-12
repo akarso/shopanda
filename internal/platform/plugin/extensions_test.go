@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -85,4 +86,46 @@ func TestApp_Extensions_ConcurrentLazyInit(t *testing.T) {
 			t.Fatalf("ExtensionRegistry pointer mismatch at worker %d", i)
 		}
 	}
+}
+
+func TestApp_WithPluginWrite_ValidatesCodesAgainstRegistry(t *testing.T) {
+	reg := extension.NewRegistry()
+	app := &plugin.App{}
+	app.SetExtensionRegistry(reg)
+	if err := app.Extensions().RegisterField(domainext.FieldDef{
+		Code: "acme.locked", Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Extensions().RegisterField(domainext.FieldDef{
+		Code: "acme.plain", Label: "P", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app.WithPluginWrite(context.Background(), "acme", "acme.locked") // ok
+
+	for name, code := range map[string]string{"typo": "acme.lockd", "not plugin-only": "acme.plain"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s: expected panic", name)
+				}
+			}()
+			app.WithPluginWrite(context.Background(), "acme", code)
+		}()
+	}
+}
+
+func TestApp_WithPluginWrite_PanicNamesRegistrationOrder(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	defer func() {
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "RegisterField") {
+			t.Fatalf("panic = %q, want hint about registering the field first", msg)
+		}
+	}()
+	app.WithPluginWrite(context.Background(), "acme", "acme.locked")
 }

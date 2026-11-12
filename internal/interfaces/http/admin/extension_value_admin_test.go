@@ -168,6 +168,14 @@ func setupExtensionValueAdmin(t *testing.T) (*admin.ExtensionValueAdminHandler, 
 		StorageMode: domainext.StorageStored,
 		Visibility:  domainext.VisibilityPrivate,
 	})
+	registerExtensionField(t, reg, domainext.FieldDef{
+		Code:        "acme.locked",
+		Label:       "Locked",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	})
 	svc := extensionapp.NewValueService(reg, newMockExtensionValueRepo())
 	h := admin.NewExtensionValueAdminHandler(svc)
 	return h, newExtensionValueAdminRouter(h)
@@ -331,5 +339,39 @@ func TestExtensionValueAdminHandler_PrivateReadRequiresPermission(t *testing.T) 
 	values, _ = data["values"].([]interface{})
 	if len(values) != 1 {
 		t.Fatalf("expected one private value, got %#v", values)
+	}
+}
+
+func TestExtensionValueAdminHandler_PluginOnlyFieldWriteForbidden(t *testing.T) {
+	_, router := setupExtensionValueAdmin(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/extensions/values/product/prod-1", extensionValueBody(t, map[string]interface{}{
+		"values": []map[string]interface{}{
+			{"field_code": "acme.locked", "value": "x"},
+		},
+	}))
+	req = req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("put status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := decodeExtensionValueError(t, rec); code != string(apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
+	}
+}
+
+func TestExtensionValueAdminHandler_PluginOnlyFieldDeleteForbidden(t *testing.T) {
+	_, router := setupExtensionValueAdmin(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/extensions/values/product/prod-1/acme.locked", nil)
+	req = req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("delete status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := decodeExtensionValueError(t, rec); code != string(apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
 	}
 }

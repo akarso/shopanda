@@ -103,7 +103,7 @@ func (s *ValueService) ListByOrderItems(ctx context.Context, orderID string, var
 
 // ValidateBatch validates extension inputs without persisting them.
 func (s *ValueService) ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error {
-	_, err := s.validateBatchValues(target, inputs, "validate", canAccessPrivate, false)
+	_, err := s.validateBatchValues(ctx, target, inputs, "validate", canAccessPrivate, false)
 	return err
 }
 
@@ -141,6 +141,8 @@ func (s *ValueService) DeleteOrphanCartItemExtensions(ctx context.Context, cartI
 }
 
 // DeleteAllForTarget removes all stored values for target.
+// Core-internal (cart line removal, orphan cleanup): intentionally not gated by
+// PluginOnlyWrite. Do not expose it to request-driven callers.
 func (s *ValueService) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
 	target.ID = strings.TrimSpace(target.ID)
@@ -164,7 +166,7 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 	if len(inputs) == 0 {
 		return nil, domainext.ValidationErr("values must not be empty")
 	}
-	out, err := s.validateBatchValues(target, inputs, updatedBy, canAccessPrivate, true)
+	out, err := s.validateBatchValues(ctx, target, inputs, updatedBy, canAccessPrivate, true)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +176,7 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 	return out, nil
 }
 
-func (s *ValueService) validateBatchValues(target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate, requireUpdatedBy bool) ([]domainext.Value, error) {
+func (s *ValueService) validateBatchValues(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate, requireUpdatedBy bool) ([]domainext.Value, error) {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
 	target.ID = strings.TrimSpace(target.ID)
 	if target.Type == "" || target.ID == "" {
@@ -211,6 +213,14 @@ func (s *ValueService) validateBatchValues(target domainext.Target, inputs []dom
 		if field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate {
 			return nil, domainext.ErrForbiddenPrivateField
 		}
+		rowUpdatedBy := updatedBy
+		if field.Access.PluginOnlyWrite {
+			registrant, trusted := pluginWriteFor(ctx, code)
+			if !trusted {
+				return nil, domainext.ErrForbiddenPluginOnlyField
+			}
+			rowUpdatedBy = "plugin:" + registrant
+		}
 
 		payload, err := domainext.PayloadFromInput(field, input.Value)
 		if err != nil {
@@ -225,7 +235,7 @@ func (s *ValueService) validateBatchValues(target domainext.Target, inputs []dom
 			TargetType: target.Type,
 			TargetID:   target.ID,
 			Payload:    payload,
-			UpdatedBy:  updatedBy,
+			UpdatedBy:  rowUpdatedBy,
 			UpdatedAt:  now,
 		})
 	}
@@ -233,6 +243,8 @@ func (s *ValueService) validateBatchValues(target domainext.Target, inputs []dom
 }
 
 // CopyTarget copies stored values from one target to another.
+// Core-internal (guest claim / merge): skips validation and PluginOnlyWrite on
+// purpose so plugin-set values survive. Sources must be trusted core targets.
 func (s *ValueService) CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error {
 	from.Type = domainext.TargetType(strings.TrimSpace(string(from.Type)))
 	from.ID = strings.TrimSpace(from.ID)
@@ -269,6 +281,9 @@ func (s *ValueService) CopyTarget(ctx context.Context, from, to domainext.Target
 }
 
 // Delete removes a stored value for target and field code.
+// Delete is the untrusted-facing delete (admin API, GraphQL): PluginOnlyWrite
+// fields need a WithPluginWrite context naming the field. Core line removal and
+// orphan cleanup use DeleteAllForTarget, which is deliberately not gated.
 func (s *ValueService) Delete(ctx context.Context, target domainext.Target, fieldCode string, canAccessPrivate bool) error {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
 	target.ID = strings.TrimSpace(target.ID)
@@ -282,6 +297,11 @@ func (s *ValueService) Delete(ctx context.Context, target domainext.Target, fiel
 	}
 	if field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate {
 		return domainext.ErrForbiddenPrivateField
+	}
+	if field.Access.PluginOnlyWrite {
+		if _, trusted := pluginWriteFor(ctx, fieldCode); !trusted {
+			return domainext.ErrForbiddenPluginOnlyField
+		}
 	}
 	return s.repo.Delete(ctx, target, fieldCode)
 }

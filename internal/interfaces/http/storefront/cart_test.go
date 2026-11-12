@@ -237,6 +237,16 @@ func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *storefron
 	}); err != nil {
 		t.Fatalf("register field: %v", err)
 	}
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.design",
+		Label:       "Design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatalf("register plugin-only field: %v", err)
+	}
 	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
@@ -906,5 +916,27 @@ func TestCartHandler_AddItem_BlockedByValidateHook(t *testing.T) {
 	items := cart["items"].([]interface{})
 	if len(items) != 0 {
 		t.Fatalf("persisted items = %d, want 0", len(items))
+	}
+}
+
+func TestCartHandler_AddItem_PluginOnlyFieldForbidden(t *testing.T) {
+	carts, prices, _, mux := cartExtensionSetup(t)
+	prices.set("var-1", "EUR", 1000)
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"acme.design","value":"d1"}]}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	got, _ := carts.FindByID(context.Background(), "cart-1")
+	if got != nil && len(got.Items) != 0 {
+		t.Fatalf("cart items = %d, want 0 (no write)", len(got.Items))
 	}
 }

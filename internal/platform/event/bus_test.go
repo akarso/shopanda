@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
 	"io"
 	"strings"
 	"sync"
@@ -781,5 +782,21 @@ func TestBus_ServeDrainWiring_StuckHandlerLogsDrainTimeout(t *testing.T) {
 
 	if got := buf.String(); !strings.Contains(got, "event.bus.drain.timeout") {
 		t.Errorf("expected event.bus.drain.timeout before ShutdownBackground returns, got %s", got)
+	}
+}
+
+func TestBus_Publish_StripsPluginWriteTrustForSyncHandlers(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	var trusted bool
+	bus.On("any.event", func(ctx context.Context, _ event.Event) error {
+		_, trusted = pluginwrite.For(ctx, "a.b")
+		return nil
+	})
+	ctx := pluginwrite.Grant(context.Background(), "acme", "a.b")
+	if err := bus.Publish(ctx, event.New("any.event", "test", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if trusted {
+		t.Fatal("sync handler must not inherit plugin write trust")
 	}
 }

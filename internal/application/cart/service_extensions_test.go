@@ -10,6 +10,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -709,4 +710,128 @@ func (r *countingBatchProducts) ListByIDs(_ context.Context, ids []string) (map[
 		}
 	}
 	return out, nil
+}
+
+func setupCartPluginOnlyService(t *testing.T) (*cartApp.Service, *memCartExtensionValueRepo) {
+	t.Helper()
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.design",
+		Label:       "Design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatalf("register field: %v", err)
+	}
+	repo := newMemCartExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, repo)
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(newStubCartRepo(), prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, nil)
+	return svc, repo
+}
+
+func TestService_AddItem_PluginOnlyWrite_UntrustedForbidden(t *testing.T) {
+	svc, repo := setupCartPluginOnlyService(t)
+	ctx := context.Background()
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}},
+		UpdatedBy:  "cust-1",
+	})
+	if !errors.Is(err, domainext.ErrForbiddenPluginOnlyField) {
+		t.Fatalf("AddItem err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	stored, _ := repo.ListByTarget(ctx, domainext.CartItemTarget(c.ID, "var-1"))
+	if len(stored) != 0 {
+		t.Fatalf("stored = %+v, want none", stored)
+	}
+}
+
+func TestService_PluginOnlyWrite_TrustedAddRemoveAndClaimMerge(t *testing.T) {
+	svc, repo := setupCartPluginOnlyService(t)
+	ctx := context.Background()
+	trusted := extensionapp.WithPluginWrite(ctx, "acme", "acme.design")
+
+	customerCart, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestCart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddItem(trusted, guestCart.ID, "", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}},
+		UpdatedBy:  "plugin:acme",
+	}); err != nil {
+		t.Fatalf("trusted AddItem: %v", err)
+	}
+
+	// Core claim/merge runs without plugin context and must still copy the field.
+	if _, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1"); err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	stored, _ := repo.ListByTarget(ctx, domainext.CartItemTarget(customerCart.ID, "var-1"))
+	if len(stored) != 1 {
+		t.Fatalf("customer stored = %+v, want 1", stored)
+	}
+
+	// Removing the line deletes the row without plugin context.
+	if _, err := svc.RemoveItem(ctx, customerCart.ID, "cust-1", "var-1"); err != nil {
+		t.Fatalf("RemoveItem: %v", err)
+	}
+	stored, _ = repo.ListByTarget(ctx, domainext.CartItemTarget(customerCart.ID, "var-1"))
+	if len(stored) != 0 {
+		t.Fatalf("after remove = %+v, want none", stored)
+	}
+}
+
+func TestService_AddItem_TrustDoesNotLeakToEventHandlers(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	for _, code := range []string{"acme.design", "acme.other"} {
+		if err := reg.Register(domainext.FieldDef{
+			Code: code, Label: code, Type: domainext.FieldTypeString,
+			Scope: domainext.TargetCartItem, StorageMode: domainext.StorageSnapshot,
+			Access: domainext.Access{PluginOnlyWrite: true},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := newMemCartExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, repo)
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	bus := testBus()
+	var handlerErr error
+	var ran bool
+	bus.On(domainCart.EventItemAdded, func(ctx context.Context, _ event.Event) error {
+		ran = true
+		_, handlerErr = values.UpsertBatch(ctx, domainext.CartItemTarget("any", "var-1"),
+			[]domainext.ValueInput{{FieldCode: "acme.design", Value: "stolen"}}, "handler", false)
+		return nil
+	})
+	svc := cartApp.NewService(newStubCartRepo(), prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), bus, values, nil)
+	ctx := context.Background()
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	trusted := extensionapp.WithPluginWrite(ctx, "acme", "acme.design")
+	if _, err := svc.AddItem(trusted, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}},
+		UpdatedBy:  "plugin:acme",
+	}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	if !ran {
+		t.Fatal("event handler did not run")
+	}
+	if !errors.Is(handlerErr, domainext.ErrForbiddenPluginOnlyField) {
+		t.Fatalf("handler err = %v, want ErrForbiddenPluginOnlyField (trust must not leak)", handlerErr)
+	}
 }

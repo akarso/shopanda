@@ -2,7 +2,6 @@ package graphql
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -533,17 +532,5 @@ func (r *Resolver) deleteExtensionValue(ctx context.Context, targetType, targetI
 }
 
 func extensionAPIError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if domainext.IsValidationError(err) {
-		return apperror.FieldValidationFailed(err.Error())
-	}
-	if errors.Is(err, domainext.ErrUnknownFieldCode) {
-		return apperror.UnknownFieldCode(err.Error())
-	}
-	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
-		return apperror.ForbiddenPrivateField(err.Error())
-	}
-	return err
+	return extensionapp.MapValueError(err)
 }

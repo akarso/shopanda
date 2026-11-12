@@ -9,9 +9,10 @@
 | PR-1088 | B | done | [SDK + docs + example](PR-1088.md) |
 | PR-1089 | B | done | [Sync job observability](PR-1089.md) |
 | PR-1090 | C | done | [Local SignedURLStorage + BindMediaStorage](PR-1090.md) |
+| PR-1091 | C | done | [Enforce Access.PluginOnlyWrite](PR-1091.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
 **Ordering rule:** Track A (1084→1085→1086) before Track B in calendar time (site-ready: plugin tables first). Track B has no code dependency on A. Do not start a merchant site until Track A+B site-ready PRs are `done`. Track C (PR-1090) is additive media platform work for product plugins; not part of the original site-ready gate.
 
-Continues Phase 12 numbering; highest issued in this phase: PR-1090.
+Continues Phase 12 numbering; highest issued in this phase: PR-1091.

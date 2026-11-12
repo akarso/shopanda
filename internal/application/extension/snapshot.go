@@ -10,6 +10,8 @@ import (
 
 // SnapshotCartItemToOrderItem copies cart_item extension values with storage_mode=snapshot
 // onto the matching order_item target.
+// Core-internal: copies StorageSnapshot values (including PluginOnlyWrite) without
+// re-validation; the cart rows were already validated on write.
 func (s *ValueService) SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error {
 	cartID = strings.TrimSpace(cartID)
 	orderID = strings.TrimSpace(orderID)

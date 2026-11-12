@@ -14,6 +14,8 @@ var (
 	ErrFieldAlreadyExists = errors.New("extension field already exists")
 	// ErrFieldNotFound indicates the field is not registered.
 	ErrFieldNotFound = errors.New("extension field not found")
+	// ErrFieldPluginOnly indicates a PluginOnlyWrite field definition cannot be changed or removed via the admin API.
+	ErrFieldPluginOnly = errors.New("plugin-only extension field cannot be modified or deleted")
 )
 
 // FieldService coordinates extension field definitions between persistence and the in-process registry.
@@ -82,6 +84,9 @@ func (s *FieldService) Update(ctx context.Context, code string, def domainext.Fi
 		return domainext.ExtensionField{}, domainext.ValidationErr("extension field code must not be empty")
 	}
 	def.Code = code
+	if err := s.guardPluginOnly(ctx, code); err != nil {
+		return domainext.ExtensionField{}, err
+	}
 	field, err := domainext.NewExtensionField(def)
 	if err != nil {
 		return domainext.ExtensionField{}, err
@@ -95,6 +100,9 @@ func (s *FieldService) Update(ctx context.Context, code string, def domainext.Fi
 		}
 	}
 	if err := s.repo.Save(ctx, field); err != nil {
+		if apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
+			return domainext.ExtensionField{}, ErrFieldPluginOnly
+		}
 		return domainext.ExtensionField{}, err
 	}
 	if err := s.registry.Replace(field); err != nil {
@@ -111,10 +119,37 @@ func (s *FieldService) Delete(ctx context.Context, code string) error {
 	if code == "" {
 		return domainext.ValidationErr("extension field code must not be empty")
 	}
+	if err := s.guardPluginOnly(ctx, code); err != nil {
+		return err
+	}
 	if err := s.repo.SoftDelete(ctx, code); err != nil {
+		if apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
+			return ErrFieldPluginOnly
+		}
 		return err
 	}
 	s.registry.Remove(code)
+	return nil
+}
+
+// guardPluginOnly stops the definition API from lifting the write guard
+// (flip flag off, write, flip back) or deleting the field.
+func (s *FieldService) guardPluginOnly(ctx context.Context, code string) error {
+	if existing, ok := s.registry.Get(code); ok && existing.Access.PluginOnlyWrite {
+		return ErrFieldPluginOnly
+	}
+	// The persisted row wins when this instance's registry has drifted.
+	// Fail closed: only NotFound means "no stored plugin-only row".
+	stored, err := s.repo.FindByCode(ctx, code)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return err
+	}
+	if stored.Access.PluginOnlyWrite {
+		return ErrFieldPluginOnly
+	}
 	return nil
 }
 

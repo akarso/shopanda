@@ -1219,3 +1219,32 @@ func findCookie(rec *httptest.ResponseRecorder, name string) (*http.Cookie, bool
 	}
 	return nil, false
 }
+
+func TestStorefrontHandler_JSONCartAdd_PluginOnlyFieldForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.print.design",
+		Label:       "Print design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
+	cartSvc, carts, prices := newStorefrontCartServiceWith(values, nil)
+	prices.set("var-1", "EUR", 1500)
+	engine := createTestTheme(t)
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()).WithCart(nil, cartSvc).WithExtensions(values)
+	before := carts.count()
+
+	rec := storefrontJSONCartRequest(t, h, http.MethodPost, "/storefront/cart/items",
+		`{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"acme.print.design","value":"d1"}]}`, storefrontJSONCartCall{})
+	if rec.Code != http.StatusForbidden || storefrontJSONErrorCode(t, rec) != "forbidden_plugin_only_field" {
+		t.Fatalf("status=%d code=%s body=%s", rec.Code, storefrontJSONErrorCode(t, rec), rec.Body.String())
+	}
+	if carts.count() != before {
+		t.Fatalf("leftover carts = %d, want %d", carts.count(), before)
+	}
+}

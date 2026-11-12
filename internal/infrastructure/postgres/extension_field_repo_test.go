@@ -168,3 +168,87 @@ func TestExtensionFieldRepo_SoftDeleteMissing(t *testing.T) {
 		t.Fatalf("SoftDelete error = %v, want not_found", err)
 	}
 }
+
+func pluginOnlyExtensionField(code string) domainext.ExtensionField {
+	field, err := domainext.NewExtensionField(domainext.FieldDef{
+		Code: code, Label: "Locked", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return field
+}
+
+func TestExtensionFieldRepo_PluginOnlyRowRejectsSaveAndSoftDelete(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.locked.field")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatalf("initial Save: %v", err)
+	}
+
+	unlocked := locked
+	unlocked.Access = domainext.Access{}
+	if err := repo.Save(ctx, unlocked); !apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
+		t.Fatalf("Save err = %v, want plugin_only_field_immutable", err)
+	}
+	if err := repo.SoftDelete(ctx, locked.Code); !apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
+		t.Fatalf("SoftDelete err = %v, want plugin_only_field_immutable", err)
+	}
+	got, err := repo.FindByCode(ctx, locked.Code)
+	if err != nil || !got.Access.PluginOnlyWrite {
+		t.Fatalf("row must be unchanged: %+v err=%v", got, err)
+	}
+}
+
+func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testing.T) {
+	// Intended: soft-deleted rows are retired; Save restores them like Create does.
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retired.field")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	// Retire via the operator path (SoftDelete is refused for plugin-only rows).
+	db := testDB(t)
+	if _, err := db.Exec(`UPDATE extension_fields SET deleted_at = now() WHERE code = $1`, locked.Code); err != nil {
+		t.Fatal(err)
+	}
+	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
+	if err := repo.Save(ctx, plain); err != nil {
+		t.Fatalf("Save over soft-deleted plugin-only row: %v", err)
+	}
+	got, err := repo.FindByCode(ctx, locked.Code)
+	if err != nil || got.Access.PluginOnlyWrite {
+		t.Fatalf("restored row = %+v err=%v", got, err)
+	}
+}
+
+func TestExtensionFieldRepo_SoftDeleteNormalRowAndMissingRow(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	field := sampleExtensionField("acme.plain.field", domainext.TargetProduct)
+	if err := repo.Save(ctx, field); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SoftDelete(ctx, field.Code); err != nil {
+		t.Fatalf("SoftDelete normal row: %v", err)
+	}
+	if err := repo.SoftDelete(ctx, field.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("SoftDelete already-deleted err = %v, want not_found", err)
+	}
+	if err := repo.SoftDelete(ctx, "acme.never.existed"); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("SoftDelete missing err = %v, want not_found", err)
+	}
+}
+
+func TestExtensionFieldRepo_SoftDeleteLookupErrorIsNotReportedAsNotFound(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := repo.SoftDelete(ctx, "acme.any")
+	if err == nil || apperror.Is(err, apperror.CodeNotFound) || apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
+		t.Fatalf("err = %v, want the real (context) error", err)
+	}
+}

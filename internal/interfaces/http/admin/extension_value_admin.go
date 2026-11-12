@@ -102,17 +102,14 @@ func extensionValueAPIError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, domainext.ErrUnknownFieldCode) {
-		return apperror.UnknownFieldCode(err.Error())
-	}
-	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
-		return apperror.ForbiddenPrivateField(err.Error())
-	}
-	if domainext.IsValidationError(err) {
-		return apperror.FieldValidationFailed(err.Error())
-	}
-	if apperror.Is(err, apperror.CodeNotFound) {
-		return err
+	mapped := extensionapp.MapValueError(err)
+	var appErr *apperror.Error
+	if errors.As(mapped, &appErr) {
+		switch appErr.Code {
+		case apperror.CodeUnknownFieldCode, apperror.CodeForbiddenPrivateField,
+			apperror.CodeForbiddenPluginOnlyField, apperror.CodeFieldValidationFailed, apperror.CodeNotFound:
+			return mapped
+		}
 	}
 	return apperror.Internal("extension value operation failed")
 }

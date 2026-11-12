@@ -15,6 +15,7 @@ import (
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/pricing"
@@ -508,6 +509,10 @@ func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *do
 
 // AddItem adds an item to the cart and recalculates pricing.
 func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int, opts AddItemOptions) (*domainCart.Cart, error) {
+	// A plugin write marker is honoured only for the extension writes below; hooks,
+	// pricing and event handlers receive ctx without it.
+	writeCtx := ctx
+	ctx = extensionapp.StripPluginWrite(ctx)
 	ctx = appPricing.WithUnitPriceCache(ctx)
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
@@ -536,7 +541,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 			return nil, apperror.Validation("extension values are not supported")
 		}
 		target := domainext.CartItemTarget(cartID, variantID)
-		if err := s.extensions.ValidateBatch(ctx, target, opts.Extensions, false); err != nil {
+		if err := s.extensions.ValidateBatch(writeCtx, target, opts.Extensions, false); err != nil {
 			return nil, err
 		}
 	}
@@ -565,7 +570,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 
 	if len(opts.Extensions) > 0 {
 		target := domainext.CartItemTarget(cartID, variantID)
-		if _, err := s.extensions.UpsertBatch(ctx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
+		if _, err := s.extensions.UpsertBatch(writeCtx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
 			return nil, err
 		}
 	}
