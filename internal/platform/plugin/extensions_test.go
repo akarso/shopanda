@@ -1,13 +1,15 @@
 package plugin_test
 
 import (
-	"errors"
+	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
@@ -147,7 +149,7 @@ func TestApp_ExtensionsFor_RecordsOwnerAndGuardsWithPluginWrite(t *testing.T) {
 	if got := app.ExtensionRegistry().Owner("acme.owned"); got != "acme" {
 		t.Fatalf("owner = %q", got)
 	}
-	app.WithPluginWrite(context.Background(), "acme", "acme.owned")   // owner: ok
+	app.WithPluginWrite(context.Background(), "acme", "acme.owned")    // owner: ok
 	app.WithPluginWrite(context.Background(), "anyone", "legacy.free") // unowned: ok
 
 	defer func() {
@@ -173,7 +175,7 @@ type extFuncPlugin struct {
 	init func(app *plugin.App) error
 }
 
-func (p *extFuncPlugin) Name() string                { return p.name }
+func (p *extFuncPlugin) Name() string               { return p.name }
 func (p *extFuncPlugin) Init(app *plugin.App) error { return p.init(app) }
 
 func ownerTestField(code string) domainext.FieldDef {
@@ -344,5 +346,94 @@ func TestApp_PluginWriteContext_ReturnsErrorsInsteadOfPanicking(t *testing.T) {
 		if _, err := app.PluginWriteContext(context.Background(), tc.who, tc.codes...); err == nil {
 			t.Fatalf("%s: expected error", name)
 		}
+	}
+}
+
+func TestRegistry_InitAll_WarnsAboutUnownedPluginOnlyFields(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "warn")
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("core.free")); err != nil { // before Init: unowned
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+		return app.Extensions().RegisterField(ownerTestField("acme.design"))
+	}})
+
+	reg.InitAll(app) // any boot path, not only serve
+
+	out := buf.String()
+	if !strings.Contains(out, "extension.plugin_only.unowned") || !strings.Contains(out, "core.free") {
+		t.Fatalf("expected unowned warning naming core.free, got %q", out)
+	}
+	if strings.Contains(out, "acme.design") {
+		t.Fatalf("owned field must not be warned about: %q", out)
+	}
+	buf.Reset()
+	app.WarnUnownedPluginOnlyFields() // second call (serve after LoadPersisted): nothing new
+	if buf.Len() != 0 {
+		t.Fatalf("already-warned field must not be logged again: %q", buf.String())
+	}
+}
+
+func TestApp_WarnUnownedPluginOnlyFields_NilLoggerDoesNotPanic(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+}
+
+func TestRegistry_Replace_CannotDisablePluginOnlyOnOwnedField(t *testing.T) {
+	reg := extension.NewRegistry()
+	if err := reg.RegisterOwned(ownerTestField("acme.design"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	field, _ := reg.Get("acme.design")
+	field.Access.PluginOnlyWrite = false
+	if err := reg.Replace(field); err == nil {
+		t.Fatal("Replace must refuse to clear PluginOnlyWrite on an owned plugin-only field")
+	}
+	got, _ := reg.Get("acme.design")
+	if !got.Access.PluginOnlyWrite {
+		t.Fatal("PluginOnlyWrite must stay set")
+	}
+}
+
+// Known limit (documented): the loader attributes by snapshot-diff, so a
+// registration by another plugin's background goroutine during Init is blamed on
+// the plugin being initialised. Fixing it needs a per-plugin App facade.
+func TestRegistry_InitAll_BackgroundRegistrationDuringOtherInit_KnownLimit(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "b", init: func(app *plugin.App) error {
+		done := make(chan struct{})
+		go func() { // stands in for plugin A's leftover goroutine
+			_ = app.ExtensionsFor("a").RegisterField(ownerTestField("a.bg"))
+			close(done)
+		}()
+		<-done
+		return nil
+	}})
+	summary := reg.InitAll(app)
+	if summary.Failed != 1 {
+		t.Fatalf("documented limit: B's Init fails on A's field (Failed=%d)", summary.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("a.bg"); ok {
+		t.Fatal("rolled back field must not stay registered")
+	}
+}
+
+func TestApp_PluginWriteContext_ErrorsNameThemselves(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	_, err := app.PluginWriteContext(context.Background(), "", "x")
+	if err == nil || !strings.Contains(err.Error(), "PluginWriteContext:") || strings.Contains(err.Error(), "WithPluginWrite:") {
+		t.Fatalf("error = %v", err)
 	}
 }

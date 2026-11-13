@@ -78,15 +78,31 @@ func (a *App) UnownedPluginOnlyFields() []string {
 	return a.ExtensionRegistry().UnownedPluginOnly()
 }
 
-// WarnUnownedPluginOnlyFields logs plugin-only fields that have no owner. Call it
-// after the last registration phase (plugin Init and persisted-field load).
+// WarnUnownedPluginOnlyFields logs plugin-only fields that have no owner and were
+// not warned about before. InitAllContext calls it after every plugin Init (all boot
+// paths); the serve runtime calls it again after LoadPersisted for persisted fields.
+// No-op without a Logger.
 func (a *App) WarnUnownedPluginOnlyFields() {
-	unowned := a.UnownedPluginOnlyFields()
-	if len(unowned) == 0 || a.Logger == nil {
+	if a.Logger == nil {
+		return
+	}
+	a.extensionRegistryMu.Lock()
+	if a.warnedUnowned == nil {
+		a.warnedUnowned = make(map[string]struct{})
+	}
+	var fresh []string
+	for _, code := range a.extensionRegistry.UnownedPluginOnly() {
+		if _, seen := a.warnedUnowned[code]; !seen {
+			a.warnedUnowned[code] = struct{}{}
+			fresh = append(fresh, code)
+		}
+	}
+	a.extensionRegistryMu.Unlock()
+	if len(fresh) == 0 {
 		return
 	}
 	a.Logger.Warn("extension.plugin_only.unowned", map[string]interface{}{
-		"fields": unowned,
+		"fields": fresh,
 		"hint":   "register plugin-only fields during plugin Init (or via App.ExtensionsFor) so the owner is recorded",
 	})
 }
@@ -142,22 +158,22 @@ func (a *App) settleExtensionFields(name string, before map[string]struct{}, ini
 func (a *App) PluginWriteContext(ctx context.Context, pluginName string, fieldCodes ...string) (context.Context, error) {
 	pluginName = strings.TrimSpace(pluginName)
 	if pluginName == "" {
-		return ctx, fmt.Errorf("plugin: WithPluginWrite: plugin name must not be empty")
+		return ctx, fmt.Errorf("plugin: PluginWriteContext: plugin name must not be empty")
 	}
 	if len(fieldCodes) == 0 {
-		return ctx, fmt.Errorf("plugin: WithPluginWrite: at least one field code is required")
+		return ctx, fmt.Errorf("plugin: PluginWriteContext: at least one field code is required")
 	}
 	registry := a.ExtensionRegistry()
 	for _, code := range fieldCodes {
 		field, ok := registry.Get(code)
 		if !ok {
-			return ctx, fmt.Errorf("plugin: WithPluginWrite: extension field %q is not registered (call RegisterField in Init before WithPluginWrite)", code)
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is not registered (call RegisterField in Init before PluginWriteContext/WithPluginWrite)", code)
 		}
 		if !field.Access.PluginOnlyWrite {
-			return ctx, fmt.Errorf("plugin: WithPluginWrite: extension field %q is not PluginOnlyWrite", code)
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is not PluginOnlyWrite", code)
 		}
 		if owner := registry.Owner(code); owner != "" && owner != pluginName {
-			return ctx, fmt.Errorf("plugin: WithPluginWrite: extension field %q is owned by %q, not %q", code, owner, pluginName)
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is owned by %q, not %q", code, owner, pluginName)
 		}
 	}
 	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...), nil

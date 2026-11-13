@@ -189,6 +189,7 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		})
 	}
 	app.cliRegistry = r.cliRegistry
+	app.WarnUnownedPluginOnlyFields()
 	return summary
 }
 
