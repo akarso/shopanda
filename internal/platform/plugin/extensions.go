@@ -86,17 +86,17 @@ func (a *App) WarnUnownedPluginOnlyFields() {
 	if a.Logger == nil {
 		return
 	}
+	// Lock order: App.extensionRegistryMu, then Registry.mu (never the reverse).
 	a.extensionRegistryMu.Lock()
-	if a.warnedUnowned == nil {
-		a.warnedUnowned = make(map[string]struct{})
-	}
 	var fresh []string
+	current := make(map[string]struct{})
 	for _, code := range a.extensionRegistry.UnownedPluginOnly() {
+		current[code] = struct{}{}
 		if _, seen := a.warnedUnowned[code]; !seen {
-			a.warnedUnowned[code] = struct{}{}
 			fresh = append(fresh, code)
 		}
 	}
+	a.warnedUnowned = current // prune: removed then re-registered fields warn again
 	a.extensionRegistryMu.Unlock()
 	if len(fresh) == 0 {
 		return

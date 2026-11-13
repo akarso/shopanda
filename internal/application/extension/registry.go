@@ -14,6 +14,10 @@ import (
 var (
 	// ErrAlreadyRegistered indicates a duplicate field code in the registry.
 	ErrAlreadyRegistered = errors.New("extension field already registered")
+	// ErrNotRegistered indicates Replace on a code that is not in the registry.
+	ErrNotRegistered = errors.New("extension field not registered")
+	// ErrPluginOnlyImmutable indicates Replace would change the guarded shape of a plugin-only field.
+	ErrPluginOnlyImmutable = errors.New("extension plugin-only field definition is immutable")
 )
 
 // ListFilter narrows registry list results.
@@ -163,22 +167,46 @@ func (r *Registry) mergeField(field domainext.ExtensionField) bool {
 	return true
 }
 
-// Replace updates an existing registered field definition. It refuses to clear
-// PluginOnlyWrite on an owned plugin-only field, so a holder of the raw registry
-// cannot silently drop the guard. Remove is not owner-aware: it is core wiring
-// (admin field delete, loader rollback), not a plugin API.
+// ValidateReplace reports whether Replace(field) would be accepted, without
+// changing anything. Call it before persisting so the store and the registry stay
+// in sync. Errors wrap ErrNotRegistered or ErrPluginOnlyImmutable.
+func (r *Registry) ValidateReplace(field domainext.ExtensionField) error {
+	if r == nil {
+		return fmt.Errorf("extension: registry must not be nil")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.validateReplaceLocked(field)
+}
+
+func (r *Registry) validateReplaceLocked(field domainext.ExtensionField) error {
+	current, exists := r.fields[field.Code]
+	if !exists {
+		return fmt.Errorf("%w: %q", ErrNotRegistered, field.Code)
+	}
+	if !current.Access.PluginOnlyWrite {
+		return nil
+	}
+	if !field.Access.PluginOnlyWrite || field.Scope != current.Scope || field.Type != current.Type ||
+		field.StorageMode != current.StorageMode || field.Visibility != current.Visibility {
+		return fmt.Errorf("%w: %q (PluginOnlyWrite, Scope, Type, StorageMode and Visibility cannot change)", ErrPluginOnlyImmutable, field.Code)
+	}
+	return nil
+}
+
+// Replace updates an existing registered field definition. On a plugin-only field
+// (owned or not) it refuses to change PluginOnlyWrite, Scope, Type, StorageMode or
+// Visibility, so a holder of the raw registry cannot drop the guard or
+// reinterpret stored values. Remove is not owner-aware: it is core wiring (admin
+// field delete, loader rollback), not a plugin API.
 func (r *Registry) Replace(field domainext.ExtensionField) error {
 	if r == nil {
 		return fmt.Errorf("extension: registry must not be nil")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	current, exists := r.fields[field.Code]
-	if !exists {
-		return fmt.Errorf("extension field %q not registered", field.Code)
-	}
-	if r.owners[field.Code] != "" && current.Access.PluginOnlyWrite && !field.Access.PluginOnlyWrite {
-		return fmt.Errorf("extension field %q is plugin-only and owned by %q: PluginOnlyWrite cannot be cleared", field.Code, r.owners[field.Code])
+	if err := r.validateReplaceLocked(field); err != nil {
+		return err
 	}
 	r.fields[field.Code] = field
 	return nil

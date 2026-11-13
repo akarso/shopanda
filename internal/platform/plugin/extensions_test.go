@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
@@ -405,7 +406,8 @@ func TestRegistry_Replace_CannotDisablePluginOnlyOnOwnedField(t *testing.T) {
 
 // Known limit (documented): the loader attributes by snapshot-diff, so a
 // registration by another plugin's background goroutine during Init is blamed on
-// the plugin being initialised. Fixing it needs a per-plugin App facade.
+// the plugin being initialised. Fixing it needs a per-plugin App facade (Init
+// signature change, tracked in PR-1092 follow-ups); THIS TEST IS EXPECTED TO CHANGE then.
 func TestRegistry_InitAll_BackgroundRegistrationDuringOtherInit_KnownLimit(t *testing.T) {
 	log := testLogger()
 	app := testApp(log)
@@ -435,5 +437,97 @@ func TestApp_PluginWriteContext_ErrorsNameThemselves(t *testing.T) {
 	_, err := app.PluginWriteContext(context.Background(), "", "x")
 	if err == nil || !strings.Contains(err.Error(), "PluginWriteContext:") || strings.Contains(err.Error(), "WithPluginWrite:") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRegistry_Replace_PluginOnlyShapeIsImmutable(t *testing.T) {
+	reg := extension.NewRegistry()
+	if err := reg.Register(ownerTestField("free.design")); err != nil { // unowned plugin-only
+		t.Fatal(err)
+	}
+	if err := reg.RegisterOwned(ownerTestField("acme.design"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"free.design", "acme.design"} {
+		base, _ := reg.Get(code)
+		for name, mut := range map[string]func(*domainext.ExtensionField){
+			"flag":    func(f *domainext.ExtensionField) { f.Access.PluginOnlyWrite = false },
+			"scope":   func(f *domainext.ExtensionField) { f.Scope = domainext.TargetProduct },
+			"type":    func(f *domainext.ExtensionField) { f.Type = domainext.FieldTypeBool },
+			"storage": func(f *domainext.ExtensionField) { f.StorageMode = domainext.StorageStored },
+		} {
+			f := base
+			mut(&f)
+			if err := reg.Replace(f); !errors.Is(err, extension.ErrPluginOnlyImmutable) {
+				t.Fatalf("%s/%s: err = %v, want ErrPluginOnlyImmutable", code, name, err)
+			}
+			if err := reg.ValidateReplace(f); !errors.Is(err, extension.ErrPluginOnlyImmutable) {
+				t.Fatalf("%s/%s: ValidateReplace err = %v", code, name, err)
+			}
+		}
+	}
+	missing, _ := reg.Get("acme.design")
+	missing.Code = "nope"
+	if err := reg.Replace(missing); !errors.Is(err, extension.ErrNotRegistered) {
+		t.Fatalf("err = %v, want ErrNotRegistered", err)
+	}
+}
+
+func TestApp_WarnUnowned_WarnsAgainAfterRemoveAndReRegister(t *testing.T) {
+	var buf bytes.Buffer
+	app := testApp(logger.NewWithWriter(&buf, "warn"))
+	reg := extension.NewRegistry()
+	app.SetExtensionRegistry(reg)
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+	reg.Remove("x.free")
+	app.WarnUnownedPluginOnlyFields() // nothing unowned; prunes the dedupe set
+	buf.Reset()
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+	if !strings.Contains(buf.String(), "x.free") {
+		t.Fatalf("re-registered unowned field must warn again: %q", buf.String())
+	}
+}
+
+func TestRegistry_InitAll_TwiceOnSameApp_WarnsOncePerField(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "warn")
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("core.free")); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(log)
+	reg.InitAll(app)
+	reg.InitAll(app)
+	if n := strings.Count(buf.String(), "extension.plugin_only.unowned"); n != 1 {
+		t.Fatalf("warnings = %d, want 1", n)
+	}
+}
+
+func TestRegistry_InitAll_FailedInitLeavesHooksButRemovesFields_KnownLimit(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	var bus = app.Bus
+	fired := 0
+	reg.Register(&extFuncPlugin{name: "p", init: func(app *plugin.App) error {
+		bus.On("probe", func(context.Context, event.Event) error { fired++; return nil })
+		_ = app.Extensions().RegisterField(ownerTestField("p.f"))
+		return errors.New("boom")
+	}})
+	reg.InitAll(app)
+	if _, ok := app.ExtensionRegistry().Get("p.f"); ok {
+		t.Fatal("field must be rolled back")
+	}
+	_ = bus.Publish(context.Background(), event.New("probe", "test", nil))
+	if fired != 1 {
+		t.Fatalf("documented limit: handler registered by failed Init stays (fired=%d)", fired)
 	}
 }
