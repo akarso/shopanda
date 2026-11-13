@@ -79,6 +79,7 @@ type App struct {
 
 	extensionRegistry   *extension.Registry
 	extensionRegistryMu sync.Mutex
+	warnedUnowned       map[string]struct{} // guarded by extensionRegistryMu
 
 	hookRegistry   *hooksapp.Registry
 	hookRegistryMu sync.Mutex

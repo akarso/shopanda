@@ -30,6 +30,23 @@ func NewValueService(registry *Registry, repo domainext.ValueRepository) *ValueS
 	return &ValueService{registry: registry, repo: repo}
 }
 
+// pluginWriter returns the trusted registrant for code and whether it may write
+// the field: the context must name code and, when the field has a recorded owner,
+// the registrant must be that owner. Unowned fields (admin-created, or registered
+// outside plugin Init) accept any registrant. The owner is read at write time, so a
+// field removed and re-registered under another owner is judged by the new owner.
+// The registrant is still a plain string: this stops accidental and cross-plugin
+// writes; it is not a security boundary against in-process code that impersonates
+// the owner's name.
+func (s *ValueService) pluginWriter(ctx context.Context, code string) (string, bool) {
+	registrant, ok := pluginWriteFor(ctx, code)
+	if !ok {
+		return "", false
+	}
+	owner := s.registry.Owner(code)
+	return registrant, owner == "" || owner == registrant
+}
+
 // List returns stored values for target, filtering private fields unless allowed.
 func (s *ValueService) List(ctx context.Context, target domainext.Target, includePrivate bool) ([]domainext.Value, error) {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
@@ -215,8 +232,8 @@ func (s *ValueService) validateBatchValues(ctx context.Context, target domainext
 		}
 		rowUpdatedBy := updatedBy
 		if field.Access.PluginOnlyWrite {
-			registrant, trusted := pluginWriteFor(ctx, code)
-			if !trusted {
+			registrant, allowed := s.pluginWriter(ctx, code)
+			if !allowed {
 				return nil, domainext.ErrForbiddenPluginOnlyField
 			}
 			rowUpdatedBy = "plugin:" + registrant
@@ -299,7 +316,7 @@ func (s *ValueService) Delete(ctx context.Context, target domainext.Target, fiel
 		return domainext.ErrForbiddenPrivateField
 	}
 	if field.Access.PluginOnlyWrite {
-		if _, trusted := pluginWriteFor(ctx, fieldCode); !trusted {
+		if _, allowed := s.pluginWriter(ctx, fieldCode); !allowed {
 			return domainext.ErrForbiddenPluginOnlyField
 		}
 	}

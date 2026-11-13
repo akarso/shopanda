@@ -99,6 +99,15 @@ func (s *FieldService) Update(ctx context.Context, code string, def domainext.Fi
 			return domainext.ExtensionField{}, err
 		}
 	}
+	// Refuse before persisting so the store and the registry cannot diverge.
+	if err := s.registry.ValidateReplace(field); err != nil {
+		if errors.Is(err, ErrPluginOnlyImmutable) {
+			return domainext.ExtensionField{}, ErrFieldPluginOnly
+		}
+		if !errors.Is(err, ErrNotRegistered) {
+			return domainext.ExtensionField{}, err
+		}
+	}
 	if err := s.repo.Save(ctx, field); err != nil {
 		if apperror.Is(err, apperror.CodePluginOnlyFieldImmutable) {
 			return domainext.ExtensionField{}, ErrFieldPluginOnly
@@ -106,6 +115,9 @@ func (s *FieldService) Update(ctx context.Context, code string, def domainext.Fi
 		return domainext.ExtensionField{}, err
 	}
 	if err := s.registry.Replace(field); err != nil {
+		if !errors.Is(err, ErrNotRegistered) {
+			return domainext.ExtensionField{}, err
+		}
 		if err := s.registry.Register(field.ToFieldDef()); err != nil {
 			return domainext.ExtensionField{}, mapRegisterError(err)
 		}

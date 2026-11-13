@@ -300,6 +300,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
+	pluginApp.WarnUnownedPluginOnlyFields()
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)
 	extensionValueService := extensionApp.NewValueService(extensionRegistry, repos.extensionValueRepo)
 	if err := plugin.LoadPersisted(context.Background(), repos.configRepo, cfg, registry.ConfigRegistry()); err != nil {

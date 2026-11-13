@@ -165,7 +165,9 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		}
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
-		if err := r.safeInit(live, app); err != nil {
+		extBefore := app.extensionCodeSnapshot()
+		err := app.settleExtensionFields(name, extBefore, r.safeInit(live, app))
+		if err != nil {
 			live.State = StateFailed
 			live.Err = err
 			summary.Failed++
@@ -187,6 +189,7 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		})
 	}
 	app.cliRegistry = r.cliRegistry
+	app.WarnUnownedPluginOnlyFields()
 	return summary
 }
 

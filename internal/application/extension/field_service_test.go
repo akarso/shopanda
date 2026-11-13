@@ -3,6 +3,7 @@ package extension_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -321,4 +322,145 @@ func TestFieldService_RepoImmutableErrorMapsToErrFieldPluginOnly(t *testing.T) {
 	if err := svc.Delete(context.Background(), "acme.race"); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
 		t.Fatalf("Delete err = %v", err)
 	}
+}
+
+func TestFieldService_AdminUpdateKeepsOwnerAndDeleteClearsIt(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(serviceFieldDef("acme.label"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+	def := serviceFieldDef("acme.label")
+	def.Label = "Renamed"
+	if _, err := svc.Update(context.Background(), "acme.label", def); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.label"); got != "acme" {
+		t.Fatalf("owner after admin Update = %q, want acme", got)
+	}
+	if err := svc.Delete(context.Background(), "acme.label"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.label"); got != "" {
+		t.Fatalf("owner after Delete = %q, want empty", got)
+	}
+}
+
+func TestRegistry_Replace_PluginOnlyRolesAndValidationStayMutable(t *testing.T) {
+	// Deliberate: only the shape that reinterprets stored values is frozen.
+	reg := extensionapp.NewRegistry()
+	def := serviceFieldDef("acme.locked")
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if err := reg.RegisterOwned(def, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := reg.Get("acme.locked")
+	f.Access.ReadRoles = []string{"admin"}
+	f.Access.WriteRoles = []string{"admin"}
+	f.Validation = domainext.Validation{Required: true}
+	if err := reg.Replace(f); err != nil {
+		t.Fatalf("Replace roles/validation: %v", err)
+	}
+}
+
+func TestRegistry_Replace_NonPluginOnlyMayBecomePluginOnly(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(serviceFieldDef("acme.open")); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := reg.Get("acme.open")
+	f.Access.PluginOnlyWrite = true
+	if err := reg.Replace(f); err != nil {
+		t.Fatalf("false->true flip: %v", err)
+	}
+	f.Access.PluginOnlyWrite = false
+	if err := reg.Replace(f); !errors.Is(err, extensionapp.ErrPluginOnlyImmutable) {
+		t.Fatalf("true->false flip err = %v", err)
+	}
+}
+
+// Pins that guardPluginOnly (service) and ValidateReplace (registry) agree.
+func TestFieldService_UpdateAgreesWithValidateReplace(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := serviceFieldDef("acme.locked")
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if err := reg.Register(def); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+	changed := def
+	changed.Type = domainext.FieldTypeBool
+	nf, err := domainext.NewExtensionField(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.ValidateReplace(nf); !errors.Is(err, extensionapp.ErrPluginOnlyImmutable) {
+		t.Fatalf("ValidateReplace err = %v", err)
+	}
+	if _, err := svc.Update(context.Background(), "acme.locked", changed); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Update err = %v", err)
+	}
+	if _, err := repo.FindByCode(context.Background(), "acme.locked"); err == nil {
+		t.Fatal("nothing may be persisted when the update is refused")
+	}
+}
+
+// lockedFieldRepo serialises the unsynchronised in-memory fake for -race runs.
+type lockedFieldRepo struct {
+	mu sync.Mutex
+	r  *memFieldRepo
+}
+
+func (l *lockedFieldRepo) Create(ctx context.Context, f domainext.ExtensionField) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Create(ctx, f)
+}
+func (l *lockedFieldRepo) Save(ctx context.Context, f domainext.ExtensionField) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Save(ctx, f)
+}
+func (l *lockedFieldRepo) FindByCode(ctx context.Context, c string) (domainext.ExtensionField, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.FindByCode(ctx, c)
+}
+func (l *lockedFieldRepo) ListActive(ctx context.Context, s domainext.TargetType) ([]domainext.ExtensionField, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.ListActive(ctx, s)
+}
+func (l *lockedFieldRepo) SoftDelete(ctx context.Context, c string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.SoftDelete(ctx, c)
+}
+
+func TestFieldService_ConcurrentUpdateAndRegistryMutation(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	svc := extensionapp.NewFieldService(reg, &lockedFieldRepo{r: newMemFieldRepo()})
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, serviceFieldDef("acme.open")); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			d := serviceFieldDef("acme.open")
+			d.Label = "L2"
+			_, _ = svc.Update(ctx, "acme.open", d)
+		}()
+		go func() {
+			defer wg.Done()
+			if f, ok := reg.Get("acme.open"); ok {
+				_ = reg.Replace(f)
+			}
+			reg.Remove("acme.open")
+		}()
+	}
+	wg.Wait()
 }

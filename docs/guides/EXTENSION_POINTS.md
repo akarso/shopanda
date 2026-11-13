@@ -1,241 +1,533 @@
-# Extension Points — Which Mechanism?
+package plugin_test
 
-Shopanda has grown five different "run some code at a certain point" mechanisms (events, hooks, the pricing pipeline, the checkout workflow, composition steps) plus close to twenty registries for wiring in infrastructure and metadata. Each one was added for a real reason, but a plugin author facing all of them at once has no single place that says *"you want this one, not that one."* This guide is that place.
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
 
-Audience: plugin authors, integrators
-Status: reference guide (Phase 10 architecture audit follow-up, PR-1026)
+	"github.com/akarso/shopanda/internal/application/extension"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/plugin"
+)
 
-Related:
+func TestApp_Extensions_RegisterField(t *testing.T) {
+	reg := extension.NewRegistry()
+	app := &plugin.App{}
+	app.SetExtensionRegistry(reg)
 
-- [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) — how to coordinate *multiple* plugins using these mechanisms (ordering, precedence, task→mechanism table). Read this guide first to pick a mechanism; read that one once you're sharing a seam with another plugin.
-- [Plugin Authoring Guide](../../PLUGINS.md) — the full API reference table and infrastructure ports
-- [Developer Extension Guide](DEVELOPER.md) — tutorial-style walkthroughs
-- [Extension API policy](EXTENSION_API.md) — `pkg/extapi` stability contract
+	err := app.Extensions().RegisterField(domainext.FieldDef{
+		Code:        "acme.gift.wrap_level",
+		Label:       "Gift wrap",
+		Type:        domainext.FieldTypeEnum,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+		Validation:  domainext.EnumOptions("none", "standard"),
+	})
+	if err != nil {
+		t.Fatalf("RegisterField: %v", err)
+	}
 
----
-
-## Pick a mechanism
-
-Answer these in order:
-
-```text
-Does this run as part of one request/workflow, where step B needs step A's
-output right now (same call stack)?
-  │
-  ├─ no ──> Does it react to something that already happened (an entity was
-  │         created/updated/deleted), fire-and-forget, no return value needed?
-  │           │
-  │           ├─ yes ──> EVENTS (Bus.On / Bus.OnAsync)
-  │           │
-  │           └─ no ───> you probably want a registry (infra port, config,
-  │                      CLI command, admin route — see "Registries" below)
-  │
-  └─ yes ─> Which request/workflow is it?
-              │
-              ├─ Cart mutation (add/update/remove item, validate)
-              │     ──> HOOKS (app.Hooks(name).Register(...))
-              │
-              ├─ Price calculation (fee, discount, tax)
-              │     ──> PRICING PIPELINE (app.RegisterPricingStep)
-              │
-              ├─ Checkout (validate, reserve, pay, create order)
-              │     ──> CHECKOUT WORKFLOW (app.RegisterCheckoutStep)
-              │
-              └─ Storefront response shaping (PDP/PLP — SEO, price
-                 indication, reviews, compliance blocks)
-                    ──> COMPOSITION STEPS (app.RegisterCompositionStep)
-```
-
-The four "same request" branches (hooks, pricing pipeline, checkout workflow, composition steps) all look similar — ordered handlers over a mutable context, first error stops the chain — but they are **four separately-typed mechanisms, not one generic system with four call sites**. Picking the wrong one usually still compiles (most take `step any`), so this guide exists because the compiler won't catch the mistake for you.
-
----
-
-## The four "same request" mechanisms
-
-### Hooks — `internal/application/hooks`
-
-```go
-// internal/application/hooks/context.go
-type Handler func(ctx *Context) error
-type Context struct{ Name string; /* payload, unexported */ }
-func (c *Context) Get(key string) (interface{}, bool)
-func (c *Context) Set(key string, value interface{})
-
-// internal/application/hooks/registry.go
-func (r *Registry) Register(hook string, priority int, registrant string, handler Handler) error
-func (r *Registry) Invoke(ctx context.Context, hookCtx *Context) error
-```
-
-Plugin-facing (`internal/platform/plugin/hooks.go`, types from `pkg/extapi`):
-
-```go
-app.Hooks("acme/assortment").Register(extapi.HookCartValidate, 100, func(hctx *extapi.HookContext) error {
-    cart, _ := hctx.Get("cart")
-    // inspect / append validation issues; return error to abort the mutation
-    return nil
-})
-```
-
-- **Synchronous, priority-ordered** (lower runs first), against a **mutable shared payload** — later handlers see earlier handlers' writes via `Get`/`Set`.
-- A handler can **veto**: returning an error aborts the chain and the triggering request fails.
-- Panics inside a handler are recovered and turned into an error — a broken plugin hook can't crash the process, only fail its own chain.
-- Fixed set of hook points today, all cart-lifecycle (`HookCartAddItemBefore/After`, `HookCartUpdateItemBefore`, `HookCartRemoveItemAfter`, `HookCartRecalculateBefore`, `HookCartValidate`) — see `pkg/extapi/hooks.go` and `GET /api/v1/admin/extensions/hooks` for the live catalog.
-- **Use for:** validating or enriching a cart mutation within the same request, where a plugin needs to read what an earlier plugin already decided.
-- **Don't use for:** checkout (there's a dedicated mechanism below), or anything that should keep running after the response is sent (that's an event).
-
-### Pricing pipeline — `internal/domain/pricing`
-
-```go
-// internal/domain/pricing/step.go
-type PricingStep interface {
-    Name() string
-    Apply(ctx context.Context, pctx *PricingContext) error
+	field, ok := app.ExtensionRegistry().Get("acme.gift.wrap_level")
+	if !ok {
+		t.Fatal("expected field in shared registry")
+	}
+	if field.Scope != domainext.TargetProduct {
+		t.Errorf("Scope = %q", field.Scope)
+	}
 }
 
-// internal/domain/pricing/pipeline.go
-type Pipeline struct{ steps []PricingStep }
-func NewPipeline(steps ...PricingStep) Pipeline
-func (p Pipeline) Execute(ctx context.Context, pctx *PricingContext) error
-```
-
-Plugin-facing: `app.RegisterPricingStep(step, position...)` (`internal/platform/plugin/pricing_steps.go`) — `position` is `before:<anchor>`, `after:<anchor>`, or `replace:<anchor>` against `CoreStepCatalog = []string{"base", "catalog_promotions", "cart_promotions", "tax", "finalize"}` (default `after:base` if omitted). Actual merge happens in `internal/application/pricing/position.go`'s `MergePluginSteps`.
-
-- Fixed, non-generic pipeline over exactly one type, `PricingContext` — this is the only same-request mechanism with a `replace:` position (a plugin can swap out a core step entirely, e.g. a custom tax calculation replacing core tax).
-- **Use for:** fees, discounts, custom promotion pricing adjustments.
-- Consumed from `internal/application/cart/service.go` and `internal/application/checkout/recalculate_pricing_step.go` — the same pipeline runs on every cart mutation *and* again inside checkout, so a pricing step must be idempotent across both call sites.
-
-### Checkout workflow — `internal/application/checkout`
-
-```go
-// internal/application/checkout/step.go
-type Step interface {
-    Name() string
-    Execute(ctx context.Context, cctx *Context) error
+func TestApp_Extensions_RegisterFieldDuplicate(t *testing.T) {
+	app := &plugin.App{}
+	def := domainext.FieldDef{
+		Code:        "acme.gift.wrap_level",
+		Label:       "Gift wrap",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+	}
+	if err := app.Extensions().RegisterField(def); err != nil {
+		t.Fatalf("first RegisterField: %v", err)
+	}
+	err := app.Extensions().RegisterField(def)
+	if err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("expected duplicate error, got %v", err)
+	}
 }
 
-// internal/application/checkout/workflow.go
-func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow
-func (w *Workflow) Execute(ctx context.Context, cctx *Context) error
-```
-
-Plugin-facing: `app.RegisterCheckoutStep(step, position...)` (`internal/platform/plugin/checkout_steps.go`) — `start`, `end` (default), `before:<anchor>`, `after:<anchor>` against `CoreStepCatalog` (`validate_cart, recalculate_pricing, reserve_inventory, create_order, select_shipping, initiate_payment`; no `replace:` here, unlike pricing).
-
-Looks like a `PricingStep` — ordered steps over a mutable context, halt-on-error — but it is a **separate, checkout-only type** with extra machinery baked in that the pricing pipeline doesn't have:
-
-- Publishes lifecycle events around every step (`checkout.step.started/completed`, `checkout.failed`, `checkout.completed`) — checkout is the one place where "workflow" and "events" overlap on purpose.
-- Wraps every step in its own OTel span (`checkout.step.<name>`) and records checkout metrics.
-- Recovers panics **per step** — but only to close and annotate that step's own span before re-panicking. This is not isolation: the panic still propagates out of `Execute` unbounded, exactly as if the per-step recover didn't exist. A panicking plugin step still fails the whole checkout request; whatever stops that from crashing the process is recovery further up the call stack (e.g. an HTTP-layer recovery middleware), not anything in `Workflow` itself.
-
-**Use for:** checkout-time validation or side effects (fraud checks, custom compliance holds, third-party fulfillment reservation) that must run inside the checkout transaction, not after it.
-
-**Context rule:** pass the request `ctx` into forward-progress blocking calls (DB, payment initiate, inventory reserve). Do **not** reuse it for compensating rollback or for persisting an already-committed side effect (PSP already charged; order already saved) — those need a detached bounded context (`context.WithoutCancel(parent)` + timeout). See [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md#cart-and-pricing-composition) for the full compensating-work pattern.
-
-### Composition steps — `internal/application/composition`
-
-```go
-// internal/application/composition/step.go
-type Step[T any] interface {
-    Name() string
-    Apply(ctx *T) error
+func TestApp_SetExtensionRegistry_NilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil extension registry")
+		}
+	}()
+	app := &plugin.App{}
+	app.SetExtensionRegistry(nil)
 }
 
-// internal/application/composition/pipeline.go
-type Pipeline[T any] struct{ steps []Step[T] }
-func NewPipeline[T any]() *Pipeline[T]
-func (p *Pipeline[T]) AddStep(s Step[T])
-func (p *Pipeline[T]) Execute(ctx *T) error
-```
+func TestApp_Extensions_ConcurrentLazyInit(t *testing.T) {
+	app := &plugin.App{}
+	const workers = 8
+	refs := make([]*extension.Registry, workers)
+	done := make(chan struct{}, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			_ = app.Extensions()
+			refs[i] = app.ExtensionRegistry()
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		<-done
+	}
+	first := refs[0]
+	for i := 1; i < workers; i++ {
+		if refs[i] != first {
+			t.Fatalf("ExtensionRegistry pointer mismatch at worker %d", i)
+		}
+	}
+}
 
-Plugin-facing: `app.RegisterCompositionStep(pipeline, step)` (`internal/platform/plugin/plugin.go`) — `pipeline` is `"pdp"` or `"plp"`, `step` is asserted to `composition.Step[ProductContext]` or `composition.Step[ListingContext]` at wiring time (registered untyped as `any`, so a type mismatch fails at plugin init, not at compile time — double-check your `Step[T]`'s `T` matches the pipeline you registered against).
+func TestApp_WithPluginWrite_ValidatesCodesAgainstRegistry(t *testing.T) {
+	reg := extension.NewRegistry()
+	app := &plugin.App{}
+	app.SetExtensionRegistry(reg)
+	if err := app.Extensions().RegisterField(domainext.FieldDef{
+		Code: "acme.locked", Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Extensions().RegisterField(domainext.FieldDef{
+		Code: "acme.plain", Label: "P", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app.WithPluginWrite(context.Background(), "acme", "acme.locked") // ok
 
-- The only **generic** same-request mechanism, reused for both PDP (`ProductContext`) and PLP (`ListingContext`).
-- `Apply(ctx *T) error` takes **no `context.Context`** — unlike every other mechanism above. Composition steps are meant to be response-shaping transforms over an already-fetched, in-memory struct, not steps that make their own blocking network calls. A step that needs an external call (e.g. a PIM enrichment lookup) manages its own timeout internally instead of relying on request cancellation — see `plugins/pimdemo/plugin.go`.
-- Concrete core steps live in `internal/application/composition/*_step.go`: SEO meta/JSON-LD/canonical, catalog offer price and availability (product + listing), EU Omnibus price indication (product + listing variants), reviews aggregation, GPSR/WEEE compliance blocks. The product offer step runs before JSON-LD and price indication so those steps reuse `meta.offer`. JSON-LD emits an Offer only when that snapshot has an amount. Listing offer runs before listing price indication and writes `meta.offers`. Later plugin steps must not replace those keys.
-- **Use for:** enriching a storefront product/listing API response — extra fields, computed badges, external PIM/review data.
+	for name, code := range map[string]string{"typo": "acme.lockd", "not plugin-only": "acme.plain"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s: expected panic", name)
+				}
+			}()
+			app.WithPluginWrite(context.Background(), "acme", code)
+		}()
+	}
+}
 
----
+func TestApp_WithPluginWrite_PanicNamesRegistrationOrder(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	defer func() {
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "RegisterField") {
+			t.Fatalf("panic = %q, want hint about registering the field first", msg)
+		}
+	}()
+	app.WithPluginWrite(context.Background(), "acme", "acme.locked")
+}
 
-## Events — `internal/platform/event`
+func TestApp_ExtensionsFor_RecordsOwnerAndGuardsWithPluginWrite(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	def := func(code string) domainext.FieldDef {
+		return domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+			StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+	}
+	if err := app.ExtensionsFor("acme").RegisterField(def("acme.owned")); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Extensions().RegisterField(def("legacy.free")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.owned"); got != "acme" {
+		t.Fatalf("owner = %q", got)
+	}
+	app.WithPluginWrite(context.Background(), "acme", "acme.owned")    // owner: ok
+	app.WithPluginWrite(context.Background(), "anyone", "legacy.free") // unowned: ok
 
-The one mechanism above that is *not* about the current request.
+	defer func() {
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "owned by") {
+			t.Fatalf("panic = %q, want owner mismatch message", msg)
+		}
+	}()
+	app.WithPluginWrite(context.Background(), "intruder", "acme.owned")
+}
 
-```go
-type Handler func(ctx context.Context, evt Event) error
-func (b *Bus) On(name string, h Handler)       // synchronous
-func (b *Bus) OnAsync(name string, h Handler)  // asynchronous
-func (b *Bus) Publish(ctx context.Context, evt Event) error
-```
+func TestApp_ExtensionsFor_BlankOwnerPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	(&plugin.App{}).ExtensionsFor("  ")
+}
 
-- `On` handlers run **sequentially, in the publisher's own goroutine** — an error aborts `Publish` (and skips remaining sync handlers *and* all async ones). This is the escape hatch for "must happen before the request completes, but isn't a first-class step in any of the four mechanisms above" — used sparingly (e.g. `internal/application/rewrite/subscriber.go` needs a URL slug to exist before the response returns).
-- `OnAsync` handlers each run in their **own goroutine**, after all sync handlers succeed, with the **bus's shutdown context** — not the request context, so a client disconnect doesn't cancel a webhook dispatch that's already started. Errors are logged, not propagated; nothing retries them beyond what the handler itself enqueues.
-- No ordering guarantee across handlers for the same event name.
-- **Use for:** side effects and notifications that should happen *because of* something, not *as part of* it — sending a webhook, invalidating a cache, notifying another system. `internal/application/webhook/dispatcher.go` is the canonical example: it subscribes `OnAsync` to every event in `domainwebhook.SupportedEvents` and enqueues a delivery job.
-- **Don't use for:** same-request sequencing ("run B after A, and B needs A's return value") — that's exactly what the four mechanisms above exist for. An async handler that assumes it runs before some other in-request code will occasionally lose that race.
-- Keep `OnAsync` bodies short (enqueue a job, don't call a third-party API inline) — see [RUNBOOK.md's "Event bus drain"](../../RUNBOOK.md#event-bus-drain-sigterm) for the shutdown-grace budget a slow handler eats into. For outbound / retryable work from a domain event, prefer `pluginsdk.Integration(slug).RegisterOnEvent(...)` — serve wires the enqueue with envelope `trigger=event`. `Enqueue` is for run-now (always stamps `trigger=manual`). A failed enqueue from the bus is log-only (`event.async_handler.failed`); durability begins only after the queue accepts the job. The example plugin uses `RegisterOnEvent` for `order.created`.
+type extFuncPlugin struct {
+	name string
+	init func(app *plugin.App) error
+}
 
----
+func (p *extFuncPlugin) Name() string               { return p.name }
+func (p *extFuncPlugin) Init(app *plugin.App) error { return p.init(app) }
 
-## Gotcha: two things named "Pipeline"
+func ownerTestField(code string) domainext.FieldDef {
+	return domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+}
 
-`internal/domain/pricing.Pipeline` and `internal/application/composition.Pipeline[T]` share a name and a shape (ordered steps, halt-on-error) but are **unrelated Go types with no common interface** — there is no `type Pipeline interface` anywhere that both satisfy. If you're reading code and see `Pipeline`, check the import path before assuming which one it is. The checkout `Workflow` (above) is really a third member of this same family — steps + mutable context + halt-on-error — that simply isn't named "Pipeline" at all.
+func TestRegistry_InitAll_BindsExtensionOwnerToLoadedPlugin(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+		return app.Extensions().RegisterField(ownerTestField("acme.design")) // legacy call, loader binds owner
+	}})
+	reg.Register(&extFuncPlugin{name: "evil", init: func(app *plugin.App) error {
+		return app.ExtensionsFor("acme").RegisterField(ownerTestField("evil.squat")) // squatting another name
+	}})
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
 
-If you're looking for a single unifying "Step" interface across all four same-request mechanisms: there isn't one, and adding one is explicitly out of scope for this platform (see [PLUGIN_COMPOSITION.md's core rule](PLUGIN_COMPOSITION.md#core-rule) — chain handlers, don't build a framework to unify them). This guide's job is to help you pick the right one quickly, not to collapse them.
+	summary := reg.InitAll(app)
 
----
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner of acme.design = %q, want acme (bound by loader)", got)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1 (squatting plugin must fail Init)", summary.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("evil.squat"); ok {
+		t.Fatal("squatted field must not be registered")
+	}
+	// Outside Init the legacy call stays unowned.
+	if err := app.Extensions().RegisterField(ownerTestField("late.free")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("late.free"); got != "" {
+		t.Fatalf("owner outside Init = %q, want empty", got)
+	}
+}
 
-## Registries
+func TestApp_WithPluginWrite_TrimsRegistrantBeforeOwnerCheck(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.ExtensionsFor(" acme ").RegisterField(ownerTestField("acme.design")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner = %q, want trimmed", got)
+	}
+	app.WithPluginWrite(context.Background(), " acme ", "acme.design") // must not panic
+}
 
-Everything above is about *when your code runs*. Registries are about *what your plugin makes available* — infrastructure implementations, metadata, routes, permissions — resolved once at startup (`Init`), not re-invoked per request the way hooks/steps are.
+func TestApp_UnownedPluginOnlyFields_ListsOnlyUnowned(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	_ = app.ExtensionsFor("acme").RegisterField(ownerTestField("acme.owned"))
+	_ = app.Extensions().RegisterField(ownerTestField("legacy.free"))
+	plain := ownerTestField("legacy.plain")
+	plain.Access = domainext.Access{}
+	_ = app.Extensions().RegisterField(plain)
+	got := app.UnownedPluginOnlyFields()
+	if len(got) != 1 || got[0] != "legacy.free" {
+		t.Fatalf("UnownedPluginOnlyFields = %v, want [legacy.free]", got)
+	}
+}
 
-Every plugin-facing registry follows the same shape: a `Register*` method that records **who** registered **what**, usually reached through a scoped wrapper keyed by your plugin's name (`app.Hooks(name)`, `app.Export(name)`, `app.Slots(name)`, `app.PromotionRules(name)`) rather than a raw registry object. Learn that idiom once and every registry below works the same way.
+func TestRegistry_InitAll_FailedInitRollsBackItsExtensionFields(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	failing := true
+	newReg := func() *plugin.Registry {
+		reg := plugin.NewRegistry(log)
+		reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+			if err := app.Extensions().RegisterField(ownerTestField("acme.design")); err != nil {
+				return err
+			}
+			if failing {
+				return errors.New("init failed after registering")
+			}
+			return nil
+		}})
+		return reg
+	}
+	if s := newReg().InitAll(app); s.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", s.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("acme.design"); ok {
+		t.Fatal("failed plugin's fields must be rolled back")
+	}
+	failing = false
+	if s := newReg().InitAll(app); s.Failed != 0 || s.Initialized != 1 {
+		t.Fatalf("retry summary = %+v, want clean init (no ErrAlreadyRegistered)", s)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner after retry = %q", got)
+	}
+}
 
-> This table is manually maintained, not generated, and this exact kind of table has drifted from source before (an earlier revision of this table, and of the equivalent one in [PLUGINS.md](../../PLUGINS.md#extension-mechanisms), both documented a nonexistent `Assets().RegisterManifest(...)` call). If a call below doesn't compile, trust the compiler over this page: `grep -n "^func (a \*App) Register" internal/platform/plugin/*.go` lists every real plugin-facing `Register*` signature directly from source.
+func TestRegistry_InitAll_LateRegistrationsStayUnowned(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	var stored *plugin.Extensions
+	proceed := make(chan struct{})
+	done := make(chan struct{})
+	reg.Register(&extFuncPlugin{name: "a", init: func(app *plugin.App) error {
+		stored = app.Extensions() // used later, e.g. in Start
+		go func() {
+			<-proceed // background work after Init finished
+			_ = app.Extensions().RegisterField(ownerTestField("a.bg"))
+			close(done)
+		}()
+		return nil
+	}})
+	reg.Register(&extFuncPlugin{name: "b", init: func(app *plugin.App) error { return nil }})
+	reg.InitAll(app)
 
-| Registry | File | Registers | Plugin-facing API |
-| --- | --- | --- | --- |
-| Hooks | `internal/application/hooks/registry.go` | `hooks.Handler` (priority + registrant) | `app.Hooks(name).Register(...)` |
-| Extension fields | `internal/application/extension/registry.go` | `domainext.FieldDef` (custom fields on entities) | `app.Extensions().RegisterField(...)`; trusted writes: `app.WithPluginWrite(ctx, name, codes...)` (see below) |
-| Export row hooks | `internal/application/exportctx/registry.go` | export `RowHandler` per entity | `app.Export(name).RegisterRowHook(...)` |
-| Import row hooks | `internal/application/importctx/registry.go` | import `RowHandler` per entity | `app.Import(name).RegisterRowHook(...)` |
-| Assets | `internal/application/assets/registry.go` | route-gated CSS/JS manifest | `app.Assets(name).Register(manifest)` |
-| Slots | `internal/application/slots/registry.go` | HTML `Renderer` per `(anchor, placement)` | `app.Slots(name).RegisterRenderer(...)` |
-| Plugin config | `internal/platform/plugin/config.go` | admin-editable settings schema | `app.RegisterConfig(def)` |
-| RBAC permissions | `internal/domain/rbac/registry.go` | `rbac.Permission` + default roles | `app.RegisterPermission(perm, roles...)` |
-| CLI commands | `internal/platform/cli/registry.go` | `cli.Command` | `app.RegisterCommand(cmd)` |
-| Shipping providers | `internal/domain/shipping/registry.go` | `shipping.Provider` keyed by method | `app.RegisterShippingRateProvider(...)` |
-| Payment providers | `internal/domain/payment/registry.go` | `payment.Provider` keyed by method | `app.RegisterPaymentProvider(...)` |
-| Promotion evaluators | `internal/domain/promotion/evaluator_registry.go` | 4 evaluator func types (catalog/cart × condition/action) | `app.PromotionRules(name).RegisterCatalogCondition/Action/RegisterCartCondition/Action(...)` |
-| Public routes | `internal/platform/plugin/public_routes.go` | `http.Handler` per pattern; duplicate pattern panics at startup | `app.RegisterPublicRoute(pattern, handler)` |
-| Search provider | `internal/domain/search/search.go` (`SearchEngine`) | one implementation; second `Register*` panics | `app.RegisterSearchProvider(provider)` |
-| Cache provider | `internal/domain/cache/cache.go` (`Cache`) | one implementation; second `Register*` panics | `app.RegisterCache(c)` |
-| Queue provider | `internal/domain/jobs/job.go` (`Queue`) | one implementation; second `Register*` panics | `app.RegisterQueue(queue)` |
-| Sync jobs | `internal/platform/plugin/sync_job.go` | cron / event / manual outbound jobs → **`integration.sync.{slug}.{name}` only** (no free-form types) | `app.Integration(slug).RegisterSyncJob` or `pluginsdk` `RegisterCron` / `RegisterOnEvent` / `RegisterManual` + `Enqueue` |
-| Media storage provider | `internal/domain/media/storage.go` (`Storage`) | one implementation; second `Register*` panics | `app.RegisterMediaStorage(storage)` |
-| Tax calculator provider | `internal/domain/tax/calculator.go` (`Calculator`) | one implementation; second `Register*` panics | `app.RegisterTaxCalculator(calculator)` |
-| Mail sender provider | `internal/domain/mail/mail.go` (`Mailer`) | one implementation; second `Register*` panics | `app.RegisterMailSender(mailer)` |
+	close(proceed)
+	<-done
+	if err := stored.RegisterField(ownerTestField("a.start")); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"a.bg", "a.start"} {
+		if got := app.ExtensionRegistry().Owner(code); got != "" {
+			t.Fatalf("owner of late field %s = %q, want unowned (never misattributed to b)", code, got)
+		}
+	}
+	got := app.UnownedPluginOnlyFields()
+	if len(got) != 2 {
+		t.Fatalf("UnownedPluginOnlyFields = %v, want both late fields", got)
+	}
+}
 
-That's 19 rows as this table happens to break them down — shipping and payment providers (above) are multi-implementation-by-method rather than single-winner, so they're listed separately from the strictly-one-implementation ports here. The architecture audit's own "thirteen registries" figure isn't independently checkable from this repo (the audit document isn't in-tree) and may have grouped some of these differently than this table does — treat the row count here as "however many distinct `Register*` surfaces exist today," not a reconciliation against that number. Full API signatures and further detail live in [PLUGINS.md § Extension mechanisms](../../PLUGINS.md#extension-mechanisms) — this table exists to answer *"is there a registry for X"* at a glance; go there once you've found the right row.
+func TestRegistry_EntryNameMatchesPluginName(t *testing.T) {
+	reg := plugin.NewRegistry(testLogger())
+	reg.Register(&extFuncPlugin{name: "acme", init: func(*plugin.App) error { return nil }})
+	for _, e := range reg.Entries() {
+		if e.Name != e.Plugin.Name() {
+			t.Fatalf("entry name %q != Plugin.Name() %q", e.Name, e.Plugin.Name())
+		}
+	}
+}
 
-Two registries exist but aren't currently exposed through `plugin.App` — `catalog.AttributeRegistry` (`internal/domain/catalog/attribute_registry.go`, PIM attribute schema) and `admin.Registry` (`internal/domain/admin/registry.go`, admin form/grid schemas). If your plugin needs either, check current wiring in `cmd/api/wire_services.go` before assuming it's reachable from `Init` — this may change; this note is a snapshot, not a guarantee.
+func TestApp_PluginWriteContext_ReturnsErrorsInsteadOfPanicking(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.ExtensionsFor("acme").RegisterField(ownerTestField("acme.owned")); err != nil {
+		t.Fatal(err)
+	}
+	plain := ownerTestField("acme.plain")
+	plain.Access = domainext.Access{}
+	_ = app.ExtensionsFor("acme").RegisterField(plain)
 
----
+	if _, err := app.PluginWriteContext(context.Background(), " acme ", "acme.owned"); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		who   string
+		codes []string
+	}{
+		"owner mismatch":  {"intruder", []string{"acme.owned"}},
+		"unregistered":    {"acme", []string{"acme.typo"}},
+		"not plugin-only": {"acme", []string{"acme.plain"}},
+		"blank name":      {"  ", []string{"acme.owned"}},
+		"no codes":        {"acme", nil},
+	} {
+		if _, err := app.PluginWriteContext(context.Background(), tc.who, tc.codes...); err == nil {
+			t.Fatalf("%s: expected error", name)
+		}
+	}
+}
 
-## Where to go next
+func TestRegistry_InitAll_WarnsAboutUnownedPluginOnlyFields(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "warn")
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("core.free")); err != nil { // before Init: unowned
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+		return app.Extensions().RegisterField(ownerTestField("acme.design"))
+	}})
 
-- Coordinating **with another plugin** on the same seam (priority bands, `before:`/`after:` conventions across teams, what wins on a conflict) → [PLUGIN_COMPOSITION.md § Multi-team precedence](PLUGIN_COMPOSITION.md#multi-team-precedence)
-- A ready-made **task → mechanism** table (e.g. "ERP CSV column remap" → import row hook) → [PLUGIN_COMPOSITION.md § Integrator task → mechanism](PLUGIN_COMPOSITION.md#integrator-task--mechanism)
-- Full **API signatures** for every mechanism and infrastructure port → [PLUGINS.md § Extension mechanisms](../../PLUGINS.md#extension-mechanisms)
-- **Tutorial**-style walkthroughs → [DEVELOPER.md](DEVELOPER.md)
+	reg.InitAll(app) // any boot path, not only serve
 
-## Plugin-only writes (`Access.PluginOnlyWrite`)
+	out := buf.String()
+	if !strings.Contains(out, "extension.plugin_only.unowned") || !strings.Contains(out, "core.free") {
+		t.Fatalf("expected unowned warning naming core.free, got %q", out)
+	}
+	if strings.Contains(out, "acme.design") {
+		t.Fatalf("owned field must not be warned about: %q", out)
+	}
+	buf.Reset()
+	app.WarnUnownedPluginOnlyFields() // second call (serve after LoadPersisted): nothing new
+	if buf.Len() != 0 {
+		t.Fatalf("already-warned field must not be logged again: %q", buf.String())
+	}
+}
 
-A field registered with `Access{PluginOnlyWrite: true}` stays readable per its `Visibility` (a `public` field is still shown in cart/order responses) but only trusted plugin code may create, update **or delete** its values.
+func TestApp_WarnUnownedPluginOnlyFields_NilLoggerDoesNotPanic(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+}
 
-- **Untrusted paths** — public cart API (`POST /api/v1/carts/{cartId}/items`), SSR `/storefront/cart/*`, admin extension values API (PUT and DELETE), GraphQL — get **403** `forbidden_plugin_only_field` and nothing is stored or removed.
-- **Trusted write** — mark the context in-process and name the field codes the plugin owns: `ctx = app.WithPluginWrite(ctx, "my-plugin", "my.field")` (`extensionapp.WithPluginWrite`), then pass `ctx` to the service call (for example `cartService.AddItem(ctx, ...)`). Trust is **per field code**: other plugin-only fields in the same batch are still rejected, so forwarding request-derived `extensions` is safe as long as the codes you name are your own. The call panics on a blank plugin name or no codes. Stored rows get `updated_by = "plugin:<name>"`. Never take codes or the marker from request input.
-- **Trust is confined** — the event bus strips the marker on `Publish` (handlers never inherit it) and `cartService.AddItem` honours it only for the extension validate/upsert, stripping it for hooks and pricing; new core code that forwards `ctx` elsewhere must call `extensionapp.StripPluginWrite`. `WithPluginWrite` panics are recovered only by HTTP middleware, so never pass runtime-built codes from events or workers. `app.WithPluginWrite` panics if a code is not a registered `PluginOnlyWrite` field (call it after `RegisterField`).
-- **Not per-plugin isolation** — the registry does not record field owners, so "plugin-only" means *trusted in-process code*, not *only the owning plugin*. A plugin could name another plugin's code, and `updated_by = "plugin:<name>"` is an advisory, spoofable label (it replaces the cart actor on those rows). Review plugin code accordingly.
-- **Field definitions** — `PUT`/`DELETE /api/v1/admin/extensions/fields/{code}` on a plugin-only field return 403 `plugin_only_field_immutable` (checked in the service and atomically in the Postgres repo). Setting `plugin_only_write` on an ordinary field is a one-way latch via the API; retiring such a field (for example after uninstalling its plugin) is an operator DB change (soft-delete the row, restart) — no API or CLI for it yet.
-- **Line remove + re-add** — `RemoveItem` clears the line's values (ungated by design); re-adding the line from the storefront carries no plugin-only value, so plugins must (re)write it on add (e.g. via their own add path).
-- **Core internals stay trusted** — line removal and orphan cleanup (`DeleteAllForTarget`), `ClaimGuestCart` merge / copy (`CopyTarget`) and the order-item snapshot do not go through this check and keep handling these fields.
-- Adding a line with a plugin-only value from plugin code needs the plugin to hold the cart service; a dedicated `plugin.App` port for that is a separate step.
+func TestRegistry_Replace_CannotDisablePluginOnlyOnOwnedField(t *testing.T) {
+	reg := extension.NewRegistry()
+	if err := reg.RegisterOwned(ownerTestField("acme.design"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	field, _ := reg.Get("acme.design")
+	field.Access.PluginOnlyWrite = false
+	if err := reg.Replace(field); err == nil {
+		t.Fatal("Replace must refuse to clear PluginOnlyWrite on an owned plugin-only field")
+	}
+	got, _ := reg.Get("acme.design")
+	if !got.Access.PluginOnlyWrite {
+		t.Fatal("PluginOnlyWrite must stay set")
+	}
+}
+
+// Known limit (documented): the loader attributes by snapshot-diff, so a
+// registration by another plugin's background goroutine during Init is blamed on
+// the plugin being initialised. Fixing it needs a per-plugin App facade (Init
+// signature change, tracked in PR-1092 follow-ups); THIS TEST IS EXPECTED TO CHANGE then.
+func TestRegistry_InitAll_BackgroundRegistrationDuringOtherInit_KnownLimit(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "b", init: func(app *plugin.App) error {
+		done := make(chan struct{})
+		go func() { // stands in for plugin A's leftover goroutine
+			_ = app.ExtensionsFor("a").RegisterField(ownerTestField("a.bg"))
+			close(done)
+		}()
+		<-done
+		return nil
+	}})
+	summary := reg.InitAll(app)
+	if summary.Failed != 1 {
+		t.Fatalf("documented limit: B's Init fails on A's field (Failed=%d)", summary.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("a.bg"); ok {
+		t.Fatal("rolled back field must not stay registered")
+	}
+}
+
+func TestApp_PluginWriteContext_ErrorsNameThemselves(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	_, err := app.PluginWriteContext(context.Background(), "", "x")
+	if err == nil || !strings.Contains(err.Error(), "PluginWriteContext:") || strings.Contains(err.Error(), "WithPluginWrite:") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRegistry_Replace_PluginOnlyShapeIsImmutable(t *testing.T) {
+	reg := extension.NewRegistry()
+	if err := reg.Register(ownerTestField("free.design")); err != nil { // unowned plugin-only
+		t.Fatal(err)
+	}
+	if err := reg.RegisterOwned(ownerTestField("acme.design"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"free.design", "acme.design"} {
+		base, _ := reg.Get(code)
+		for name, mut := range map[string]func(*domainext.ExtensionField){
+			"flag":    func(f *domainext.ExtensionField) { f.Access.PluginOnlyWrite = false },
+			"scope":   func(f *domainext.ExtensionField) { f.Scope = domainext.TargetProduct },
+			"type":    func(f *domainext.ExtensionField) { f.Type = domainext.FieldTypeBool },
+			"storage": func(f *domainext.ExtensionField) { f.StorageMode = domainext.StorageStored },
+		} {
+			f := base
+			mut(&f)
+			if err := reg.Replace(f); !errors.Is(err, extension.ErrPluginOnlyImmutable) {
+				t.Fatalf("%s/%s: err = %v, want ErrPluginOnlyImmutable", code, name, err)
+			}
+			if err := reg.ValidateReplace(f); !errors.Is(err, extension.ErrPluginOnlyImmutable) {
+				t.Fatalf("%s/%s: ValidateReplace err = %v", code, name, err)
+			}
+		}
+	}
+	missing, _ := reg.Get("acme.design")
+	missing.Code = "nope"
+	if err := reg.Replace(missing); !errors.Is(err, extension.ErrNotRegistered) {
+		t.Fatalf("err = %v, want ErrNotRegistered", err)
+	}
+}
+
+func TestApp_WarnUnowned_WarnsAgainAfterRemoveAndReRegister(t *testing.T) {
+	var buf bytes.Buffer
+	app := testApp(logger.NewWithWriter(&buf, "warn"))
+	reg := extension.NewRegistry()
+	app.SetExtensionRegistry(reg)
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+	reg.Remove("x.free")
+	app.WarnUnownedPluginOnlyFields() // nothing unowned; prunes the dedupe set
+	buf.Reset()
+	if err := app.Extensions().RegisterField(ownerTestField("x.free")); err != nil {
+		t.Fatal(err)
+	}
+	app.WarnUnownedPluginOnlyFields()
+	if !strings.Contains(buf.String(), "x.free") {
+		t.Fatalf("re-registered unowned field must warn again: %q", buf.String())
+	}
+}
+
+func TestRegistry_InitAll_TwiceOnSameApp_WarnsOncePerField(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "warn")
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.Extensions().RegisterField(ownerTestField("core.free")); err != nil {
+		t.Fatal(err)
+	}
+	reg := plugin.NewRegistry(log)
+	reg.InitAll(app)
+	reg.InitAll(app)
+	if n := strings.Count(buf.String(), "extension.plugin_only.unowned"); n != 1 {
+		t.Fatalf("warnings = %d, want 1", n)
+	}
+}
+
+func TestRegistry_InitAll_FailedInitLeavesHooksButRemovesFields_KnownLimit(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	var bus = app.Bus
+	fired := 0
+	reg.Register(&extFuncPlugin{name: "p", init: func(app *plugin.App) error {
+		bus.On("probe", func(context.Context, event.Event) error { fired++; return nil })
+		_ = app.Extensions().RegisterField(ownerTestField("p.f"))
+		return errors.New("boom")
+	}})
+	reg.InitAll(app)
+	if _, ok := app.ExtensionRegistry().Get("p.f"); ok {
+		t.Fatal("field must be rolled back")
+	}
+	_ = bus.Publish(context.Background(), event.New("probe", "test", nil))
+	if fired != 1 {
+		t.Fatalf("documented limit: handler registered by failed Init stays (fired=%d)", fired)
+	}
+}
