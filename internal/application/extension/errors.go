@@ -18,6 +18,9 @@ func MapValueError(err error) error {
 	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
 		return apperror.ForbiddenPrivateField(err.Error())
 	}
+	if errors.Is(err, domainext.ErrForbiddenPluginOnlyField) {
+		return apperror.ForbiddenPluginOnlyField(err.Error())
+	}
 	if domainext.IsValidationError(err) {
 		return apperror.FieldValidationFailed(err.Error())
 	}

@@ -65,6 +65,12 @@ func (v Visibility) IsValid() bool {
 }
 
 // Access declares role-based read/write constraints.
+//
+// PluginOnlyWrite: values may be written or deleted only by trusted in-process
+// code (a context marked via extension.WithPluginWrite naming the field code);
+// public/admin/GraphQL writes get 403 forbidden_plugin_only_field. It does NOT
+// isolate plugins from each other: field owners are not recorded and any trusted
+// code that names the code may write it. Definitions are immutable via the admin API.
 // JSON keys use Go field names (ReadRoles, WriteRoles, PluginOnlyWrite) to match persisted definition blobs.
 type Access struct {
 	ReadRoles       []string

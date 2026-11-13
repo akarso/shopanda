@@ -354,3 +354,194 @@ func TestValueService_Delete(t *testing.T) {
 func int64Ptr(v int64) *int64 {
 	return &v
 }
+
+func pluginOnlyField(code string) domainext.FieldDef {
+	return domainext.FieldDef{
+		Code:        code,
+		Label:       "Plugin only",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}
+}
+
+func TestValueService_PluginOnlyWrite_UntrustedDenied(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	in := []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}}
+
+	if err := svc.ValidateBatch(context.Background(), target, in, false); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("ValidateBatch err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	if _, err := svc.UpsertBatch(context.Background(), target, in, "cust-1", false); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("UpsertBatch err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("stored = %+v, want none", repo.values)
+	}
+	if !apperror.Is(extensionapp.MapValueError(domainext.ErrForbiddenPluginOnlyField), apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatal("MapValueError must map to forbidden_plugin_only_field")
+	}
+}
+
+func TestValueService_PluginOnlyWrite_TrustedContextAllowed(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+
+	if _, err := svc.UpsertBatch(ctx, target, []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}}, "plugin:acme", false); err != nil {
+		t.Fatalf("UpsertBatch trusted: %v", err)
+	}
+	if len(repo.values) != 1 {
+		t.Fatalf("stored = %d, want 1", len(repo.values))
+	}
+	for _, v := range repo.values {
+		if v.UpdatedBy != "plugin:acme" {
+			t.Fatalf("UpdatedBy = %q, want plugin:acme", v.UpdatedBy)
+		}
+	}
+}
+
+func TestValueService_PluginOnlyWrite_DeleteAndCopyStayAllowed(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	src := domainext.CartItemTarget("cart-1", "var-1")
+	dst := domainext.CartItemTarget("cart-2", "var-1")
+	trusted := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+	if _, err := svc.UpsertBatch(trusted, src, []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}}, "plugin:acme", false); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := svc.CopyTarget(ctx, src, dst, "system"); err != nil {
+		t.Fatalf("CopyTarget: %v", err)
+	}
+	if err := svc.SnapshotCartItemToOrderItem(ctx, "cart-2", "ord-1", "var-1", "system"); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if got, _ := repo.ListByTarget(ctx, domainext.OrderItemTarget("ord-1", "var-1")); len(got) != 1 {
+		t.Fatalf("order item values = %d, want 1", len(got))
+	}
+	if err := svc.DeleteAllForTarget(ctx, src); err != nil {
+		t.Fatalf("DeleteAllForTarget: %v", err)
+	}
+	if got, _ := repo.ListByTarget(ctx, src); len(got) != 0 {
+		t.Fatalf("after delete = %+v", got)
+	}
+}
+
+func TestValueService_NonPluginOnlyFieldUnchanged(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := pluginOnlyField("acme.note")
+	def.Access = domainext.Access{}
+	registerValueField(t, reg, def)
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	if _, err := svc.UpsertBatch(context.Background(), domainext.CartItemTarget("c", "v"), []domainext.ValueInput{{FieldCode: "acme.note", Value: "x"}}, "cust", false); err != nil {
+		t.Fatalf("UpsertBatch: %v", err)
+	}
+}
+
+func TestValueService_PluginOnlyWrite_DeleteRequiresTrust(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	trusted := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+	if _, err := svc.UpsertBatch(trusted, target, []domainext.ValueInput{{FieldCode: "acme.design", Value: "d1"}}, "x", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(context.Background(), target, "acme.design", true); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("untrusted Delete err = %v, want ErrForbiddenPluginOnlyField", err)
+	}
+	if len(repo.values) != 1 {
+		t.Fatalf("value must survive untrusted delete, have %d", len(repo.values))
+	}
+	if err := svc.Delete(trusted, target, "acme.design", false); err != nil {
+		t.Fatalf("trusted Delete: %v", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("value must be gone after trusted delete")
+	}
+}
+
+func TestValueService_PluginOnlyWrite_TrustIsPerFieldCode(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	registerValueField(t, reg, pluginOnlyField("other.flag"))
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+
+	_, err := svc.UpsertBatch(ctx, target, []domainext.ValueInput{
+		{FieldCode: "acme.design", Value: "d1"},
+		{FieldCode: "other.flag", Value: "forged"},
+	}, "x", false)
+	if err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("err = %v, want ErrForbiddenPluginOnlyField for field not named in context", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("stored = %+v, want none", repo.values)
+	}
+}
+
+func TestWithPluginWrite_PanicsOnEmptyRegistrantOrCodes(t *testing.T) {
+	for name, fn := range map[string]func(){
+		"empty registrant": func() { extensionapp.WithPluginWrite(context.Background(), "  ", "a.b") },
+		"no codes":         func() { extensionapp.WithPluginWrite(context.Background(), "acme") },
+		"blank code":       func() { extensionapp.WithPluginWrite(context.Background(), "acme", " ") },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s: expected panic", name)
+				}
+			}()
+			fn()
+		}()
+	}
+}
+
+func TestStripPluginWrite_RemovesTrust(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	target := domainext.CartItemTarget("c", "v")
+	in := []domainext.ValueInput{{FieldCode: "acme.design", Value: "x"}}
+	trusted := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+	if _, err := svc.UpsertBatch(extensionapp.StripPluginWrite(trusted), target, in, "x", false); err != domainext.ErrForbiddenPluginOnlyField {
+		t.Fatalf("stripped ctx err = %v, want forbidden", err)
+	}
+}
+
+func TestValueService_PluginOnlyWrite_TrustSurvivesWithoutCancel(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("acme.design"))
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	ctx, cancel := context.WithCancel(extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design"))
+	cancel()
+	if _, err := svc.UpsertBatch(context.WithoutCancel(ctx), domainext.CartItemTarget("c", "v"),
+		[]domainext.ValueInput{{FieldCode: "acme.design", Value: "x"}}, "x", false); err != nil {
+		t.Fatalf("WithoutCancel must keep trust: %v", err)
+	}
+}
+
+// Records current behavior: trust is per code, not per owning plugin (registry has no owners).
+func TestValueService_PluginOnlyWrite_AnyPluginMayNameAnyCode(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, pluginOnlyField("b.field"))
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	ctx := extensionapp.WithPluginWrite(context.Background(), "plugin-a", "b.field")
+	if _, err := svc.UpsertBatch(ctx, domainext.CartItemTarget("c", "v"), []domainext.ValueInput{{FieldCode: "b.field", Value: "x"}}, "x", false); err != nil {
+		t.Fatalf("documented limitation: err = %v", err)
+	}
+}

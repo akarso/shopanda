@@ -2,6 +2,7 @@ package extension_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -10,7 +11,11 @@ import (
 )
 
 type memFieldRepo struct {
-	fields map[string]domainext.ExtensionField
+	fields    map[string]domainext.ExtensionField
+	findErr   error
+	saveErr   error
+	deleteErr error
+	saveCalls int
 }
 
 func newMemFieldRepo() *memFieldRepo {
@@ -26,11 +31,18 @@ func (m *memFieldRepo) Create(_ context.Context, field domainext.ExtensionField)
 }
 
 func (m *memFieldRepo) Save(_ context.Context, field domainext.ExtensionField) error {
+	m.saveCalls++
+	if m.saveErr != nil {
+		return m.saveErr
+	}
 	m.fields[field.Code] = field
 	return nil
 }
 
 func (m *memFieldRepo) FindByCode(_ context.Context, code string) (domainext.ExtensionField, error) {
+	if m.findErr != nil {
+		return domainext.ExtensionField{}, m.findErr
+	}
 	field, ok := m.fields[code]
 	if !ok {
 		return domainext.ExtensionField{}, apperror.NotFound("extension field not found")
@@ -50,6 +62,9 @@ func (m *memFieldRepo) ListActive(_ context.Context, scope domainext.TargetType)
 }
 
 func (m *memFieldRepo) SoftDelete(_ context.Context, code string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	if _, ok := m.fields[code]; !ok {
 		return apperror.NotFound("extension field not found")
 	}
@@ -204,5 +219,106 @@ func TestFieldService_UpdateRegistersWhenMissingFromRegistry(t *testing.T) {
 	}
 	if _, ok := reg.Get(field.Code); !ok {
 		t.Fatal("expected field registered after update fallback")
+	}
+}
+
+func TestFieldService_PluginOnlyFieldIsImmutableViaService(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := serviceFieldDef("acme.locked")
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if err := reg.Register(def); err != nil {
+		t.Fatal(err)
+	}
+	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+
+	unlocked := def
+	unlocked.Access = domainext.Access{}
+	if _, err := svc.Update(context.Background(), "acme.locked", unlocked); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Update err = %v, want ErrFieldPluginOnly", err)
+	}
+	if err := svc.Delete(context.Background(), "acme.locked"); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Delete err = %v, want ErrFieldPluginOnly", err)
+	}
+	got, ok := reg.Get("acme.locked")
+	if !ok || !got.Access.PluginOnlyWrite {
+		t.Fatalf("registry field changed: %+v ok=%v", got, ok)
+	}
+}
+
+func TestFieldService_GuardUsesRepoWhenRegistryDrifted(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	locked := domainext.ExtensionField{Code: "acme.locked", Label: "L", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored, Visibility: domainext.VisibilityPublic,
+		Access: domainext.Access{PluginOnlyWrite: true}}
+	repo.fields[locked.Code] = locked // in DB, not in this instance's registry
+	svc := extensionapp.NewFieldService(reg, repo)
+
+	if err := svc.Delete(context.Background(), "acme.locked"); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Delete err = %v, want ErrFieldPluginOnly", err)
+	}
+	def := serviceFieldDef("acme.locked")
+	if _, err := svc.Update(context.Background(), "acme.locked", def); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Update err = %v, want ErrFieldPluginOnly", err)
+	}
+	if !repo.fields["acme.locked"].Access.PluginOnlyWrite {
+		t.Fatal("repo row must be unchanged")
+	}
+}
+
+// Documents the one-way latch: an ordinary field can be made plugin-only, never reverted via the API.
+func TestFieldService_MakingFieldPluginOnlyIsOneWay(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+	def := serviceFieldDef("acme.latch")
+	if _, err := svc.Create(context.Background(), def); err != nil {
+		t.Fatal(err)
+	}
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if _, err := svc.Update(context.Background(), "acme.latch", def); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	def.Access = domainext.Access{}
+	if _, err := svc.Update(context.Background(), "acme.latch", def); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("revert err = %v, want ErrFieldPluginOnly", err)
+	}
+}
+
+func TestFieldService_GuardFailsClosedOnRepoError(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(serviceFieldDef("acme.plain")); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemFieldRepo()
+	boom := errors.New("db timeout")
+	repo.findErr = boom
+	svc := extensionapp.NewFieldService(reg, repo)
+
+	if _, err := svc.Update(context.Background(), "acme.plain", serviceFieldDef("acme.plain")); !errors.Is(err, boom) {
+		t.Fatalf("Update err = %v, want repo error", err)
+	}
+	if err := svc.Delete(context.Background(), "acme.plain"); !errors.Is(err, boom) {
+		t.Fatalf("Delete err = %v, want repo error", err)
+	}
+	if repo.saveCalls != 0 {
+		t.Fatalf("Save called %d times despite guard error", repo.saveCalls)
+	}
+}
+
+// The repo enforces the guard atomically; a concurrent flag flip surfaces as the repo error.
+func TestFieldService_RepoImmutableErrorMapsToErrFieldPluginOnly(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(serviceFieldDef("acme.race")); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemFieldRepo()
+	repo.saveErr = apperror.PluginOnlyFieldImmutable("locked concurrently")
+	repo.deleteErr = apperror.PluginOnlyFieldImmutable("locked concurrently")
+	svc := extensionapp.NewFieldService(reg, repo)
+	if _, err := svc.Update(context.Background(), "acme.race", serviceFieldDef("acme.race")); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Update err = %v", err)
+	}
+	if err := svc.Delete(context.Background(), "acme.race"); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Delete err = %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -46,4 +47,24 @@ func (a *App) Extensions() *Extensions {
 		a.extensionRegistry = extensionapp.NewRegistry()
 	}
 	return &Extensions{registry: a.extensionRegistry}
+}
+
+// WithPluginWrite returns ctx marked as a trusted write by pluginName for the
+// given Access.PluginOnlyWrite field codes (only those). Pass the result to the
+// service call, e.g. cartService.AddItem(ctx, ...); values for other plugin-only
+// fields in the same call are still rejected. Panics on a blank name, no codes (also when called per request: ensure panics are recovered),
+// or a code that is not a registered PluginOnlyWrite field (call it after RegisterField).
+// Name only fields your plugin owns and never take codes from request input.
+func (a *App) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes ...string) context.Context {
+	registry := a.ExtensionRegistry()
+	for _, code := range fieldCodes {
+		field, ok := registry.Get(code)
+		if !ok {
+			panic(fmt.Sprintf("plugin: WithPluginWrite: extension field %q is not registered (call RegisterField in Init before WithPluginWrite)", code))
+		}
+		if !field.Access.PluginOnlyWrite {
+			panic(fmt.Sprintf("plugin: WithPluginWrite: extension field %q is not PluginOnlyWrite", code))
+		}
+	}
+	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...)
 }

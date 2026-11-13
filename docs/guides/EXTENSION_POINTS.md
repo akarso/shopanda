@@ -194,7 +194,7 @@ Every plugin-facing registry follows the same shape: a `Register*` method that r
 | Registry | File | Registers | Plugin-facing API |
 | --- | --- | --- | --- |
 | Hooks | `internal/application/hooks/registry.go` | `hooks.Handler` (priority + registrant) | `app.Hooks(name).Register(...)` |
-| Extension fields | `internal/application/extension/registry.go` | `domainext.FieldDef` (custom fields on entities) | `app.Extensions().RegisterField(...)` |
+| Extension fields | `internal/application/extension/registry.go` | `domainext.FieldDef` (custom fields on entities) | `app.Extensions().RegisterField(...)`; trusted writes: `app.WithPluginWrite(ctx, name, codes...)` (see below) |
 | Export row hooks | `internal/application/exportctx/registry.go` | export `RowHandler` per entity | `app.Export(name).RegisterRowHook(...)` |
 | Import row hooks | `internal/application/importctx/registry.go` | import `RowHandler` per entity | `app.Import(name).RegisterRowHook(...)` |
 | Assets | `internal/application/assets/registry.go` | route-gated CSS/JS manifest | `app.Assets(name).Register(manifest)` |
@@ -226,3 +226,16 @@ Two registries exist but aren't currently exposed through `plugin.App` — `cata
 - A ready-made **task → mechanism** table (e.g. "ERP CSV column remap" → import row hook) → [PLUGIN_COMPOSITION.md § Integrator task → mechanism](PLUGIN_COMPOSITION.md#integrator-task--mechanism)
 - Full **API signatures** for every mechanism and infrastructure port → [PLUGINS.md § Extension mechanisms](../../PLUGINS.md#extension-mechanisms)
 - **Tutorial**-style walkthroughs → [DEVELOPER.md](DEVELOPER.md)
+
+## Plugin-only writes (`Access.PluginOnlyWrite`)
+
+A field registered with `Access{PluginOnlyWrite: true}` stays readable per its `Visibility` (a `public` field is still shown in cart/order responses) but only trusted plugin code may create, update **or delete** its values.
+
+- **Untrusted paths** — public cart API (`POST /api/v1/carts/{cartId}/items`), SSR `/storefront/cart/*`, admin extension values API (PUT and DELETE), GraphQL — get **403** `forbidden_plugin_only_field` and nothing is stored or removed.
+- **Trusted write** — mark the context in-process and name the field codes the plugin owns: `ctx = app.WithPluginWrite(ctx, "my-plugin", "my.field")` (`extensionapp.WithPluginWrite`), then pass `ctx` to the service call (for example `cartService.AddItem(ctx, ...)`). Trust is **per field code**: other plugin-only fields in the same batch are still rejected, so forwarding request-derived `extensions` is safe as long as the codes you name are your own. The call panics on a blank plugin name or no codes. Stored rows get `updated_by = "plugin:<name>"`. Never take codes or the marker from request input.
+- **Trust is confined** — the event bus strips the marker on `Publish` (handlers never inherit it) and `cartService.AddItem` honours it only for the extension validate/upsert, stripping it for hooks and pricing; new core code that forwards `ctx` elsewhere must call `extensionapp.StripPluginWrite`. `WithPluginWrite` panics are recovered only by HTTP middleware, so never pass runtime-built codes from events or workers. `app.WithPluginWrite` panics if a code is not a registered `PluginOnlyWrite` field (call it after `RegisterField`).
+- **Not per-plugin isolation** — the registry does not record field owners, so "plugin-only" means *trusted in-process code*, not *only the owning plugin*. A plugin could name another plugin's code, and `updated_by = "plugin:<name>"` is an advisory, spoofable label (it replaces the cart actor on those rows). Review plugin code accordingly.
+- **Field definitions** — `PUT`/`DELETE /api/v1/admin/extensions/fields/{code}` on a plugin-only field return 403 `plugin_only_field_immutable` (checked in the service and atomically in the Postgres repo). Setting `plugin_only_write` on an ordinary field is a one-way latch via the API; retiring such a field (for example after uninstalling its plugin) is an operator DB change (soft-delete the row, restart) — no API or CLI for it yet.
+- **Line remove + re-add** — `RemoveItem` clears the line's values (ungated by design); re-adding the line from the storefront carries no plugin-only value, so plugins must (re)write it on add (e.g. via their own add path).
+- **Core internals stay trusted** — line removal and orphan cleanup (`DeleteAllForTarget`), `ClaimGuestCart` merge / copy (`CopyTarget`) and the order-item snapshot do not go through this check and keep handling these fields.
+- Adding a line with a plugin-only value from plugin code needs the plugin to hold the cart service; a dedicated `plugin.App` port for that is a separate step.

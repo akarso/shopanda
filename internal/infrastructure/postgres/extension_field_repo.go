@@ -72,8 +72,18 @@ func (r *ExtensionFieldRepo) Save(ctx context.Context, field domainext.Extension
 		ON CONFLICT (code) DO UPDATE SET
 			definition = EXCLUDED.definition,
 			updated_at = EXCLUDED.updated_at,
-			deleted_at = NULL`
-	if _, err := r.db.ExecContext(ctx, q, field.Code, definition, now); err != nil {
+			deleted_at = NULL
+		WHERE extension_fields.deleted_at IS NOT NULL
+			OR COALESCE((extension_fields.definition->'access'->>'PluginOnlyWrite')::boolean, false) = false
+		RETURNING code`
+	// The plugin-only guard lives in the WHERE clause so check and write are atomic.
+	// A soft-deleted (retired) row may be restored by Save, like Create does.
+	var returned string
+	err = r.db.QueryRowContext(ctx, q, field.Code, definition, now).Scan(&returned)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be modified")
+	}
+	if err != nil {
 		return fmt.Errorf("extension_field_repo: save: %w", err)
 	}
 	return nil
@@ -140,18 +150,26 @@ func (r *ExtensionFieldRepo) SoftDelete(ctx context.Context, code string) error 
 	if code == "" {
 		return fmt.Errorf("extension_field_repo: soft delete: empty code")
 	}
-	const q = `UPDATE extension_fields SET deleted_at = $2, updated_at = $2 WHERE code = $1 AND deleted_at IS NULL`
-	now := time.Now().UTC()
-	res, err := r.db.ExecContext(ctx, q, code, now)
-	if err != nil {
+	// One statement: lock the active row, delete it unless it is plugin-only, and
+	// report what was found so not-found vs immutable is decided atomically.
+	const q = `WITH cur AS (
+			SELECT code, COALESCE((definition->'access'->>'PluginOnlyWrite')::boolean, false) AS locked
+			FROM extension_fields WHERE code = $1 AND deleted_at IS NULL FOR UPDATE
+		), upd AS (
+			UPDATE extension_fields e SET deleted_at = $2, updated_at = $2
+			FROM cur WHERE e.code = cur.code AND NOT cur.locked
+			RETURNING e.code
+		)
+		SELECT EXISTS (SELECT 1 FROM cur), EXISTS (SELECT 1 FROM upd)`
+	var found, deleted bool
+	if err := r.db.QueryRowContext(ctx, q, code, time.Now().UTC()).Scan(&found, &deleted); err != nil {
 		return fmt.Errorf("extension_field_repo: soft delete: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("extension_field_repo: soft delete rows: %w", err)
-	}
-	if n == 0 {
+	switch {
+	case !found:
 		return apperror.NotFound("extension field not found")
+	case !deleted:
+		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be deleted")
 	}
 	return nil
 }
