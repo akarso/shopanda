@@ -77,6 +77,44 @@ func (r *Registry) register(def domainext.FieldDef, owner string) error {
 	return nil
 }
 
+// AssignOwner sets owner on an existing field that has none. It reports whether
+// it assigned (false: unknown code, or the field already has an owner).
+func (r *Registry) AssignOwner(code, owner string) bool {
+	owner = strings.TrimSpace(owner)
+	if r == nil || owner == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.fields[code]; !ok {
+		return false
+	}
+	if _, owned := r.owners[code]; owned {
+		return false
+	}
+	r.owners[code] = owner
+	return true
+}
+
+// UnownedPluginOnly lists plugin-only field codes with no owner, in registration
+// order, from one consistent snapshot.
+func (r *Registry) UnownedPluginOnly() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []string
+	for _, code := range r.order {
+		if r.fields[code].Access.PluginOnlyWrite {
+			if _, owned := r.owners[code]; !owned {
+				out = append(out, code)
+			}
+		}
+	}
+	return out
+}
+
 // Owner returns the plugin that registered code, or "" when unowned/unknown.
 func (r *Registry) Owner(code string) string {
 	if r == nil {

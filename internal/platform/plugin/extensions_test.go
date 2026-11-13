@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"errors"
 	"context"
 	"strings"
 	"testing"
@@ -235,5 +236,113 @@ func TestApp_UnownedPluginOnlyFields_ListsOnlyUnowned(t *testing.T) {
 	got := app.UnownedPluginOnlyFields()
 	if len(got) != 1 || got[0] != "legacy.free" {
 		t.Fatalf("UnownedPluginOnlyFields = %v, want [legacy.free]", got)
+	}
+}
+
+func TestRegistry_InitAll_FailedInitRollsBackItsExtensionFields(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	failing := true
+	newReg := func() *plugin.Registry {
+		reg := plugin.NewRegistry(log)
+		reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+			if err := app.Extensions().RegisterField(ownerTestField("acme.design")); err != nil {
+				return err
+			}
+			if failing {
+				return errors.New("init failed after registering")
+			}
+			return nil
+		}})
+		return reg
+	}
+	if s := newReg().InitAll(app); s.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", s.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("acme.design"); ok {
+		t.Fatal("failed plugin's fields must be rolled back")
+	}
+	failing = false
+	if s := newReg().InitAll(app); s.Failed != 0 || s.Initialized != 1 {
+		t.Fatalf("retry summary = %+v, want clean init (no ErrAlreadyRegistered)", s)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner after retry = %q", got)
+	}
+}
+
+func TestRegistry_InitAll_LateRegistrationsStayUnowned(t *testing.T) {
+	log := testLogger()
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+	reg := plugin.NewRegistry(log)
+	var stored *plugin.Extensions
+	proceed := make(chan struct{})
+	done := make(chan struct{})
+	reg.Register(&extFuncPlugin{name: "a", init: func(app *plugin.App) error {
+		stored = app.Extensions() // used later, e.g. in Start
+		go func() {
+			<-proceed // background work after Init finished
+			_ = app.Extensions().RegisterField(ownerTestField("a.bg"))
+			close(done)
+		}()
+		return nil
+	}})
+	reg.Register(&extFuncPlugin{name: "b", init: func(app *plugin.App) error { return nil }})
+	reg.InitAll(app)
+
+	close(proceed)
+	<-done
+	if err := stored.RegisterField(ownerTestField("a.start")); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{"a.bg", "a.start"} {
+		if got := app.ExtensionRegistry().Owner(code); got != "" {
+			t.Fatalf("owner of late field %s = %q, want unowned (never misattributed to b)", code, got)
+		}
+	}
+	got := app.UnownedPluginOnlyFields()
+	if len(got) != 2 {
+		t.Fatalf("UnownedPluginOnlyFields = %v, want both late fields", got)
+	}
+}
+
+func TestRegistry_EntryNameMatchesPluginName(t *testing.T) {
+	reg := plugin.NewRegistry(testLogger())
+	reg.Register(&extFuncPlugin{name: "acme", init: func(*plugin.App) error { return nil }})
+	for _, e := range reg.Entries() {
+		if e.Name != e.Plugin.Name() {
+			t.Fatalf("entry name %q != Plugin.Name() %q", e.Name, e.Plugin.Name())
+		}
+	}
+}
+
+func TestApp_PluginWriteContext_ReturnsErrorsInsteadOfPanicking(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.ExtensionsFor("acme").RegisterField(ownerTestField("acme.owned")); err != nil {
+		t.Fatal(err)
+	}
+	plain := ownerTestField("acme.plain")
+	plain.Access = domainext.Access{}
+	_ = app.ExtensionsFor("acme").RegisterField(plain)
+
+	if _, err := app.PluginWriteContext(context.Background(), " acme ", "acme.owned"); err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		who   string
+		codes []string
+	}{
+		"owner mismatch":  {"intruder", []string{"acme.owned"}},
+		"unregistered":    {"acme", []string{"acme.typo"}},
+		"not plugin-only": {"acme", []string{"acme.plain"}},
+		"blank name":      {"  ", []string{"acme.owned"}},
+		"no codes":        {"acme", nil},
+	} {
+		if _, err := app.PluginWriteContext(context.Background(), tc.who, tc.codes...); err == nil {
+			t.Fatalf("%s: expected error", name)
+		}
 	}
 }

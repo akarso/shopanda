@@ -165,9 +165,8 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		}
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
-		app.setInitPlugin(name)
-		err := r.safeInit(live, app)
-		app.setInitPlugin("")
+		extBefore := app.extensionCodeSnapshot()
+		err := app.settleExtensionFields(name, extBefore, r.safeInit(live, app))
 		if err != nil {
 			live.State = StateFailed
 			live.Err = err
@@ -190,12 +189,6 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		})
 	}
 	app.cliRegistry = r.cliRegistry
-	if unowned := app.UnownedPluginOnlyFields(); len(unowned) > 0 {
-		r.log.Warn("extension.plugin_only.unowned", map[string]interface{}{
-			"fields": unowned,
-			"hint":   "register plugin-only fields during plugin Init (or via App.ExtensionsFor) so the owner is recorded",
-		})
-	}
 	return summary
 }
 

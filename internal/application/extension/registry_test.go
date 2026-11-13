@@ -175,3 +175,27 @@ func TestRegistry_OwnerConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestRegistry_AssignOwnerAndUnownedPluginOnly(t *testing.T) {
+	reg := extension.NewRegistry()
+	po := domainext.FieldDef{Code: "a.po", Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+	if err := reg.Register(po); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.UnownedPluginOnly(); len(got) != 1 || got[0] != "a.po" {
+		t.Fatalf("UnownedPluginOnly = %v", got)
+	}
+	if !reg.AssignOwner("a.po", "acme") || reg.Owner("a.po") != "acme" {
+		t.Fatal("AssignOwner must set owner on unowned field")
+	}
+	if reg.AssignOwner("a.po", "other") || reg.Owner("a.po") != "acme" {
+		t.Fatal("AssignOwner must not override an existing owner")
+	}
+	if reg.AssignOwner("missing", "acme") {
+		t.Fatal("AssignOwner on unknown code must be false")
+	}
+	if got := reg.UnownedPluginOnly(); len(got) != 0 {
+		t.Fatalf("UnownedPluginOnly after assign = %v", got)
+	}
+}
