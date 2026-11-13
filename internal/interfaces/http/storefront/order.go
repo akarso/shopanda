@@ -16,11 +16,11 @@ import (
 // OrderHandler handles order read endpoints.
 type OrderHandler struct {
 	orders     order.OrderRepository
-	extensions *extensionapp.ValueService
+	extensions extensionapp.ValueAPI
 }
 
 // NewOrderHandler creates an OrderHandler.
-func NewOrderHandler(orders order.OrderRepository, extensions *extensionapp.ValueService) *OrderHandler {
+func NewOrderHandler(orders order.OrderRepository, extensions extensionapp.ValueAPI) *OrderHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
@@ -104,7 +104,7 @@ type OrderResponse struct {
 	UpdatedAt   string            `json:"updated_at"`
 }
 
-func ToOrderResponse(ctx context.Context, extensions *extensionapp.ValueService, o *order.Order) (OrderResponse, error) {
+func ToOrderResponse(ctx context.Context, extensions extensionapp.ValueAPI, o *order.Order) (OrderResponse, error) {
 	orderItems := o.Items()
 	variantIDs := make([]string, len(orderItems))
 	for i, item := range orderItems {

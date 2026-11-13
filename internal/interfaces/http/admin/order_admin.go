@@ -21,7 +21,7 @@ import (
 // OrderAdminHandler serves admin order endpoints with Track 3 hardening.
 type OrderAdminHandler struct {
 	orders     order.OrderRepository
-	extensions *extensionapp.ValueService
+	extensions extensionapp.ValueAPI
 	auditor    *admin.Auditor
 	validator  admin.OrderValidator
 	bus        *event.Bus
@@ -29,7 +29,7 @@ type OrderAdminHandler struct {
 }
 
 // NewOrderAdminHandler creates an OrderAdminHandler.
-func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger, extensions *extensionapp.ValueService) *OrderAdminHandler {
+func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger, extensions extensionapp.ValueAPI) *OrderAdminHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
@@ -45,7 +45,7 @@ func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger, exten
 }
 
 // NewOrderAdminHandlerWithAuditor creates an OrderAdminHandler with custom auditor (for testing).
-func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admin.Auditor, extensions *extensionapp.ValueService) *OrderAdminHandler {
+func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admin.Auditor, extensions extensionapp.ValueAPI) *OrderAdminHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}

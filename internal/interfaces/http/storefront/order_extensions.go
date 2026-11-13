@@ -6,7 +6,7 @@ import (
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 )
 
-func orderItemExtensionsMap(ctx context.Context, values *extensionapp.ValueService, orderID string, variantIDs []string) (map[string][]cartItemExtensionResponse, error) {
+func orderItemExtensionsMap(ctx context.Context, values extensionapp.ValueAPI, orderID string, variantIDs []string) (map[string][]cartItemExtensionResponse, error) {
 	if values == nil || len(variantIDs) == 0 {
 		return nil, nil
 	}
