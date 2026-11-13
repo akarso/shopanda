@@ -197,7 +197,11 @@ func (r *Registry) validateReplaceLocked(field domainext.ExtensionField) error {
 // Replace updates an existing registered field definition. On a plugin-only field
 // (owned or not) it refuses to change PluginOnlyWrite, Scope, Type, StorageMode or
 // Visibility, so a holder of the raw registry cannot drop the guard or
-// reinterpret stored values. Remove is not owner-aware: it is core wiring (admin
+// reinterpret stored values. Deliberately still mutable: ReadRoles, WriteRoles and
+// Validation (tuning, not reinterpretation), and a non-plugin-only field may become
+// plugin-only. Not atomic with persistence: FieldService validates, saves, then
+// replaces, so a concurrent registry change in between can leave the store and the
+// registry out of sync (admin paths cannot trigger it today). Remove is not owner-aware: it is core wiring (admin
 // field delete, loader rollback), not a plugin API.
 func (r *Registry) Replace(field domainext.ExtensionField) error {
 	if r == nil {
