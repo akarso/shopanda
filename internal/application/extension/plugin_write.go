@@ -13,8 +13,10 @@ import (
 // NOT recovered outside HTTP handlers (events, workers, goroutines): never build
 // the codes from runtime/request input.
 //
-// "Plugin-only" means trusted in-process code, not the owning plugin: the
-// registry does not record field owners, and the registrant is an advisory label.
+// "Plugin-only" means trusted in-process code. For fields registered with an owner
+// (plugin Init, or app.ExtensionsFor) the registrant must equal that owner; fields
+// without an owner accept any registrant. The registrant is a plain string, so this
+// is a guard against mistakes, not a security boundary.
 func WithPluginWrite(ctx context.Context, registrant string, fieldCodes ...string) context.Context {
 	return pluginwrite.Grant(ctx, registrant, fieldCodes...)
 }

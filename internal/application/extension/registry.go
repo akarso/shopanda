@@ -39,26 +39,24 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register validates and stores a field definition.
+// Register validates and stores a field definition with no owner.
 // Duplicate codes return a deterministic error.
 func (r *Registry) Register(def domainext.FieldDef) error {
-	if r == nil {
-		return fmt.Errorf("extension: registry must not be nil")
-	}
-	field, err := domainext.NewExtensionField(def)
-	if err != nil {
-		return err
-	}
-	return r.registerField(field)
+	return r.register(def, "")
 }
 
-// RegisterOwned registers a field and records owner (the registering plugin).
-// Owned plugin-only fields are writable only by a trusted write naming that owner.
+// RegisterOwned registers a field and records owner (the registering plugin,
+// whitespace-trimmed, case-sensitive). Owned plugin-only fields are writable only
+// by a trusted write naming that owner.
 func (r *Registry) RegisterOwned(def domainext.FieldDef, owner string) error {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		return fmt.Errorf("extension: field owner must not be empty")
 	}
+	return r.register(def, owner)
+}
+
+func (r *Registry) register(def domainext.FieldDef, owner string) error {
 	if r == nil {
 		return fmt.Errorf("extension: registry must not be nil")
 	}
@@ -72,7 +70,9 @@ func (r *Registry) RegisterOwned(def domainext.FieldDef, owner string) error {
 		return ErrAlreadyRegistered
 	}
 	r.fields[field.Code] = field
-	r.owners[field.Code] = owner
+	if owner != "" {
+		r.owners[field.Code] = owner
+	}
 	r.order = append(r.order, field.Code)
 	return nil
 }
@@ -111,17 +111,6 @@ func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldReposi
 			})
 		}
 	}
-	return nil
-}
-
-func (r *Registry) registerField(field domainext.ExtensionField) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.fields[field.Code]; exists {
-		return ErrAlreadyRegistered
-	}
-	r.fields[field.Code] = field
-	r.order = append(r.order, field.Code)
 	return nil
 }
 

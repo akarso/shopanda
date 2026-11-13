@@ -79,6 +79,7 @@ type App struct {
 
 	extensionRegistry   *extension.Registry
 	extensionRegistryMu sync.Mutex
+	initPlugin          string // plugin whose Init is running (guarded by extensionRegistryMu)
 
 	hookRegistry   *hooksapp.Registry
 	hookRegistryMu sync.Mutex

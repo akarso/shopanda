@@ -45,26 +45,46 @@ func (a *App) ExtensionRegistry() *extensionapp.Registry {
 }
 
 // Extensions returns the plugin-facing extension registration API.
+// While the loader runs a plugin's Init, fields are registered with that plugin
+// as owner (bound by the loader, not chosen by the plugin); outside Init they are
+// unowned.
 func (a *App) Extensions() *Extensions {
 	a.extensionRegistryMu.Lock()
 	defer a.extensionRegistryMu.Unlock()
 	if a.extensionRegistry == nil {
 		a.extensionRegistry = extensionapp.NewRegistry()
 	}
-	return &Extensions{registry: a.extensionRegistry}
+	return &Extensions{registry: a.extensionRegistry, owner: a.initPlugin}
 }
 
-// ExtensionsFor is like Extensions but records owner (the plugin name) on every
-// field it registers. Owned plugin-only fields can then be written only by a
-// trusted write naming that owner. Panics on a blank owner.
+// ExtensionsFor is like Extensions but records owner (the plugin name) explicitly,
+// for code running outside plugin Init. During a plugin's Init the owner is bound by
+// the loader and a different name panics (the loader recovers it as an Init failure),
+// so a plugin cannot register fields under another plugin's name. Panics on a blank owner.
 func (a *App) ExtensionsFor(owner string) *Extensions {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		panic("plugin: extension owner must not be empty")
 	}
 	e := a.Extensions()
+	if e.owner != "" && e.owner != owner {
+		panic(fmt.Sprintf("plugin: ExtensionsFor(%q) called during Init of plugin %q", owner, e.owner))
+	}
 	e.owner = owner
 	return e
+}
+
+// UnownedPluginOnlyFields lists plugin-only extension fields with no recorded owner;
+// any trusted registrant may write them. Sorted by registration order.
+func (a *App) UnownedPluginOnlyFields() []string {
+	registry := a.ExtensionRegistry()
+	var out []string
+	for _, field := range registry.List(extensionapp.ListFilter{IncludePrivate: true}) {
+		if field.Access.PluginOnlyWrite && registry.Owner(field.Code) == "" {
+			out = append(out, field.Code)
+		}
+	}
+	return out
 }
 
 // WithPluginWrite returns ctx marked as a trusted write by pluginName for the
@@ -88,4 +108,10 @@ func (a *App) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes
 		}
 	}
 	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...)
+}
+
+func (a *App) setInitPlugin(name string) {
+	a.extensionRegistryMu.Lock()
+	defer a.extensionRegistryMu.Unlock()
+	a.initPlugin = name
 }

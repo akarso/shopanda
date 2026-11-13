@@ -166,3 +166,74 @@ func TestApp_ExtensionsFor_BlankOwnerPanics(t *testing.T) {
 	}()
 	(&plugin.App{}).ExtensionsFor("  ")
 }
+
+type extFuncPlugin struct {
+	name string
+	init func(app *plugin.App) error
+}
+
+func (p *extFuncPlugin) Name() string                { return p.name }
+func (p *extFuncPlugin) Init(app *plugin.App) error { return p.init(app) }
+
+func ownerTestField(code string) domainext.FieldDef {
+	return domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+}
+
+func TestRegistry_InitAll_BindsExtensionOwnerToLoadedPlugin(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&extFuncPlugin{name: "acme", init: func(app *plugin.App) error {
+		return app.Extensions().RegisterField(ownerTestField("acme.design")) // legacy call, loader binds owner
+	}})
+	reg.Register(&extFuncPlugin{name: "evil", init: func(app *plugin.App) error {
+		return app.ExtensionsFor("acme").RegisterField(ownerTestField("evil.squat")) // squatting another name
+	}})
+	app := testApp(log)
+	app.SetExtensionRegistry(extension.NewRegistry())
+
+	summary := reg.InitAll(app)
+
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner of acme.design = %q, want acme (bound by loader)", got)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1 (squatting plugin must fail Init)", summary.Failed)
+	}
+	if _, ok := app.ExtensionRegistry().Get("evil.squat"); ok {
+		t.Fatal("squatted field must not be registered")
+	}
+	// Outside Init the legacy call stays unowned.
+	if err := app.Extensions().RegisterField(ownerTestField("late.free")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("late.free"); got != "" {
+		t.Fatalf("owner outside Init = %q, want empty", got)
+	}
+}
+
+func TestApp_WithPluginWrite_TrimsRegistrantBeforeOwnerCheck(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	if err := app.ExtensionsFor(" acme ").RegisterField(ownerTestField("acme.design")); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.ExtensionRegistry().Owner("acme.design"); got != "acme" {
+		t.Fatalf("owner = %q, want trimmed", got)
+	}
+	app.WithPluginWrite(context.Background(), " acme ", "acme.design") // must not panic
+}
+
+func TestApp_UnownedPluginOnlyFields_ListsOnlyUnowned(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	_ = app.ExtensionsFor("acme").RegisterField(ownerTestField("acme.owned"))
+	_ = app.Extensions().RegisterField(ownerTestField("legacy.free"))
+	plain := ownerTestField("legacy.plain")
+	plain.Access = domainext.Access{}
+	_ = app.Extensions().RegisterField(plain)
+	got := app.UnownedPluginOnlyFields()
+	if len(got) != 1 || got[0] != "legacy.free" {
+		t.Fatalf("UnownedPluginOnlyFields = %v, want [legacy.free]", got)
+	}
+}

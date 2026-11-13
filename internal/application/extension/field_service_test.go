@@ -322,3 +322,25 @@ func TestFieldService_RepoImmutableErrorMapsToErrFieldPluginOnly(t *testing.T) {
 		t.Fatalf("Delete err = %v", err)
 	}
 }
+
+func TestFieldService_AdminUpdateKeepsOwnerAndDeleteClearsIt(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(serviceFieldDef("acme.label"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+	def := serviceFieldDef("acme.label")
+	def.Label = "Renamed"
+	if _, err := svc.Update(context.Background(), "acme.label", def); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.label"); got != "acme" {
+		t.Fatalf("owner after admin Update = %q, want acme", got)
+	}
+	if err := svc.Delete(context.Background(), "acme.label"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.label"); got != "" {
+		t.Fatalf("owner after Delete = %q, want empty", got)
+	}
+}

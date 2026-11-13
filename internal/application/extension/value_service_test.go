@@ -564,3 +564,15 @@ func TestValueService_PluginOnlyWrite_OwnerIsEnforced(t *testing.T) {
 		t.Fatalf("UpdatedBy = %q", got)
 	}
 }
+
+func TestValueService_PluginOnlyWrite_RegistrantWhitespaceTrimmed(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(pluginOnlyField("b.field"), "plugin-b"); err != nil {
+		t.Fatal(err)
+	}
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	ctx := extensionapp.WithPluginWrite(context.Background(), "  plugin-b ", "b.field")
+	if _, err := svc.UpsertBatch(ctx, domainext.CartItemTarget("c", "v"), []domainext.ValueInput{{FieldCode: "b.field", Value: "x"}}, "x", false); err != nil {
+		t.Fatalf("trimmed registrant must match owner: %v", err)
+	}
+}
