@@ -654,30 +654,84 @@ func TestDownloadAccount_Deliver_LocalSignedRedirectAndGET(t *testing.T) {
 	}
 }
 
-func TestDownloadAccount_Deliver_RejectsLocalPathTraversalRedirect(t *testing.T) {
-	repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
-	svc := downloadapp.NewService(repo, nil)
-	g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "cust-1", "asset-1", time.Now().UTC().Add(time.Hour), 1)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
+func TestDownloadAccount_Deliver_LocalNamedSignedRedirectAndRejectsTraversal(t *testing.T) {
 	asset := &media.Asset{ID: "asset-1", Path: "files/a.pdf", Filename: "g.pdf", CreatedAt: time.Now().UTC()}
-	storage := &memSignedStorage{
-		memReadableStorage: memReadableStorage{files: map[string][]byte{"files/a.pdf": []byte("x")}},
-		url:                "/api/v1/media/local-signed/../admin",
+	files := map[string][]byte{"files/a.pdf": []byte("x")}
+
+	newGrant := func(t *testing.T) (*downloadapp.Service, *dlGrantRepo, *domain.DownloadGrant) {
+		t.Helper()
+		repo := &dlGrantRepo{byID: map[string]*domain.DownloadGrant{}}
+		svc := downloadapp.NewService(repo, nil)
+		g, err := svc.Issue(context.Background(), domain.OrderItemID(id.New(), "v"), "cust-1", "asset-1", time.Now().UTC().Add(time.Hour), 1)
+		if err != nil {
+			t.Fatalf("Issue: %v", err)
+		}
+		return svc, repo, g
 	}
-	// Force Name()=local path in validate: override via localNamedSigned wrapper.
-	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: storage}, nil)
-	rr := postDownload(h.Deliver(), g.ID, "cust-1")
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
-	}
-	stored, _ := repo.FindByID(context.Background(), g.ID)
-	if stored.DownloadCount != 0 {
-		t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
-	}
+
+	t.Run("safe_token_redirects_when_Name_local", func(t *testing.T) {
+		svc, repo, g := newGrant(t)
+		storage := &memSignedStorage{
+			memReadableStorage: memReadableStorage{files: files},
+			url:                "/api/v1/media/local-signed/abcTOKEN",
+		}
+		h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: storage}, nil)
+		rr := postDownload(h.Deliver(), g.ID, "cust-1")
+		if rr.Code != http.StatusFound {
+			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Location"); loc != storage.url {
+			t.Fatalf("Location = %q, want %q", loc, storage.url)
+		}
+		stored, _ := repo.FindByID(context.Background(), g.ID)
+		if stored.DownloadCount != 1 {
+			t.Fatalf("count = %d, want claim after safe local redirect", stored.DownloadCount)
+		}
+		if storage.signs.Load() != 1 {
+			t.Fatalf("signs = %d, want 1 (pointer embed aliases the test storage)", storage.signs.Load())
+		}
+	})
+
+	t.Run("traversal_rejected_no_claim", func(t *testing.T) {
+		svc, repo, g := newGrant(t)
+		storage := &memSignedStorage{
+			memReadableStorage: memReadableStorage{files: files},
+			url:                "/api/v1/media/local-signed/../admin",
+		}
+		h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: storage}, nil)
+		rr := postDownload(h.Deliver(), g.ID, "cust-1")
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+		}
+		stored, _ := repo.FindByID(context.Background(), g.ID)
+		if stored.DownloadCount != 0 {
+			t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
+		}
+	})
+
+	t.Run("s3_Name_rejects_same_safe_relative_path", func(t *testing.T) {
+		// Without localNamedSigned, memSignedStorage.Name is "s3" and relative
+		// local-signed paths fail closed — proves the Name() override matters.
+		svc, repo, g := newGrant(t)
+		storage := &memSignedStorage{
+			memReadableStorage: memReadableStorage{files: files},
+			url:                "/api/v1/media/local-signed/abcTOKEN",
+		}
+		h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, storage, nil)
+		rr := postDownload(h.Deliver(), g.ID, "cust-1")
+		if rr.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+		}
+		stored, _ := repo.FindByID(context.Background(), g.ID)
+		if stored.DownloadCount != 0 {
+			t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
+		}
+	})
 }
 
+// localNamedSigned overrides Name to "local" for validateSignedRedirectURL's
+// relative-path branch. The embed is a pointer because memSignedStorage holds
+// atomic.Int64 (heads/signs) and must not be copied by value.
 type localNamedSigned struct {
 	*memSignedStorage
 }
