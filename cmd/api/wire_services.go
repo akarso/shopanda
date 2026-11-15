@@ -297,10 +297,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return nil, err
 	}
-	// InitAllContext marks not-yet-started plugins Failed when initCtx is canceled.
-	// Refuse a partial boot so callers cannot treat a nil wire error as a full plugin set.
-	if summary.Failed > 0 {
-		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	// Refuse only when boot was canceled before some plugins started. Ordinary
+	// Init errors stay logged/skipped so serve continues (worker/scheduler differ).
+	if summary.Canceled > 0 {
+		return nil, fmt.Errorf("plugin init interrupted: boot canceled (%d plugin(s) not started)", summary.Canceled)
 	}
 	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)

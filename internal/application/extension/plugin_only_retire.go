@@ -12,8 +12,8 @@ type PluginOnlyRetireStore interface {
 	// FieldService; use PurgeIfSoftDeletedPluginOnly for value deletes.
 	RetireActive(ctx context.Context, code string, purgeValues bool) (valuesPurged int64, err error)
 	// PurgeIfSoftDeletedPluginOnly deletes values when a soft-deleted plugin-only
-	// row exists for code. Timeout → ErrPurgeIncomplete; restored/missing definition
-	// → ErrPurgeDefinitionChanged. Returns NotFound when no soft-deleted plugin-only
-	// row exists (including never stored or active again).
+	// row exists for code. Timeout → ErrPurgeIncomplete; restored → ErrPurgeDefinitionRestored;
+	// missing row → ErrPurgeDefinitionMissing. Returns NotFound when no soft-deleted
+	// plugin-only row exists (including never stored or active again).
 	PurgeIfSoftDeletedPluginOnly(ctx context.Context, code string) (valuesPurged int64, err error)
 }

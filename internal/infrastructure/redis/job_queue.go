@@ -43,6 +43,8 @@ type JobQueue struct {
 type QueueConfig struct {
 	URL       string
 	KeyPrefix string
+	// Context is used for the connectivity PING. Nil means context.Background().
+	Context context.Context
 }
 
 // NewJobQueue creates a JobQueue and verifies the Redis connection with PING.
@@ -50,7 +52,7 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("NewJobQueue: empty url")
 	}
-	client, err := ConnectURL(cfg.URL)
+	client, err := ConnectURLContext(cfg.Context, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("NewJobQueue: %w", err)
 	}

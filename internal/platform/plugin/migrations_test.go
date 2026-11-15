@@ -360,9 +360,9 @@ func TestInitAllContext_Cancelled(t *testing.T) {
 		Bootstrap: &plugin.Bootstrap{DB: dbConn},
 	}
 	summary := reg.InitAllContext(ctx, app)
-	// Pre-canceled ctx fails closed before Migrator work; remaining stay Failed.
-	if summary.Failed != 1 || summary.Initialized != 0 {
-		t.Fatalf("summary = %+v, want Failed=1 Initialized=0 on cancelled ctx", summary)
+	// Pre-canceled ctx fails closed before Migrator work; remaining stay Failed/Canceled.
+	if summary.Failed != 1 || summary.Canceled != 1 || summary.Initialized != 0 {
+		t.Fatalf("summary = %+v, want Failed=1 Canceled=1 Initialized=0 on cancelled ctx", summary)
 	}
 	if reg.Entries()[0].State != plugin.StateFailed || !errors.Is(reg.Entries()[0].Err, context.Canceled) {
 		t.Fatalf("entry = %+v, want failed canceled", reg.Entries()[0])

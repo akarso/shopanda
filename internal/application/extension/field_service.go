@@ -202,11 +202,23 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 		result.ValuesPurged = n
 		result.PurgeOnly = true
 		if purgeErr != nil {
-			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) || errors.Is(purgeErr, domainext.ErrPurgeDefinitionChanged) {
+			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) {
+				// Soft-deleted row still present; drop any stale in-memory entry.
 				s.registry.Remove(code)
 				return result, purgeErr
 			}
-			return RetireResult{}, mapRetireStoreError(purgeErr)
+			if errors.Is(purgeErr, domainext.ErrPurgeDefinitionRestored) || errors.Is(purgeErr, domainext.ErrPurgeDefinitionMissing) {
+				// DB row is active again or gone — do not drop a restored in-memory def.
+				return result, purgeErr
+			}
+			mapped := mapRetireStoreError(purgeErr)
+			if errors.Is(mapped, ErrFieldNotFound) {
+				// Race: Save restored between FindByCode(not found) and assert.
+				if active, findErr := s.repo.FindByCode(ctx, code); findErr == nil && active.Access.PluginOnlyWrite {
+					return RetireResult{}, ErrPurgeWhileActive
+				}
+			}
+			return RetireResult{}, mapped
 		}
 	default:
 		return RetireResult{}, ErrFieldNotFound

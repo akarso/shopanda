@@ -38,6 +38,8 @@ type inflightEntry struct {
 type QueueConfig struct {
 	Brokers     []string
 	TopicPrefix string
+	// Context cancels the initial broker dial. Nil means context.Background().
+	Context context.Context
 }
 
 func isTopicExistsErr(err error) bool {
@@ -61,7 +63,11 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	delayTopic := prefix + ".jobs.delay"
 	failedTopic := prefix + ".jobs.failed"
 
-	conn, err := kafka.Dial("tcp", cfg.Brokers[0])
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	conn, err := kafka.DialContext(ctx, "tcp", cfg.Brokers[0])
 	if err != nil {
 		return nil, fmt.Errorf("NewJobQueue: dial: %w", err)
 	}

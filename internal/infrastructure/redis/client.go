@@ -22,8 +22,17 @@ func NormalizeKeyPrefix(prefix string) string {
 
 // ConnectURL parses url, creates a client, and verifies connectivity with PING.
 func ConnectURL(url string) (*goredis.Client, error) {
+	return ConnectURLContext(context.Background(), url)
+}
+
+// ConnectURLContext is ConnectURL using ctx for the connectivity PING (and a
+// 5s child timeout when ctx has no deadline).
+func ConnectURLContext(ctx context.Context, url string) (*goredis.Client, error) {
 	if url == "" {
 		return nil, fmt.Errorf("redis: empty url")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	opts, err := goredis.ParseURL(url)
 	if err != nil {
@@ -31,9 +40,13 @@ func ConnectURL(url string) (*goredis.Client, error) {
 	}
 	client := goredis.NewClient(opts)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
+	pingCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
+	if err := client.Ping(pingCtx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("redis: ping: %w", err)
 	}

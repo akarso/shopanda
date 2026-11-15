@@ -327,8 +327,8 @@ func TestExtensionFieldRepo_PurgeStopsWhenSaveRestoresDefinition(t *testing.T) {
 		},
 	}
 	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(ctx, db, locked.Code, 1)
-	if !errors.Is(err, domainext.ErrPurgeDefinitionChanged) {
-		t.Fatalf("purge = %d, %v, want ErrPurgeDefinitionChanged", n, err)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionRestored) {
+		t.Fatalf("purge = %d, %v, want ErrPurgeDefinitionRestored", n, err)
 	}
 	if n != 1 {
 		t.Fatalf("committed batches = %d, want 1", n)

@@ -20,7 +20,9 @@ import (
 )
 
 const (
-	extensionFieldRetireUsage   = "usage: extension-field retire <code> [--purge-values --confirm-idle]"
+	extensionFieldRetireUsage = "usage:\n" +
+		"  extension-field retire <code>\n" +
+		"  extension-field retire <code> --purge-values --confirm-idle"
 	extensionFieldRetireTimeout = 2 * time.Minute
 )
 
@@ -56,10 +58,10 @@ func retireBootConfig(cfg *config.Config) *config.Config {
 	boot.Queue.Driver = "postgres"
 	boot.Cache.Driver = "postgres"
 	boot.Search.Engine = "postgres"
-	enable := true
-	boot.Plugins.Core.PostgresQueue = &enable
-	boot.Plugins.Core.PostgresCache = &enable
-	boot.Plugins.Core.PostgresSearch = &enable
+	enableQueue, enableCache, enableSearch := true, true, true
+	boot.Plugins.Core.PostgresQueue = &enableQueue
+	boot.Plugins.Core.PostgresCache = &enableCache
+	boot.Plugins.Core.PostgresSearch = &enableSearch
 	// Skip Stripe Init dials; leave media as configured (local needs base_path).
 	boot.Payment.Stripe.Enabled = false
 	return &boot
@@ -118,7 +120,7 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 	}, nil
 }
 
-// runExtensionFieldRetire handles `app extension-field retire <code> [--purge-values --confirm-idle]`.
+// runExtensionFieldRetire handles soft-delete or purge-only retire (two separate invocations).
 func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
 	parsed, err := parseExtensionFieldRetireArgs(args)
 	if errors.Is(err, errExtensionFieldRetireHelp) {
@@ -173,9 +175,6 @@ func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger,
 	if result.PurgeOnly {
 		return writeSuccessLinef(w, "Purged %d value row(s) for already-retired plugin-only extension field %q.\n", result.ValuesPurged, result.Code)
 	}
-	if parsed.purge {
-		return writeSuccessLinef(w, "Retired plugin-only extension field %q (purged %d value row(s)).\n", result.Code, result.ValuesPurged)
-	}
 	return writeSuccessLinef(w, "Retired plugin-only extension field %q.\n", result.Code)
 }
 
@@ -211,8 +210,10 @@ func mapExtensionFieldRetireError(err error) error {
 		return fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")
 	case errors.Is(err, extensionapp.ErrPurgeWhileActive):
 		return fmt.Errorf("extension-field retire: %w (run soft-delete without --purge-values first)", err)
-	case errors.Is(err, domainext.ErrPurgeDefinitionChanged):
+	case errors.Is(err, domainext.ErrPurgeDefinitionRestored):
 		return fmt.Errorf("extension-field retire: %w (definition left active; do not purge again)", err)
+	case errors.Is(err, domainext.ErrPurgeDefinitionMissing):
+		return fmt.Errorf("extension-field retire: %w (definition row gone; leftover values may remain)", err)
 	case errors.Is(err, domainext.ErrPurgeIncomplete):
 		return fmt.Errorf("extension-field retire: %w (re-run with --purge-values --confirm-idle)", err)
 	default:

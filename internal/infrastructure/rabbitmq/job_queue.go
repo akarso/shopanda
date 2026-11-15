@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -47,6 +48,8 @@ type inflightEntry struct {
 type QueueConfig struct {
 	URL         string
 	QueuePrefix string
+	// Context cancels the TCP dial. Nil means context.Background().
+	Context context.Context
 }
 
 // NewJobQueue connects to RabbitMQ and declares durable job queues.
@@ -54,8 +57,17 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("NewJobQueue: empty url")
 	}
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	conn, err := amqp.Dial(cfg.URL)
+	conn, err := amqp.DialConfig(cfg.URL, amqp.Config{
+		Dial: func(network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("NewJobQueue: dial: %w", err)
 	}

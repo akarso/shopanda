@@ -22,8 +22,11 @@ type InitSummary struct {
 	Registered    int
 	Initialized   int
 	Failed        int
-	MigrateFailed int   // Migrator apply/verify failures; always counted in Failed
-	DependsOnErr  error // non-nil when depends_on sort failed and a Migrator is registered
+	MigrateFailed int // Migrator apply/verify failures; always counted in Failed
+	// Canceled is how many Loaded plugins were marked Failed because the boot
+	// context was canceled before their Init ran (not ordinary Init errors).
+	Canceled     int
+	DependsOnErr error // non-nil when depends_on sort failed and a Migrator is registered
 }
 
 // Entry tracks a registered plugin and its lifecycle state.
@@ -139,7 +142,9 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 	for i := range entries {
 		if err := ctx.Err(); err != nil {
 			// Deadline/cancel: mark every remaining Loaded plugin failed so callers
-			// fail closed. Plugins that already finished Init stay Active.
+			// that care about a full boot can refuse. Ordinary Init errors are not
+			// counted in Canceled. Plugins that already finished Init stay Active.
+			skipped := 0
 			for j := i; j < len(entries); j++ {
 				live := r.entryByName(entries[j].Name)
 				if live == nil || live.State != StateLoaded {
@@ -148,9 +153,11 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 				live.State = StateFailed
 				live.Err = err
 				summary.Failed++
+				summary.Canceled++
+				skipped++
 			}
 			r.log.Error("plugin.init.canceled", err, map[string]interface{}{
-				"remaining": summary.Failed,
+				"remaining": skipped,
 			})
 			break
 		}

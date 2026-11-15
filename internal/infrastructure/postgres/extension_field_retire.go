@@ -33,8 +33,8 @@ func (r *ExtensionFieldRepo) RetireActive(ctx context.Context, code string, purg
 
 // PurgeIfSoftDeletedPluginOnly deletes values when a soft-deleted plugin-only
 // row exists for code. Never-stored codes and ordinary soft-deleted rows return NotFound.
-// Timeout/cancel wrap domainext.ErrPurgeIncomplete. A restored or missing definition
-// returns domainext.ErrPurgeDefinitionChanged (not a purge-retry signal).
+// Timeout/cancel wrap domainext.ErrPurgeIncomplete. A restored definition returns
+// ErrPurgeDefinitionRestored; a missing row returns ErrPurgeDefinitionMissing.
 func (r *ExtensionFieldRepo) PurgeIfSoftDeletedPluginOnly(ctx context.Context, code string) (int64, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -53,7 +53,7 @@ func wrapLockedPurge(n int64, err error) (int64, error) {
 	if err == nil {
 		return n, nil
 	}
-	if errors.Is(err, domainext.ErrPurgeDefinitionChanged) {
+	if errors.Is(err, domainext.ErrPurgeDefinitionRestored) || errors.Is(err, domainext.ErrPurgeDefinitionMissing) {
 		return n, err
 	}
 	return n, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
@@ -89,7 +89,8 @@ func assertSoftDeletedPluginOnly(ctx context.Context, db interface {
 
 // purgeExtensionValuesByFieldCode deletes values in short transactions.
 // When lockField is true (retire path), each batch FOR UPDATE-locks the field row
-// and returns ErrPurgeDefinitionChanged if it is no longer soft-deleted plugin-only.
+// and returns ErrPurgeDefinitionRestored / ErrPurgeDefinitionMissing when the row
+// is no longer a soft-deleted plugin-only definition.
 func purgeExtensionValuesByFieldCode(ctx context.Context, db dbBatchExec, fieldCode string, batchSize int, lockField bool) (int64, error) {
 	if batchSize <= 0 {
 		batchSize = extensionValuePurgeBatchSize
@@ -128,7 +129,7 @@ func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode stri
 		var softDeleted bool
 		err = tx.QueryRowContext(ctx, lockQ, fieldCode).Scan(&raw, &softDeleted)
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("%w: field %q no longer exists", domainext.ErrPurgeDefinitionChanged, fieldCode)
+			return 0, fmt.Errorf("%w: field %q no longer exists", domainext.ErrPurgeDefinitionMissing, fieldCode)
 		}
 		if err != nil {
 			return 0, fmt.Errorf("extension_field_repo: purge lock: %w", err)
@@ -138,7 +139,7 @@ func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode stri
 			return 0, err
 		}
 		if !softDeleted || !field.Access.PluginOnlyWrite {
-			return 0, fmt.Errorf("%w: field %q is no longer a soft-deleted plugin-only definition", domainext.ErrPurgeDefinitionChanged, fieldCode)
+			return 0, fmt.Errorf("%w: field %q is no longer a soft-deleted plugin-only definition", domainext.ErrPurgeDefinitionRestored, fieldCode)
 		}
 	}
 

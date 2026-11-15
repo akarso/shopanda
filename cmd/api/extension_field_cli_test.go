@@ -321,8 +321,12 @@ func TestMapExtensionFieldRetireError_PurgeIncompleteHint(t *testing.T) {
 	if !errors.Is(err, domainext.ErrPurgeIncomplete) || !strings.Contains(err.Error(), "re-run") {
 		t.Fatalf("err = %v", err)
 	}
-	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionChanged)
-	if !errors.Is(err, domainext.ErrPurgeDefinitionChanged) || strings.Contains(err.Error(), "--purge-values --confirm-idle") {
-		t.Fatalf("definition-changed err = %v, must not suggest purge retry", err)
+	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionRestored)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionRestored) || strings.Contains(err.Error(), "--purge-values --confirm-idle") {
+		t.Fatalf("restored err = %v, must not suggest purge retry", err)
+	}
+	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionMissing)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionMissing) || !strings.Contains(err.Error(), "leftover values") {
+		t.Fatalf("missing err = %v", err)
 	}
 }

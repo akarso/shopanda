@@ -175,8 +175,8 @@ func TestRegistry_InitAllContext_CancelBetweenPlugins(t *testing.T) {
 	reg.Register(p2)
 
 	s := reg.InitAllContext(ctx, testApp(log))
-	if s.Initialized != 1 || s.Failed != 1 {
-		t.Fatalf("summary = %+v, want Initialized=1 Failed=1", s)
+	if s.Initialized != 1 || s.Failed != 1 || s.Canceled != 1 {
+		t.Fatalf("summary = %+v, want Initialized=1 Failed=1 Canceled=1", s)
 	}
 	entries := reg.Entries()
 	if entries[0].State != plugin.StateActive {
@@ -222,8 +222,8 @@ func TestRegistry_InitAllContext_PreCanceledMarksLoadedFailed(t *testing.T) {
 	cancel()
 
 	s := reg.InitAllContext(ctx, testApp(log))
-	if s.Initialized != 0 || s.Failed != 2 {
-		t.Fatalf("summary = %+v, want Initialized=0 Failed=2", s)
+	if s.Initialized != 0 || s.Failed != 2 || s.Canceled != 2 {
+		t.Fatalf("summary = %+v, want Initialized=0 Failed=2 Canceled=2", s)
 	}
 	for _, e := range reg.Entries() {
 		if e.State != plugin.StateFailed || !errors.Is(e.Err, context.Canceled) {
