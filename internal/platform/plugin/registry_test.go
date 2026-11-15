@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -19,12 +20,16 @@ type mockPlugin struct {
 	initErr error
 	doPanic bool
 	called  bool
+	onInit  func()
 }
 
 func (p *mockPlugin) Name() string { return p.name }
 
 func (p *mockPlugin) Init(_ *plugin.App) error {
 	p.called = true
+	if p.onInit != nil {
+		p.onInit()
+	}
 	if p.doPanic {
 		panic("plugin init exploded")
 	}
@@ -157,6 +162,99 @@ func TestRegistry_InitAll_FailureContinues(t *testing.T) {
 	}
 	if entries[1].State != plugin.StateActive {
 		t.Errorf("ok state = %q, want active", entries[1].State)
+	}
+}
+
+func TestRegistry_InitAllContext_CancelBetweenPlugins(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	p1 := &mockPlugin{name: "p1", onInit: cancel}
+	p2 := &mockPlugin{name: "p2"}
+	reg.Register(p1)
+	reg.Register(p2)
+
+	s := reg.InitAllContext(ctx, testApp(log))
+	if s.Initialized != 1 || s.Failed != 1 || s.Canceled != 1 {
+		t.Fatalf("summary = %+v, want Initialized=1 Failed=1 Canceled=1", s)
+	}
+	entries := reg.Entries()
+	if entries[0].State != plugin.StateActive {
+		t.Fatalf("p1 state = %q, want active", entries[0].State)
+	}
+	if entries[1].State != plugin.StateFailed || !errors.Is(entries[1].Err, context.Canceled) {
+		t.Fatalf("p2 = %+v, want failed canceled", entries[1])
+	}
+	if p2.called {
+		t.Fatal("p2 Init must not run after cancel")
+	}
+}
+
+func TestApp_Context_DuringInit(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var saw context.Context
+	reg.Register(&contextProbePlugin{probe: func(app *plugin.App) { saw = app.Context() }})
+	_ = reg.InitAllContext(ctx, testApp(log))
+	if saw != ctx {
+		t.Fatalf("App.Context during Init = %v, want boot ctx", saw)
+	}
+}
+
+type contextProbePlugin struct {
+	probe func(*plugin.App)
+}
+
+func (p *contextProbePlugin) Name() string { return "ctx-probe" }
+func (p *contextProbePlugin) Init(app *plugin.App) error {
+	p.probe(app)
+	return nil
+}
+
+func TestRegistry_InitAllContext_PreCanceledMarksLoadedFailed(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&mockPlugin{name: "p1"})
+	reg.Register(&mockPlugin{name: "p2"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	s := reg.InitAllContext(ctx, testApp(log))
+	if s.Initialized != 0 || s.Failed != 2 || s.Canceled != 2 {
+		t.Fatalf("summary = %+v, want Initialized=0 Failed=2 Canceled=2", s)
+	}
+	for _, e := range reg.Entries() {
+		if e.State != plugin.StateFailed || !errors.Is(e.Err, context.Canceled) {
+			t.Fatalf("entry %+v, want failed canceled", e)
+		}
+	}
+}
+
+func TestRegistry_InitAllContext_PluginLocalDeadlineIsNotCanceled(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&mockPlugin{name: "sqs-like", initErr: context.DeadlineExceeded})
+	// Boot context stays live — plugin-local timeout must not fail serve via Canceled.
+	s := reg.InitAllContext(context.Background(), testApp(log))
+	if s.Failed != 1 || s.Canceled != 0 || s.Initialized != 0 {
+		t.Fatalf("summary = %+v, want Failed=1 Canceled=0 Initialized=0", s)
+	}
+}
+
+func TestRegistry_InitAllContext_OnInitCancelCountsCanceled(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	reg.Register(&mockPlugin{
+		name:   "only",
+		onInit: cancel,
+		initErr: context.Canceled,
+	})
+	s := reg.InitAllContext(ctx, testApp(log))
+	if s.Failed != 1 || s.Canceled != 1 || s.Initialized != 0 {
+		t.Fatalf("summary = %+v, want Failed=1 Canceled=1 Initialized=0", s)
 	}
 }
 

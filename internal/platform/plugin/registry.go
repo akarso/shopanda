@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/cli"
@@ -22,8 +23,11 @@ type InitSummary struct {
 	Registered    int
 	Initialized   int
 	Failed        int
-	MigrateFailed int   // Migrator apply/verify failures; always counted in Failed
-	DependsOnErr  error // non-nil when depends_on sort failed and a Migrator is registered
+	MigrateFailed int // Migrator apply/verify failures; always counted in Failed
+	// Canceled is how many Loaded plugins were marked Failed because the boot
+	// context was canceled before their Init ran (not ordinary Init errors).
+	Canceled     int
+	DependsOnErr error // non-nil when depends_on sort failed and a Migrator is registered
 }
 
 // Entry tracks a registered plugin and its lifecycle state.
@@ -137,6 +141,27 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		entries = r.entries
 	}
 	for i := range entries {
+		if err := ctx.Err(); err != nil {
+			// Deadline/cancel: mark every remaining Loaded plugin failed so callers
+			// that care about a full boot can refuse. Ordinary Init errors are not
+			// counted in Canceled. Plugins that already finished Init stay Active.
+			skipped := 0
+			for j := i; j < len(entries); j++ {
+				live := r.entryByName(entries[j].Name)
+				if live == nil || live.State != StateLoaded {
+					continue
+				}
+				live.State = StateFailed
+				live.Err = err
+				summary.Failed++
+				summary.Canceled++
+				skipped++
+			}
+			r.log.Error("plugin.init.canceled", err, map[string]interface{}{
+				"remaining": skipped,
+			})
+			break
+		}
 		e := &entries[i]
 		// Resolve the live registry entry so State updates persist under depends_on sorts.
 		live := r.entryByName(e.Name)
@@ -166,11 +191,17 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
 		extBefore := app.extensionCodeSnapshot()
-		err := app.settleExtensionFields(name, extBefore, r.safeInit(live, app))
+		err := app.settleExtensionFields(name, extBefore, r.safeInit(ctx, live, app))
 		if err != nil {
 			live.State = StateFailed
 			live.Err = err
 			summary.Failed++
+			// Only boot-context cancel counts as Canceled. A plugin-local
+			// WithTimeout (e.g. SQS) returns DeadlineExceeded while ctx is live —
+			// that stays an ordinary Failed so serve can continue.
+			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				summary.Canceled++
+			}
 			cause := "error"
 			if _, ok := err.(*panicError); ok {
 				cause = "panic"
@@ -211,13 +242,20 @@ func (e *panicError) Error() string {
 	return fmt.Sprintf("panic: %v", e.value)
 }
 
-// safeInit calls plugin.Init and recovers from panics.
-func (r *Registry) safeInit(e *Entry, app *App) (err error) {
+// safeInit calls plugin.Init under the boot context and recovers from panics.
+// Plugins observe cancellation via App.Context(); a blocked Init that ignores
+// that context still runs until it returns (between-plugin checks cover the rest).
+func (r *Registry) safeInit(ctx context.Context, e *Entry, app *App) (err error) {
 	defer func() {
 		if rv := recover(); rv != nil {
 			err = &panicError{value: rv}
 		}
+		app.setInitContext(nil)
 	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	app.setInitContext(ctx)
 	return e.Plugin.Init(app)
 }
 

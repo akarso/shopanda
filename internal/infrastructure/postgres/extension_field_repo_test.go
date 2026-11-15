@@ -2,6 +2,10 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -202,6 +206,255 @@ func TestExtensionFieldRepo_PluginOnlyRowRejectsSaveAndSoftDelete(t *testing.T) 
 	}
 }
 
+func TestExtensionFieldRepo_RetirePluginOnlyAndRefuseOrdinary(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.field")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if _, err := repo.FindByCode(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("FindByCode after retire: %v", err)
+	}
+	if err := repo.Retire(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("Retire already-retired: %v", err)
+	}
+
+	plain := sampleExtensionField("acme.retire.plain", domainext.TargetProduct)
+	if err := repo.Save(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, plain.Code); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Retire ordinary err = %v, want validation", err)
+	}
+}
+
+func TestExtensionFieldRepo_RetireActivePurgesValuesThenAllowsRetry(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.purge")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	target := domainext.Target{Type: domainext.TargetCartItem, ID: "cart:var"}
+	if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, "v")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.RetireActive(ctx, locked.Code, true)
+	if err != nil || n != 1 {
+		t.Fatalf("RetireActive = %d, %v", n, err)
+	}
+	if _, err := repo.FindByCode(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("active after retire: %v", err)
+	}
+	vals, err := valueRepo.ListByTarget(ctx, target)
+	if err != nil || len(vals) != 0 {
+		t.Fatalf("values = %+v err=%v", vals, err)
+	}
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 0 {
+		t.Fatalf("PurgeIfSoftDeletedPluginOnly = %d, %v", n, err)
+	}
+	if _, err := repo.PurgeIfSoftDeletedPluginOnly(ctx, "acme.never.existed"); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("never stored: %v", err)
+	}
+}
+
+func TestExtensionFieldRepo_PurgeCancelKeepsSoftDelete(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.partial")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	target := domainext.Target{Type: domainext.TargetCartItem, ID: "cart:partial"}
+	if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, "v")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	n, err := repo.PurgeIfSoftDeletedPluginOnly(cancelCtx, locked.Code)
+	if err == nil || !errors.Is(err, domainext.ErrPurgeIncomplete) {
+		t.Fatalf("err = %v n=%d, want ErrPurgeIncomplete", err, n)
+	}
+	vals, err := valueRepo.ListByTarget(ctx, target)
+	if err != nil || len(vals) != 1 {
+		t.Fatalf("values should remain after canceled purge: %+v err=%v", vals, err)
+	}
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 1 {
+		t.Fatalf("retry purge = %d, %v", n, err)
+	}
+}
+
+func TestExtensionFieldRepo_PurgeStopsWhenSaveRestoresDefinition(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.restore")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	for i := 0; i < 3; i++ {
+		target := domainext.Target{Type: domainext.TargetCartItem, ID: fmt.Sprintf("cart:restore:%d", i)}
+		if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, fmt.Sprintf("v%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	restoreBatch := postgres.SetExtensionValuePurgeBatchSizeForTest(1)
+	t.Cleanup(restoreBatch)
+
+	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
+	db := &saveBeforeBeginTx{
+		DB: postgres.ExtensionFieldRepoDB(repo),
+		beforeBegin: 2, // restore before the second batch begins
+		save: func() {
+			if err := repo.Save(ctx, plain); err != nil {
+				t.Errorf("Save restore: %v", err)
+			}
+		},
+	}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(ctx, db, locked.Code, 1)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionRestored) {
+		t.Fatalf("purge = %d, %v, want ErrPurgeDefinitionRestored", n, err)
+	}
+	if n != 1 {
+		t.Fatalf("committed batches = %d, want 1", n)
+	}
+	got, err := repo.FindByCode(ctx, locked.Code)
+	if err != nil {
+		t.Fatalf("definition must stay active: %v", err)
+	}
+	if got.Access.PluginOnlyWrite {
+		t.Fatalf("restored row should not be plugin-only, got %+v", got)
+	}
+	var remaining int
+	if err := postgres.ExtensionFieldRepoDB(repo).QueryRowContext(ctx, `SELECT COUNT(*) FROM extension_values WHERE field_code = $1`, locked.Code).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining values = %d, want 2 (second batch must not delete)", remaining)
+	}
+}
+
+// saveBeforeBeginTx runs save once when BeginTx count reaches beforeBegin.
+type saveBeforeBeginTx struct {
+	*sql.DB
+	beforeBegin int
+	begun       int
+	save        func()
+	saved       bool
+}
+
+func (s *saveBeforeBeginTx) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	s.begun++
+	if !s.saved && s.begun >= s.beforeBegin {
+		s.saved = true
+		s.save()
+	}
+	return s.DB.BeginTx(ctx, opts)
+}
+
+func TestExtensionFieldRepo_PurgeSoftDeletedNonPluginOnlyIsNotFound(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.nonpo")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	// Keep deleted_at set but clear PluginOnlyWrite in the stored definition.
+	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
+	raw, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := postgres.ExtensionFieldRepoDB(repo)
+	if _, err := db.ExecContext(ctx, `UPDATE extension_fields SET definition = $1 WHERE code = $2 AND deleted_at IS NOT NULL`, raw, locked.Code); err != nil {
+		t.Fatal(err)
+	}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(ctx, db, locked.Code, 100)
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("purge = %d, %v, want NotFound", n, err)
+	}
+}
+
+func TestExtensionFieldRepo_PurgeBatchCancelKeepsCountThenRetry(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.batches")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	for i := 0; i < 3; i++ {
+		target := domainext.Target{Type: domainext.TargetCartItem, ID: fmt.Sprintf("cart:batch:%d", i)}
+		if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, fmt.Sprintf("v%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	restore := postgres.SetExtensionValuePurgeBatchSizeForTest(1)
+	t.Cleanup(restore)
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	db := &cancelAfterBeginTx{DB: postgres.ExtensionFieldRepoDB(repo), cancelAfter: 1, cancel: cancel}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(cancelCtx, db, locked.Code, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("partial purge = %d, %v, want context.Canceled", n, err)
+	}
+	if n != 1 {
+		t.Fatalf("partial purge count = %d, want 1", n)
+	}
+	var remaining int
+	if err := postgres.ExtensionFieldRepoDB(repo).QueryRowContext(ctx, `SELECT COUNT(*) FROM extension_values WHERE field_code = $1`, locked.Code).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining = %d, want 2", remaining)
+	}
+
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 2 {
+		t.Fatalf("retry = %d, %v, want 2", n, err)
+	}
+}
+
+// cancelAfterBeginTx fails the (cancelAfter+1)th BeginTx after canceling the context.
+type cancelAfterBeginTx struct {
+	*sql.DB
+	cancelAfter int
+	begun       int
+	cancel      context.CancelFunc
+}
+
+func (c *cancelAfterBeginTx) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	c.begun++
+	if c.begun > c.cancelAfter {
+		c.cancel()
+		return nil, context.Canceled
+	}
+	return c.DB.BeginTx(ctx, opts)
+}
+
 func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testing.T) {
 	// Intended: soft-deleted rows are retired; Save restores them like Create does.
 	repo := setupExtensionFieldRepo(t)
@@ -210,10 +463,8 @@ func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testi
 	if err := repo.Save(ctx, locked); err != nil {
 		t.Fatal(err)
 	}
-	// Retire via the operator path (SoftDelete is refused for plugin-only rows).
-	db := testDB(t)
-	if _, err := db.Exec(`UPDATE extension_fields SET deleted_at = now() WHERE code = $1`, locked.Code); err != nil {
-		t.Fatal(err)
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
 	}
 	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
 	if err := repo.Save(ctx, plain); err != nil {

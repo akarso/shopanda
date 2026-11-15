@@ -14,4 +14,8 @@ type FieldRepository interface {
 	FindByCode(ctx context.Context, code string) (ExtensionField, error)
 	ListActive(ctx context.Context, scope TargetType) ([]ExtensionField, error)
 	SoftDelete(ctx context.Context, code string) error
+	// Retire soft-deletes an active PluginOnlyWrite field. SoftDelete refuses those
+	// rows; Retire is the operator path (CLI). Returns NotFound when missing, and a
+	// validation error when the active row is not plugin-only.
+	Retire(ctx context.Context, code string) error
 }

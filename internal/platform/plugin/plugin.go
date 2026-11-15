@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -52,6 +53,10 @@ type App struct {
 	// PluginMigrateMode controls Migrator handling in InitAllContext.
 	// Default (zero) is PluginMigrateApply. Short-lived CLIs use PluginMigrateVerify.
 	PluginMigrateMode PluginMigrateMode
+
+	// initCtx is the boot context for the current Init call (set by InitAllContext).
+	initCtx   context.Context
+	initCtxMu sync.RWMutex
 
 	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []checkoutStepRegistration
@@ -112,6 +117,30 @@ type App struct {
 	integrationStockSyncMu sync.Mutex
 
 	syncJobs []SyncJobRegistration
+}
+
+// Context returns the boot context for the current Init call.
+// Plugins that dial external services should honor this context (or a child timeout).
+// Outside InitAllContext it returns context.Background().
+func (a *App) Context() context.Context {
+	if a == nil {
+		return context.Background()
+	}
+	a.initCtxMu.RLock()
+	defer a.initCtxMu.RUnlock()
+	if a.initCtx == nil {
+		return context.Background()
+	}
+	return a.initCtx
+}
+
+func (a *App) setInitContext(ctx context.Context) {
+	if a == nil {
+		return
+	}
+	a.initCtxMu.Lock()
+	a.initCtx = ctx
+	a.initCtxMu.Unlock()
 }
 
 // RegisterCompositionStep registers a composition pipeline step.

@@ -35,6 +35,7 @@ func (p *CachePlugin) Init(app *plugin.App) error {
 		URL:       url,
 		KeyPrefix: app.Config.Cache.Redis.KeyPrefix,
 		Logger:    app.Logger,
+		Context:   app.Context(),
 	})
 	if err != nil {
 		return fmt.Errorf("redis cache: init client: %w", err)

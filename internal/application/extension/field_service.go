@@ -16,7 +16,30 @@ var (
 	ErrFieldNotFound = errors.New("extension field not found")
 	// ErrFieldPluginOnly indicates a PluginOnlyWrite field definition cannot be changed or removed via the admin API.
 	ErrFieldPluginOnly = errors.New("plugin-only extension field cannot be modified or deleted")
+	// ErrFieldNotPluginOnly indicates Retire was called on an ordinary (non-plugin-only) field.
+	ErrFieldNotPluginOnly = errors.New("extension field is not plugin-only")
+	// ErrPurgeWhileActive indicates --purge-values was requested while the definition is
+	// still active. Soft-delete first (omit --purge-values), then purge. This keeps a
+	// restored-during-purge definition active instead of soft-deleting it again.
+	ErrPurgeWhileActive = errors.New("field is active; soft-delete before purging values")
 )
+
+// RetireOptions controls FieldService.Retire.
+type RetireOptions struct {
+	// PurgeValues deletes extension_values for a soft-deleted plugin-only row only.
+	// An active row with PurgeValues returns ErrPurgeWhileActive (soft-delete first).
+	PurgeValues bool
+	// Store performs the soft-delete and optional purge. Required.
+	Store PluginOnlyRetireStore
+}
+
+// RetireResult is the outcome of retiring a plugin-only definition.
+type RetireResult struct {
+	Code         string
+	ValuesPurged int64
+	// PurgeOnly is true when the definition was already soft-deleted and this call only purged values.
+	PurgeOnly bool
+}
 
 // FieldService coordinates extension field definitions between persistence and the in-process registry.
 type FieldService struct {
@@ -142,6 +165,87 @@ func (s *FieldService) Delete(ctx context.Context, code string) error {
 	}
 	s.registry.Remove(code)
 	return nil
+}
+
+// Retire soft-deletes a plugin-only definition (operator CLI) and removes it from
+// the registry after the store commits. Admin Delete continues to refuse plugin-only fields.
+// When PurgeValues is set and the active row is already gone, a soft-deleted
+// plugin-only row may still be purged (retry after a failed earlier purge).
+func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptions) (RetireResult, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return RetireResult{}, domainext.ValidationErr("extension field code must not be empty")
+	}
+	if opts.Store == nil {
+		return RetireResult{}, domainext.ValidationErr("retire store is required")
+	}
+
+	stored, err := s.repo.FindByCode(ctx, code)
+	if err != nil && !apperror.Is(err, apperror.CodeNotFound) {
+		return RetireResult{}, err
+	}
+
+	result := RetireResult{Code: code}
+	switch {
+	case err == nil && !stored.Access.PluginOnlyWrite:
+		return RetireResult{}, ErrFieldNotPluginOnly
+	case err == nil && opts.PurgeValues:
+		// Leave the active definition alone. A restore mid-purge must not be
+		// undone by a --purge-values re-run that soft-deletes again.
+		return RetireResult{}, ErrPurgeWhileActive
+	case err == nil:
+		if _, retireErr := opts.Store.RetireActive(ctx, code, false); retireErr != nil {
+			return RetireResult{}, mapRetireStoreError(retireErr)
+		}
+	case opts.PurgeValues:
+		n, purgeErr := opts.Store.PurgeIfSoftDeletedPluginOnly(ctx, code)
+		result.ValuesPurged = n
+		result.PurgeOnly = true
+		if purgeErr != nil {
+			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) {
+				// Soft-deleted row still present; drop any stale in-memory entry.
+				s.registry.Remove(code)
+				return result, purgeErr
+			}
+			if errors.Is(purgeErr, domainext.ErrPurgeDefinitionRestored) || errors.Is(purgeErr, domainext.ErrPurgeDefinitionMissing) {
+				// DB row is active again or gone — do not drop a restored in-memory def.
+				return result, purgeErr
+			}
+			mapped := mapRetireStoreError(purgeErr)
+			if errors.Is(mapped, ErrFieldNotFound) {
+				// Race: Save restored between FindByCode(not found) and assert.
+				active, findErr := s.repo.FindByCode(ctx, code)
+				if findErr == nil {
+					if active.Access.PluginOnlyWrite {
+						return result, ErrPurgeWhileActive
+					}
+					return result, ErrFieldNotPluginOnly
+				}
+				if !apperror.Is(findErr, apperror.CodeNotFound) {
+					// Re-read failed for a reason other than missing — keep ValuesPurged.
+					return result, findErr
+				}
+				// Still missing (e.g. soft-deleted non-plugin-only mid-batch): keep ValuesPurged.
+				return result, mapped
+			}
+			return RetireResult{}, mapped
+		}
+	default:
+		return RetireResult{}, ErrFieldNotFound
+	}
+
+	s.registry.Remove(code)
+	return result, nil
+}
+
+func mapRetireStoreError(err error) error {
+	if apperror.Is(err, apperror.CodeNotFound) {
+		return ErrFieldNotFound
+	}
+	if apperror.Is(err, apperror.CodeValidation) {
+		return ErrFieldNotPluginOnly
+	}
+	return err
 }
 
 // guardPluginOnly stops the definition API from lifting the write guard
