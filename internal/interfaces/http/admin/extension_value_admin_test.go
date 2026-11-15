@@ -375,3 +375,39 @@ func TestExtensionValueAdminHandler_PluginOnlyFieldDeleteForbidden(t *testing.T)
 		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
 	}
 }
+
+// fakeValueAPI shows handlers depend only on the ValueAPI port.
+type fakeValueAPI struct {
+	reg        *extensionapp.Registry
+	deleteErr  error
+	deleteSeen []string
+}
+
+func (f *fakeValueAPI) Registry() *extensionapp.Registry { return f.reg }
+func (f *fakeValueAPI) List(context.Context, domainext.Target, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) ListByOrderItems(context.Context, string, []string, bool) (map[string][]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) Delete(_ context.Context, _ domainext.Target, code string, _ bool) error {
+	f.deleteSeen = append(f.deleteSeen, code)
+	return f.deleteErr
+}
+
+func TestExtensionValueAdmin_WorksWithFakeValueAPI(t *testing.T) {
+	fake := &fakeValueAPI{reg: extensionapp.NewRegistry(), deleteErr: domainext.ErrForbiddenPluginOnlyField}
+	h := admin.NewExtensionValueAdminHandler(fake)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/extensions/values/product/p1/acme.locked", nil)
+	rec := httptest.NewRecorder()
+	newExtensionValueAdminRouter(h).ServeHTTP(rec, req)
+	if len(fake.deleteSeen) != 1 || fake.deleteSeen[0] != "acme.locked" {
+		t.Fatalf("fake not called: %v (status %d)", fake.deleteSeen, rec.Code)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 body=%s", rec.Code, rec.Body.String())
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
@@ -438,7 +439,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
 			WithContentBlocks(rt.repos.contentBlockRepo, rt.blockResolver, rt.repos.pageRepo).
 			WithCart(rt.repos.variantRepo, rt.cartService).
-			WithExtensions(rt.extensionValueService).
+			WithExtensions(extensionApp.AsValueAPI(rt.extensionValueService)).
 			WithCheckout(rt.shippingReg.Providers(), rt.payRegistry, rt.checkoutService).
 			WithAccount(rt.authService, rt.repos.orderRepo, rt.accountService).
 			WithTrustedProxies(cfg.RateLimit.TrustedProxies...).
