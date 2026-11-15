@@ -214,11 +214,16 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 			mapped := mapRetireStoreError(purgeErr)
 			if errors.Is(mapped, ErrFieldNotFound) {
 				// Race: Save restored between FindByCode(not found) and assert.
-				if active, findErr := s.repo.FindByCode(ctx, code); findErr == nil {
+				active, findErr := s.repo.FindByCode(ctx, code)
+				if findErr == nil {
 					if active.Access.PluginOnlyWrite {
 						return RetireResult{}, ErrPurgeWhileActive
 					}
 					return RetireResult{}, ErrFieldNotPluginOnly
+				}
+				if !apperror.Is(findErr, apperror.CodeNotFound) {
+					// Re-read failed for a reason other than missing — keep ValuesPurged.
+					return result, findErr
 				}
 				// Still missing (e.g. soft-deleted non-plugin-only mid-batch): keep ValuesPurged.
 				return result, mapped

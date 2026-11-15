@@ -170,7 +170,7 @@ func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger,
 	})
 	audit(retireErr, map[string]interface{}{"purge_only": result.PurgeOnly}, result.ValuesPurged)
 	if retireErr != nil {
-		return mapExtensionFieldRetireError(retireErr)
+		return mapExtensionFieldRetireError(retireErr, result.ValuesPurged)
 	}
 	if result.PurgeOnly {
 		return writeSuccessLinef(w, "Purged %d value row(s) for already-retired plugin-only extension field %q.\n", result.ValuesPurged, result.Code)
@@ -202,9 +202,12 @@ func parseExtensionFieldRetireArgs(args []string) (extensionFieldRetireArgs, err
 	return out, nil
 }
 
-func mapExtensionFieldRetireError(err error) error {
+func mapExtensionFieldRetireError(err error, valuesPurged int64) error {
 	switch {
 	case errors.Is(err, extensionapp.ErrFieldNotFound):
+		if valuesPurged > 0 {
+			return fmt.Errorf("extension-field retire: field not found (purged %d value row(s) before stop)", valuesPurged)
+		}
 		return fmt.Errorf("extension-field retire: field not found")
 	case errors.Is(err, extensionapp.ErrFieldNotPluginOnly):
 		return fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")

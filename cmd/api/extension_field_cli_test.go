@@ -317,16 +317,24 @@ func TestRunExtensionFieldRetire_Integration(t *testing.T) {
 }
 
 func TestMapExtensionFieldRetireError_PurgeIncompleteHint(t *testing.T) {
-	err := mapExtensionFieldRetireError(domainext.ErrPurgeIncomplete)
+	err := mapExtensionFieldRetireError(domainext.ErrPurgeIncomplete, 0)
 	if !errors.Is(err, domainext.ErrPurgeIncomplete) || !strings.Contains(err.Error(), "re-run") {
 		t.Fatalf("err = %v", err)
 	}
-	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionRestored)
+	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionRestored, 0)
 	if !errors.Is(err, domainext.ErrPurgeDefinitionRestored) || strings.Contains(err.Error(), "--purge-values --confirm-idle") {
 		t.Fatalf("restored err = %v, must not suggest purge retry", err)
 	}
-	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionMissing)
+	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionMissing, 0)
 	if !errors.Is(err, domainext.ErrPurgeDefinitionMissing) || !strings.Contains(err.Error(), "leftover values") {
 		t.Fatalf("missing err = %v", err)
+	}
+	err = mapExtensionFieldRetireError(extensionapp.ErrFieldNotFound, 0)
+	if err.Error() != "extension-field retire: field not found" {
+		t.Fatalf("total miss = %v", err)
+	}
+	err = mapExtensionFieldRetireError(extensionapp.ErrFieldNotFound, 3)
+	if !strings.Contains(err.Error(), "purged 3 value row(s) before stop") {
+		t.Fatalf("partial miss = %v", err)
 	}
 }

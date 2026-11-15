@@ -598,6 +598,40 @@ func TestFieldService_Retire_PurgeNotFoundKeepsValuesPurged(t *testing.T) {
 	}
 }
 
+type purgeNotFoundThenFindErrRepo struct {
+	purgeNotFoundWithCountStore
+	rereadErr error
+	findN     int
+}
+
+func (r *purgeNotFoundThenFindErrRepo) FindByCode(context.Context, string) (domainext.ExtensionField, error) {
+	r.findN++
+	if r.findN == 1 {
+		return domainext.ExtensionField{}, apperror.NotFound("extension field not found")
+	}
+	return domainext.ExtensionField{}, r.rereadErr
+}
+
+func TestFieldService_Retire_PurgeRereadDBErrorKeepsValuesPurged(t *testing.T) {
+	boom := errors.New("db timeout")
+	repo := &purgeNotFoundThenFindErrRepo{
+		purgeNotFoundWithCountStore: purgeNotFoundWithCountStore{purged: 2},
+		rereadErr:                   boom,
+	}
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
+
+	got, err := svc.Retire(context.Background(), "acme.flaky", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Store:       repo,
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want db timeout", err)
+	}
+	if !got.PurgeOnly || got.ValuesPurged != 2 {
+		t.Fatalf("result = %+v, want PurgeOnly ValuesPurged=2", got)
+	}
+}
+
 func TestFieldService_GuardFailsClosedOnRepoError(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(serviceFieldDef("acme.plain")); err != nil {
