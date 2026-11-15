@@ -3,11 +3,16 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 // --- mock queue ---
@@ -171,6 +176,92 @@ func TestWorker_ProcessesJob(t *testing.T) {
 	defer q.mu.Unlock()
 	if len(q.completed) != 1 || q.completed[0] != "j1" {
 		t.Errorf("completed = %v, want [j1]", q.completed)
+	}
+}
+
+func TestWorker_StripsPluginWriteTrust(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parent = requestctx.WithRequestID(parent, "req-job-1")
+	parent = pluginwrite.Grant(parent, "acme", "acme.a", "acme.b")
+
+	var saw context.Context
+	handler := &mockHandler{
+		jobType: "test_job",
+		handleFn: func(ctx context.Context, _ jobs.Job) error {
+			saw = ctx
+			for _, code := range []string{"acme.a", "acme.b"} {
+				if _, ok := pluginwrite.For(ctx, code); ok {
+					t.Errorf("job handler inherited trust for %q", code)
+				}
+			}
+			if got := requestctx.RequestID(ctx); got != "req-job-1" {
+				t.Errorf("RequestID = %q, want req-job-1", got)
+			}
+			if ctx.Err() != nil {
+				t.Errorf("handler ctx already canceled: %v", ctx.Err())
+			}
+			regranted := pluginwrite.Grant(ctx, "acme", "acme.c")
+			if _, ok := pluginwrite.For(regranted, "acme.c"); !ok {
+				t.Error("Grant on stripped handler ctx must stick")
+			}
+			return nil
+		},
+	}
+	w := jobs.NewWorker(q, log, 50*time.Millisecond)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "test_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	if !w.ProcessOne(parent) {
+		t.Fatal("expected job to be processed")
+	}
+	if saw == nil {
+		t.Fatal("handler did not run")
+	}
+	cancel()
+	if saw.Err() == nil {
+		t.Fatal("handler ctx must observe parent cancel")
+	}
+}
+
+func TestWorker_WithPluginWritePanicFailsJob(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extensionapp.NewRegistry())
+	handler := &mockHandler{
+		jobType: "test_job",
+		handleFn: func(ctx context.Context, _ jobs.Job) error {
+			_ = app.WithPluginWrite(ctx, "acme", "acme.missing")
+			return nil
+		},
+	}
+	w := jobs.NewWorker(q, log, 50*time.Millisecond)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "test_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job to be processed")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.completed) != 0 {
+		t.Fatalf("completed = %v, want none", q.completed)
+	}
+	if len(q.failed) != 1 || q.failed[0] != "j1" {
+		t.Fatalf("failed = %v, want [j1]", q.failed)
+	}
+	if len(q.failErrs) != 1 || !strings.Contains(q.failErrs[0].Error(), "job handler panic") {
+		t.Fatalf("failErr = %v, want job handler panic", q.failErrs)
+	}
+	if !strings.Contains(q.failErrs[0].Error(), "not registered") {
+		t.Fatalf("failErr = %v, want unregistered-field panic text", q.failErrs)
 	}
 }
 

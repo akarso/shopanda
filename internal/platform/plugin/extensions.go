@@ -179,9 +179,12 @@ func (a *App) PluginWriteContext(ctx context.Context, pluginName string, fieldCo
 	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...), nil
 }
 
-// WithPluginWrite is PluginWriteContext that panics on error. A panic is recovered
-// only by HTTP middleware and plugin Init; in events, workers and goroutines use
-// PluginWriteContext instead. Never build the codes from runtime/request input.
+// WithPluginWrite is PluginWriteContext that panics on error. Unrecovered goroutines
+// crash the process: OnAsync handlers and any goroutine the plugin starts — use
+// PluginWriteContext there. Sync On handlers are recovered when Publish runs under
+// HTTP RecoveryMiddleware or Worker.safeHandle; otherwise they crash. Init recovers.
+// The worker recovers and fails the job (panic text stored). Never build the codes
+// from runtime/request input.
 func (a *App) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes ...string) context.Context {
 	out, err := a.PluginWriteContext(ctx, pluginName, fieldCodes...)
 	if err != nil {

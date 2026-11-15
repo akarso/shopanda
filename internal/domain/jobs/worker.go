@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
 )
 
 // outcomeRecordTimeout bounds the detached context used to record a job's
@@ -229,7 +231,9 @@ func (w *Worker) safeHandle(ctx context.Context, h Handler, job Job) (err error)
 			err = fmt.Errorf("job handler panic: %v", r)
 		}
 	}()
-	return h.Handle(ctx, job)
+	// Job handlers (including plugin-registered ones) must not inherit a
+	// plugin-write grant from whatever context dequeued the job.
+	return h.Handle(pluginwrite.Strip(ctx), job)
 }
 
 // recordFail and recordComplete record a job's terminal outcome on a
