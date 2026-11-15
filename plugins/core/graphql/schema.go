@@ -49,7 +49,6 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 		},
 	})
 
-
 	productType := gql.NewObject(gql.ObjectConfig{
 		Name: "Product",
 		Fields: gql.Fields{

@@ -307,7 +307,6 @@ func (r *hListAssetRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-
 type hMockAssetAttachments struct {
 	count int
 }

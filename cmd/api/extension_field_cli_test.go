@@ -142,8 +142,10 @@ func (p *registerThenOKPlugin) Init(app *plugin.App) error {
 
 type alwaysFailPlugin struct{}
 
-func (p *alwaysFailPlugin) Name() string                  { return "test/always-fail" }
-func (p *alwaysFailPlugin) Init(*plugin.App) error        { return errors.New("init boom after peer registered") }
+func (p *alwaysFailPlugin) Name() string { return "test/always-fail" }
+func (p *alwaysFailPlugin) Init(*plugin.App) error {
+	return errors.New("init boom after peer registered")
+}
 
 func TestDefaultOpenExtensionFieldRetireRuntime_FailClosedWhenPeerInitFails(t *testing.T) {
 	dsn := os.Getenv("SHOPANDA_TEST_DSN")

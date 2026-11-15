@@ -319,7 +319,7 @@ func TestExtensionFieldRepo_PurgeStopsWhenSaveRestoresDefinition(t *testing.T) {
 
 	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
 	db := &saveBeforeBeginTx{
-		DB: postgres.ExtensionFieldRepoDB(repo),
+		DB:          postgres.ExtensionFieldRepoDB(repo),
 		beforeBegin: 2, // restore before the second batch begins
 		save: func() {
 			if err := repo.Save(ctx, plain); err != nil {

@@ -2058,4 +2058,3 @@ func TestImport_ReindexTriggerErrorPreservesResult(t *testing.T) {
 		t.Fatalf("result = %+v, want Products=1 Variants=1 preserved with Trigger error", result)
 	}
 }
-

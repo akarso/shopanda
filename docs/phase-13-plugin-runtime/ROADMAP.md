@@ -126,7 +126,7 @@ After the gate:
 | 1093 | C | [oss] | **done** — Narrow port for core-internal extension operations |
 | 1094 | C | [oss] | **done** — Retire plugin-only extension field definitions |
 | 1095 | C | [oss] | **done** — Trust-propagation hardening and coverage gaps |
-| 1096 | C | [oss] | **planned** — Green `make check`: gofmt and go vet cleanup |
+| 1096 | C | [oss] | **done** — Green `make check`: gofmt and go vet cleanup |
 
 PR specs: [`prs/`](prs/).
 

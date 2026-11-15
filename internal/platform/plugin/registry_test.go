@@ -248,8 +248,8 @@ func TestRegistry_InitAllContext_OnInitCancelCountsCanceled(t *testing.T) {
 	reg := plugin.NewRegistry(log)
 	ctx, cancel := context.WithCancel(context.Background())
 	reg.Register(&mockPlugin{
-		name:   "only",
-		onInit: cancel,
+		name:    "only",
+		onInit:  cancel,
 		initErr: context.Canceled,
 	})
 	s := reg.InitAllContext(ctx, testApp(log))

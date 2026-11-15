@@ -10,10 +10,10 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
-	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 type memCartExtensionValueRepo struct {

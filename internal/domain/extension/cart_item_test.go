@@ -4,10 +4,10 @@ import "testing"
 
 func TestParseCartItemTargetID(t *testing.T) {
 	tests := []struct {
-		in          string
-		cartID      string
-		variantID   string
-		ok          bool
+		in        string
+		cartID    string
+		variantID string
+		ok        bool
 	}{
 		{"cart-1:var-1", "cart-1", "var-1", true},
 		{" cart-1 : var-2 ", "cart-1", "var-2", true},

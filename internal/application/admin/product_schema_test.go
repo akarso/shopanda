@@ -93,10 +93,10 @@ func TestRegisterProductSchemas_Form(t *testing.T) {
 
 	// Each field declares its scope so the admin UI can render scope badges.
 	wantScopes := map[string]string{
-		"name":        "translatable",
-		"slug":        "global",
-		"description": "translatable",
-		"type":        "global",
+		"name":                   "translatable",
+		"slug":                   "global",
+		"description":            "translatable",
+		"type":                   "global",
 		"status":                 "global",
 		"requires_linked_parent": "global",
 	}
