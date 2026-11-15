@@ -232,19 +232,29 @@ func TestRegistry_InitAllContext_PreCanceledMarksLoadedFailed(t *testing.T) {
 	}
 }
 
-func TestRegistry_InitAllContext_SafeInitCancelCountsCanceled(t *testing.T) {
-	// Single plugin: cancel after between-plugin check passes but before Init
-	// finishes observing ctx — simulate by canceling in onInit after setInitContext.
+func TestRegistry_InitAllContext_PluginLocalDeadlineIsNotCanceled(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&mockPlugin{name: "sqs-like", initErr: context.DeadlineExceeded})
+	// Boot context stays live — plugin-local timeout must not fail serve via Canceled.
+	s := reg.InitAllContext(context.Background(), testApp(log))
+	if s.Failed != 1 || s.Canceled != 0 || s.Initialized != 0 {
+		t.Fatalf("summary = %+v, want Failed=1 Canceled=0 Initialized=0", s)
+	}
+}
+
+func TestRegistry_InitAllContext_OnInitCancelCountsCanceled(t *testing.T) {
 	log := testLogger()
 	reg := plugin.NewRegistry(log)
 	ctx, cancel := context.WithCancel(context.Background())
-	reg.Register(&mockPlugin{name: "only", onInit: cancel})
-	// Cancel before InitAll so safeInit's ctx.Err() check trips for the only plugin.
-	// (between-plugin cancel loop also marks it; either path must set Canceled.)
-	cancel()
+	reg.Register(&mockPlugin{
+		name:   "only",
+		onInit: cancel,
+		initErr: context.Canceled,
+	})
 	s := reg.InitAllContext(ctx, testApp(log))
-	if s.Canceled < 1 || s.Failed < 1 {
-		t.Fatalf("summary = %+v, want Canceled>=1 Failed>=1", s)
+	if s.Failed != 1 || s.Canceled != 1 || s.Initialized != 0 {
+		t.Fatalf("summary = %+v, want Failed=1 Canceled=1 Initialized=0", s)
 	}
 }
 

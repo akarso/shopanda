@@ -569,6 +569,35 @@ func TestFieldService_Retire_PurgeAssertRacePluginOnlyRestore(t *testing.T) {
 	}
 }
 
+type purgeNotFoundWithCountStore struct {
+	restoreRaceRepo
+	purged int64
+}
+
+func (s *purgeNotFoundWithCountStore) FindByCode(context.Context, string) (domainext.ExtensionField, error) {
+	// Always not found (soft-deleted non-plugin-only / gone).
+	return domainext.ExtensionField{}, apperror.NotFound("extension field not found")
+}
+func (s *purgeNotFoundWithCountStore) PurgeIfSoftDeletedPluginOnly(context.Context, string) (int64, error) {
+	return s.purged, apperror.NotFound("extension field not found")
+}
+
+func TestFieldService_Retire_PurgeNotFoundKeepsValuesPurged(t *testing.T) {
+	repo := &purgeNotFoundWithCountStore{purged: 3}
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
+
+	got, err := svc.Retire(context.Background(), "acme.gone", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Store:       repo,
+	})
+	if !errors.Is(err, extensionapp.ErrFieldNotFound) {
+		t.Fatalf("err = %v, want ErrFieldNotFound", err)
+	}
+	if !got.PurgeOnly || got.ValuesPurged != 3 {
+		t.Fatalf("result = %+v, want PurgeOnly ValuesPurged=3", got)
+	}
+}
+
 func TestFieldService_GuardFailsClosedOnRepoError(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(serviceFieldDef("acme.plain")); err != nil {

@@ -196,7 +196,10 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 			live.State = StateFailed
 			live.Err = err
 			summary.Failed++
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// Only boot-context cancel counts as Canceled. A plugin-local
+			// WithTimeout (e.g. SQS) returns DeadlineExceeded while ctx is live —
+			// that stays an ordinary Failed so serve can continue.
+			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 				summary.Canceled++
 			}
 			cause := "error"

@@ -220,6 +220,8 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 					}
 					return RetireResult{}, ErrFieldNotPluginOnly
 				}
+				// Still missing (e.g. soft-deleted non-plugin-only mid-batch): keep ValuesPurged.
+				return result, mapped
 			}
 			return RetireResult{}, mapped
 		}
