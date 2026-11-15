@@ -775,7 +775,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithUnpaidOrderCompensation(repos.orderRepo, assignmentFlow, repos.paymentRepo, storeCreditService)
 	checkoutApp.RegisterPaymentFailedCompensation(bus, repos.orderRepo, storeCreditService, assignmentFlow, log)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
-	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionValueService)
+	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionApp.AsValueAPI(extensionValueService))
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
@@ -910,9 +910,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
 		WithVisibilityFacts(visibilityFacts).
 		WithOffers(catalogOffers)
-	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
-	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
-	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService).
+	cartHandler := storefront.NewCartHandler(cartService, extensionApp.AsValueAPI(extensionValueService))
+	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionApp.AsValueAPI(extensionValueService))
+	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionApp.AsValueAPI(extensionValueService)).
 		WithEventBus(bus).
 		WithShipmentStatusService(shipmentStatusService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
@@ -1043,7 +1043,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	attributeAdmin := admin.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor).
 		WithDiscoveryFacetSync(discoveryFacetSync)
 	extensionFieldAdmin := admin.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
-	extensionValueAdmin := admin.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
+	extensionValueAdmin := admin.NewExtensionValueAdminHandlerWithAuditor(extensionApp.AsValueAPI(extensionValueService), sharedAuditor)
 	extensionHookAdmin := admin.NewExtensionHookAdminHandler(hookRegistry)
 	extensionSlotAdmin := admin.NewExtensionSlotAdminHandler(slotRegistry)
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)

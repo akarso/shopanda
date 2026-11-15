@@ -39,7 +39,7 @@ type Resolver struct {
 	productRepo  catalog.ProductRepository
 	categoryRepo catalog.CategoryRepository
 	fields       *extensionapp.FieldService
-	values       *extensionapp.ValueService
+	values       extensionapp.ValueAPI
 
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
@@ -60,7 +60,7 @@ func NewResolver(products catalog.ProductRepository, categories catalog.Category
 }
 
 // WithExtensions wires extension services into the GraphQL resolver.
-func (r *Resolver) WithExtensions(fields *extensionapp.FieldService, values *extensionapp.ValueService) *Resolver {
+func (r *Resolver) WithExtensions(fields *extensionapp.FieldService, values extensionapp.ValueAPI) *Resolver {
 	r.fields = fields
 	r.values = values
 	return r

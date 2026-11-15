@@ -123,7 +123,7 @@ After the gate:
 | 1090 | C | [oss] | **done** — Local SignedURLStorage + BindMediaStorage |
 | 1091 | C | [oss] | **done** — Enforce `Access.PluginOnlyWrite` on extension writes |
 | 1092 | C | [oss] | **done** — Field ownership for plugin-only extension fields |
-| 1093 | C | [oss] | **planned** — Narrow port for core-internal extension operations |
+| 1093 | C | [oss] | **done** — Narrow port for core-internal extension operations |
 | 1094 | C | [oss] | **planned** — Retire plugin-only extension field definitions |
 | 1095 | C | [oss] | **planned** — Trust-propagation hardening and coverage gaps |
 | 1096 | C | [oss] | **planned** — Green `make check`: gofmt and go vet cleanup |

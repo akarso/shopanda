@@ -21,11 +21,11 @@ import (
 // CartHandler handles cart HTTP endpoints.
 type CartHandler struct {
 	svc        *cartApp.Service
-	extensions *extensionapp.ValueService
+	extensions extensionapp.ValueAPI
 }
 
 // NewCartHandler creates a new CartHandler.
-func NewCartHandler(svc *cartApp.Service, extensions *extensionapp.ValueService) *CartHandler {
+func NewCartHandler(svc *cartApp.Service, extensions extensionapp.ValueAPI) *CartHandler {
 	return &CartHandler{svc: svc, extensions: extensions}
 }
 

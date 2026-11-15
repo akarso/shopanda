@@ -55,7 +55,7 @@ type StorefrontHandler struct {
 	search              search.SearchEngine
 	variants            catalog.VariantRepository
 	carts               *cartApp.Service
-	extensions          *extensionApp.ValueService
+	extensions          extensionApp.ValueAPI
 	auth                *appAuth.Service
 	checkout            *checkoutApp.Service
 	orders              order.OrderRepository
@@ -359,7 +359,7 @@ func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *
 }
 
 // WithExtensions enables cart line extension capture and storefront display.
-func (h *StorefrontHandler) WithExtensions(extensions *extensionApp.ValueService) *StorefrontHandler {
+func (h *StorefrontHandler) WithExtensions(extensions extensionApp.ValueAPI) *StorefrontHandler {
 	h.extensions = extensions
 	return h
 }
