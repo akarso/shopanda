@@ -96,7 +96,6 @@ func (s *LinkedEligibilityService) ListCategories(ctx context.Context, childID s
 	return rows, nil
 }
 
-
 // ListAllParentSlugRows returns every allowlist row with product slugs for CSV export.
 func (s *LinkedEligibilityService) ListAllParentSlugRows(ctx context.Context) ([]catalog.LinkedEligibleParentSlugRow, error) {
 	rows, err := s.rules.ListAllParentSlugRows(ctx)

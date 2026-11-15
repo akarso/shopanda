@@ -10,7 +10,6 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 )
 
-
 func mustLocal(t *testing.T, basePath, baseURL string) *localfs.Storage {
 	t.Helper()
 	s, err := localfs.NewWithSecret(basePath, baseURL, []byte("unit-test-sign-secret-32-bytes!!"))

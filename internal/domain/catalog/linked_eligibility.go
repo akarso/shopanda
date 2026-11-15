@@ -111,4 +111,3 @@ type LinkedEligibleCategorySlugRow struct {
 	ChildSlug    string
 	CategorySlug string
 }
-

@@ -19,7 +19,7 @@ func testLogger() logger.Logger { return logger.NewWithWriter(io.Discard, "error
 type stubProductRepo struct {
 	findByIDFn         func(ctx context.Context, id string) (*catalog.Product, error)
 	findBySlugFn       func(ctx context.Context, slug string) (*catalog.Product, error)
-	listFn func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
+	listFn             func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	findByCategoryIDFn func(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error)
 }
 

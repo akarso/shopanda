@@ -650,13 +650,13 @@ func (h *ProductAdminHandler) Get() http.HandlerFunc {
 					inputCodes = []string{}
 				}
 				visibilityPayload = map[string]interface{}{
-					"enforced":                   h.enforced,
-					"status":                     string(product.Status),
-					"auto_basis":                 autoBasis,
-					"failure_codes":              codes,
-					"input_failure_codes":        inputCodes,
-					"requires_linked_parent":     product.RequiresLinkedParent,
-					"missing_downloadable_file":  inputs.MissingDownloadableFile,
+					"enforced":                  h.enforced,
+					"status":                    string(product.Status),
+					"auto_basis":                autoBasis,
+					"failure_codes":             codes,
+					"input_failure_codes":       inputCodes,
+					"requires_linked_parent":    product.RequiresLinkedParent,
+					"missing_downloadable_file": inputs.MissingDownloadableFile,
 					"axes": map[string]interface{}{
 						"catalog":      newAdminAxisExplanation(axesExp.Catalog),
 						"search":       newAdminAxisExplanation(axesExp.Search),

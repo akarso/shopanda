@@ -229,7 +229,7 @@ func TestNew_SignedURLHosts_AWSVirtualHosted(t *testing.T) {
 	}
 	hosts := st.SignedURLHosts()
 	want := map[string]bool{
-		"s3.eu-west-1.amazonaws.com":            true,
+		"s3.eu-west-1.amazonaws.com":           true,
 		"my-bucket.s3.eu-west-1.amazonaws.com": true,
 	}
 	if len(hosts) != 2 {
@@ -262,7 +262,7 @@ func TestNew_SignedURLHosts_ChinaRegion(t *testing.T) {
 	}
 	hosts := st.SignedURLHosts()
 	want := map[string]bool{
-		"s3.cn-north-1.amazonaws.com.cn":            true,
+		"s3.cn-north-1.amazonaws.com.cn":           true,
 		"my-bucket.s3.cn-north-1.amazonaws.com.cn": true,
 	}
 	if len(hosts) != 2 {
@@ -303,8 +303,8 @@ type statusCodeErr struct {
 	msg  string
 }
 
-func (e statusCodeErr) Error() string         { return e.msg }
-func (e statusCodeErr) HTTPStatusCode() int   { return e.code }
+func (e statusCodeErr) Error() string       { return e.msg }
+func (e statusCodeErr) HTTPStatusCode() int { return e.code }
 
 func TestIsS3NotFound(t *testing.T) {
 	if !isS3NotFound(&s3types.NotFound{Message: aws.String("missing")}) {
