@@ -668,6 +668,17 @@ func TestDownloadAccount_Deliver_LocalNamedSignedRedirectAndRejectsTraversal(t *
 		}
 		return svc, repo, g
 	}
+	mustGrant := func(t *testing.T, repo *dlGrantRepo, grantID string) *domain.DownloadGrant {
+		t.Helper()
+		stored, err := repo.FindByID(context.Background(), grantID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if stored == nil {
+			t.Fatal("FindByID: grant missing")
+		}
+		return stored
+	}
 
 	t.Run("safe_token_redirects_when_Name_local", func(t *testing.T) {
 		svc, repo, g := newGrant(t)
@@ -683,9 +694,8 @@ func TestDownloadAccount_Deliver_LocalNamedSignedRedirectAndRejectsTraversal(t *
 		if loc := rr.Header().Get("Location"); loc != storage.url {
 			t.Fatalf("Location = %q, want %q", loc, storage.url)
 		}
-		stored, _ := repo.FindByID(context.Background(), g.ID)
-		if stored.DownloadCount != 1 {
-			t.Fatalf("count = %d, want claim after safe local redirect", stored.DownloadCount)
+		if got := mustGrant(t, repo, g.ID).DownloadCount; got != 1 {
+			t.Fatalf("count = %d, want claim after safe local redirect", got)
 		}
 		if storage.signs.Load() != 1 {
 			t.Fatalf("signs = %d, want 1 (pointer embed aliases the test storage)", storage.signs.Load())
@@ -703,9 +713,8 @@ func TestDownloadAccount_Deliver_LocalNamedSignedRedirectAndRejectsTraversal(t *
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 		}
-		stored, _ := repo.FindByID(context.Background(), g.ID)
-		if stored.DownloadCount != 0 {
-			t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
+		if got := mustGrant(t, repo, g.ID).DownloadCount; got != 0 {
+			t.Fatalf("count = %d, claim must not run", got)
 		}
 	})
 
@@ -722,9 +731,8 @@ func TestDownloadAccount_Deliver_LocalNamedSignedRedirectAndRejectsTraversal(t *
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
 		}
-		stored, _ := repo.FindByID(context.Background(), g.ID)
-		if stored.DownloadCount != 0 {
-			t.Fatalf("count = %d, claim must not run", stored.DownloadCount)
+		if got := mustGrant(t, repo, g.ID).DownloadCount; got != 0 {
+			t.Fatalf("count = %d, claim must not run", got)
 		}
 	})
 }
