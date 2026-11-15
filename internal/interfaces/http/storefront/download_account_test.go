@@ -667,7 +667,7 @@ func TestDownloadAccount_Deliver_RejectsLocalPathTraversalRedirect(t *testing.T)
 		url:                "/api/v1/media/local-signed/../admin",
 	}
 	// Force Name()=local path in validate: override via localNamedSigned wrapper.
-	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: *storage}, nil)
+	h := storefront.NewDownloadAccountHandler(svc, &dlAssetRepo{asset: asset}, &localNamedSigned{memSignedStorage: storage}, nil)
 	rr := postDownload(h.Deliver(), g.ID, "cust-1")
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
@@ -679,7 +679,7 @@ func TestDownloadAccount_Deliver_RejectsLocalPathTraversalRedirect(t *testing.T)
 }
 
 type localNamedSigned struct {
-	memSignedStorage
+	*memSignedStorage
 }
 
 func (s *localNamedSigned) Name() string { return "local" }

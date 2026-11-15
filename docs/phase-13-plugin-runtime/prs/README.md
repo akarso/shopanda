@@ -14,7 +14,7 @@
 | PR-1093 | C | done | [Narrow port for core-internal extension operations](PR-1093.md) |
 | PR-1094 | C | done | [Retire plugin-only extension field definitions](PR-1094.md) |
 | PR-1095 | C | done | [Trust-propagation hardening and coverage gaps](PR-1095.md) |
-| PR-1096 | C | planned | [Green `make check`: gofmt and go vet cleanup](PR-1096.md) |
+| PR-1096 | C | done | [Green `make check`: gofmt and go vet cleanup](PR-1096.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
