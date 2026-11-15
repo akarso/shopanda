@@ -190,6 +190,29 @@ func TestRegistry_InitAllContext_CancelBetweenPlugins(t *testing.T) {
 	}
 }
 
+func TestApp_Context_DuringInit(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var saw context.Context
+	reg.Register(&contextProbePlugin{probe: func(app *plugin.App) { saw = app.Context() }})
+	_ = reg.InitAllContext(ctx, testApp(log))
+	if saw != ctx {
+		t.Fatalf("App.Context during Init = %v, want boot ctx", saw)
+	}
+}
+
+type contextProbePlugin struct {
+	probe func(*plugin.App)
+}
+
+func (p *contextProbePlugin) Name() string { return "ctx-probe" }
+func (p *contextProbePlugin) Init(app *plugin.App) error {
+	p.probe(app)
+	return nil
+}
+
 func TestRegistry_InitAllContext_PreCanceledMarksLoadedFailed(t *testing.T) {
 	log := testLogger()
 	reg := plugin.NewRegistry(log)

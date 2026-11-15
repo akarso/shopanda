@@ -295,6 +295,78 @@ func TestExtensionFieldRepo_PurgeCancelKeepsSoftDelete(t *testing.T) {
 	}
 }
 
+func TestExtensionFieldRepo_PurgeStopsWhenSaveRestoresDefinition(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.restore")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	for i := 0; i < 3; i++ {
+		target := domainext.Target{Type: domainext.TargetCartItem, ID: fmt.Sprintf("cart:restore:%d", i)}
+		if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, fmt.Sprintf("v%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	restoreBatch := postgres.SetExtensionValuePurgeBatchSizeForTest(1)
+	t.Cleanup(restoreBatch)
+
+	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
+	db := &saveBeforeBeginTx{
+		DB: postgres.ExtensionFieldRepoDB(repo),
+		beforeBegin: 2, // restore before the second batch begins
+		save: func() {
+			if err := repo.Save(ctx, plain); err != nil {
+				t.Errorf("Save restore: %v", err)
+			}
+		},
+	}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(ctx, db, locked.Code, 1)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionChanged) {
+		t.Fatalf("purge = %d, %v, want ErrPurgeDefinitionChanged", n, err)
+	}
+	if n != 1 {
+		t.Fatalf("committed batches = %d, want 1", n)
+	}
+	got, err := repo.FindByCode(ctx, locked.Code)
+	if err != nil {
+		t.Fatalf("definition must stay active: %v", err)
+	}
+	if got.Access.PluginOnlyWrite {
+		t.Fatalf("restored row should not be plugin-only, got %+v", got)
+	}
+	var remaining int
+	if err := postgres.ExtensionFieldRepoDB(repo).QueryRowContext(ctx, `SELECT COUNT(*) FROM extension_values WHERE field_code = $1`, locked.Code).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining values = %d, want 2 (second batch must not delete)", remaining)
+	}
+}
+
+// saveBeforeBeginTx runs save once when BeginTx count reaches beforeBegin.
+type saveBeforeBeginTx struct {
+	*sql.DB
+	beforeBegin int
+	begun       int
+	save        func()
+	saved       bool
+}
+
+func (s *saveBeforeBeginTx) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	s.begun++
+	if !s.saved && s.begun >= s.beforeBegin {
+		s.saved = true
+		s.save()
+	}
+	return s.DB.BeginTx(ctx, opts)
+}
+
 func TestExtensionFieldRepo_PurgeBatchCancelKeepsCountThenRetry(t *testing.T) {
 	repo := setupExtensionFieldRepo(t)
 	ctx := context.Background()

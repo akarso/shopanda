@@ -265,15 +265,15 @@ Extension fields with `Access.PluginOnlyWrite` (admin UI: `plugin_only_write`) c
 # Soft-delete the definition only (safe while serve is up; new plugin writes still need the plugin gone + restart)
 app extension-field retire <code>
 
-# Soft-delete, then purge values in short batches (requires idle processes)
+# Purge values for an already soft-deleted plugin-only field (requires idle processes)
 app extension-field retire <code> --purge-values --confirm-idle
 ```
 
 - Audited as `extension_field.retire` (`cli:<os-user>`), including still-registered refusals (missing `--confirm-idle` is rejected before audit).
-- Soft-delete commits first; value deletes run in separate short batches (each batch locks the field row). A purge timeout or incomplete error keeps completed batches and returns `definition retired; value purge incomplete` with a re-run hint — re-run with `--purge-values --confirm-idle` to finish. The CLI refuses when any plugin fails `Init` / migration verify, or when plugin boot still registers the code (`plugin still registers`, any definition, not only plugin-only).
+- Soft-delete and purge are separate steps: `--purge-values` refuses an active definition (`field is active; soft-delete before purging values`) so a restore mid-purge is not undone by a purge re-run. Value deletes run in short batches (each batch locks the field row). A purge timeout keeps completed batches and returns `definition retired; value purge incomplete` with a re-run hint. If Save restores the row between batches, purge stops with `field definition is active again or missing` (no re-run hint) and leaves the definition active. The CLI refuses when any plugin fails `Init` / migration verify, or when plugin boot still registers the code (`plugin still registers`, any definition, not only plugin-only).
 - After a successful retire, restart `serve` / `worker` so their registries drop the code (`LoadPersisted` will not reload a soft-deleted row).
 - Ordinary (non-plugin-only) fields keep using admin `DELETE`; `extension-field retire` refuses them.
-- Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`). While a purge batch holds `FOR UPDATE` on the field row, Save cannot clear `deleted_at`; if the row is restored between batches, purge stops and reports incomplete.
+- Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`). While a purge batch holds `FOR UPDATE` on the field row, Save cannot clear `deleted_at`.
 
 ## Rate limiting and login lockout
 

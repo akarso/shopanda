@@ -18,11 +18,16 @@ var (
 	ErrFieldPluginOnly = errors.New("plugin-only extension field cannot be modified or deleted")
 	// ErrFieldNotPluginOnly indicates Retire was called on an ordinary (non-plugin-only) field.
 	ErrFieldNotPluginOnly = errors.New("extension field is not plugin-only")
+	// ErrPurgeWhileActive indicates --purge-values was requested while the definition is
+	// still active. Soft-delete first (omit --purge-values), then purge. This keeps a
+	// restored-during-purge definition active instead of soft-deleting it again.
+	ErrPurgeWhileActive = errors.New("field is active; soft-delete before purging values")
 )
 
 // RetireOptions controls FieldService.Retire.
 type RetireOptions struct {
-	// PurgeValues deletes every extension_values row for the code (same transaction as soft-delete).
+	// PurgeValues deletes extension_values for a soft-deleted plugin-only row only.
+	// An active row with PurgeValues returns ErrPurgeWhileActive (soft-delete first).
 	PurgeValues bool
 	// Store performs the soft-delete and optional purge. Required.
 	Store PluginOnlyRetireStore
@@ -184,14 +189,12 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 	switch {
 	case err == nil && !stored.Access.PluginOnlyWrite:
 		return RetireResult{}, ErrFieldNotPluginOnly
+	case err == nil && opts.PurgeValues:
+		// Leave the active definition alone. A restore mid-purge must not be
+		// undone by a --purge-values re-run that soft-deletes again.
+		return RetireResult{}, ErrPurgeWhileActive
 	case err == nil:
-		n, retireErr := opts.Store.RetireActive(ctx, code, opts.PurgeValues)
-		result.ValuesPurged = n
-		if retireErr != nil {
-			if errors.Is(retireErr, domainext.ErrPurgeIncomplete) {
-				s.registry.Remove(code)
-				return result, retireErr
-			}
+		if _, retireErr := opts.Store.RetireActive(ctx, code, false); retireErr != nil {
 			return RetireResult{}, mapRetireStoreError(retireErr)
 		}
 	case opts.PurgeValues:
@@ -199,7 +202,7 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 		result.ValuesPurged = n
 		result.PurgeOnly = true
 		if purgeErr != nil {
-			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) {
+			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) || errors.Is(purgeErr, domainext.ErrPurgeDefinitionChanged) {
 				s.registry.Remove(code)
 				return result, purgeErr
 			}

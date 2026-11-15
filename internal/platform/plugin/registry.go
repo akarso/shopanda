@@ -183,7 +183,7 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		stagingCLI := cli.NewRegistry()
 		app.cliRegistry = stagingCLI
 		extBefore := app.extensionCodeSnapshot()
-		err := app.settleExtensionFields(name, extBefore, r.safeInit(live, app))
+		err := app.settleExtensionFields(name, extBefore, r.safeInit(ctx, live, app))
 		if err != nil {
 			live.State = StateFailed
 			live.Err = err
@@ -228,13 +228,20 @@ func (e *panicError) Error() string {
 	return fmt.Sprintf("panic: %v", e.value)
 }
 
-// safeInit calls plugin.Init and recovers from panics.
-func (r *Registry) safeInit(e *Entry, app *App) (err error) {
+// safeInit calls plugin.Init under the boot context and recovers from panics.
+// Plugins observe cancellation via App.Context(); a blocked Init that ignores
+// that context still runs until it returns (between-plugin checks cover the rest).
+func (r *Registry) safeInit(ctx context.Context, e *Entry, app *App) (err error) {
 	defer func() {
 		if rv := recover(); rv != nil {
 			err = &panicError{value: rv}
 		}
+		app.setInitContext(nil)
 	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	app.setInitContext(ctx)
 	return e.Plugin.Init(app)
 }
 

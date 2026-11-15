@@ -259,10 +259,18 @@ func TestRunExtensionFieldRetire_Integration(t *testing.T) {
 		t.Fatal("expected error without --confirm-idle")
 	}
 	out.Reset()
-	if err := runExtensionFieldRetire(&out, cfg, log, []string{code, "--purge-values", "--confirm-idle"}); err != nil {
-		t.Fatalf("runExtensionFieldRetire: %v\n(media=%s)", err, filepath.Clean(mediaDir))
+	if err := runExtensionFieldRetire(&out, cfg, log, []string{code, "--purge-values", "--confirm-idle"}); err == nil || !strings.Contains(err.Error(), "soft-delete") {
+		t.Fatalf("purge while active err = %v", err)
 	}
-	if !strings.Contains(out.String(), code) || !strings.Contains(out.String(), "purged 1") {
+	out.Reset()
+	if err := runExtensionFieldRetire(&out, cfg, log, []string{code}); err != nil {
+		t.Fatalf("soft-delete: %v\n(media=%s)", err, filepath.Clean(mediaDir))
+	}
+	out.Reset()
+	if err := runExtensionFieldRetire(&out, cfg, log, []string{code, "--purge-values", "--confirm-idle"}); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if !strings.Contains(out.String(), code) || !strings.Contains(out.String(), "Purged 1") {
 		t.Fatalf("output = %q", out.String())
 	}
 
@@ -312,5 +320,9 @@ func TestMapExtensionFieldRetireError_PurgeIncompleteHint(t *testing.T) {
 	err := mapExtensionFieldRetireError(domainext.ErrPurgeIncomplete)
 	if !errors.Is(err, domainext.ErrPurgeIncomplete) || !strings.Contains(err.Error(), "re-run") {
 		t.Fatalf("err = %v", err)
+	}
+	err = mapExtensionFieldRetireError(domainext.ErrPurgeDefinitionChanged)
+	if !errors.Is(err, domainext.ErrPurgeDefinitionChanged) || strings.Contains(err.Error(), "--purge-values --confirm-idle") {
+		t.Fatalf("definition-changed err = %v, must not suggest purge retry", err)
 	}
 }

@@ -371,15 +371,32 @@ func TestFieldService_Retire_PluginOnlyRemovesDefinitionAndRegistry(t *testing.T
 		t.Fatalf("Delete err = %v, want ErrFieldPluginOnly", err)
 	}
 
-	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{
+	if _, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Store:       repo,
+	}); !errors.Is(err, extensionapp.ErrPurgeWhileActive) {
+		t.Fatalf("purge while active err = %v, want ErrPurgeWhileActive", err)
+	}
+	if _, err := repo.FindByCode(context.Background(), "acme.locked"); err != nil {
+		t.Fatalf("active row must remain after refused purge: %v", err)
+	}
+
+	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{Store: repo})
+	if err != nil {
+		t.Fatalf("soft-delete Retire: %v", err)
+	}
+	if got.Code != "acme.locked" || got.ValuesPurged != 0 {
+		t.Fatalf("soft-delete result = %+v", got)
+	}
+	got, err = svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{
 		PurgeValues: true,
 		Store:       repo,
 	})
 	if err != nil {
-		t.Fatalf("Retire: %v", err)
+		t.Fatalf("purge Retire: %v", err)
 	}
-	if got.Code != "acme.locked" || got.ValuesPurged != 3 {
-		t.Fatalf("result = %+v", got)
+	if !got.PurgeOnly || got.ValuesPurged != 3 {
+		t.Fatalf("purge result = %+v", got)
 	}
 	if _, ok := reg.Get("acme.locked"); ok {
 		t.Fatal("expected registry entry removed")
@@ -426,22 +443,27 @@ func TestFieldService_Retire_PurgeFailureKeepsSoftDeleteThenRetry(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	boom := errors.New("purge boom")
-	repo.purgeErr = boom
-	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
-	if !errors.Is(err, domainext.ErrPurgeIncomplete) {
-		t.Fatalf("first Retire err = %v, want ErrPurgeIncomplete", err)
+	if _, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{Store: repo}); err != nil {
+		t.Fatalf("soft-delete: %v", err)
 	}
 	if _, ok := reg.Get("acme.locked"); ok {
 		t.Fatal("registry must drop the field after soft-delete commits")
 	}
+
+	boom := errors.New("purge boom")
+	repo.purgeErr = boom
+	repo.purgePartial = 0
+	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
+	if !errors.Is(err, domainext.ErrPurgeIncomplete) {
+		t.Fatalf("first purge err = %v, want ErrPurgeIncomplete", err)
+	}
 	if _, err := repo.FindByCode(context.Background(), "acme.locked"); !apperror.Is(err, apperror.CodeNotFound) {
-		t.Fatalf("definition must be soft-deleted after purge failure: %v", err)
+		t.Fatalf("definition must stay soft-deleted after purge failure: %v", err)
 	}
 	if repo.valueCounts["acme.locked"] != 2 {
 		t.Fatalf("values must remain for retry, got %d", repo.valueCounts["acme.locked"])
 	}
-	if got.Code != "acme.locked" || got.ValuesPurged != 0 {
+	if got.Code != "acme.locked" || got.ValuesPurged != 0 || !got.PurgeOnly {
 		t.Fatalf("result = %+v", got)
 	}
 

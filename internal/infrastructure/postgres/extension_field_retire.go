@@ -11,7 +11,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-// extensionValuePurgeBatchSize is the per-transaction delete limit. Tests may lower it.
+// extensionValuePurgeBatchSize is the per-transaction delete limit.
+// Tests must change it only via SetExtensionValuePurgeBatchSizeForTest.
 var extensionValuePurgeBatchSize = 1000
 
 // RetireActive soft-deletes an active plugin-only field and commits, then optionally
@@ -27,16 +28,13 @@ func (r *ExtensionFieldRepo) RetireActive(ctx context.Context, code string, purg
 	if !purgeValues {
 		return 0, nil
 	}
-	n, err := purgeExtensionValuesByFieldCode(ctx, r.db, code, extensionValuePurgeBatchSize, true)
-	if err != nil {
-		return n, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
-	}
-	return n, nil
+	return wrapLockedPurge(purgeExtensionValuesByFieldCode(ctx, r.db, code, extensionValuePurgeBatchSize, true))
 }
 
 // PurgeIfSoftDeletedPluginOnly deletes values when a soft-deleted plugin-only
 // row exists for code. Never-stored codes and ordinary soft-deleted rows return NotFound.
-// Incomplete purges (timeout, restored definition) wrap domainext.ErrPurgeIncomplete.
+// Timeout/cancel wrap domainext.ErrPurgeIncomplete. A restored or missing definition
+// returns domainext.ErrPurgeDefinitionChanged (not a purge-retry signal).
 func (r *ExtensionFieldRepo) PurgeIfSoftDeletedPluginOnly(ctx context.Context, code string) (int64, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -48,11 +46,17 @@ func (r *ExtensionFieldRepo) PurgeIfSoftDeletedPluginOnly(ctx context.Context, c
 		}
 		return 0, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
 	}
-	n, err := purgeExtensionValuesByFieldCode(ctx, r.db, code, extensionValuePurgeBatchSize, true)
-	if err != nil {
-		return n, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
+	return wrapLockedPurge(purgeExtensionValuesByFieldCode(ctx, r.db, code, extensionValuePurgeBatchSize, true))
+}
+
+func wrapLockedPurge(n int64, err error) (int64, error) {
+	if err == nil {
+		return n, nil
 	}
-	return n, nil
+	if errors.Is(err, domainext.ErrPurgeDefinitionChanged) {
+		return n, err
+	}
+	return n, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
 }
 
 type dbBatchExec interface {
@@ -85,7 +89,7 @@ func assertSoftDeletedPluginOnly(ctx context.Context, db interface {
 
 // purgeExtensionValuesByFieldCode deletes values in short transactions.
 // When lockField is true (retire path), each batch FOR UPDATE-locks the field row
-// and stops if it is no longer a soft-deleted plugin-only definition.
+// and returns ErrPurgeDefinitionChanged if it is no longer soft-deleted plugin-only.
 func purgeExtensionValuesByFieldCode(ctx context.Context, db dbBatchExec, fieldCode string, batchSize int, lockField bool) (int64, error) {
 	if batchSize <= 0 {
 		batchSize = extensionValuePurgeBatchSize
@@ -99,7 +103,7 @@ func purgeExtensionValuesByFieldCode(ctx context.Context, db dbBatchExec, fieldC
 		if err != nil {
 			return total, fmt.Errorf("extension_value_repo: purge batch begin: %w", err)
 		}
-		n, stop, err := purgeOneExtensionValueBatch(ctx, tx, fieldCode, batchSize, lockField)
+		n, err := purgeOneExtensionValueBatch(ctx, tx, fieldCode, batchSize, lockField)
 		if err != nil {
 			_ = tx.Rollback()
 			return total, err
@@ -109,13 +113,14 @@ func purgeExtensionValuesByFieldCode(ctx context.Context, db dbBatchExec, fieldC
 			return total, fmt.Errorf("extension_value_repo: purge batch commit: %w", err)
 		}
 		total += n
-		if stop || n < int64(batchSize) {
+		// Finished only when a batch deletes fewer than the limit (no remaining rows).
+		if n < int64(batchSize) {
 			return total, nil
 		}
 	}
 }
 
-func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode string, batchSize int, lockField bool) (n int64, stop bool, err error) {
+func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode string, batchSize int, lockField bool) (n int64, err error) {
 	if lockField {
 		const lockQ = `SELECT definition, deleted_at IS NOT NULL
 			FROM extension_fields WHERE code = $1 FOR UPDATE`
@@ -123,17 +128,17 @@ func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode stri
 		var softDeleted bool
 		err = tx.QueryRowContext(ctx, lockQ, fieldCode).Scan(&raw, &softDeleted)
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, true, fmt.Errorf("field %q no longer exists", fieldCode)
+			return 0, fmt.Errorf("%w: field %q no longer exists", domainext.ErrPurgeDefinitionChanged, fieldCode)
 		}
 		if err != nil {
-			return 0, false, fmt.Errorf("extension_field_repo: purge lock: %w", err)
+			return 0, fmt.Errorf("extension_field_repo: purge lock: %w", err)
 		}
 		field, err := decodeExtensionField(fieldCode, raw)
 		if err != nil {
-			return 0, false, err
+			return 0, err
 		}
 		if !softDeleted || !field.Access.PluginOnlyWrite {
-			return 0, true, fmt.Errorf("field %q is no longer a soft-deleted plugin-only definition", fieldCode)
+			return 0, fmt.Errorf("%w: field %q is no longer a soft-deleted plugin-only definition", domainext.ErrPurgeDefinitionChanged, fieldCode)
 		}
 	}
 
@@ -143,11 +148,11 @@ func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode stri
 		DELETE FROM extension_values v USING doomed WHERE v.ctid = doomed.ctid`
 	res, err := tx.ExecContext(ctx, q, fieldCode, batchSize)
 	if err != nil {
-		return 0, false, fmt.Errorf("extension_value_repo: delete by field code batch: %w", err)
+		return 0, fmt.Errorf("extension_value_repo: delete by field code batch: %w", err)
 	}
 	n, err = res.RowsAffected()
 	if err != nil {
-		return 0, false, fmt.Errorf("extension_value_repo: delete by field code rows: %w", err)
+		return 0, fmt.Errorf("extension_value_repo: delete by field code rows: %w", err)
 	}
-	return n, false, nil
+	return n, nil
 }

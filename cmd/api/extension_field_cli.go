@@ -47,6 +47,7 @@ var openExtensionFieldRetireRuntime = defaultOpenExtensionFieldRetireRuntime
 var retireBootRegisterPlugins = registerPlugins
 
 // retireBootConfig forces postgres drivers so retire does not dial Redis/RabbitMQ/Kafka/SQS.
+// Explicit plugins.core.postgres_* = false is overridden so those plugins still load.
 func retireBootConfig(cfg *config.Config) *config.Config {
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -55,6 +56,12 @@ func retireBootConfig(cfg *config.Config) *config.Config {
 	boot.Queue.Driver = "postgres"
 	boot.Cache.Driver = "postgres"
 	boot.Search.Engine = "postgres"
+	enable := true
+	boot.Plugins.Core.PostgresQueue = &enable
+	boot.Plugins.Core.PostgresCache = &enable
+	boot.Plugins.Core.PostgresSearch = &enable
+	// Skip Stripe Init dials; leave media as configured (local needs base_path).
+	boot.Payment.Stripe.Enabled = false
 	return &boot
 }
 
@@ -202,6 +209,10 @@ func mapExtensionFieldRetireError(err error) error {
 		return fmt.Errorf("extension-field retire: field not found")
 	case errors.Is(err, extensionapp.ErrFieldNotPluginOnly):
 		return fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")
+	case errors.Is(err, extensionapp.ErrPurgeWhileActive):
+		return fmt.Errorf("extension-field retire: %w (run soft-delete without --purge-values first)", err)
+	case errors.Is(err, domainext.ErrPurgeDefinitionChanged):
+		return fmt.Errorf("extension-field retire: %w (definition left active; do not purge again)", err)
 	case errors.Is(err, domainext.ErrPurgeIncomplete):
 		return fmt.Errorf("extension-field retire: %w (re-run with --purge-values --confirm-idle)", err)
 	default:
