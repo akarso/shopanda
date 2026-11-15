@@ -7717,6 +7717,12 @@
             if (String(field.storage_mode || "stored").toLowerCase() === "computed") {
                 continue;
             }
+            // Plugin-only fields are not operator inputs. Leaving them in the
+            // form makes Save Extensions reject the whole batch.
+            var access = field.access || {};
+            if (access.plugin_only_write) {
+                continue;
+            }
             if (!field.code) {
                 continue;
             }
