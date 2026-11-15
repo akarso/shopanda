@@ -691,6 +691,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(filterSnippet, `"private"`) {
 		t.Fatal("expected filterProductExtensionFields to exclude private fields")
 	}
+	if !strings.Contains(filterSnippet, "plugin_only_write") {
+		t.Fatal("expected filterProductExtensionFields to exclude plugin-only fields")
+	}
 	expectedExtensionFieldDefinitionWiring := []string{
 		"renderExtensionFieldsGrid",
 		"renderExtensionFieldForm",

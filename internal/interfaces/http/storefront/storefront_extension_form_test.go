@@ -82,3 +82,53 @@ func TestStorefrontExtensionInputsFromForm_BoolUsesLastValue(t *testing.T) {
 		t.Fatalf("value = %#v (%T), want bool true", inputs[0].Value, inputs[0].Value)
 	}
 }
+
+func TestStorefrontCartExtensionFields_OmitsPluginOnly(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift message", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.print.design", Label: "Print design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageSnapshot,
+		Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := &StorefrontHandler{extensions: extensionapp.NewValueService(reg, storefrontFormTestValueRepo{})}
+	fields := h.storefrontCartExtensionFields()
+	if len(fields) != 1 || fields[0].Code != "acme.gift.message" {
+		t.Fatalf("fields = %+v, want only the customer-writable field", fields)
+	}
+}
+
+func TestStorefrontExtensionInputsFromForm_DropsPluginOnlyField(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift message", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.print.design", Label: "Print design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageSnapshot,
+		Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := &StorefrontHandler{extensions: extensionapp.NewValueService(reg, storefrontFormTestValueRepo{})}
+	body := "ext__acme-gift-message=hello&ext__acme-print-design="
+	req := httptest.NewRequest("POST", "/cart/add", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	inputs := h.storefrontExtensionInputsFromForm(req)
+	if len(inputs) != 1 || inputs[0].FieldCode != "acme.gift.message" || inputs[0].Value != "hello" {
+		t.Fatalf("inputs = %+v, want only the customer field", inputs)
+	}
+}
