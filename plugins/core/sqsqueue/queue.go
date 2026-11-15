@@ -39,7 +39,7 @@ func (p *QueuePlugin) Init(app *plugin.App) error {
 		return fmt.Errorf("sqs queue: empty queue_url (set queue.sqs.queue_url, SQS_QUEUE_URL, or SHOPANDA_QUEUE_SQS_QUEUE_URL)")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
+	ctx, cancel := context.WithTimeout(app.Context(), initTimeout)
 	defer cancel()
 
 	newQueue := p.NewQueue

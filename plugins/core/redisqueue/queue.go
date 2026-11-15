@@ -37,6 +37,7 @@ func (p *QueuePlugin) Init(app *plugin.App) error {
 	q, err := inredis.NewJobQueue(inredis.QueueConfig{
 		URL:       url,
 		KeyPrefix: app.Config.Queue.Redis.KeyPrefix,
+		Context:   app.Context(),
 	})
 	if err != nil {
 		return fmt.Errorf("redis queue: init client: %w", err)

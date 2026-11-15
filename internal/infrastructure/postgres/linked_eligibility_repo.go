@@ -269,7 +269,6 @@ func (r *LinkedEligibilityRepo) RemoveCategory(ctx context.Context, childProduct
 	return nil
 }
 
-
 // ListAllParentSlugRows returns every allowlist row joined to product slugs.
 func (r *LinkedEligibilityRepo) ListAllParentSlugRows(ctx context.Context) ([]catalog.LinkedEligibleParentSlugRow, error) {
 	const q = `SELECT child.slug, parent.slug

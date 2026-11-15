@@ -17,11 +17,11 @@ import (
 // CheckoutHandler handles checkout HTTP endpoints.
 type CheckoutHandler struct {
 	svc        *checkoutApp.Service
-	extensions *extensionapp.ValueService
+	extensions extensionapp.ValueAPI
 }
 
 // NewCheckoutHandler creates a CheckoutHandler.
-func NewCheckoutHandler(svc *checkoutApp.Service, extensions *extensionapp.ValueService) *CheckoutHandler {
+func NewCheckoutHandler(svc *checkoutApp.Service, extensions extensionapp.ValueAPI) *CheckoutHandler {
 	if svc == nil {
 		panic("http: checkout service must not be nil")
 	}

@@ -22,6 +22,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 // --- Mock step ---
@@ -162,6 +164,58 @@ func TestWorkflow_EmptySteps(t *testing.T) {
 	if len(ctx.Trace) != 0 {
 		t.Errorf("Trace len = %d, want 0", len(ctx.Trace))
 	}
+}
+
+func TestWorkflow_Execute_StripsPluginWriteTrust(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parent = requestctx.WithRequestID(parent, "req-checkout-1")
+	parent = pluginwrite.Grant(parent, "acme", "acme.a", "acme.b")
+
+	var saw context.Context
+	step := &ctxAwareStep{name: "probe", fn: func(ctx context.Context, _ *checkout.Context) error {
+		saw = ctx
+		for _, code := range []string{"acme.a", "acme.b"} {
+			if _, ok := pluginwrite.For(ctx, code); ok {
+				t.Errorf("checkout step inherited trust for %q", code)
+			}
+		}
+		if got := requestctx.RequestID(ctx); got != "req-checkout-1" {
+			t.Errorf("RequestID = %q, want req-checkout-1", got)
+		}
+		if ctx.Err() != nil {
+			t.Errorf("step ctx already canceled: %v", ctx.Err())
+		}
+		regranted := pluginwrite.Grant(ctx, "acme", "acme.c")
+		if _, ok := pluginwrite.For(regranted, "acme.c"); !ok {
+			t.Error("Grant on stripped step ctx must stick")
+		}
+		return nil
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(parent, cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if saw == nil {
+		t.Fatal("step did not run")
+	}
+	cancel()
+	if saw.Err() == nil {
+		t.Fatal("step ctx must observe parent cancel")
+	}
+}
+
+type ctxAwareStep struct {
+	name string
+	fn   func(ctx context.Context, cctx *checkout.Context) error
+}
+
+func (s *ctxAwareStep) Name() string { return s.name }
+func (s *ctxAwareStep) Execute(ctx context.Context, cctx *checkout.Context) error {
+	return s.fn(ctx, cctx)
 }
 
 func TestWorkflow_ExecutesInOrder(t *testing.T) {

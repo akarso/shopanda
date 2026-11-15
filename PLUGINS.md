@@ -101,7 +101,7 @@ Available today through `plugin.App`:
 | **Checkout workflow** | `RegisterCheckoutStep` | Extra validation or side effects during checkout |
 | **Composition pipelines** | `RegisterCompositionStep("pdp"\|"plp", …)` | Enrich API/storefront product responses |
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |
-| **Extension fields** | `Extensions().RegisterField(...)` | Custom fields on entities; values via REST/GraphQL; cart → order snapshot at checkout |
+| **Extension fields** | `Extensions().RegisterField(...)` (owner = plugin, assigned by the loader after `Init`; `ExtensionsFor(name)` outside `Init`) | Custom fields on entities; values via REST/GraphQL; cart → order snapshot at checkout |
 | **Import/export row hooks** | `Import(registrant).RegisterRowHook(...)` / `Export(registrant).RegisterRowHook(...)` | Remap/validate CSV columns per entity, in priority order |
 | **Permissions** | `RegisterPermission` | Admin RBAC strings on the app-owned `rbac.Registry` |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |

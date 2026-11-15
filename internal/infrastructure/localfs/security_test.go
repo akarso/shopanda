@@ -39,8 +39,8 @@ func TestSave_PrivateModesAndAncestorChmod(t *testing.T) {
 	// Leaf dir, intermediate parent, and media root must all tighten to 0700
 	// (chmodAncestors walks up to basePath, including the root).
 	for _, dir := range []string{
-		filepath.Dir(full),                                  // .../11
-		filepath.Dir(filepath.Dir(full)),                    // .../2026
+		filepath.Dir(full),                                   // .../11
+		filepath.Dir(filepath.Dir(full)),                     // .../2026
 		filepath.Join(root, "private", "blobs", "metaldogs"), // intermediate
 		root, // media basePath
 	} {

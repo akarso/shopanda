@@ -90,8 +90,10 @@ func (r *dlImportFileRepo) ListByProductID(context.Context, string) ([]catalog.D
 	}
 	return out, nil
 }
-func (r *dlImportFileRepo) CountByProductID(context.Context, string) (int, error) { return len(r.rows), nil }
-func (r *dlImportFileRepo) CountByAssetID(context.Context, string) (int, error)  { return 0, nil }
+func (r *dlImportFileRepo) CountByProductID(context.Context, string) (int, error) {
+	return len(r.rows), nil
+}
+func (r *dlImportFileRepo) CountByAssetID(context.Context, string) (int, error) { return 0, nil }
 func (r *dlImportFileRepo) Upsert(_ context.Context, f *catalog.DownloadableFile) error {
 	cp := *f
 	for i, row := range r.rows {
@@ -103,7 +105,7 @@ func (r *dlImportFileRepo) Upsert(_ context.Context, f *catalog.DownloadableFile
 	r.rows = append(r.rows, &cp)
 	return nil
 }
-func (r *dlImportFileRepo) Remove(context.Context, string, string) error { return nil }
+func (r *dlImportFileRepo) Remove(context.Context, string, string) error      { return nil }
 func (r *dlImportFileRepo) WithTx(*sql.Tx) catalog.DownloadableFileRepository { return r }
 
 type dlImportAssetRepo struct {
@@ -190,7 +192,7 @@ func TestDownloadableFileImport_SkippedErrors(t *testing.T) {
 	}}
 	files := &dlImportFileRepo{}
 	assets := &dlImportAssetRepo{byID: map[string]*media.Asset{
-		"a1": {ID: "a1", Path: "private/downloads/a1/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
+		"a1":  {ID: "a1", Path: "private/downloads/a1/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
 		"pub": {ID: "pub", Path: "public/pub/file.pdf", Filename: "file.pdf", MimeType: "application/pdf", Size: 10},
 	}}
 	svc := catalogApp.NewDownloadableFileService(products, files, assets, dlFilesImportTxStarter())

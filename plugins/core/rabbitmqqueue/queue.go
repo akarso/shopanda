@@ -37,6 +37,7 @@ func (p *QueuePlugin) Init(app *plugin.App) error {
 	q, err := inrabbitmq.NewJobQueue(inrabbitmq.QueueConfig{
 		URL:         url,
 		QueuePrefix: app.Config.Queue.RabbitMQ.QueuePrefix,
+		Context:     app.Context(),
 	})
 	if err != nil {
 		return fmt.Errorf("rabbitmq queue: init client: %w", err)

@@ -121,6 +121,12 @@ After the gate:
 | 1088 | B | [oss] | **done** — SDK, docs, example, plugins report |
 | 1089 | B | [oss] | **done** — Sync job observability |
 | 1090 | C | [oss] | **done** — Local SignedURLStorage + BindMediaStorage |
+| 1091 | C | [oss] | **done** — Enforce `Access.PluginOnlyWrite` on extension writes |
+| 1092 | C | [oss] | **done** — Field ownership for plugin-only extension fields |
+| 1093 | C | [oss] | **done** — Narrow port for core-internal extension operations |
+| 1094 | C | [oss] | **done** — Retire plugin-only extension field definitions |
+| 1095 | C | [oss] | **done** — Trust-propagation hardening and coverage gaps |
+| 1096 | C | [oss] | **done** — Green `make check`: gofmt and go vet cleanup |
 
 PR specs: [`prs/`](prs/).
 

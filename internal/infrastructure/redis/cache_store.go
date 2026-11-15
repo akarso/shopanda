@@ -125,6 +125,8 @@ type Config struct {
 	URL       string
 	KeyPrefix string
 	Logger    Logger
+	// Context is used for the connectivity PING. Nil means context.Background().
+	Context context.Context
 }
 
 // New creates a CacheStore and verifies the Redis connection with PING.
@@ -132,7 +134,7 @@ func New(cfg Config) (*CacheStore, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("redis cache: empty url")
 	}
-	client, err := ConnectURL(cfg.URL)
+	client, err := ConnectURLContext(cfg.Context, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("redis cache: init client: %w", err)
 	}

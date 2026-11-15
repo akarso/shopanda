@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -13,6 +14,10 @@ import (
 var (
 	// ErrAlreadyRegistered indicates a duplicate field code in the registry.
 	ErrAlreadyRegistered = errors.New("extension field already registered")
+	// ErrNotRegistered indicates Replace on a code that is not in the registry.
+	ErrNotRegistered = errors.New("extension field not registered")
+	// ErrPluginOnlyImmutable indicates Replace would change the guarded shape of a plugin-only field.
+	ErrPluginOnlyImmutable = errors.New("extension plugin-only field definition is immutable")
 )
 
 // ListFilter narrows registry list results.
@@ -26,6 +31,7 @@ type ListFilter struct {
 type Registry struct {
 	mu     sync.RWMutex
 	fields map[string]domainext.ExtensionField
+	owners map[string]string // code -> registering plugin; absent = unowned
 	order  []string
 }
 
@@ -33,12 +39,28 @@ type Registry struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		fields: make(map[string]domainext.ExtensionField),
+		owners: make(map[string]string),
 	}
 }
 
-// Register validates and stores a field definition.
+// Register validates and stores a field definition with no owner.
 // Duplicate codes return a deterministic error.
 func (r *Registry) Register(def domainext.FieldDef) error {
+	return r.register(def, "")
+}
+
+// RegisterOwned registers a field and records owner (the registering plugin,
+// whitespace-trimmed, case-sensitive). Owned plugin-only fields are writable only
+// by a trusted write naming that owner.
+func (r *Registry) RegisterOwned(def domainext.FieldDef, owner string) error {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return fmt.Errorf("extension: field owner must not be empty")
+	}
+	return r.register(def, owner)
+}
+
+func (r *Registry) register(def domainext.FieldDef, owner string) error {
 	if r == nil {
 		return fmt.Errorf("extension: registry must not be nil")
 	}
@@ -46,7 +68,65 @@ func (r *Registry) Register(def domainext.FieldDef) error {
 	if err != nil {
 		return err
 	}
-	return r.registerField(field)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.fields[field.Code]; exists {
+		return ErrAlreadyRegistered
+	}
+	r.fields[field.Code] = field
+	if owner != "" {
+		r.owners[field.Code] = owner
+	}
+	r.order = append(r.order, field.Code)
+	return nil
+}
+
+// AssignOwner sets owner on an existing field that has none. It reports whether
+// it assigned (false: unknown code, or the field already has an owner).
+func (r *Registry) AssignOwner(code, owner string) bool {
+	owner = strings.TrimSpace(owner)
+	if r == nil || owner == "" {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.fields[code]; !ok {
+		return false
+	}
+	if _, owned := r.owners[code]; owned {
+		return false
+	}
+	r.owners[code] = owner
+	return true
+}
+
+// UnownedPluginOnly lists plugin-only field codes with no owner, in registration
+// order, from one consistent snapshot.
+func (r *Registry) UnownedPluginOnly() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []string
+	for _, code := range r.order {
+		if r.fields[code].Access.PluginOnlyWrite {
+			if _, owned := r.owners[code]; !owned {
+				out = append(out, code)
+			}
+		}
+	}
+	return out
+}
+
+// Owner returns the plugin that registered code, or "" when unowned/unknown.
+func (r *Registry) Owner(code string) string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.owners[code]
 }
 
 // LoadPersisted merges active definitions from repo into the registry.
@@ -76,17 +156,6 @@ func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldReposi
 	return nil
 }
 
-func (r *Registry) registerField(field domainext.ExtensionField) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.fields[field.Code]; exists {
-		return ErrAlreadyRegistered
-	}
-	r.fields[field.Code] = field
-	r.order = append(r.order, field.Code)
-	return nil
-}
-
 func (r *Registry) mergeField(field domainext.ExtensionField) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,15 +167,50 @@ func (r *Registry) mergeField(field domainext.ExtensionField) bool {
 	return true
 }
 
-// Replace updates an existing registered field definition.
+// ValidateReplace reports whether Replace(field) would be accepted, without
+// changing anything. Call it before persisting so the store and the registry stay
+// in sync. Errors wrap ErrNotRegistered or ErrPluginOnlyImmutable.
+func (r *Registry) ValidateReplace(field domainext.ExtensionField) error {
+	if r == nil {
+		return fmt.Errorf("extension: registry must not be nil")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.validateReplaceLocked(field)
+}
+
+func (r *Registry) validateReplaceLocked(field domainext.ExtensionField) error {
+	current, exists := r.fields[field.Code]
+	if !exists {
+		return fmt.Errorf("%w: %q", ErrNotRegistered, field.Code)
+	}
+	if !current.Access.PluginOnlyWrite {
+		return nil
+	}
+	if !field.Access.PluginOnlyWrite || field.Scope != current.Scope || field.Type != current.Type ||
+		field.StorageMode != current.StorageMode || field.Visibility != current.Visibility {
+		return fmt.Errorf("%w: %q (PluginOnlyWrite, Scope, Type, StorageMode and Visibility cannot change)", ErrPluginOnlyImmutable, field.Code)
+	}
+	return nil
+}
+
+// Replace updates an existing registered field definition. On a plugin-only field
+// (owned or not) it refuses to change PluginOnlyWrite, Scope, Type, StorageMode or
+// Visibility, so a holder of the raw registry cannot drop the guard or
+// reinterpret stored values. Deliberately still mutable: ReadRoles, WriteRoles and
+// Validation (tuning, not reinterpretation), and a non-plugin-only field may become
+// plugin-only. Not atomic with persistence: FieldService validates, saves, then
+// replaces, so a concurrent registry change in between can leave the store and the
+// registry out of sync (admin paths cannot trigger it today). Remove is not owner-aware: it is core wiring (admin
+// field delete, loader rollback), not a plugin API.
 func (r *Registry) Replace(field domainext.ExtensionField) error {
 	if r == nil {
 		return fmt.Errorf("extension: registry must not be nil")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.fields[field.Code]; !exists {
-		return fmt.Errorf("extension field %q not registered", field.Code)
+	if err := r.validateReplaceLocked(field); err != nil {
+		return err
 	}
 	r.fields[field.Code] = field
 	return nil
@@ -123,6 +227,7 @@ func (r *Registry) Remove(code string) bool {
 		return false
 	}
 	delete(r.fields, code)
+	delete(r.owners, code)
 	for i, c := range r.order {
 		if c == code {
 			r.order = append(r.order[:i], r.order[i+1:]...)

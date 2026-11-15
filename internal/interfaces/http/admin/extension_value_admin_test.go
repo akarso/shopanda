@@ -168,6 +168,14 @@ func setupExtensionValueAdmin(t *testing.T) (*admin.ExtensionValueAdminHandler, 
 		StorageMode: domainext.StorageStored,
 		Visibility:  domainext.VisibilityPrivate,
 	})
+	registerExtensionField(t, reg, domainext.FieldDef{
+		Code:        "acme.locked",
+		Label:       "Locked",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	})
 	svc := extensionapp.NewValueService(reg, newMockExtensionValueRepo())
 	h := admin.NewExtensionValueAdminHandler(svc)
 	return h, newExtensionValueAdminRouter(h)
@@ -331,5 +339,114 @@ func TestExtensionValueAdminHandler_PrivateReadRequiresPermission(t *testing.T) 
 	values, _ = data["values"].([]interface{})
 	if len(values) != 1 {
 		t.Fatalf("expected one private value, got %#v", values)
+	}
+}
+
+func TestExtensionValueAdminHandler_PluginOnlyFieldWriteForbidden(t *testing.T) {
+	_, router := setupExtensionValueAdmin(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/extensions/values/product/prod-1", extensionValueBody(t, map[string]interface{}{
+		"values": []map[string]interface{}{
+			{"field_code": "acme.locked", "value": "x"},
+		},
+	}))
+	req = req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("put status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := decodeExtensionValueError(t, rec); code != string(apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
+	}
+}
+
+func TestExtensionValueAdminHandler_OrderItemPluginOnlyFieldForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerExtensionField(t, reg, domainext.FieldDef{
+		Code:        "acme.order.design",
+		Label:       "Order design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	})
+	repo := newMockExtensionValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	h := admin.NewExtensionValueAdminHandler(svc)
+	router := newExtensionValueAdminRouter(h)
+
+	target := domainext.OrderItemTarget("ord-1", "var-1")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/extensions/values/order_item/"+target.ID, extensionValueBody(t, map[string]interface{}{
+		"values": []map[string]interface{}{
+			{"field_code": "acme.order.design", "value": "stolen"},
+		},
+	}))
+	req = req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("put status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+	}
+	if code := decodeExtensionValueError(t, rec); code != string(apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
+	}
+	stored, err := repo.ListByTarget(context.Background(), target)
+	if err != nil {
+		t.Fatalf("ListByTarget: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("stored = %+v, want none after 403", stored)
+	}
+}
+
+func TestExtensionValueAdminHandler_PluginOnlyFieldDeleteForbidden(t *testing.T) {
+	_, router := setupExtensionValueAdmin(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/extensions/values/product/prod-1/acme.locked", nil)
+	req = req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("delete status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := decodeExtensionValueError(t, rec); code != string(apperror.CodeForbiddenPluginOnlyField) {
+		t.Fatalf("error code = %q, want %q", code, apperror.CodeForbiddenPluginOnlyField)
+	}
+}
+
+// fakeValueAPI shows handlers depend only on the ValueAPI port.
+type fakeValueAPI struct {
+	reg        *extensionapp.Registry
+	deleteErr  error
+	deleteSeen []string
+}
+
+func (f *fakeValueAPI) Registry() *extensionapp.Registry { return f.reg }
+func (f *fakeValueAPI) List(context.Context, domainext.Target, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) ListByOrderItems(context.Context, string, []string, bool) (map[string][]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (f *fakeValueAPI) Delete(_ context.Context, _ domainext.Target, code string, _ bool) error {
+	f.deleteSeen = append(f.deleteSeen, code)
+	return f.deleteErr
+}
+
+func TestExtensionValueAdmin_WorksWithFakeValueAPI(t *testing.T) {
+	fake := &fakeValueAPI{reg: extensionapp.NewRegistry(), deleteErr: domainext.ErrForbiddenPluginOnlyField}
+	h := admin.NewExtensionValueAdminHandler(fake)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/extensions/values/product/p1/acme.locked", nil)
+	rec := httptest.NewRecorder()
+	newExtensionValueAdminRouter(h).ServeHTTP(rec, req)
+	if len(fake.deleteSeen) != 1 || fake.deleteSeen[0] != "acme.locked" {
+		t.Fatalf("fake not called: %v (status %d)", fake.deleteSeen, rec.Code)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 body=%s", rec.Code, rec.Body.String())
 	}
 }

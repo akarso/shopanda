@@ -393,9 +393,9 @@ func (g *trackingGrantGate) DeleteExpiredOrRevokedByAssetID(context.Context, str
 // txGrantGate implements grantTXBinder for the preferred TX purge path.
 // Rollback restores expired rows via mediaFakeTx hooks.
 type txGrantGate struct {
-	mu      sync.Mutex
-	live    int
-	expired int
+	mu              sync.Mutex
+	live            int
+	expired         int
 	snapshotExpired int
 }
 
@@ -606,7 +606,6 @@ func TestDelete_ZeroAttachmentsAllows(t *testing.T) {
 		t.Fatalf("deleted paths = %d, want 2", len(storage.deleted))
 	}
 }
-
 
 func TestDelete_DeletesAssetRowBeforeBlob(t *testing.T) {
 	var order []string

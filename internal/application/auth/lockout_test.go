@@ -147,7 +147,6 @@ func TestLogin_LockoutFailuresReadErrorSkipsReset(t *testing.T) {
 	}
 }
 
-
 func TestLockoutKey_IPAndAccount(t *testing.T) {
 	got := auth.LockoutKey("1.2.3.4", "a@example.com")
 	want := "1.2.3.4|a@example.com"
@@ -356,8 +355,8 @@ func TestLogin_LockoutConcurrentBatchRespectsMaxFailures(t *testing.T) {
 		other        int
 	}
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
+		mu  sync.Mutex
+		wg  sync.WaitGroup
 		got result
 	)
 	wg.Add(workers)

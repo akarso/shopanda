@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
 	"io"
 	"strings"
 	"sync"
@@ -781,5 +782,41 @@ func TestBus_ServeDrainWiring_StuckHandlerLogsDrainTimeout(t *testing.T) {
 
 	if got := buf.String(); !strings.Contains(got, "event.bus.drain.timeout") {
 		t.Errorf("expected event.bus.drain.timeout before ShutdownBackground returns, got %s", got)
+	}
+}
+
+func TestBus_Publish_StripsPluginWriteTrustForSyncHandlers(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parent = requestctx.WithRequestID(parent, "req-bus-1")
+	parent = pluginwrite.Grant(parent, "acme", "a.b", "a.c")
+
+	var saw context.Context
+	bus.On("any.event", func(ctx context.Context, _ event.Event) error {
+		saw = ctx
+		for _, code := range []string{"a.b", "a.c"} {
+			if _, ok := pluginwrite.For(ctx, code); ok {
+				t.Errorf("sync handler inherited trust for %q", code)
+			}
+		}
+		if got := requestctx.RequestID(ctx); got != "req-bus-1" {
+			t.Errorf("RequestID = %q, want req-bus-1", got)
+		}
+		regranted := pluginwrite.Grant(ctx, "acme", "a.d")
+		if _, ok := pluginwrite.For(regranted, "a.d"); !ok {
+			t.Error("Grant on stripped handler ctx must stick")
+		}
+		return nil
+	})
+	if err := bus.Publish(parent, event.New("any.event", "test", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if saw == nil {
+		t.Fatal("handler did not run")
+	}
+	cancel()
+	if saw.Err() == nil {
+		t.Fatal("handler ctx must observe parent cancel")
 	}
 }

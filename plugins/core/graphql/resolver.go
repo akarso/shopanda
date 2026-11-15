@@ -2,7 +2,6 @@ package graphql
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -40,7 +39,7 @@ type Resolver struct {
 	productRepo  catalog.ProductRepository
 	categoryRepo catalog.CategoryRepository
 	fields       *extensionapp.FieldService
-	values       *extensionapp.ValueService
+	values       extensionapp.ValueAPI
 
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
@@ -61,7 +60,7 @@ func NewResolver(products catalog.ProductRepository, categories catalog.Category
 }
 
 // WithExtensions wires extension services into the GraphQL resolver.
-func (r *Resolver) WithExtensions(fields *extensionapp.FieldService, values *extensionapp.ValueService) *Resolver {
+func (r *Resolver) WithExtensions(fields *extensionapp.FieldService, values extensionapp.ValueAPI) *Resolver {
 	r.fields = fields
 	r.values = values
 	return r
@@ -533,17 +532,5 @@ func (r *Resolver) deleteExtensionValue(ctx context.Context, targetType, targetI
 }
 
 func extensionAPIError(err error) error {
-	if err == nil {
-		return nil
-	}
-	if domainext.IsValidationError(err) {
-		return apperror.FieldValidationFailed(err.Error())
-	}
-	if errors.Is(err, domainext.ErrUnknownFieldCode) {
-		return apperror.UnknownFieldCode(err.Error())
-	}
-	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
-		return apperror.ForbiddenPrivateField(err.Error())
-	}
-	return err
+	return extensionapp.MapValueError(err)
 }

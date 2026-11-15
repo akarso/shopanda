@@ -214,6 +214,75 @@ func TestStorefrontHandler_Product_RendersCartForm(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_CartAdd_IgnoresPostedPluginOnlyField(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift message", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.print.design", Label: "Print design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageSnapshot,
+		Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	extRepo := newCartTestExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+	engine := createTestTheme(t)
+	cartSvc, carts, prices := newStorefrontCartServiceWith(values, nil)
+	prices.set("var-1", "EUR", 1500)
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()).
+		WithCart(nil, cartSvc).WithExtensions(values)
+
+	form := url.Values{
+		"variant_id":             {"var-1"},
+		"quantity":               {"1"},
+		"redirect_to":            {"/products/widget"},
+		"ext__acme-gift-message": {"hello"},
+		"ext__acme-print-design": {""},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/cart/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	var cartID string
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_cart" {
+			cartID = cookie.Value
+		}
+	}
+	if cartID == "" {
+		t.Fatal("expected storefront cart cookie")
+	}
+	cart, err := carts.FindByID(context.Background(), cartID)
+	if err != nil || cart == nil || len(cart.Items) != 1 || cart.Items[0].VariantID != "var-1" {
+		t.Fatalf("cart = %+v err=%v", cart, err)
+	}
+	stored, err := extRepo.ListByTarget(context.Background(), domainext.CartItemTarget(cartID, "var-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawGift, sawDesign bool
+	for _, value := range stored {
+		switch value.FieldCode {
+		case "acme.gift.message":
+			sawGift = true
+		case "acme.print.design":
+			sawDesign = true
+		}
+	}
+	if !sawGift || sawDesign {
+		t.Fatalf("stored = %+v, want gift message only", stored)
+	}
+}
+
 func TestStorefrontHandler_CartAdd_SetsCookie_AndCountFragment(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -1218,4 +1287,33 @@ func findCookie(rec *httptest.ResponseRecorder, name string) (*http.Cookie, bool
 		}
 	}
 	return nil, false
+}
+
+func TestStorefrontHandler_JSONCartAdd_PluginOnlyFieldForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.print.design",
+		Label:       "Print design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
+	cartSvc, carts, prices := newStorefrontCartServiceWith(values, nil)
+	prices.set("var-1", "EUR", 1500)
+	engine := createTestTheme(t)
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()).WithCart(nil, cartSvc).WithExtensions(values)
+	before := carts.count()
+
+	rec := storefrontJSONCartRequest(t, h, http.MethodPost, "/storefront/cart/items",
+		`{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"acme.print.design","value":"d1"}]}`, storefrontJSONCartCall{})
+	if rec.Code != http.StatusForbidden || storefrontJSONErrorCode(t, rec) != "forbidden_plugin_only_field" {
+		t.Fatalf("status=%d code=%s body=%s", rec.Code, storefrontJSONErrorCode(t, rec), rec.Body.String())
+	}
+	if carts.count() != before {
+		t.Fatalf("leftover carts = %d, want %d", carts.count(), before)
+	}
 }

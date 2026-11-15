@@ -10,6 +10,8 @@ import (
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 type memSnapshotValueRepo struct {
@@ -85,6 +87,85 @@ func (m *memSnapshotValueRepo) Delete(_ context.Context, target domainext.Target
 	}
 	delete(m.values, key)
 	return nil
+}
+
+func TestWorkflow_SnapshotsPluginOnlyCartItemExtensionsWithoutInheritedTrust(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.design",
+		Label:       "Design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newMemSnapshotValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+	probe := &snapshotCtxProbe{inner: values}
+
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, probe, idleProducts(), idleComponents(), idlePrices())
+	wf := checkout.NewWorkflow([]checkout.Step{step}, testBus(t), testLogger())
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	cartTarget := domainext.CartItemTarget(cctx.Cart.ID, "v1")
+	seed := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+	if _, err := values.UpsertBatch(seed, cartTarget, []domainext.ValueInput{
+		{FieldCode: "acme.design", Value: "d1"},
+	}, "plugin:acme", false); err != nil {
+		t.Fatalf("UpsertBatch: %v", err)
+	}
+
+	// Production path: Workflow.Execute strips trust; CreateOrderStep then uses
+	// detachedTimeout (WithoutCancel), which keeps values from its parent — so
+	// the parent must already be stripped or the grant would survive into Snapshot.
+	// Request id must survive Strip + WithoutCancel; context.Background() would not.
+	parent := requestctx.WithRequestID(context.Background(), "req-snap-1")
+	trusted := extensionapp.WithPluginWrite(parent, "acme", "acme.design")
+	if err := wf.Execute(trusted, cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if cctx.Order == nil {
+		t.Fatal("expected order on context")
+	}
+	if probe.saw == nil {
+		t.Fatal("SnapshotCartItemToOrderItem was not called")
+	}
+	if _, ok := pluginwrite.For(probe.saw, "acme.design"); ok {
+		t.Fatal("snapshot ctx must not inherit the Workflow caller's plugin-write grant")
+	}
+	if got := requestctx.RequestID(probe.saw); got != "req-snap-1" {
+		t.Fatalf("snapshot RequestID = %q, want req-snap-1 (WithoutCancel must keep parent values)", got)
+	}
+	orderTarget := domainext.OrderItemTarget(cctx.Order.ID, "v1")
+	stored, err := extRepo.ListByTarget(context.Background(), orderTarget)
+	if err != nil {
+		t.Fatalf("ListByTarget: %v", err)
+	}
+	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "d1" {
+		t.Fatalf("order extensions = %+v", stored)
+	}
+}
+
+// snapshotCtxProbe records the ctx CreateOrderStep passes to SnapshotCartItemToOrderItem.
+type snapshotCtxProbe struct {
+	inner interface {
+		SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error
+	}
+	saw context.Context
+}
+
+func (p *snapshotCtxProbe) SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error {
+	p.saw = ctx
+	return p.inner.SnapshotCartItemToOrderItem(ctx, cartID, orderID, variantID, updatedBy)
 }
 
 func TestCreateOrderStep_SnapshotsCartItemExtensions(t *testing.T) {

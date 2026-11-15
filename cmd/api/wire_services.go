@@ -297,9 +297,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return nil, err
 	}
+	// Refuse only when boot was canceled before some plugins started. Ordinary
+	// Init errors stay logged/skipped so serve continues (worker/scheduler differ).
+	if summary.Canceled > 0 {
+		return nil, fmt.Errorf("plugin init interrupted: boot canceled (%d plugin(s) not started)", summary.Canceled)
+	}
 	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
+	pluginApp.WarnUnownedPluginOnlyFields()
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)
 	extensionValueService := extensionApp.NewValueService(extensionRegistry, repos.extensionValueRepo)
 	if err := plugin.LoadPersisted(context.Background(), repos.configRepo, cfg, registry.ConfigRegistry()); err != nil {
@@ -774,7 +780,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithUnpaidOrderCompensation(repos.orderRepo, assignmentFlow, repos.paymentRepo, storeCreditService)
 	checkoutApp.RegisterPaymentFailedCompensation(bus, repos.orderRepo, storeCreditService, assignmentFlow, log)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
-	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionValueService)
+	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionApp.AsValueAPI(extensionValueService))
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
@@ -909,9 +915,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
 		WithVisibilityFacts(visibilityFacts).
 		WithOffers(catalogOffers)
-	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
-	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
-	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService).
+	cartHandler := storefront.NewCartHandler(cartService, extensionApp.AsValueAPI(extensionValueService))
+	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionApp.AsValueAPI(extensionValueService))
+	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionApp.AsValueAPI(extensionValueService)).
 		WithEventBus(bus).
 		WithShipmentStatusService(shipmentStatusService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
@@ -1042,7 +1048,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	attributeAdmin := admin.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor).
 		WithDiscoveryFacetSync(discoveryFacetSync)
 	extensionFieldAdmin := admin.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
-	extensionValueAdmin := admin.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
+	extensionValueAdmin := admin.NewExtensionValueAdminHandlerWithAuditor(extensionApp.AsValueAPI(extensionValueService), sharedAuditor)
 	extensionHookAdmin := admin.NewExtensionHookAdminHandler(hookRegistry)
 	extensionSlotAdmin := admin.NewExtensionSlotAdminHandler(slotRegistry)
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)

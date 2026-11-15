@@ -2,6 +2,8 @@ package extension_test
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/extension"
@@ -102,5 +104,98 @@ func TestRegistry_RegisterValidationError(t *testing.T) {
 	err := reg.Register(def)
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestRegistry_RegisterOwned_RecordsAndClearsOwner(t *testing.T) {
+	reg := extension.NewRegistry()
+	def := domainext.FieldDef{Code: "acme.owned", Label: "O", Type: domainext.FieldTypeString, Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored}
+	if err := reg.RegisterOwned(def, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.owned"); got != "acme" {
+		t.Fatalf("Owner = %q", got)
+	}
+	if got := reg.Owner("missing"); got != "" {
+		t.Fatalf("Owner(missing) = %q", got)
+	}
+	plain := def
+	plain.Code = "acme.plain"
+	if err := reg.Register(plain); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.Owner("acme.plain"); got != "" {
+		t.Fatalf("unowned Owner = %q", got)
+	}
+	reg.Remove("acme.owned")
+	if got := reg.Owner("acme.owned"); got != "" {
+		t.Fatalf("Owner after Remove = %q", got)
+	}
+	if err := reg.RegisterOwned(def, "other"); err != nil || reg.Owner("acme.owned") != "other" {
+		t.Fatalf("re-register after Remove: err=%v owner=%q", err, reg.Owner("acme.owned"))
+	}
+}
+
+func TestRegistry_OwnedAndUnownedDuplicateCodes(t *testing.T) {
+	reg := extension.NewRegistry()
+	def := func(code string) domainext.FieldDef {
+		return domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored}
+	}
+	if err := reg.Register(def("a.free")); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.RegisterOwned(def("a.free"), "acme"); !errors.Is(err, extension.ErrAlreadyRegistered) {
+		t.Fatalf("owned over unowned err = %v", err)
+	}
+	if err := reg.RegisterOwned(def("b.owned"), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(def("b.owned")); !errors.Is(err, extension.ErrAlreadyRegistered) {
+		t.Fatalf("unowned over owned err = %v", err)
+	}
+	if reg.Owner("a.free") != "" || reg.Owner("b.owned") != "acme" {
+		t.Fatalf("owners changed: %q %q", reg.Owner("a.free"), reg.Owner("b.owned"))
+	}
+}
+
+func TestRegistry_OwnerConcurrentAccess(t *testing.T) {
+	reg := extension.NewRegistry()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			code := fmt.Sprintf("c%d.field", i)
+			for n := 0; n < 50; n++ {
+				_ = reg.RegisterOwned(domainext.FieldDef{Code: code, Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored}, "acme")
+				_ = reg.Owner(code)
+				reg.Remove(code)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestRegistry_AssignOwnerAndUnownedPluginOnly(t *testing.T) {
+	reg := extension.NewRegistry()
+	po := domainext.FieldDef{Code: "a.po", Label: "L", Type: domainext.FieldTypeString, Scope: domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot, Access: domainext.Access{PluginOnlyWrite: true}}
+	if err := reg.Register(po); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.UnownedPluginOnly(); len(got) != 1 || got[0] != "a.po" {
+		t.Fatalf("UnownedPluginOnly = %v", got)
+	}
+	if !reg.AssignOwner("a.po", "acme") || reg.Owner("a.po") != "acme" {
+		t.Fatal("AssignOwner must set owner on unowned field")
+	}
+	if reg.AssignOwner("a.po", "other") || reg.Owner("a.po") != "acme" {
+		t.Fatal("AssignOwner must not override an existing owner")
+	}
+	if reg.AssignOwner("missing", "acme") {
+		t.Fatal("AssignOwner on unknown code must be false")
+	}
+	if got := reg.UnownedPluginOnly(); len(got) != 0 {
+		t.Fatalf("UnownedPluginOnly after assign = %v", got)
 	}
 }

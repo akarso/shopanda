@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	orderapp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -200,6 +201,8 @@ func (w *Workflow) publishEvent(ctx context.Context, name, source string, data i
 
 // Execute runs every step in sequence. It stops on the first error
 // and emits lifecycle events for observability.
+// Plugin-write trust is stripped so checkout steps (including plugin-registered
+// ones) cannot inherit a grant from the caller.
 func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 	defer func() {
 		if err == nil || cctx == nil {
@@ -248,6 +251,11 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 		}
 		span.End()
 	}()
+
+	// After recover/compensate defers are registered. Callers must not pass nil:
+	// Strip panics on nil; recover records failure then re-panics, so compensation
+	// does not run.
+	ctx = extensionapp.StripPluginWrite(ctx)
 
 	// cctx == nil is a contract case every Step already guards against
 	// (returning a normal error, not panicking) — this must not dereference

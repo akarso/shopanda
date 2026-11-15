@@ -14,7 +14,7 @@ type cartItemExtensionResponse struct {
 	Value     interface{} `json:"value"`
 }
 
-func cartItemExtensions(ctx context.Context, values *extensionapp.ValueService, cartID, variantID string) ([]cartItemExtensionResponse, error) {
+func cartItemExtensions(ctx context.Context, values extensionapp.ValueAPI, cartID, variantID string) ([]cartItemExtensionResponse, error) {
 	if values == nil {
 		return nil, nil
 	}

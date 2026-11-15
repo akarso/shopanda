@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
@@ -97,6 +98,8 @@ func (b *Bus) OnAsync(name string, h Handler) {
 // enqueue paths (sync jobs, webhooks) can correlate without the Publish
 // request context.
 func (b *Bus) Publish(ctx context.Context, evt Event) error {
+	// Handlers never inherit a plugin-write grant from the publisher.
+	ctx = pluginwrite.Strip(ctx)
 	b.mu.RLock()
 	syncH := append([]Handler(nil), b.sync[evt.Name]...)
 	b.mu.RUnlock()

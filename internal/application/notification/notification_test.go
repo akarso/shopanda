@@ -279,7 +279,7 @@ func TestHandleOrderPaid_EnqueueFailureCancelledCtxStillReleasesClaim(t *testing
 
 	q := &mockQueue{ignoreID: true}
 	q.enqueueFn = func(c context.Context, job jobs.Job) error {
-		cancel() // simulate shutdown cancelling the request ctx while Enqueue waits
+		cancel()          // simulate shutdown cancelling the request ctx while Enqueue waits
 		q.enqueueFn = nil // subsequent retries use normal enqueue
 		return context.Canceled
 	}

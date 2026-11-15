@@ -445,6 +445,11 @@ func (h *StorefrontHandler) storefrontCartExtensionFields() []StorefrontCartExte
 	fields := extensionapp.PublicFieldsForScope(h.extensions.Registry(), domainext.TargetCartItem)
 	out := make([]StorefrontCartExtensionField, 0, len(fields))
 	for _, field := range fields {
+		// A plugin-only field is public for display, but this form is an
+		// untrusted write. Submitting it fails the whole add.
+		if field.Access.PluginOnlyWrite {
+			continue
+		}
 		out = append(out, StorefrontCartExtensionField{
 			Code:     field.Code,
 			FormName: storefrontExtensionFormName(field.Code),
@@ -484,12 +489,17 @@ func (h *StorefrontHandler) storefrontExtensionInputsFromForm(r *http.Request) [
 		raw := values[len(values)-1]
 		value := interface{}(raw)
 		if h.extensions != nil {
-			if field, ok := h.extensions.Registry().Get(code); ok && field.Type == domainext.FieldTypeBool {
-				parsed, err := strconv.ParseBool(raw)
-				if err != nil {
+			if field, ok := h.extensions.Registry().Get(code); ok {
+				if field.Access.PluginOnlyWrite {
 					continue
 				}
-				value = parsed
+				if field.Type == domainext.FieldTypeBool {
+					parsed, err := strconv.ParseBool(raw)
+					if err != nil {
+						continue
+					}
+					value = parsed
+				}
 			}
 		}
 		out = append(out, domainext.ValueInput{FieldCode: code, Value: value})

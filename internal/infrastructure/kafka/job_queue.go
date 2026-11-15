@@ -38,6 +38,8 @@ type inflightEntry struct {
 type QueueConfig struct {
 	Brokers     []string
 	TopicPrefix string
+	// Context cancels the initial broker dial. Nil means context.Background().
+	Context context.Context
 }
 
 func isTopicExistsErr(err error) bool {
@@ -61,12 +63,21 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	delayTopic := prefix + ".jobs.delay"
 	failedTopic := prefix + ".jobs.failed"
 
-	conn, err := kafka.Dial("tcp", cfg.Brokers[0])
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	conn, err := kafka.DialContext(ctx, "tcp", cfg.Brokers[0])
 	if err != nil {
 		return nil, fmt.Errorf("NewJobQueue: dial: %w", err)
 	}
 	defer conn.Close()
-
+	// Bound CreateTopics so a broker that accepts TCP then stalls cannot block Init.
+	deadline := time.Now().Add(30 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
 	for _, topic := range []string{mainTopic, delayTopic, failedTopic} {
 		if err := conn.CreateTopics(kafka.TopicConfig{
 			Topic:             topic,
@@ -76,6 +87,7 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 			return nil, fmt.Errorf("NewJobQueue: create topic %q: %w", topic, err)
 		}
 	}
+	_ = conn.SetDeadline(time.Time{})
 
 	return &JobQueue{
 		mainWriter: &kafka.Writer{

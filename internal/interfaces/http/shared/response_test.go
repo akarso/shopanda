@@ -120,6 +120,9 @@ func TestStatusFromCode(t *testing.T) {
 		{apperror.CodeValidation, http.StatusUnprocessableEntity},
 		{apperror.CodeUnauthorized, http.StatusUnauthorized},
 		{apperror.CodeForbidden, http.StatusForbidden},
+		{apperror.CodeForbiddenPrivateField, http.StatusForbidden},
+		{apperror.CodeForbiddenPluginOnlyField, http.StatusForbidden},
+		{apperror.CodePluginOnlyFieldImmutable, http.StatusForbidden},
 		{apperror.CodeInternal, http.StatusInternalServerError},
 	}
 	for _, tc := range tests {

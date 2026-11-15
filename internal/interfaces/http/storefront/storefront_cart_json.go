@@ -300,7 +300,8 @@ func storefrontCartJSONClientError(err error) bool {
 	switch appErr.Code {
 	case apperror.CodeValidation, apperror.CodeNotFound, apperror.CodeForbidden,
 		apperror.CodeConflict, apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed,
-		apperror.CodeCartValidationFailed, apperror.CodeForbiddenPrivateField:
+		apperror.CodeCartValidationFailed, apperror.CodeForbiddenPrivateField,
+		apperror.CodeForbiddenPluginOnlyField:
 		return true
 	default:
 		return false

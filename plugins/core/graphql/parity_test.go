@@ -96,9 +96,9 @@ func (s *stubGroupedLister) List(ctx context.Context, groupID string) ([]catalog
 
 type batchProductRepo struct {
 	stubProductRepo
-	byID            map[string]*catalog.Product
-	listByIDsCalls  int
-	listByIDsErr    error
+	byID           map[string]*catalog.Product
+	listByIDsCalls int
+	listByIDsErr   error
 }
 
 func (r *batchProductRepo) ListByIDs(_ context.Context, ids []string) (map[string]*catalog.Product, error) {

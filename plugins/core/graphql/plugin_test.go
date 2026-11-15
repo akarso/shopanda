@@ -125,4 +125,3 @@ func TestPlugin_Init_EnforceAttachesVisibility(t *testing.T) {
 		t.Fatalf("enforce attach must gate individually-hidden product to null, got %v", resp)
 	}
 }
-

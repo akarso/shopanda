@@ -42,6 +42,7 @@ func (p *QueuePlugin) Init(app *plugin.App) error {
 	q, err := newQueue(inkafka.QueueConfig{
 		Brokers:     brokers,
 		TopicPrefix: app.Config.Queue.Kafka.TopicPrefix,
+		Context:     app.Context(),
 	})
 	if err != nil {
 		return fmt.Errorf("kafka queue: init client: %w", err)

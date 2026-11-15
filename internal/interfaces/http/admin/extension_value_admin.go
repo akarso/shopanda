@@ -20,17 +20,17 @@ const maxExtensionValueBodyBytes int64 = 1 << 20 // 1 MiB
 
 // ExtensionValueAdminHandler serves extension value admin endpoints.
 type ExtensionValueAdminHandler struct {
-	values  *extensionapp.ValueService
+	values  extensionapp.ValueAPI
 	auditor *admin.Auditor
 }
 
 // NewExtensionValueAdminHandler creates an ExtensionValueAdminHandler with a default auditor.
-func NewExtensionValueAdminHandler(values *extensionapp.ValueService) *ExtensionValueAdminHandler {
+func NewExtensionValueAdminHandler(values extensionapp.ValueAPI) *ExtensionValueAdminHandler {
 	return NewExtensionValueAdminHandlerWithAuditor(values, admin.NewAuditor(logger.New("info")))
 }
 
 // NewExtensionValueAdminHandlerWithAuditor creates an ExtensionValueAdminHandler with a custom auditor.
-func NewExtensionValueAdminHandlerWithAuditor(values *extensionapp.ValueService, auditor *admin.Auditor) *ExtensionValueAdminHandler {
+func NewExtensionValueAdminHandlerWithAuditor(values extensionapp.ValueAPI, auditor *admin.Auditor) *ExtensionValueAdminHandler {
 	if values == nil {
 		panic("ExtensionValueAdminHandler: value service must not be nil")
 	}
@@ -102,17 +102,14 @@ func extensionValueAPIError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, domainext.ErrUnknownFieldCode) {
-		return apperror.UnknownFieldCode(err.Error())
-	}
-	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
-		return apperror.ForbiddenPrivateField(err.Error())
-	}
-	if domainext.IsValidationError(err) {
-		return apperror.FieldValidationFailed(err.Error())
-	}
-	if apperror.Is(err, apperror.CodeNotFound) {
-		return err
+	mapped := extensionapp.MapValueError(err)
+	var appErr *apperror.Error
+	if errors.As(mapped, &appErr) {
+		switch appErr.Code {
+		case apperror.CodeUnknownFieldCode, apperror.CodeForbiddenPrivateField,
+			apperror.CodeForbiddenPluginOnlyField, apperror.CodeFieldValidationFailed, apperror.CodeNotFound:
+			return mapped
+		}
 	}
 	return apperror.Internal("extension value operation failed")
 }

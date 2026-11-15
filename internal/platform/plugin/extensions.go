@@ -1,7 +1,9 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -10,6 +12,7 @@ import (
 // Extensions exposes extension field registration to plugins during Init.
 type Extensions struct {
 	registry *extensionapp.Registry
+	owner    string // empty = unowned (legacy app.Extensions())
 }
 
 // RegisterField registers an extension field definition.
@@ -17,6 +20,9 @@ type Extensions struct {
 func (e *Extensions) RegisterField(def domainext.FieldDef) error {
 	if e == nil || e.registry == nil {
 		return fmt.Errorf("plugin: extension registry not configured")
+	}
+	if e.owner != "" {
+		return e.registry.RegisterOwned(def, e.owner)
 	}
 	return e.registry.Register(def)
 }
@@ -39,6 +45,9 @@ func (a *App) ExtensionRegistry() *extensionapp.Registry {
 }
 
 // Extensions returns the plugin-facing extension registration API.
+// Fields registered during a plugin's Init are assigned to that plugin by the
+// loader after Init returns (and rolled back if Init fails); fields registered
+// at any other time are unowned.
 func (a *App) Extensions() *Extensions {
 	a.extensionRegistryMu.Lock()
 	defer a.extensionRegistryMu.Unlock()
@@ -46,4 +55,140 @@ func (a *App) Extensions() *Extensions {
 		a.extensionRegistry = extensionapp.NewRegistry()
 	}
 	return &Extensions{registry: a.extensionRegistry}
+}
+
+// ExtensionsFor is like Extensions but records owner (the plugin name) explicitly,
+// for code running outside plugin Init. Panics on a blank owner. During a plugin's
+// Init the loader verifies afterwards that every field was registered under that
+// plugin's own name and fails the Init (rolling the fields back) otherwise; outside
+// Init the name is not verified.
+func (a *App) ExtensionsFor(owner string) *Extensions {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		panic("plugin: extension owner must not be empty")
+	}
+	e := a.Extensions()
+	e.owner = owner
+	return e
+}
+
+// UnownedPluginOnlyFields lists plugin-only extension fields with no recorded owner;
+// any trusted registrant may write them.
+func (a *App) UnownedPluginOnlyFields() []string {
+	return a.ExtensionRegistry().UnownedPluginOnly()
+}
+
+// WarnUnownedPluginOnlyFields logs plugin-only fields that have no owner and were
+// not warned about before. InitAllContext calls it after every plugin Init (all boot
+// paths); the serve runtime calls it again after LoadPersisted for persisted fields.
+// No-op without a Logger.
+func (a *App) WarnUnownedPluginOnlyFields() {
+	if a.Logger == nil {
+		return
+	}
+	// Lock order: App.extensionRegistryMu, then Registry.mu (never the reverse).
+	a.extensionRegistryMu.Lock()
+	var fresh []string
+	current := make(map[string]struct{})
+	for _, code := range a.extensionRegistry.UnownedPluginOnly() {
+		current[code] = struct{}{}
+		if _, seen := a.warnedUnowned[code]; !seen {
+			fresh = append(fresh, code)
+		}
+	}
+	a.warnedUnowned = current // prune: removed then re-registered fields warn again
+	a.extensionRegistryMu.Unlock()
+	if len(fresh) == 0 {
+		return
+	}
+	a.Logger.Warn("extension.plugin_only.unowned", map[string]interface{}{
+		"fields": fresh,
+		"hint":   "register plugin-only fields during plugin Init (or via App.ExtensionsFor) so the owner is recorded",
+	})
+}
+
+// extensionCodeSnapshot returns the currently registered extension field codes.
+func (a *App) extensionCodeSnapshot() map[string]struct{} {
+	registry := a.ExtensionRegistry()
+	out := make(map[string]struct{})
+	for _, code := range registry.Codes() {
+		out[code] = struct{}{}
+	}
+	return out
+}
+
+// settleExtensionFields runs after a plugin's Init. Fields registered since
+// before: on Init failure they are removed; otherwise unowned ones are assigned to
+// name, and a field owned by another plugin fails the Init and is rolled back.
+func (a *App) settleExtensionFields(name string, before map[string]struct{}, initErr error) error {
+	registry := a.ExtensionRegistry()
+	var added []string
+	for _, code := range registry.Codes() {
+		if _, existed := before[code]; !existed {
+			added = append(added, code)
+		}
+	}
+	rollback := func() {
+		for _, code := range added {
+			registry.Remove(code)
+		}
+	}
+	if initErr != nil {
+		rollback()
+		return initErr
+	}
+	for _, code := range added {
+		if registry.AssignOwner(code, name) {
+			continue
+		}
+		if owner := registry.Owner(code); owner != name {
+			rollback()
+			return fmt.Errorf("plugin %q registered extension field %q under owner %q", name, code, owner)
+		}
+	}
+	return nil
+}
+
+// PluginWriteContext returns ctx marked as a trusted write by pluginName for the
+// given Access.PluginOnlyWrite field codes (only those). It returns an error for a
+// blank name, no codes, an unregistered or non-plugin-only code, or a field owned by
+// another plugin. Prefer it in events, workers and goroutines, where a panic is not
+// recovered. Call it after RegisterField. The name is caller-supplied, so this is a
+// guard against mistakes, not a security boundary.
+func (a *App) PluginWriteContext(ctx context.Context, pluginName string, fieldCodes ...string) (context.Context, error) {
+	pluginName = strings.TrimSpace(pluginName)
+	if pluginName == "" {
+		return ctx, fmt.Errorf("plugin: PluginWriteContext: plugin name must not be empty")
+	}
+	if len(fieldCodes) == 0 {
+		return ctx, fmt.Errorf("plugin: PluginWriteContext: at least one field code is required")
+	}
+	registry := a.ExtensionRegistry()
+	for _, code := range fieldCodes {
+		field, ok := registry.Get(code)
+		if !ok {
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is not registered (call RegisterField in Init before PluginWriteContext/WithPluginWrite)", code)
+		}
+		if !field.Access.PluginOnlyWrite {
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is not PluginOnlyWrite", code)
+		}
+		if owner := registry.Owner(code); owner != "" && owner != pluginName {
+			return ctx, fmt.Errorf("plugin: PluginWriteContext: extension field %q is owned by %q, not %q", code, owner, pluginName)
+		}
+	}
+	return extensionapp.WithPluginWrite(ctx, pluginName, fieldCodes...), nil
+}
+
+// WithPluginWrite is PluginWriteContext that panics on error. Unrecovered goroutines
+// crash the process: OnAsync handlers and any goroutine the plugin starts — use
+// PluginWriteContext there. Sync On handlers are recovered when Publish runs under
+// HTTP RecoveryMiddleware or Worker.safeHandle; otherwise they crash. Init recovers.
+// The worker recovers and fails the job (panic text stored). Never build the codes
+// from runtime/request input.
+func (a *App) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes ...string) context.Context {
+	out, err := a.PluginWriteContext(ctx, pluginName, fieldCodes...)
+	if err != nil {
+		panic(err.Error())
+	}
+	return out
 }

@@ -17,10 +17,12 @@ const (
 	CodeRateLimited  Code = "rate_limited"
 	CodeInternal     Code = "internal"
 
-	CodeForbiddenPrivateField Code = "forbidden_private_field"
-	CodeUnknownFieldCode      Code = "unknown_field_code"
-	CodeFieldValidationFailed Code = "field_validation_failed"
-	CodeCartValidationFailed  Code = "cart_validation_failed"
+	CodeForbiddenPrivateField    Code = "forbidden_private_field"
+	CodeForbiddenPluginOnlyField Code = "forbidden_plugin_only_field"
+	CodePluginOnlyFieldImmutable Code = "plugin_only_field_immutable"
+	CodeUnknownFieldCode         Code = "unknown_field_code"
+	CodeFieldValidationFailed    Code = "field_validation_failed"
+	CodeCartValidationFailed     Code = "cart_validation_failed"
 )
 
 // Error is a structured application error.
@@ -79,6 +81,16 @@ func Forbidden(message string) *Error {
 // ForbiddenPrivateField creates a forbidden_private_field error.
 func ForbiddenPrivateField(message string) *Error {
 	return New(CodeForbiddenPrivateField, message)
+}
+
+// ForbiddenPluginOnlyField creates a forbidden_plugin_only_field error.
+func ForbiddenPluginOnlyField(message string) *Error {
+	return New(CodeForbiddenPluginOnlyField, message)
+}
+
+// PluginOnlyFieldImmutable creates a plugin_only_field_immutable error.
+func PluginOnlyFieldImmutable(message string) *Error {
+	return New(CodePluginOnlyFieldImmutable, message)
 }
 
 // UnknownFieldCode creates an unknown_field_code error.

@@ -41,6 +41,10 @@ func (s *stubFieldRepo) SoftDelete(context.Context, string) error {
 	panic("not implemented")
 }
 
+func (s *stubFieldRepo) Retire(context.Context, string) error {
+	panic("not implemented")
+}
+
 func TestRegistry_LoadPersisted_MergesWithPluginFields(t *testing.T) {
 	reg := extension.NewRegistry()
 	if err := reg.Register(domainext.FieldDef{

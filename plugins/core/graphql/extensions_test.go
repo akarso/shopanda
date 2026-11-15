@@ -26,6 +26,7 @@ func (extFieldRepoStub) ListActive(context.Context, domainext.TargetType) ([]dom
 	return nil, nil
 }
 func (extFieldRepoStub) SoftDelete(context.Context, string) error { return nil }
+func (extFieldRepoStub) Retire(context.Context, string) error     { return nil }
 
 type extValueRepoStub struct {
 	values map[string]map[string]domainext.Value
@@ -113,6 +114,12 @@ func testResolverWithExtensions(t *testing.T) *cgraphql.Resolver {
 		Code: "acme.private_flag", Label: "Private flag", Type: domainext.FieldTypeBool, Scope: domainext.TargetProduct, Visibility: domainext.VisibilityPrivate,
 	}); err != nil {
 		t.Fatalf("register private field: %v", err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.locked", Label: "Locked", Type: domainext.FieldTypeString, Scope: domainext.TargetProduct,
+		Access: domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatalf("register plugin-only field: %v", err)
 	}
 	fields := extensionapp.NewFieldService(reg, extFieldRepoStub{})
 	repo := newExtValueRepoStub()
@@ -224,5 +231,23 @@ func TestHandler_ExtensionMutationForbiddenWithoutCapability(t *testing.T) {
 	}
 	if len(resp.Errors) == 0 || resp.Errors[0].Message != "insufficient permissions" {
 		t.Fatalf("errors = %+v", resp.Errors)
+	}
+}
+
+func TestHandler_ExtensionMutationPluginOnlyFieldRejected(t *testing.T) {
+	schema, err := cgraphql.NewSchema(testResolverWithExtensions(t))
+	if err != nil {
+		t.Fatalf("NewSchema: %v", err)
+	}
+	h := cgraphql.NewHandler(schema, testLogger())
+	body := `{"query":"mutation($values:[ExtensionValueInput!]!){ upsertExtensionValues(targetType:\"product\", targetId:\"prod-1\", values:$values) { fieldCode } }","variables":{"values":[{"fieldCode":"acme.locked","value":"x"}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(body))
+	req = req.WithContext((&admin.AdminContext{
+		AdminID: "admin-1", Permissions: []string{string(rbac.ExtensionsRead), string(rbac.ExtensionsWrite)},
+	}).WithContext(req.Context()))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !bytes.Contains(rec.Body.Bytes(), []byte("can only be written by a plugin")) {
+		t.Fatalf("expected plugin-only rejection, got status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

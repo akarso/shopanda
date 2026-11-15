@@ -196,6 +196,9 @@ func extensionFieldAPIError(err error) error {
 	if errors.Is(err, extensionapp.ErrFieldNotFound) {
 		return apperror.NotFound(err.Error())
 	}
+	if errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		return apperror.PluginOnlyFieldImmutable(err.Error())
+	}
 	if apperror.Is(err, apperror.CodeNotFound) {
 		return err
 	}

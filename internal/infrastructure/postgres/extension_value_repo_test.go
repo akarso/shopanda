@@ -122,3 +122,27 @@ func TestExtensionValueRepo_Delete(t *testing.T) {
 		t.Fatalf("Delete missing err = %v, want not found", err)
 	}
 }
+
+func TestExtensionValueRepo_DeleteByFieldCode(t *testing.T) {
+	repo := setupExtensionValueRepo(t)
+	ctx := context.Background()
+	a := domainext.Target{Type: domainext.TargetProduct, ID: "prod-1"}
+	b := domainext.Target{Type: domainext.TargetProduct, ID: "prod-2"}
+	if err := repo.Upsert(ctx, sampleExtensionValue(a, "acme.purge", "a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Upsert(ctx, sampleExtensionValue(b, "acme.purge", "b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Upsert(ctx, sampleExtensionValue(a, "acme.keep", "k")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.DeleteByFieldCode(ctx, "acme.purge")
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteByFieldCode = %d, %v; want 2, nil", n, err)
+	}
+	kept, err := repo.ListByTarget(ctx, a)
+	if err != nil || len(kept) != 1 || kept[0].FieldCode != "acme.keep" {
+		t.Fatalf("kept = %+v err=%v", kept, err)
+	}
+}

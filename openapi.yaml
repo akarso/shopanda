@@ -765,7 +765,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            Forbidden — another customer's cart, a private extension field
+            (`forbidden_private_field`), or an extension field registered with
+            `Access.PluginOnlyWrite` (`forbidden_plugin_only_field`); such
+            fields are writable only by trusted plugin code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
         "422":
           $ref: "#/components/responses/Validation"
 
