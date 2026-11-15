@@ -32,6 +32,8 @@ type RetireOptions struct {
 type RetireResult struct {
 	Code         string
 	ValuesPurged int64
+	// PurgeOnly is true when the definition was already soft-deleted and this call only purged values.
+	PurgeOnly bool
 }
 
 // FieldService coordinates extension field definitions between persistence and the in-process registry.
@@ -184,16 +186,21 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 		return RetireResult{}, ErrFieldNotPluginOnly
 	case err == nil:
 		n, retireErr := opts.Store.RetireActive(ctx, code, opts.PurgeValues)
+		result.ValuesPurged = n
 		if retireErr != nil {
+			if errors.Is(retireErr, domainext.ErrPurgeIncomplete) {
+				s.registry.Remove(code)
+				return result, retireErr
+			}
 			return RetireResult{}, mapRetireStoreError(retireErr)
 		}
-		result.ValuesPurged = n
 	case opts.PurgeValues:
 		n, purgeErr := opts.Store.PurgeIfSoftDeletedPluginOnly(ctx, code)
 		if purgeErr != nil {
 			return RetireResult{}, mapRetireStoreError(purgeErr)
 		}
 		result.ValuesPurged = n
+		result.PurgeOnly = true
 	default:
 		return RetireResult{}, ErrFieldNotFound
 	}

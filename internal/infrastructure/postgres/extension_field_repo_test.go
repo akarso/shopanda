@@ -228,7 +228,7 @@ func TestExtensionFieldRepo_RetirePluginOnlyAndRefuseOrdinary(t *testing.T) {
 	}
 }
 
-func TestExtensionFieldRepo_RetireActivePurgesValuesAtomically(t *testing.T) {
+func TestExtensionFieldRepo_RetireActivePurgesValuesThenAllowsRetry(t *testing.T) {
 	repo := setupExtensionFieldRepo(t)
 	ctx := context.Background()
 	locked := pluginOnlyExtensionField("acme.retire.purge")
@@ -251,13 +251,43 @@ func TestExtensionFieldRepo_RetireActivePurgesValuesAtomically(t *testing.T) {
 	if err != nil || len(vals) != 0 {
 		t.Fatalf("values = %+v err=%v", vals, err)
 	}
-	// Retry purge on soft-deleted plugin-only row with no remaining values.
 	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
 	if err != nil || n != 0 {
 		t.Fatalf("PurgeIfSoftDeletedPluginOnly = %d, %v", n, err)
 	}
 	if _, err := repo.PurgeIfSoftDeletedPluginOnly(ctx, "acme.never.existed"); !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("never stored: %v", err)
+	}
+}
+
+func TestExtensionFieldRepo_PurgeCancelKeepsSoftDelete(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.partial")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	target := domainext.Target{Type: domainext.TargetCartItem, ID: "cart:partial"}
+	if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, "v")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repo.PurgeIfSoftDeletedPluginOnly(cancelCtx, locked.Code); err == nil {
+		t.Fatal("expected canceled purge error")
+	}
+	vals, err := valueRepo.ListByTarget(ctx, target)
+	if err != nil || len(vals) != 1 {
+		t.Fatalf("values should remain after canceled purge: %+v err=%v", vals, err)
+	}
+	n, err := repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 1 {
+		t.Fatalf("retry purge = %d, %v", n, err)
 	}
 }
 

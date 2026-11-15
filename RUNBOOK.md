@@ -269,8 +269,8 @@ app extension-field retire <code>
 app extension-field retire <code> --purge-values --confirm-idle
 ```
 
-- Audited as `extension_field.retire` (`cli:<os-user>`), with `purge_values` / `values_purged` in details.
-- Soft-delete and value purge share one transaction: a purge failure rolls the definition back so a non-zero exit leaves the field active. If values were somehow left behind for an already soft-deleted plugin-only row, re-run with `--purge-values --confirm-idle` to purge only.
+- Audited as `extension_field.retire` (`cli:<os-user>`), including refusals (still-registered plugin, missing `--confirm-idle`).
+- Soft-delete commits first; value deletes run in separate short batches afterward. A purge timeout or error leaves the definition retired and keeps completed batches — re-run with `--purge-values --confirm-idle` to finish. The CLI refuses the command when any plugin fails `Init` / migration verify, or when plugin boot still registers the code (any definition, not only plugin-only).
 - After a successful retire, restart `serve` / `worker` so their registries drop the code (`LoadPersisted` will not reload a soft-deleted row).
 - Ordinary (non-plugin-only) fields keep using admin `DELETE`; `extension-field retire` refuses them.
 - Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`).

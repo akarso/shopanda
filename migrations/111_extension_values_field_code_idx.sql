@@ -1,2 +1,12 @@
--- Support operator purge by field_code (extension-field retire --purge-values).
+-- Supports operator purge by field_code (extension-field retire --purge-values).
+--
+-- NOTE: shopanda migrations run inside a transaction (see
+-- migrate.applyMigrationContent), so CREATE INDEX CONCURRENTLY is not
+-- available here — same constraint documented in
+-- 050_payments_admin_list_indexes.sql and 066_add_jobs_introspection_indexes.sql.
+-- This build takes a ShareLock on extension_values during creation, blocking
+-- INSERT/UPDATE/DELETE (cart add, checkout snapshot, admin extension writes)
+-- for that duration. Run as part of normal deploy when brief index-build locking
+-- is acceptable; for a large/hot production extension_values table, apply the
+-- equivalent index manually with CONCURRENTLY during a maintenance window instead.
 CREATE INDEX IF NOT EXISTS extension_values_field_code_idx ON extension_values (field_code);

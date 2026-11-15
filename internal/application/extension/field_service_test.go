@@ -3,6 +3,7 @@ package extension_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -113,16 +114,16 @@ func (m *memFieldRepo) RetireActive(_ context.Context, code string, purgeValues 
 	if !field.Access.PluginOnlyWrite {
 		return 0, apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
 	}
-	if purgeValues && m.purgeErr != nil {
-		return 0, m.purgeErr // definition stays active (rolled back)
-	}
 	delete(m.fields, code)
 	m.softDeleted[code] = field
-	var purged int64
-	if purgeValues {
-		purged = m.valueCounts[code]
-		delete(m.valueCounts, code)
+	if !purgeValues {
+		return 0, nil
 	}
+	if m.purgeErr != nil {
+		return 0, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, m.purgeErr)
+	}
+	purged := m.valueCounts[code]
+	delete(m.valueCounts, code)
 	return purged, nil
 }
 
@@ -412,7 +413,7 @@ func TestFieldService_Retire_MissingAndStoreRequired(t *testing.T) {
 	}
 }
 
-func TestFieldService_Retire_PurgeFailureLeavesDefinitionActiveThenRetry(t *testing.T) {
+func TestFieldService_Retire_PurgeFailureKeepsSoftDeleteThenRetry(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	repo := newMemFieldRepo()
 	repo.valueCounts["acme.locked"] = 2
@@ -425,30 +426,30 @@ func TestFieldService_Retire_PurgeFailureLeavesDefinitionActiveThenRetry(t *test
 
 	boom := errors.New("purge boom")
 	repo.purgeErr = boom
-	if _, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo}); !errors.Is(err, boom) {
-		t.Fatalf("first Retire err = %v, want purge boom", err)
+	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
+	if !errors.Is(err, domainext.ErrPurgeIncomplete) {
+		t.Fatalf("first Retire err = %v, want ErrPurgeIncomplete", err)
 	}
-	if _, ok := reg.Get("acme.locked"); !ok {
-		t.Fatal("registry must keep the field when purge rolls back")
+	if _, ok := reg.Get("acme.locked"); ok {
+		t.Fatal("registry must drop the field after soft-delete commits")
 	}
-	if _, err := repo.FindByCode(context.Background(), "acme.locked"); err != nil {
-		t.Fatalf("definition must stay active after purge failure: %v", err)
+	if _, err := repo.FindByCode(context.Background(), "acme.locked"); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("definition must be soft-deleted after purge failure: %v", err)
 	}
 	if repo.valueCounts["acme.locked"] != 2 {
-		t.Fatalf("values must remain after rollback, got %d", repo.valueCounts["acme.locked"])
+		t.Fatalf("values must remain for retry, got %d", repo.valueCounts["acme.locked"])
+	}
+	if got.Code != "acme.locked" {
+		t.Fatalf("result = %+v", got)
 	}
 
 	repo.purgeErr = nil
-	// Simulate a prior commit that soft-deleted but left values (retry path).
-	field := repo.fields["acme.locked"]
-	delete(repo.fields, "acme.locked")
-	repo.softDeleted["acme.locked"] = field
-	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
+	got, err = svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
 	if err != nil {
 		t.Fatalf("retry Retire: %v", err)
 	}
-	if got.ValuesPurged != 2 {
-		t.Fatalf("retry purged = %d, want 2", got.ValuesPurged)
+	if !got.PurgeOnly || got.ValuesPurged != 2 {
+		t.Fatalf("retry result = %+v", got)
 	}
 	if _, ok := repo.valueCounts["acme.locked"]; ok {
 		t.Fatal("values must be gone after retry purge")

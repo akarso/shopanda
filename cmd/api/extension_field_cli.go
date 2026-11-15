@@ -11,6 +11,7 @@ import (
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -31,16 +32,27 @@ type extensionFieldRetireArgs struct {
 	confirmIdle bool
 }
 
-func newExtensionFieldRetireDeps(cfg *config.Config, log logger.Logger) (svc *extensionapp.FieldService, store *postgres.ExtensionFieldRepo, pluginReg *extensionapp.Registry, conn *sql.DB, err error) {
+type extensionFieldRetireRuntime struct {
+	svc       *extensionapp.FieldService
+	store     extensionapp.PluginOnlyRetireStore
+	pluginExt *extensionapp.Registry
+	conn      *sql.DB
+}
+
+// openExtensionFieldRetireRuntime boots plugins under a deadline so the CLI can
+// refuse codes still registered on Init. Tests may replace this function.
+var openExtensionFieldRetireRuntime = defaultOpenExtensionFieldRetireRuntime
+
+func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logger) (*extensionFieldRetireRuntime, error) {
 	dsn := config.DatabaseDSN(cfg)
-	conn, err = db.Open(dsn)
+	conn, err := db.Open(dsn)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("database: %w", err)
+		return nil, fmt.Errorf("database: %w", err)
 	}
 	fieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {
 		conn.Close()
-		return nil, nil, nil, nil, fmt.Errorf("extension field repo: %w", err)
+		return nil, fmt.Errorf("extension field repo: %w", err)
 	}
 
 	extReg := extensionapp.NewRegistry()
@@ -49,7 +61,7 @@ func newExtensionFieldRetireDeps(cfg *config.Config, log logger.Logger) (svc *ex
 	boot, err := newPluginBootstrap(conn)
 	if err != nil {
 		conn.Close()
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	pluginApp := &plugin.App{
 		Logger:            log,
@@ -59,22 +71,30 @@ func newExtensionFieldRetireDeps(cfg *config.Config, log logger.Logger) (svc *ex
 	}
 	pluginApp.SetExtensionRegistry(extReg)
 	preparePermissionRegistry(pluginApp)
-	summary := plugins.InitAll(pluginApp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), extensionFieldRetireTimeout)
+	defer cancel()
+	summary := plugins.InitAllContext(ctx, pluginApp)
 	if err := plugin.InitSummaryError(summary); err != nil {
 		conn.Close()
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
-	// Unrelated Init failures (e.g. misconfigured storage) must not block retire:
-	// we only need whichever plugins did Init to populate the extension registry.
 	if summary.Failed > 0 {
-		log.Warn("extension-field.retire.plugin_init_partial", map[string]interface{}{
-			"failed":      summary.Failed,
-			"initialized": summary.Initialized,
-		})
+		conn.Close()
+		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize (refuse retire while boot is incomplete)", summary.Failed)
+	}
+	if err := ctx.Err(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("plugin init: %w", err)
 	}
 	freezePermissionRegistry(pluginApp)
 
-	return extensionapp.NewFieldService(extReg, fieldRepo), fieldRepo, extReg, conn, nil
+	return &extensionFieldRetireRuntime{
+		svc:       extensionapp.NewFieldService(extReg, fieldRepo),
+		store:     fieldRepo,
+		pluginExt: extReg,
+		conn:      conn,
+	}, nil
 }
 
 // runExtensionFieldRetire handles `app extension-field retire <code> [--purge-values --confirm-idle]`.
@@ -87,39 +107,51 @@ func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger,
 	if err != nil {
 		return err
 	}
-	if parsed.purge && !parsed.confirmIdle {
-		return fmt.Errorf("extension-field retire: --purge-values requires --confirm-idle (stop serve and worker first; see RUNBOOK)")
-	}
 
-	svc, store, pluginExt, conn, err := newExtensionFieldRetireDeps(cfg, log)
+	rt, err := openExtensionFieldRetireRuntime(cfg, log)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer rt.conn.Close()
 
-	if field, ok := pluginExt.Get(parsed.code); ok && field.Access.PluginOnlyWrite {
-		owner := pluginExt.Owner(parsed.code)
+	audit := func(retireErr error, details map[string]interface{}, valuesPurged int64) {
+		if details == nil {
+			details = map[string]interface{}{}
+		}
+		details["purge_values"] = parsed.purge
+		details["confirm_idle"] = parsed.confirmIdle
+		details["values_purged"] = valuesPurged
+		auditCLIActionDetails(context.Background(), rt.conn, log, adminApp.AuditExtensionFieldRetire, "extension_field", parsed.code, details, retireErr)
+	}
+
+	if parsed.purge && !parsed.confirmIdle {
+		err := fmt.Errorf("extension-field retire: --purge-values requires --confirm-idle (stop serve and worker first; see RUNBOOK)")
+		audit(err, nil, 0)
+		return err
+	}
+	if _, ok := rt.pluginExt.Get(parsed.code); ok {
+		owner := rt.pluginExt.Owner(parsed.code)
 		if owner == "" {
 			owner = "(unowned)"
 		}
-		return fmt.Errorf("extension-field retire: plugin still registers %q on boot (owner %s); remove or disable that plugin in this binary/config before retiring", parsed.code, owner)
+		err := fmt.Errorf("extension-field retire: plugin still registers %q on boot (owner %s); remove or disable that plugin in this binary/config before retiring", parsed.code, owner)
+		audit(err, map[string]interface{}{"plugin_registered": true, "owner": owner}, 0)
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), extensionFieldRetireTimeout)
 	defer cancel()
 
-	result, retireErr := svc.Retire(ctx, parsed.code, extensionapp.RetireOptions{
+	result, retireErr := rt.svc.Retire(ctx, parsed.code, extensionapp.RetireOptions{
 		PurgeValues: parsed.purge,
-		Store:       store,
+		Store:       rt.store,
 	})
-	details := map[string]interface{}{
-		"purge_values":  parsed.purge,
-		"confirm_idle":  parsed.confirmIdle,
-		"values_purged": result.ValuesPurged,
-	}
-	auditCLIActionDetails(ctx, conn, log, adminApp.AuditExtensionFieldRetire, "extension_field", parsed.code, details, retireErr)
+	audit(retireErr, map[string]interface{}{"purge_only": result.PurgeOnly}, result.ValuesPurged)
 	if retireErr != nil {
 		return mapExtensionFieldRetireError(retireErr)
+	}
+	if result.PurgeOnly {
+		return writeSuccessLinef(w, "Purged %d value row(s) for already-retired plugin-only extension field %q.\n", result.ValuesPurged, result.Code)
 	}
 	if parsed.purge {
 		return writeSuccessLinef(w, "Retired plugin-only extension field %q (purged %d value row(s)).\n", result.Code, result.ValuesPurged)
@@ -157,6 +189,8 @@ func mapExtensionFieldRetireError(err error) error {
 		return fmt.Errorf("extension-field retire: field not found")
 	case errors.Is(err, extensionapp.ErrFieldNotPluginOnly):
 		return fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")
+	case errors.Is(err, domainext.ErrPurgeIncomplete):
+		return fmt.Errorf("extension-field retire: %w (re-run with --purge-values --confirm-idle)", err)
 	default:
 		return fmt.Errorf("extension-field retire: %w", err)
 	}
