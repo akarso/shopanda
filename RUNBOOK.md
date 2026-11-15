@@ -253,6 +253,23 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 **Check plugin status:** startup logs emit `plugin.status` per registered plugin (`active` / `failed`). Use `app help` to list plugin CLI commands when enabled.
 
+### Retire plugin-only extension fields
+
+Extension fields with `Access.PluginOnlyWrite` (admin UI: `plugin_only_write`) cannot be updated or deleted through the admin HTTP API (`403 plugin_only_field_immutable`). Making an ordinary field plugin-only via `PUT /api/v1/admin/extensions/fields/{code}` is a **one-way latch** through that API.
+
+After uninstalling (or disabling) the plugin that owned such a field, soft-delete the definition with the operator CLI:
+
+```bash
+app extension-field retire <code>
+app extension-field retire <code> --purge-values   # also DELETE every extension_values row for that code
+```
+
+- Audited as `extension_field.retire` (`cli:<os-user>`).
+- Soft-deletes the `extension_fields` row and drops it from the in-process registry of that CLI process. Running `serve` / `worker` processes keep the old registry until restart; after restart `LoadPersisted` will not reload the retired row.
+- If the plugin is still enabled and still calls `RegisterField` on boot, it will re-create the definition — disable or remove the plugin first.
+- Ordinary (non-plugin-only) fields keep using admin `DELETE`; `extension-field retire` refuses them.
+- Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`).
+
 ## Rate limiting and login lockout
 
 - HTTP rate limiting is **on by default** (`SHOPANDA_RATE_LIMIT_ENABLED=true`). Default budget is **10 requests/second** with a **burst of 20** (both drivers). Rejected requests return `429` / `rate_limited`.

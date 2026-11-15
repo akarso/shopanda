@@ -145,7 +145,7 @@ func (r *ExtensionFieldRepo) ListActive(ctx context.Context, scope domainext.Tar
 	return out, nil
 }
 
-// SoftDelete marks a field as deleted.
+// SoftDelete marks a non-plugin-only field as deleted.
 func (r *ExtensionFieldRepo) SoftDelete(ctx context.Context, code string) error {
 	if code == "" {
 		return fmt.Errorf("extension_field_repo: soft delete: empty code")
@@ -170,6 +170,33 @@ func (r *ExtensionFieldRepo) SoftDelete(ctx context.Context, code string) error 
 		return apperror.NotFound("extension field not found")
 	case !deleted:
 		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be deleted")
+	}
+	return nil
+}
+
+// Retire soft-deletes an active plugin-only field (operator CLI path).
+func (r *ExtensionFieldRepo) Retire(ctx context.Context, code string) error {
+	if code == "" {
+		return fmt.Errorf("extension_field_repo: retire: empty code")
+	}
+	const q = `WITH cur AS (
+			SELECT code, COALESCE((definition->'access'->>'PluginOnlyWrite')::boolean, false) AS locked
+			FROM extension_fields WHERE code = $1 AND deleted_at IS NULL FOR UPDATE
+		), upd AS (
+			UPDATE extension_fields e SET deleted_at = $2, updated_at = $2
+			FROM cur WHERE e.code = cur.code AND cur.locked
+			RETURNING e.code
+		)
+		SELECT EXISTS (SELECT 1 FROM cur), EXISTS (SELECT 1 FROM upd)`
+	var found, deleted bool
+	if err := r.db.QueryRowContext(ctx, q, code, time.Now().UTC()).Scan(&found, &deleted); err != nil {
+		return fmt.Errorf("extension_field_repo: retire: %w", err)
+	}
+	switch {
+	case !found:
+		return apperror.NotFound("extension field not found")
+	case !deleted:
+		return apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
 	}
 	return nil
 }

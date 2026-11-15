@@ -58,8 +58,24 @@ func (m *mockExtensionFieldRepo) ListActive(_ context.Context, scope domainext.T
 }
 
 func (m *mockExtensionFieldRepo) SoftDelete(_ context.Context, code string) error {
-	if _, ok := m.fields[code]; !ok {
+	field, ok := m.fields[code]
+	if !ok {
 		return apperror.NotFound("extension field not found")
+	}
+	if field.Access.PluginOnlyWrite {
+		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be deleted")
+	}
+	delete(m.fields, code)
+	return nil
+}
+
+func (m *mockExtensionFieldRepo) Retire(_ context.Context, code string) error {
+	field, ok := m.fields[code]
+	if !ok {
+		return apperror.NotFound("extension field not found")
+	}
+	if !field.Access.PluginOnlyWrite {
+		return apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
 	}
 	delete(m.fields, code)
 	return nil

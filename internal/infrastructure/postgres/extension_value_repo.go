@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -183,6 +184,25 @@ func (r *ExtensionValueRepo) Delete(ctx context.Context, target domainext.Target
 		return apperror.NotFound("extension value not found")
 	}
 	return nil
+}
+
+// DeleteByFieldCode removes every stored value for fieldCode across all targets.
+// Used by the operator retire path; not part of ValueRepository.
+func (r *ExtensionValueRepo) DeleteByFieldCode(ctx context.Context, fieldCode string) (int64, error) {
+	fieldCode = strings.TrimSpace(fieldCode)
+	if fieldCode == "" {
+		return 0, fmt.Errorf("extension_value_repo: delete by field code: empty code")
+	}
+	const q = `DELETE FROM extension_values WHERE field_code = $1`
+	res, err := r.db.ExecContext(ctx, q, fieldCode)
+	if err != nil {
+		return 0, fmt.Errorf("extension_value_repo: delete by field code: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("extension_value_repo: delete by field code rows: %w", err)
+	}
+	return n, nil
 }
 
 func scanExtensionValue(scan func(dest ...interface{}) error, target domainext.Target) (domainext.Value, error) {

@@ -200,6 +200,16 @@ func run() error {
 			default:
 				return fmt.Errorf("unknown plugins command: %s (try: plugins report)", os.Args[2])
 			}
+		case "extension-field":
+			if len(os.Args) < 3 {
+				return fmt.Errorf("extension-field: missing subcommand (try: extension-field retire)")
+			}
+			switch os.Args[2] {
+			case "retire":
+				return runExtensionFieldRetire(os.Stdout, cfg, log, os.Args[3:])
+			default:
+				return fmt.Errorf("unknown extension-field command: %s (try: extension-field retire)", os.Args[2])
+			}
 		default:
 			if ran, err := runPluginCLICommand(cfg, log, pluginCLIRegistryFn, os.Args[1], os.Args[2:]); err != nil {
 				return err
@@ -822,6 +832,8 @@ Commands:
   schedule:enable <n>  Re-enable a scheduled task
   schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
+  extension-field retire <code>
+                       Soft-delete a plugin-only extension field ([--purge-values])
   theme:init <name>    Create a child theme under themes/<name>
   help                 Show this help message
 `))

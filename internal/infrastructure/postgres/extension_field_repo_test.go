@@ -202,6 +202,32 @@ func TestExtensionFieldRepo_PluginOnlyRowRejectsSaveAndSoftDelete(t *testing.T) 
 	}
 }
 
+func TestExtensionFieldRepo_RetirePluginOnlyAndRefuseOrdinary(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.field")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if _, err := repo.FindByCode(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("FindByCode after retire: %v", err)
+	}
+	if err := repo.Retire(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("Retire already-retired: %v", err)
+	}
+
+	plain := sampleExtensionField("acme.retire.plain", domainext.TargetProduct)
+	if err := repo.Save(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, plain.Code); !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Retire ordinary err = %v, want validation", err)
+	}
+}
+
 func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testing.T) {
 	// Intended: soft-deleted rows are retired; Save restores them like Create does.
 	repo := setupExtensionFieldRepo(t)
@@ -210,10 +236,8 @@ func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testi
 	if err := repo.Save(ctx, locked); err != nil {
 		t.Fatal(err)
 	}
-	// Retire via the operator path (SoftDelete is refused for plugin-only rows).
-	db := testDB(t)
-	if _, err := db.Exec(`UPDATE extension_fields SET deleted_at = now() WHERE code = $1`, locked.Code); err != nil {
-		t.Fatal(err)
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
 	}
 	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
 	if err := repo.Save(ctx, plain); err != nil {

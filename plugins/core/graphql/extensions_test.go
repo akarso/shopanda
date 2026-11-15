@@ -26,6 +26,7 @@ func (extFieldRepoStub) ListActive(context.Context, domainext.TargetType) ([]dom
 	return nil, nil
 }
 func (extFieldRepoStub) SoftDelete(context.Context, string) error { return nil }
+func (extFieldRepoStub) Retire(context.Context, string) error     { return nil }
 
 type extValueRepoStub struct {
 	values map[string]map[string]domainext.Value

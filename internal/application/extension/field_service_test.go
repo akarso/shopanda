@@ -66,8 +66,27 @@ func (m *memFieldRepo) SoftDelete(_ context.Context, code string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
-	if _, ok := m.fields[code]; !ok {
+	field, ok := m.fields[code]
+	if !ok {
 		return apperror.NotFound("extension field not found")
+	}
+	if field.Access.PluginOnlyWrite {
+		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be deleted")
+	}
+	delete(m.fields, code)
+	return nil
+}
+
+func (m *memFieldRepo) Retire(_ context.Context, code string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	field, ok := m.fields[code]
+	if !ok {
+		return apperror.NotFound("extension field not found")
+	}
+	if !field.Access.PluginOnlyWrite {
+		return apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
 	}
 	delete(m.fields, code)
 	return nil
@@ -285,6 +304,76 @@ func TestFieldService_MakingFieldPluginOnlyIsOneWay(t *testing.T) {
 	}
 }
 
+type memValuePurger struct {
+	byCode map[string]int64
+	err    error
+}
+
+func (m *memValuePurger) DeleteByFieldCode(_ context.Context, fieldCode string) (int64, error) {
+	if m.err != nil {
+		return 0, m.err
+	}
+	n := m.byCode[fieldCode]
+	delete(m.byCode, fieldCode)
+	return n, nil
+}
+
+func TestFieldService_Retire_PluginOnlyRemovesDefinitionAndRegistry(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+	def := serviceFieldDef("acme.locked")
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if _, err := svc.Create(context.Background(), def); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(context.Background(), "acme.locked"); !errors.Is(err, extensionapp.ErrFieldPluginOnly) {
+		t.Fatalf("Delete err = %v, want ErrFieldPluginOnly", err)
+	}
+
+	purger := &memValuePurger{byCode: map[string]int64{"acme.locked": 3}}
+	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Values:      purger,
+	})
+	if err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	if got.Code != "acme.locked" || got.ValuesPurged != 3 {
+		t.Fatalf("result = %+v", got)
+	}
+	if _, ok := reg.Get("acme.locked"); ok {
+		t.Fatal("expected registry entry removed")
+	}
+	if _, err := repo.FindByCode(context.Background(), "acme.locked"); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("repo after retire: %v", err)
+	}
+}
+
+func TestFieldService_Retire_OrdinaryFieldRefused(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+	if _, err := svc.Create(context.Background(), serviceFieldDef("acme.plain")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Retire(context.Background(), "acme.plain", extensionapp.RetireOptions{}); !errors.Is(err, extensionapp.ErrFieldNotPluginOnly) {
+		t.Fatalf("Retire err = %v, want ErrFieldNotPluginOnly", err)
+	}
+	if _, ok := reg.Get("acme.plain"); !ok {
+		t.Fatal("ordinary field must remain registered")
+	}
+}
+
+func TestFieldService_Retire_MissingAndPurgeRequiresStore(t *testing.T) {
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), newMemFieldRepo())
+	if _, err := svc.Retire(context.Background(), "acme.missing", extensionapp.RetireOptions{}); !errors.Is(err, extensionapp.ErrFieldNotFound) {
+		t.Fatalf("missing err = %v, want ErrFieldNotFound", err)
+	}
+	if _, err := svc.Retire(context.Background(), "acme.any", extensionapp.RetireOptions{PurgeValues: true}); err == nil {
+		t.Fatal("expected error when PurgeValues has no store")
+	}
+}
+
 func TestFieldService_GuardFailsClosedOnRepoError(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(serviceFieldDef("acme.plain")); err != nil {
@@ -436,6 +525,11 @@ func (l *lockedFieldRepo) SoftDelete(ctx context.Context, c string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.r.SoftDelete(ctx, c)
+}
+func (l *lockedFieldRepo) Retire(ctx context.Context, c string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.r.Retire(ctx, c)
 }
 
 func TestFieldService_ConcurrentUpdateAndRegistryMutation(t *testing.T) {
