@@ -508,6 +508,7 @@ func TestFieldService_Retire_PurgeOnlyIncompleteKeepsValuesPurged(t *testing.T) 
 type restoreRaceRepo struct {
 	findCalls int
 	restored  domainext.ExtensionField
+	purged    int64
 }
 
 func (r *restoreRaceRepo) Create(context.Context, domainext.ExtensionField) error { return nil }
@@ -528,7 +529,7 @@ func (r *restoreRaceRepo) RetireActive(context.Context, string, bool) (int64, er
 	return 0, nil
 }
 func (r *restoreRaceRepo) PurgeIfSoftDeletedPluginOnly(context.Context, string) (int64, error) {
-	return 0, apperror.NotFound("extension field not found")
+	return r.purged, apperror.NotFound("extension field not found")
 }
 
 func TestFieldService_Retire_PurgeAssertRaceOrdinaryRestore(t *testing.T) {
@@ -536,15 +537,18 @@ func TestFieldService_Retire_PurgeAssertRaceOrdinaryRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := &restoreRaceRepo{restored: plain}
+	repo := &restoreRaceRepo{restored: plain, purged: 4}
 	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
 
-	_, err = svc.Retire(context.Background(), "acme.restored", extensionapp.RetireOptions{
+	got, err := svc.Retire(context.Background(), "acme.restored", extensionapp.RetireOptions{
 		PurgeValues: true,
 		Store:       repo,
 	})
 	if !errors.Is(err, extensionapp.ErrFieldNotPluginOnly) {
 		t.Fatalf("err = %v, want ErrFieldNotPluginOnly (ordinary restore)", err)
+	}
+	if !got.PurgeOnly || got.ValuesPurged != 4 {
+		t.Fatalf("result = %+v, want PurgeOnly ValuesPurged=4", got)
 	}
 	if repo.findCalls != 2 {
 		t.Fatalf("FindByCode calls = %d, want 2", repo.findCalls)
@@ -557,15 +561,18 @@ func TestFieldService_Retire_PurgeAssertRacePluginOnlyRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	locked.Access.PluginOnlyWrite = true
-	repo := &restoreRaceRepo{restored: locked}
+	repo := &restoreRaceRepo{restored: locked, purged: 2}
 	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
 
-	_, err = svc.Retire(context.Background(), "acme.restored.po", extensionapp.RetireOptions{
+	got, err := svc.Retire(context.Background(), "acme.restored.po", extensionapp.RetireOptions{
 		PurgeValues: true,
 		Store:       repo,
 	})
 	if !errors.Is(err, extensionapp.ErrPurgeWhileActive) {
 		t.Fatalf("err = %v, want ErrPurgeWhileActive", err)
+	}
+	if !got.PurgeOnly || got.ValuesPurged != 2 {
+		t.Fatalf("result = %+v, want PurgeOnly ValuesPurged=2", got)
 	}
 }
 

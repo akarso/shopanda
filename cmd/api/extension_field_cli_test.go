@@ -337,4 +337,12 @@ func TestMapExtensionFieldRetireError_PurgeIncompleteHint(t *testing.T) {
 	if !strings.Contains(err.Error(), "purged 3 value row(s) before stop") {
 		t.Fatalf("partial miss = %v", err)
 	}
+	err = mapExtensionFieldRetireError(extensionapp.ErrPurgeWhileActive, 2)
+	if !errors.Is(err, extensionapp.ErrPurgeWhileActive) || !strings.Contains(err.Error(), "purged 2 value row(s) before stop") {
+		t.Fatalf("active re-read = %v", err)
+	}
+	err = mapExtensionFieldRetireError(errors.New("db timeout"), 5)
+	if !strings.Contains(err.Error(), "db timeout") || !strings.Contains(err.Error(), "purged 5 value row(s) before stop") {
+		t.Fatalf("re-read db err = %v", err)
+	}
 }

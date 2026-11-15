@@ -217,9 +217,9 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 				active, findErr := s.repo.FindByCode(ctx, code)
 				if findErr == nil {
 					if active.Access.PluginOnlyWrite {
-						return RetireResult{}, ErrPurgeWhileActive
+						return result, ErrPurgeWhileActive
 					}
-					return RetireResult{}, ErrFieldNotPluginOnly
+					return result, ErrFieldNotPluginOnly
 				}
 				if !apperror.Is(findErr, apperror.CodeNotFound) {
 					// Re-read failed for a reason other than missing — keep ValuesPurged.

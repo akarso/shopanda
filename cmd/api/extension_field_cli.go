@@ -203,23 +203,26 @@ func parseExtensionFieldRetireArgs(args []string) (extensionFieldRetireArgs, err
 }
 
 func mapExtensionFieldRetireError(err error, valuesPurged int64) error {
+	var out error
 	switch {
 	case errors.Is(err, extensionapp.ErrFieldNotFound):
-		if valuesPurged > 0 {
-			return fmt.Errorf("extension-field retire: field not found (purged %d value row(s) before stop)", valuesPurged)
-		}
-		return fmt.Errorf("extension-field retire: field not found")
+		out = fmt.Errorf("extension-field retire: field not found")
 	case errors.Is(err, extensionapp.ErrFieldNotPluginOnly):
-		return fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")
+		out = fmt.Errorf("extension-field retire: field is not plugin-only (use admin DELETE for ordinary fields)")
 	case errors.Is(err, extensionapp.ErrPurgeWhileActive):
-		return fmt.Errorf("extension-field retire: %w (run soft-delete without --purge-values first)", err)
+		out = fmt.Errorf("extension-field retire: %w (run soft-delete without --purge-values first)", err)
 	case errors.Is(err, domainext.ErrPurgeDefinitionRestored):
-		return fmt.Errorf("extension-field retire: %w (definition left active; do not purge again)", err)
+		out = fmt.Errorf("extension-field retire: %w (definition left active; do not purge again)", err)
 	case errors.Is(err, domainext.ErrPurgeDefinitionMissing):
-		return fmt.Errorf("extension-field retire: %w (definition row gone; leftover values may remain)", err)
+		out = fmt.Errorf("extension-field retire: %w (definition row gone; leftover values may remain)", err)
 	case errors.Is(err, domainext.ErrPurgeIncomplete):
-		return fmt.Errorf("extension-field retire: %w (re-run with --purge-values --confirm-idle)", err)
+		out = fmt.Errorf("extension-field retire: %w (re-run with --purge-values --confirm-idle)", err)
 	default:
-		return fmt.Errorf("extension-field retire: %w", err)
+		// Re-read DB errors and other unexpected failures.
+		out = fmt.Errorf("extension-field retire: %w", err)
 	}
+	if valuesPurged > 0 {
+		return fmt.Errorf("%w (purged %d value row(s) before stop)", out, valuesPurged)
+	}
+	return out
 }
