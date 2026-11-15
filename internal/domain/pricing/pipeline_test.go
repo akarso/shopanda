@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/platform/pluginwrite"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 type stubStep struct {
@@ -97,4 +99,54 @@ func TestPipelineExecute_ErrorWrapsStepName(t *testing.T) {
 	if err.Error() != want {
 		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
+}
+
+func TestPipelineExecute_StripsPluginWriteTrust(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	parent = requestctx.WithRequestID(parent, "req-price-1")
+	parent = pluginwrite.Grant(parent, "acme", "acme.a", "acme.b")
+
+	var saw context.Context
+	probe := &ctxProbeStep{name: "probe", check: func(ctx context.Context) {
+		saw = ctx
+		for _, code := range []string{"acme.a", "acme.b"} {
+			if _, ok := pluginwrite.For(ctx, code); ok {
+				t.Errorf("pricing step inherited trust for %q", code)
+			}
+		}
+		if got := requestctx.RequestID(ctx); got != "req-price-1" {
+			t.Errorf("RequestID = %q, want req-price-1", got)
+		}
+		if ctx.Err() != nil {
+			t.Errorf("step ctx already canceled: %v", ctx.Err())
+		}
+		regranted := pluginwrite.Grant(ctx, "acme", "acme.c")
+		if _, ok := pluginwrite.For(regranted, "acme.c"); !ok {
+			t.Error("Grant on stripped step ctx must stick")
+		}
+	}}
+	p := pricing.NewPipeline(probe)
+	pctx, _ := pricing.NewPricingContext("EUR")
+	if err := p.Execute(parent, &pctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if saw == nil {
+		t.Fatal("step did not run")
+	}
+	cancel()
+	if saw.Err() == nil {
+		t.Fatal("step ctx must observe parent cancel")
+	}
+}
+
+type ctxProbeStep struct {
+	name  string
+	check func(context.Context)
+}
+
+func (s *ctxProbeStep) Name() string { return s.name }
+func (s *ctxProbeStep) Apply(ctx context.Context, _ *pricing.PricingContext) error {
+	s.check(ctx)
+	return nil
 }

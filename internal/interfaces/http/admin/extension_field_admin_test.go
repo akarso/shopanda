@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
@@ -384,5 +386,67 @@ func TestExtensionFieldAdminHandler_DeletePluginOnlyForbidden(t *testing.T) {
 	}
 	if _, err := repo.FindByCode(context.Background(), "acme.locked.field"); err != nil {
 		t.Fatalf("definition must remain: %v", err)
+	}
+}
+
+// findErrFieldRepo surfaces a non-NotFound FindByCode error so the definition
+// guard fails closed as 500 rather than leaking a 403/404.
+type findErrFieldRepo struct {
+	*mockExtensionFieldRepo
+	err error
+}
+
+func (r *findErrFieldRepo) FindByCode(ctx context.Context, code string) (domainext.ExtensionField, error) {
+	if r.err != nil {
+		return domainext.ExtensionField{}, r.err
+	}
+	return r.mockExtensionFieldRepo.FindByCode(ctx, code)
+}
+
+func TestExtensionFieldAdminHandler_GuardRepoErrorIs500(t *testing.T) {
+	repo := &findErrFieldRepo{
+		mockExtensionFieldRepo: newMockExtensionFieldRepo(),
+		err:                    errors.New("db unavailable"),
+	}
+	h := admin.NewExtensionFieldAdminHandler(extensionapp.NewFieldService(extensionapp.NewRegistry(), repo))
+	router := newExtensionFieldAdminRouter(h)
+
+	for _, tc := range []struct {
+		name string
+		req  *http.Request
+	}{
+		{
+			name: "delete",
+			req:  httptest.NewRequest("DELETE", "/api/v1/admin/extensions/fields/acme.any", nil),
+		},
+		{
+			name: "put",
+			req: httptest.NewRequest("PUT", "/api/v1/admin/extensions/fields/acme.any", extensionFieldBody(t, map[string]interface{}{
+				"code": "acme.any", "label": "Any", "type": "string", "scope": "product",
+			})),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := tc.req.WithContext(withAdminPermissions(string(rbac.ExtensionsWrite)))
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "db unavailable") {
+				t.Fatalf("body leaked repo error: %s", rec.Body.String())
+			}
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+			}
+			if body.Error.Code != string(apperror.CodeInternal) {
+				t.Fatalf("error code = %q, want %q", body.Error.Code, apperror.CodeInternal)
+			}
+		})
 	}
 }

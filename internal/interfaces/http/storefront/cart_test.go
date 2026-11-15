@@ -935,6 +935,11 @@ func TestCartHandler_AddItem_PluginOnlyFieldForbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
+	parsed := parseCartBody(t, rec)
+	errBody := parsed["error"].(map[string]interface{})
+	if errBody["code"] != "forbidden_plugin_only_field" {
+		t.Fatalf("error code = %v, want forbidden_plugin_only_field", errBody["code"])
+	}
 	got, _ := carts.FindByID(context.Background(), "cart-1")
 	if got != nil && len(got.Items) != 0 {
 		t.Fatalf("cart items = %d, want 0 (no write)", len(got.Items))

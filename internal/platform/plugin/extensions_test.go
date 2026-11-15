@@ -134,6 +134,18 @@ func TestApp_WithPluginWrite_PanicNamesRegistrationOrder(t *testing.T) {
 	app.WithPluginWrite(context.Background(), "acme", "acme.locked")
 }
 
+func TestApp_PluginWriteContext_ReturnsErrorInsteadOfPanic(t *testing.T) {
+	app := &plugin.App{}
+	app.SetExtensionRegistry(extension.NewRegistry())
+	_, err := app.PluginWriteContext(context.Background(), "acme", "acme.missing")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not registered") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestApp_ExtensionsFor_RecordsOwnerAndGuardsWithPluginWrite(t *testing.T) {
 	app := &plugin.App{}
 	app.SetExtensionRegistry(extension.NewRegistry())
