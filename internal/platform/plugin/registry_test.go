@@ -232,6 +232,22 @@ func TestRegistry_InitAllContext_PreCanceledMarksLoadedFailed(t *testing.T) {
 	}
 }
 
+func TestRegistry_InitAllContext_SafeInitCancelCountsCanceled(t *testing.T) {
+	// Single plugin: cancel after between-plugin check passes but before Init
+	// finishes observing ctx — simulate by canceling in onInit after setInitContext.
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	ctx, cancel := context.WithCancel(context.Background())
+	reg.Register(&mockPlugin{name: "only", onInit: cancel})
+	// Cancel before InitAll so safeInit's ctx.Err() check trips for the only plugin.
+	// (between-plugin cancel loop also marks it; either path must set Canceled.)
+	cancel()
+	s := reg.InitAllContext(ctx, testApp(log))
+	if s.Canceled < 1 || s.Failed < 1 {
+		t.Fatalf("summary = %+v, want Canceled>=1 Failed>=1", s)
+	}
+}
+
 func TestRegistry_InitAll_NilAppPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

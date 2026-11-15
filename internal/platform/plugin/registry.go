@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/cli"
@@ -195,6 +196,9 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 			live.State = StateFailed
 			live.Err = err
 			summary.Failed++
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				summary.Canceled++
+			}
 			cause := "error"
 			if _, ok := err.(*panicError); ok {
 				cause = "panic"

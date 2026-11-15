@@ -72,7 +72,12 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 		return nil, fmt.Errorf("NewJobQueue: dial: %w", err)
 	}
 	defer conn.Close()
-
+	// Bound CreateTopics so a broker that accepts TCP then stalls cannot block Init.
+	deadline := time.Now().Add(30 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
 	for _, topic := range []string{mainTopic, delayTopic, failedTopic} {
 		if err := conn.CreateTopics(kafka.TopicConfig{
 			Topic:             topic,
@@ -82,6 +87,7 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 			return nil, fmt.Errorf("NewJobQueue: create topic %q: %w", topic, err)
 		}
 	}
+	_ = conn.SetDeadline(time.Time{})
 
 	return &JobQueue{
 		mainWriter: &kafka.Writer{

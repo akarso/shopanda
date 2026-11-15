@@ -56,6 +56,9 @@ func wrapLockedPurge(n int64, err error) (int64, error) {
 	if errors.Is(err, domainext.ErrPurgeDefinitionRestored) || errors.Is(err, domainext.ErrPurgeDefinitionMissing) {
 		return n, err
 	}
+	if apperror.Is(err, apperror.CodeNotFound) {
+		return n, err
+	}
 	return n, fmt.Errorf("%w: %v", domainext.ErrPurgeIncomplete, err)
 }
 
@@ -138,8 +141,12 @@ func purgeOneExtensionValueBatch(ctx context.Context, tx *sql.Tx, fieldCode stri
 		if err != nil {
 			return 0, err
 		}
-		if !softDeleted || !field.Access.PluginOnlyWrite {
-			return 0, fmt.Errorf("%w: field %q is no longer a soft-deleted plugin-only definition", domainext.ErrPurgeDefinitionRestored, fieldCode)
+		if !softDeleted {
+			return 0, fmt.Errorf("%w: field %q is active again", domainext.ErrPurgeDefinitionRestored, fieldCode)
+		}
+		// Soft-deleted but no longer plugin-only: treat as not found (not "restored").
+		if !field.Access.PluginOnlyWrite {
+			return 0, apperror.NotFound("extension field not found")
 		}
 	}
 

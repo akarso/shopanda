@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -365,6 +366,32 @@ func (s *saveBeforeBeginTx) BeginTx(ctx context.Context, opts *sql.TxOptions) (*
 		s.save()
 	}
 	return s.DB.BeginTx(ctx, opts)
+}
+
+func TestExtensionFieldRepo_PurgeSoftDeletedNonPluginOnlyIsNotFound(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.nonpo")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+	// Keep deleted_at set but clear PluginOnlyWrite in the stored definition.
+	plain := sampleExtensionField(locked.Code, domainext.TargetCartItem)
+	raw, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := postgres.ExtensionFieldRepoDB(repo)
+	if _, err := db.ExecContext(ctx, `UPDATE extension_fields SET definition = $1 WHERE code = $2 AND deleted_at IS NOT NULL`, raw, locked.Code); err != nil {
+		t.Fatal(err)
+	}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(ctx, db, locked.Code, 100)
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("purge = %d, %v, want NotFound", n, err)
+	}
 }
 
 func TestExtensionFieldRepo_PurgeBatchCancelKeepsCountThenRetry(t *testing.T) {

@@ -214,8 +214,11 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 			mapped := mapRetireStoreError(purgeErr)
 			if errors.Is(mapped, ErrFieldNotFound) {
 				// Race: Save restored between FindByCode(not found) and assert.
-				if active, findErr := s.repo.FindByCode(ctx, code); findErr == nil && active.Access.PluginOnlyWrite {
-					return RetireResult{}, ErrPurgeWhileActive
+				if active, findErr := s.repo.FindByCode(ctx, code); findErr == nil {
+					if active.Access.PluginOnlyWrite {
+						return RetireResult{}, ErrPurgeWhileActive
+					}
+					return RetireResult{}, ErrFieldNotPluginOnly
 				}
 			}
 			return RetireResult{}, mapped

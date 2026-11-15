@@ -503,6 +503,72 @@ func TestFieldService_Retire_PurgeOnlyIncompleteKeepsValuesPurged(t *testing.T) 
 	}
 }
 
+// restoreRaceRepo simulates Save restoring an ordinary definition between the
+// service's FindByCode(not found) and PurgeIfSoftDeletedPluginOnly's assert.
+type restoreRaceRepo struct {
+	findCalls int
+	restored  domainext.ExtensionField
+}
+
+func (r *restoreRaceRepo) Create(context.Context, domainext.ExtensionField) error { return nil }
+func (r *restoreRaceRepo) Save(context.Context, domainext.ExtensionField) error   { return nil }
+func (r *restoreRaceRepo) ListActive(context.Context, domainext.TargetType) ([]domainext.ExtensionField, error) {
+	return nil, nil
+}
+func (r *restoreRaceRepo) SoftDelete(context.Context, string) error { return nil }
+func (r *restoreRaceRepo) Retire(context.Context, string) error     { return nil }
+func (r *restoreRaceRepo) FindByCode(_ context.Context, code string) (domainext.ExtensionField, error) {
+	r.findCalls++
+	if r.findCalls == 1 {
+		return domainext.ExtensionField{}, apperror.NotFound("extension field not found")
+	}
+	return r.restored, nil
+}
+func (r *restoreRaceRepo) RetireActive(context.Context, string, bool) (int64, error) {
+	return 0, nil
+}
+func (r *restoreRaceRepo) PurgeIfSoftDeletedPluginOnly(context.Context, string) (int64, error) {
+	return 0, apperror.NotFound("extension field not found")
+}
+
+func TestFieldService_Retire_PurgeAssertRaceOrdinaryRestore(t *testing.T) {
+	plain, err := domainext.NewExtensionField(serviceFieldDef("acme.restored"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &restoreRaceRepo{restored: plain}
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
+
+	_, err = svc.Retire(context.Background(), "acme.restored", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Store:       repo,
+	})
+	if !errors.Is(err, extensionapp.ErrFieldNotPluginOnly) {
+		t.Fatalf("err = %v, want ErrFieldNotPluginOnly (ordinary restore)", err)
+	}
+	if repo.findCalls != 2 {
+		t.Fatalf("FindByCode calls = %d, want 2", repo.findCalls)
+	}
+}
+
+func TestFieldService_Retire_PurgeAssertRacePluginOnlyRestore(t *testing.T) {
+	locked, err := domainext.NewExtensionField(serviceFieldDef("acme.restored.po"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked.Access.PluginOnlyWrite = true
+	repo := &restoreRaceRepo{restored: locked}
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
+
+	_, err = svc.Retire(context.Background(), "acme.restored.po", extensionapp.RetireOptions{
+		PurgeValues: true,
+		Store:       repo,
+	})
+	if !errors.Is(err, extensionapp.ErrPurgeWhileActive) {
+		t.Fatalf("err = %v, want ErrPurgeWhileActive", err)
+	}
+}
+
 func TestFieldService_GuardFailsClosedOnRepoError(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(serviceFieldDef("acme.plain")); err != nil {

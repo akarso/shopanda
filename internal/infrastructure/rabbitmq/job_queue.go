@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
-	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -18,9 +17,10 @@ import (
 var _ jobs.Queue = (*JobQueue)(nil)
 
 const (
-	queueBackoffBase = 5 * time.Second
-	queueBackoffMax  = 5 * time.Minute
-	queueJitterRatio = 0.25
+	queueBackoffBase   = 5 * time.Second
+	queueBackoffMax    = 5 * time.Minute
+	queueJitterRatio   = 0.25
+	amqpConnectTimeout = 30 * time.Second // matches amqp.DefaultDial
 )
 
 // JobQueue implements jobs.Queue using RabbitMQ durable queues.
@@ -48,7 +48,9 @@ type inflightEntry struct {
 type QueueConfig struct {
 	URL         string
 	QueuePrefix string
-	// Context cancels the TCP dial. Nil means context.Background().
+	// Context cancels the initial connect only. It is not stored on the AMQP
+	// connection (recovery uses DefaultDial with a 30s timeout). Nil means
+	// context.Background().
 	Context context.Context
 }
 
@@ -57,17 +59,7 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("NewJobQueue: empty url")
 	}
-	ctx := cfg.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	conn, err := amqp.DialConfig(cfg.URL, amqp.Config{
-		Dial: func(network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, network, addr)
-		},
-	})
+	conn, err := dialAMQP(cfg.URL, cfg.Context)
 	if err != nil {
 		return nil, fmt.Errorf("NewJobQueue: dial: %w", err)
 	}
@@ -114,6 +106,40 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 		failedQueue: failedQueue,
 		inflight:    make(map[string]inflightEntry),
 	}, nil
+}
+
+// dialAMQP connects with amqp.DefaultDial (30s TCP + handshake deadline) so a
+// blackholed broker cannot stall forever. cancelCtx aborts the initial dial only;
+// Config.Dial stays DefaultDial so reconnect after bootSignal.Stop still works.
+func dialAMQP(url string, cancelCtx context.Context) (*amqp.Connection, error) {
+	if cancelCtx == nil {
+		cancelCtx = context.Background()
+	}
+	if err := cancelCtx.Err(); err != nil {
+		return nil, err
+	}
+	type outcome struct {
+		conn *amqp.Connection
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		conn, err := amqp.DialConfig(url, amqp.Config{
+			Dial: amqp.DefaultDial(amqpConnectTimeout),
+		})
+		done <- outcome{conn, err}
+	}()
+	select {
+	case <-cancelCtx.Done():
+		go func() {
+			if r := <-done; r.conn != nil {
+				_ = r.conn.Close()
+			}
+		}()
+		return nil, cancelCtx.Err()
+	case r := <-done:
+		return r.conn, r.err
+	}
 }
 
 func (q *JobQueue) publishTo(ctx context.Context, queue string, msg jobMessage, delay time.Duration) error {
