@@ -12,15 +12,23 @@ import (
 )
 
 type memFieldRepo struct {
-	fields    map[string]domainext.ExtensionField
-	findErr   error
-	saveErr   error
-	deleteErr error
-	saveCalls int
+	fields      map[string]domainext.ExtensionField
+	softDeleted map[string]domainext.ExtensionField
+	valueCounts map[string]int64
+	findErr     error
+	saveErr     error
+	deleteErr   error
+	retireErr   error
+	purgeErr    error
+	saveCalls   int
 }
 
 func newMemFieldRepo() *memFieldRepo {
-	return &memFieldRepo{fields: make(map[string]domainext.ExtensionField)}
+	return &memFieldRepo{
+		fields:      make(map[string]domainext.ExtensionField),
+		softDeleted: make(map[string]domainext.ExtensionField),
+		valueCounts: make(map[string]int64),
+	}
 }
 
 func (m *memFieldRepo) Create(_ context.Context, field domainext.ExtensionField) error {
@@ -74,12 +82,13 @@ func (m *memFieldRepo) SoftDelete(_ context.Context, code string) error {
 		return apperror.PluginOnlyFieldImmutable("plugin-only extension field cannot be deleted")
 	}
 	delete(m.fields, code)
+	m.softDeleted[code] = field
 	return nil
 }
 
 func (m *memFieldRepo) Retire(_ context.Context, code string) error {
-	if m.deleteErr != nil {
-		return m.deleteErr
+	if m.retireErr != nil {
+		return m.retireErr
 	}
 	field, ok := m.fields[code]
 	if !ok {
@@ -89,7 +98,48 @@ func (m *memFieldRepo) Retire(_ context.Context, code string) error {
 		return apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
 	}
 	delete(m.fields, code)
+	m.softDeleted[code] = field
 	return nil
+}
+
+func (m *memFieldRepo) RetireActive(_ context.Context, code string, purgeValues bool) (int64, error) {
+	if m.retireErr != nil {
+		return 0, m.retireErr
+	}
+	field, ok := m.fields[code]
+	if !ok {
+		return 0, apperror.NotFound("extension field not found")
+	}
+	if !field.Access.PluginOnlyWrite {
+		return 0, apperror.Validation("extension field is not plugin-only; use admin DELETE for ordinary fields")
+	}
+	if purgeValues && m.purgeErr != nil {
+		return 0, m.purgeErr // definition stays active (rolled back)
+	}
+	delete(m.fields, code)
+	m.softDeleted[code] = field
+	var purged int64
+	if purgeValues {
+		purged = m.valueCounts[code]
+		delete(m.valueCounts, code)
+	}
+	return purged, nil
+}
+
+func (m *memFieldRepo) PurgeIfSoftDeletedPluginOnly(_ context.Context, code string) (int64, error) {
+	if m.purgeErr != nil {
+		return 0, m.purgeErr
+	}
+	field, ok := m.softDeleted[code]
+	if !ok || !field.Access.PluginOnlyWrite {
+		return 0, apperror.NotFound("extension field not found")
+	}
+	if _, active := m.fields[code]; active {
+		return 0, apperror.NotFound("extension field not found")
+	}
+	purged := m.valueCounts[code]
+	delete(m.valueCounts, code)
+	return purged, nil
 }
 
 func serviceFieldDef(code string) domainext.FieldDef {
@@ -304,23 +354,10 @@ func TestFieldService_MakingFieldPluginOnlyIsOneWay(t *testing.T) {
 	}
 }
 
-type memValuePurger struct {
-	byCode map[string]int64
-	err    error
-}
-
-func (m *memValuePurger) DeleteByFieldCode(_ context.Context, fieldCode string) (int64, error) {
-	if m.err != nil {
-		return 0, m.err
-	}
-	n := m.byCode[fieldCode]
-	delete(m.byCode, fieldCode)
-	return n, nil
-}
-
 func TestFieldService_Retire_PluginOnlyRemovesDefinitionAndRegistry(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	repo := newMemFieldRepo()
+	repo.valueCounts["acme.locked"] = 3
 	svc := extensionapp.NewFieldService(reg, repo)
 	def := serviceFieldDef("acme.locked")
 	def.Access = domainext.Access{PluginOnlyWrite: true}
@@ -331,10 +368,9 @@ func TestFieldService_Retire_PluginOnlyRemovesDefinitionAndRegistry(t *testing.T
 		t.Fatalf("Delete err = %v, want ErrFieldPluginOnly", err)
 	}
 
-	purger := &memValuePurger{byCode: map[string]int64{"acme.locked": 3}}
 	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{
 		PurgeValues: true,
-		Values:      purger,
+		Store:       repo,
 	})
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
@@ -352,11 +388,12 @@ func TestFieldService_Retire_PluginOnlyRemovesDefinitionAndRegistry(t *testing.T
 
 func TestFieldService_Retire_OrdinaryFieldRefused(t *testing.T) {
 	reg := extensionapp.NewRegistry()
-	svc := extensionapp.NewFieldService(reg, newMemFieldRepo())
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
 	if _, err := svc.Create(context.Background(), serviceFieldDef("acme.plain")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Retire(context.Background(), "acme.plain", extensionapp.RetireOptions{}); !errors.Is(err, extensionapp.ErrFieldNotPluginOnly) {
+	if _, err := svc.Retire(context.Background(), "acme.plain", extensionapp.RetireOptions{Store: repo}); !errors.Is(err, extensionapp.ErrFieldNotPluginOnly) {
 		t.Fatalf("Retire err = %v, want ErrFieldNotPluginOnly", err)
 	}
 	if _, ok := reg.Get("acme.plain"); !ok {
@@ -364,13 +401,57 @@ func TestFieldService_Retire_OrdinaryFieldRefused(t *testing.T) {
 	}
 }
 
-func TestFieldService_Retire_MissingAndPurgeRequiresStore(t *testing.T) {
-	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), newMemFieldRepo())
-	if _, err := svc.Retire(context.Background(), "acme.missing", extensionapp.RetireOptions{}); !errors.Is(err, extensionapp.ErrFieldNotFound) {
+func TestFieldService_Retire_MissingAndStoreRequired(t *testing.T) {
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(extensionapp.NewRegistry(), repo)
+	if _, err := svc.Retire(context.Background(), "acme.missing", extensionapp.RetireOptions{Store: repo}); !errors.Is(err, extensionapp.ErrFieldNotFound) {
 		t.Fatalf("missing err = %v, want ErrFieldNotFound", err)
 	}
 	if _, err := svc.Retire(context.Background(), "acme.any", extensionapp.RetireOptions{PurgeValues: true}); err == nil {
-		t.Fatal("expected error when PurgeValues has no store")
+		t.Fatal("expected error when Store is nil")
+	}
+}
+
+func TestFieldService_Retire_PurgeFailureLeavesDefinitionActiveThenRetry(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	repo.valueCounts["acme.locked"] = 2
+	svc := extensionapp.NewFieldService(reg, repo)
+	def := serviceFieldDef("acme.locked")
+	def.Access = domainext.Access{PluginOnlyWrite: true}
+	if _, err := svc.Create(context.Background(), def); err != nil {
+		t.Fatal(err)
+	}
+
+	boom := errors.New("purge boom")
+	repo.purgeErr = boom
+	if _, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo}); !errors.Is(err, boom) {
+		t.Fatalf("first Retire err = %v, want purge boom", err)
+	}
+	if _, ok := reg.Get("acme.locked"); !ok {
+		t.Fatal("registry must keep the field when purge rolls back")
+	}
+	if _, err := repo.FindByCode(context.Background(), "acme.locked"); err != nil {
+		t.Fatalf("definition must stay active after purge failure: %v", err)
+	}
+	if repo.valueCounts["acme.locked"] != 2 {
+		t.Fatalf("values must remain after rollback, got %d", repo.valueCounts["acme.locked"])
+	}
+
+	repo.purgeErr = nil
+	// Simulate a prior commit that soft-deleted but left values (retry path).
+	field := repo.fields["acme.locked"]
+	delete(repo.fields, "acme.locked")
+	repo.softDeleted["acme.locked"] = field
+	got, err := svc.Retire(context.Background(), "acme.locked", extensionapp.RetireOptions{PurgeValues: true, Store: repo})
+	if err != nil {
+		t.Fatalf("retry Retire: %v", err)
+	}
+	if got.ValuesPurged != 2 {
+		t.Fatalf("retry purged = %d, want 2", got.ValuesPurged)
+	}
+	if _, ok := repo.valueCounts["acme.locked"]; ok {
+		t.Fatal("values must be gone after retry purge")
 	}
 }
 

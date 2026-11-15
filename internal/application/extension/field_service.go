@@ -3,7 +3,6 @@ package extension
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -21,16 +20,12 @@ var (
 	ErrFieldNotPluginOnly = errors.New("extension field is not plugin-only")
 )
 
-// FieldValuePurger deletes stored values by field code (operator retire path).
-type FieldValuePurger interface {
-	DeleteByFieldCode(ctx context.Context, fieldCode string) (int64, error)
-}
-
 // RetireOptions controls FieldService.Retire.
 type RetireOptions struct {
-	// PurgeValues deletes every extension_values row for the code when Values is set.
+	// PurgeValues deletes every extension_values row for the code (same transaction as soft-delete).
 	PurgeValues bool
-	Values      FieldValuePurger
+	// Store performs the soft-delete and optional purge. Required.
+	Store PluginOnlyRetireStore
 }
 
 // RetireResult is the outcome of retiring a plugin-only definition.
@@ -166,57 +161,55 @@ func (s *FieldService) Delete(ctx context.Context, code string) error {
 }
 
 // Retire soft-deletes a plugin-only definition (operator CLI) and removes it from
-// the registry. Admin Delete continues to refuse plugin-only fields.
+// the registry after the store commits. Admin Delete continues to refuse plugin-only fields.
+// When PurgeValues is set and the active row is already gone, a soft-deleted
+// plugin-only row may still be purged (retry after a failed earlier purge).
 func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptions) (RetireResult, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return RetireResult{}, domainext.ValidationErr("extension field code must not be empty")
 	}
-	if opts.PurgeValues && opts.Values == nil {
-		return RetireResult{}, domainext.ValidationErr("purge values requires a value store")
+	if opts.Store == nil {
+		return RetireResult{}, domainext.ValidationErr("retire store is required")
 	}
 
-	pluginOnly, err := s.isPluginOnly(ctx, code)
-	if err != nil {
+	stored, err := s.repo.FindByCode(ctx, code)
+	if err != nil && !apperror.Is(err, apperror.CodeNotFound) {
 		return RetireResult{}, err
 	}
-	if !pluginOnly {
+
+	result := RetireResult{Code: code}
+	switch {
+	case err == nil && !stored.Access.PluginOnlyWrite:
 		return RetireResult{}, ErrFieldNotPluginOnly
-	}
-
-	if err := s.repo.Retire(ctx, code); err != nil {
-		if apperror.Is(err, apperror.CodeNotFound) {
-			return RetireResult{}, ErrFieldNotFound
+	case err == nil:
+		n, retireErr := opts.Store.RetireActive(ctx, code, opts.PurgeValues)
+		if retireErr != nil {
+			return RetireResult{}, mapRetireStoreError(retireErr)
 		}
-		if apperror.Is(err, apperror.CodeValidation) {
-			return RetireResult{}, ErrFieldNotPluginOnly
+		result.ValuesPurged = n
+	case opts.PurgeValues:
+		n, purgeErr := opts.Store.PurgeIfSoftDeletedPluginOnly(ctx, code)
+		if purgeErr != nil {
+			return RetireResult{}, mapRetireStoreError(purgeErr)
 		}
-		return RetireResult{}, err
+		result.ValuesPurged = n
+	default:
+		return RetireResult{}, ErrFieldNotFound
 	}
 
 	s.registry.Remove(code)
-	result := RetireResult{Code: code}
-	if opts.PurgeValues {
-		n, err := opts.Values.DeleteByFieldCode(ctx, code)
-		if err != nil {
-			return result, fmt.Errorf("definition retired; value purge failed: %w", err)
-		}
-		result.ValuesPurged = n
-	}
 	return result, nil
 }
 
-// isPluginOnly reports whether the active persisted row is plugin-only.
-// Fail closed: repo errors propagate; NotFound means the field is absent.
-func (s *FieldService) isPluginOnly(ctx context.Context, code string) (bool, error) {
-	stored, err := s.repo.FindByCode(ctx, code)
-	if err != nil {
-		if apperror.Is(err, apperror.CodeNotFound) {
-			return false, ErrFieldNotFound
-		}
-		return false, err
+func mapRetireStoreError(err error) error {
+	if apperror.Is(err, apperror.CodeNotFound) {
+		return ErrFieldNotFound
 	}
-	return stored.Access.PluginOnlyWrite, nil
+	if apperror.Is(err, apperror.CodeValidation) {
+		return ErrFieldNotPluginOnly
+	}
+	return err
 }
 
 // guardPluginOnly stops the definition API from lifting the write guard

@@ -257,16 +257,21 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 Extension fields with `Access.PluginOnlyWrite` (admin UI: `plugin_only_write`) cannot be updated or deleted through the admin HTTP API (`403 plugin_only_field_immutable`). Making an ordinary field plugin-only via `PUT /api/v1/admin/extensions/fields/{code}` is a **one-way latch** through that API.
 
-After uninstalling (or disabling) the plugin that owned such a field, soft-delete the definition with the operator CLI:
+**Before retiring:** remove or disable the owning plugin in this binary/config so it no longer calls `RegisterField` for that code on `Init`. The CLI refuses to retire a code that plugin init still registers. Boot does **not** rewrite the soft-deleted `extension_fields` row; if a plugin still registers the code, `serve` keeps an in-memory definition while the DB row stays deleted — admin `DELETE` then returns `plugin_only_field_immutable` from the in-memory guard, and `extension-field retire` returns not found.
+
+**Stop `serve` and `worker` before `--purge-values`.** Live processes keep the field in their registries and can write `extension_values` during or after the purge. Restart alone is not enough to make a prior purge safe.
 
 ```bash
+# Soft-delete the definition only (safe while serve is up; new plugin writes still need the plugin gone + restart)
 app extension-field retire <code>
-app extension-field retire <code> --purge-values   # also DELETE every extension_values row for that code
+
+# Soft-delete + purge values in one transaction (requires idle processes)
+app extension-field retire <code> --purge-values --confirm-idle
 ```
 
-- Audited as `extension_field.retire` (`cli:<os-user>`).
-- Soft-deletes the `extension_fields` row and drops it from the in-process registry of that CLI process. Running `serve` / `worker` processes keep the old registry until restart; after restart `LoadPersisted` will not reload the retired row.
-- If the plugin is still enabled and still calls `RegisterField` on boot, it will re-create the definition — disable or remove the plugin first.
+- Audited as `extension_field.retire` (`cli:<os-user>`), with `purge_values` / `values_purged` in details.
+- Soft-delete and value purge share one transaction: a purge failure rolls the definition back so a non-zero exit leaves the field active. If values were somehow left behind for an already soft-deleted plugin-only row, re-run with `--purge-values --confirm-idle` to purge only.
+- After a successful retire, restart `serve` / `worker` so their registries drop the code (`LoadPersisted` will not reload a soft-deleted row).
 - Ordinary (non-plugin-only) fields keep using admin `DELETE`; `extension-field retire` refuses them.
 - Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`).
 

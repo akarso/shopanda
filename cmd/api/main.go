@@ -833,7 +833,7 @@ Commands:
   schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
   extension-field retire <code>
-                       Soft-delete a plugin-only extension field ([--purge-values])
+                       Soft-delete a plugin-only extension field ([--purge-values --confirm-idle])
   theme:init <name>    Create a child theme under themes/<name>
   help                 Show this help message
 `))

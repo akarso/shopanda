@@ -349,3 +349,40 @@ func TestExtensionFieldAdminHandler_DeleteNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestExtensionFieldAdminHandler_DeletePluginOnlyForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMockExtensionFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+	h := admin.NewExtensionFieldAdminHandler(svc)
+	router := newExtensionFieldAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/extensions/fields", extensionFieldBody(t, map[string]interface{}{
+		"code": "acme.locked.field", "label": "Locked", "type": "string", "scope": "product",
+		"access": map[string]interface{}{"plugin_only_write": true},
+	})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/extensions/fields/acme.locked.field", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("delete status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if body.Error.Code != string(apperror.CodePluginOnlyFieldImmutable) {
+		t.Fatalf("error code = %q, want %q", body.Error.Code, apperror.CodePluginOnlyFieldImmutable)
+	}
+	if _, err := repo.FindByCode(context.Background(), "acme.locked.field"); err != nil {
+		t.Fatalf("definition must remain: %v", err)
+	}
+}

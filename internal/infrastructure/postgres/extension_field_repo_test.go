@@ -228,6 +228,39 @@ func TestExtensionFieldRepo_RetirePluginOnlyAndRefuseOrdinary(t *testing.T) {
 	}
 }
 
+func TestExtensionFieldRepo_RetireActivePurgesValuesAtomically(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.purge")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	target := domainext.Target{Type: domainext.TargetCartItem, ID: "cart:var"}
+	if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, "v")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := repo.RetireActive(ctx, locked.Code, true)
+	if err != nil || n != 1 {
+		t.Fatalf("RetireActive = %d, %v", n, err)
+	}
+	if _, err := repo.FindByCode(ctx, locked.Code); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("active after retire: %v", err)
+	}
+	vals, err := valueRepo.ListByTarget(ctx, target)
+	if err != nil || len(vals) != 0 {
+		t.Fatalf("values = %+v err=%v", vals, err)
+	}
+	// Retry purge on soft-deleted plugin-only row with no remaining values.
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 0 {
+		t.Fatalf("PurgeIfSoftDeletedPluginOnly = %d, %v", n, err)
+	}
+	if _, err := repo.PurgeIfSoftDeletedPluginOnly(ctx, "acme.never.existed"); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("never stored: %v", err)
+	}
+}
+
 func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testing.T) {
 	// Intended: soft-deleted rows are retired; Save restores them like Create does.
 	repo := setupExtensionFieldRepo(t)

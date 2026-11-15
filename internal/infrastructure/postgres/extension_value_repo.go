@@ -186,21 +186,25 @@ func (r *ExtensionValueRepo) Delete(ctx context.Context, target domainext.Target
 	return nil
 }
 
-// DeleteByFieldCode removes every stored value for fieldCode across all targets.
-// Used by the operator retire path; not part of ValueRepository.
+// DeleteByFieldCode removes every stored value for fieldCode across all targets
+// in batches (uses extension_values_field_code_idx). Prefer RetireActive /
+// PurgeIfSoftDeletedPluginOnly for the operator path so soft-delete and purge share a transaction.
 func (r *ExtensionValueRepo) DeleteByFieldCode(ctx context.Context, fieldCode string) (int64, error) {
 	fieldCode = strings.TrimSpace(fieldCode)
 	if fieldCode == "" {
 		return 0, fmt.Errorf("extension_value_repo: delete by field code: empty code")
 	}
-	const q = `DELETE FROM extension_values WHERE field_code = $1`
-	res, err := r.db.ExecContext(ctx, q, fieldCode)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("extension_value_repo: delete by field code: %w", err)
+		return 0, fmt.Errorf("extension_value_repo: delete by field code begin: %w", err)
 	}
-	n, err := res.RowsAffected()
+	defer tx.Rollback()
+	n, err := deleteExtensionValuesByFieldCodeTx(ctx, tx, fieldCode, extensionValuePurgeBatchSize)
 	if err != nil {
-		return 0, fmt.Errorf("extension_value_repo: delete by field code rows: %w", err)
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("extension_value_repo: delete by field code commit: %w", err)
 	}
 	return n, nil
 }
