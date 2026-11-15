@@ -2,6 +2,9 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"testing"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -278,17 +281,79 @@ func TestExtensionFieldRepo_PurgeCancelKeepsSoftDelete(t *testing.T) {
 
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := repo.PurgeIfSoftDeletedPluginOnly(cancelCtx, locked.Code); err == nil {
-		t.Fatal("expected canceled purge error")
+	n, err := repo.PurgeIfSoftDeletedPluginOnly(cancelCtx, locked.Code)
+	if err == nil || !errors.Is(err, domainext.ErrPurgeIncomplete) {
+		t.Fatalf("err = %v n=%d, want ErrPurgeIncomplete", err, n)
 	}
 	vals, err := valueRepo.ListByTarget(ctx, target)
 	if err != nil || len(vals) != 1 {
 		t.Fatalf("values should remain after canceled purge: %+v err=%v", vals, err)
 	}
-	n, err := repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
 	if err != nil || n != 1 {
 		t.Fatalf("retry purge = %d, %v", n, err)
 	}
+}
+
+func TestExtensionFieldRepo_PurgeBatchCancelKeepsCountThenRetry(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	locked := pluginOnlyExtensionField("acme.retire.batches")
+	if err := repo.Save(ctx, locked); err != nil {
+		t.Fatal(err)
+	}
+	valueRepo := setupExtensionValueRepo(t)
+	for i := 0; i < 3; i++ {
+		target := domainext.Target{Type: domainext.TargetCartItem, ID: fmt.Sprintf("cart:batch:%d", i)}
+		if err := valueRepo.Upsert(ctx, sampleExtensionValue(target, locked.Code, fmt.Sprintf("v%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.Retire(ctx, locked.Code); err != nil {
+		t.Fatalf("Retire: %v", err)
+	}
+
+	restore := postgres.SetExtensionValuePurgeBatchSizeForTest(1)
+	t.Cleanup(restore)
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	db := &cancelAfterBeginTx{DB: postgres.ExtensionFieldRepoDB(repo), cancelAfter: 1, cancel: cancel}
+	n, err := postgres.PurgeExtensionValuesByFieldCodeForTest(cancelCtx, db, locked.Code, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("partial purge = %d, %v, want context.Canceled", n, err)
+	}
+	if n != 1 {
+		t.Fatalf("partial purge count = %d, want 1", n)
+	}
+	var remaining int
+	if err := postgres.ExtensionFieldRepoDB(repo).QueryRowContext(ctx, `SELECT COUNT(*) FROM extension_values WHERE field_code = $1`, locked.Code).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining = %d, want 2", remaining)
+	}
+
+	n, err = repo.PurgeIfSoftDeletedPluginOnly(ctx, locked.Code)
+	if err != nil || n != 2 {
+		t.Fatalf("retry = %d, %v, want 2", n, err)
+	}
+}
+
+// cancelAfterBeginTx fails the (cancelAfter+1)th BeginTx after canceling the context.
+type cancelAfterBeginTx struct {
+	*sql.DB
+	cancelAfter int
+	begun       int
+	cancel      context.CancelFunc
+}
+
+func (c *cancelAfterBeginTx) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	c.begun++
+	if c.begun > c.cancelAfter {
+		c.cancel()
+		return nil, context.Canceled
+	}
+	return c.DB.BeginTx(ctx, opts)
 }
 
 func TestExtensionFieldRepo_SoftDeletedPluginOnlyRowMayBeRestoredBySave(t *testing.T) {

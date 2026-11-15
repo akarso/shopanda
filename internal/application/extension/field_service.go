@@ -196,11 +196,15 @@ func (s *FieldService) Retire(ctx context.Context, code string, opts RetireOptio
 		}
 	case opts.PurgeValues:
 		n, purgeErr := opts.Store.PurgeIfSoftDeletedPluginOnly(ctx, code)
-		if purgeErr != nil {
-			return RetireResult{}, mapRetireStoreError(purgeErr)
-		}
 		result.ValuesPurged = n
 		result.PurgeOnly = true
+		if purgeErr != nil {
+			if errors.Is(purgeErr, domainext.ErrPurgeIncomplete) {
+				s.registry.Remove(code)
+				return result, purgeErr
+			}
+			return RetireResult{}, mapRetireStoreError(purgeErr)
+		}
 	default:
 		return RetireResult{}, ErrFieldNotFound
 	}

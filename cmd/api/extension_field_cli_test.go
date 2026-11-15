@@ -20,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
+	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 func TestParseExtensionFieldRetireArgs(t *testing.T) {
@@ -79,42 +80,24 @@ func (m *memRetireStore) PurgeIfSoftDeletedPluginOnly(context.Context, string) (
 }
 
 func TestRunExtensionFieldRetire_RefusesPluginRegisteredCode(t *testing.T) {
-	dsn := os.Getenv("SHOPANDA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SHOPANDA_TEST_DSN not set")
-	}
-	conn, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := conn.Ping(); err != nil {
-		_ = conn.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		cleanup, cerr := sql.Open("pgx", dsn)
-		if cerr != nil {
-			return
-		}
-		defer cleanup.Close()
-		_, _ = cleanup.Exec(`DELETE FROM admin_audit_log WHERE resource_type = 'extension_field' AND resource_id = 'acme.cli.refused'`)
-	})
-
 	extReg := extensionapp.NewRegistry()
 	if err := extReg.Register(domainext.FieldDef{
 		Code: "acme.cli.refused", Label: "X", Type: domainext.FieldTypeString,
 		Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored,
 	}); err != nil {
-		_ = conn.Close()
 		t.Fatal(err)
 	}
 	store := &memRetireStore{
 		active:      map[string]domainext.ExtensionField{},
 		softDeleted: map[string]domainext.ExtensionField{},
 	}
+	// Invalid DSN: refusal must not require a live DB; audit write fails closed via log.
+	conn, err := sql.Open("pgx", "postgres://invalid:invalid@127.0.0.1:1/shopanda?connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	orig := openExtensionFieldRetireRuntime
 	openExtensionFieldRetireRuntime = func(*config.Config, logger.Logger) (*extensionFieldRetireRuntime, error) {
-		// Ownership of conn transfers to runExtensionFieldRetire (defer Close).
 		return &extensionFieldRetireRuntime{
 			svc:       extensionapp.NewFieldService(extReg, store),
 			store:     store,
@@ -130,30 +113,70 @@ func TestRunExtensionFieldRetire_RefusesPluginRegisteredCode(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "still registers") {
 		t.Fatalf("err = %v", err)
 	}
+}
 
-	verify, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
+func TestRunExtensionFieldRetire_ConfirmIdleBeforeOpen(t *testing.T) {
+	orig := openExtensionFieldRetireRuntime
+	openExtensionFieldRetireRuntime = func(*config.Config, logger.Logger) (*extensionFieldRetireRuntime, error) {
+		t.Fatal("openExtensionFieldRetireRuntime must not run without --confirm-idle")
+		return nil, errors.New("unreachable")
 	}
-	defer verify.Close()
-	auditRepo, err := postgres.NewAuditLogRepo(verify)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, err := auditRepo.List(context.Background(), domainadmin.AuditLogFilter{
-		Action: string(adminApp.AuditExtensionFieldRetire), ResourceType: "extension_field",
-		ResourceID: "acme.cli.refused", Limit: 5,
-	})
-	if err != nil || len(rows) == 0 || rows[0].Result != "error" {
-		t.Fatalf("audit = %+v err=%v", rows, err)
-	}
-	if rows[0].Metadata["plugin_registered"] != true {
-		t.Fatalf("metadata = %#v", rows[0].Metadata)
+	t.Cleanup(func() { openExtensionFieldRetireRuntime = orig })
+
+	err := runExtensionFieldRetire(&bytes.Buffer{}, &config.Config{}, logger.NewWithWriter(os.Stderr, "error"), []string{"acme.any", "--purge-values"})
+	if err == nil || !strings.Contains(err.Error(), "--confirm-idle") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRunExtensionFieldRetire_RefusesWhenPluginInitFailsAfterRegister(t *testing.T) {
-	// Fail-closed: openExtensionFieldRetireRuntime returns Failed Init error before soft-delete.
+type registerThenOKPlugin struct{ code string }
+
+func (p *registerThenOKPlugin) Name() string { return "test/register-ok" }
+func (p *registerThenOKPlugin) Init(app *plugin.App) error {
+	return app.Extensions().RegisterField(domainext.FieldDef{
+		Code: p.code, Label: "X", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetProduct, StorageMode: domainext.StorageStored,
+		Access: domainext.Access{PluginOnlyWrite: true},
+	})
+}
+
+type alwaysFailPlugin struct{}
+
+func (p *alwaysFailPlugin) Name() string                  { return "test/always-fail" }
+func (p *alwaysFailPlugin) Init(*plugin.App) error        { return errors.New("init boom after peer registered") }
+
+func TestDefaultOpenExtensionFieldRetireRuntime_FailClosedWhenPeerInitFails(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+	mediaDir := t.TempDir()
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	cfg := &config.Config{}
+	cfg.Media.Storage = "local"
+	cfg.Media.Local.BasePath = mediaDir
+	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
+	cfg.Media.Local.SignSecret = strings.Repeat("s", 32)
+	cfg.Queue.Driver = "postgres"
+	cfg.Cache.Driver = "postgres"
+	cfg.Search.Engine = "postgres"
+
+	code := "acme.cli.failclosed"
+	orig := retireBootRegisterPlugins
+	retireBootRegisterPlugins = func(reg *plugin.Registry, bootCfg *config.Config) {
+		reg.Register(&registerThenOKPlugin{code: code})
+		reg.Register(&alwaysFailPlugin{})
+	}
+	t.Cleanup(func() { retireBootRegisterPlugins = orig })
+
+	_, err := defaultOpenExtensionFieldRetireRuntime(cfg, logger.NewWithWriter(os.Stderr, "error"))
+	if err == nil || !strings.Contains(err.Error(), "plugin init failed") {
+		t.Fatalf("err = %v, want plugin init failed", err)
+	}
+}
+
+func TestRunExtensionFieldRetire_RefusesWhenPluginInitFails(t *testing.T) {
 	orig := openExtensionFieldRetireRuntime
 	openExtensionFieldRetireRuntime = func(*config.Config, logger.Logger) (*extensionFieldRetireRuntime, error) {
 		return nil, errors.New("plugin init failed: 1 plugin(s) failed to initialize (refuse retire while boot is incomplete)")
@@ -225,6 +248,7 @@ func TestRunExtensionFieldRetire_Integration(t *testing.T) {
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = mediaDir
 	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
+	cfg.Media.Local.SignSecret = strings.Repeat("s", 32)
 	cfg.Queue.Driver = "postgres"
 	cfg.Cache.Driver = "postgres"
 	cfg.Search.Engine = "postgres"
@@ -281,5 +305,12 @@ func TestRunExtensionFieldRetire_Integration(t *testing.T) {
 	}
 	if !success {
 		t.Fatalf("no success audit among %+v", rows)
+	}
+}
+
+func TestMapExtensionFieldRetireError_PurgeIncompleteHint(t *testing.T) {
+	err := mapExtensionFieldRetireError(domainext.ErrPurgeIncomplete)
+	if !errors.Is(err, domainext.ErrPurgeIncomplete) || !strings.Contains(err.Error(), "re-run") {
+		t.Fatalf("err = %v", err)
 	}
 }

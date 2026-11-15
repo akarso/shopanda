@@ -43,7 +43,23 @@ type extensionFieldRetireRuntime struct {
 // refuse codes still registered on Init. Tests may replace this function.
 var openExtensionFieldRetireRuntime = defaultOpenExtensionFieldRetireRuntime
 
+// retireBootRegisterPlugins registers the plugin set for retire boot. Tests may replace it.
+var retireBootRegisterPlugins = registerPlugins
+
+// retireBootConfig forces postgres drivers so retire does not dial Redis/RabbitMQ/Kafka/SQS.
+func retireBootConfig(cfg *config.Config) *config.Config {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	boot := *cfg
+	boot.Queue.Driver = "postgres"
+	boot.Cache.Driver = "postgres"
+	boot.Search.Engine = "postgres"
+	return &boot
+}
+
 func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logger) (*extensionFieldRetireRuntime, error) {
+	bootCfg := retireBootConfig(cfg)
 	dsn := config.DatabaseDSN(cfg)
 	conn, err := db.Open(dsn)
 	if err != nil {
@@ -57,7 +73,7 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 
 	extReg := extensionapp.NewRegistry()
 	plugins := plugin.NewRegistry(log)
-	registerPlugins(plugins, cfg)
+	retireBootRegisterPlugins(plugins, bootCfg)
 	boot, err := newPluginBootstrap(conn)
 	if err != nil {
 		conn.Close()
@@ -65,7 +81,7 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 	}
 	pluginApp := &plugin.App{
 		Logger:            log,
-		Config:            cfg,
+		Config:            bootCfg,
 		Bootstrap:         boot,
 		PluginMigrateMode: plugin.PluginMigrateVerify,
 	}
@@ -83,10 +99,8 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize (refuse retire while boot is incomplete)", summary.Failed)
 	}
-	if err := ctx.Err(); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("plugin init: %w", err)
-	}
+	// A finished boot that merely ran long is still usable for the registration check;
+	// InitAllContext already marks any plugin that did not finish as Failed.
 	freezePermissionRegistry(pluginApp)
 
 	return &extensionFieldRetireRuntime{
@@ -107,6 +121,10 @@ func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger,
 	if err != nil {
 		return err
 	}
+	// Refuse before DB/plugin boot so a flag mistake does not dial brokers.
+	if parsed.purge && !parsed.confirmIdle {
+		return fmt.Errorf("extension-field retire: --purge-values requires --confirm-idle (stop serve and worker first; see RUNBOOK)")
+	}
 
 	rt, err := openExtensionFieldRetireRuntime(cfg, log)
 	if err != nil {
@@ -124,11 +142,6 @@ func runExtensionFieldRetire(w io.Writer, cfg *config.Config, log logger.Logger,
 		auditCLIActionDetails(context.Background(), rt.conn, log, adminApp.AuditExtensionFieldRetire, "extension_field", parsed.code, details, retireErr)
 	}
 
-	if parsed.purge && !parsed.confirmIdle {
-		err := fmt.Errorf("extension-field retire: --purge-values requires --confirm-idle (stop serve and worker first; see RUNBOOK)")
-		audit(err, nil, 0)
-		return err
-	}
 	if _, ok := rt.pluginExt.Get(parsed.code); ok {
 		owner := rt.pluginExt.Owner(parsed.code)
 		if owner == "" {

@@ -8,11 +8,12 @@ import "context"
 type PluginOnlyRetireStore interface {
 	// RetireActive soft-deletes an active PluginOnlyWrite row and commits. When
 	// purgeValues is true, then deletes extension_values in separate short
-	// transactions. A purge failure returns domainext.ErrPurgeIncomplete after
-	// the soft-delete has committed.
+	// transactions (each batch locks the field row). A purge failure returns
+	// domainext.ErrPurgeIncomplete with the committed valuesPurged count.
 	RetireActive(ctx context.Context, code string, purgeValues bool) (valuesPurged int64, err error)
 	// PurgeIfSoftDeletedPluginOnly deletes values when a soft-deleted plugin-only
-	// row exists for code (retry after an incomplete purge). Returns NotFound when
-	// no such row exists (including never stored).
+	// row exists for code (retry after an incomplete purge). Incomplete purges
+	// return ErrPurgeIncomplete with valuesPurged. Returns NotFound when no such
+	// row exists (including never stored).
 	PurgeIfSoftDeletedPluginOnly(ctx context.Context, code string) (valuesPurged int64, err error)
 }

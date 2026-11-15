@@ -257,23 +257,23 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 Extension fields with `Access.PluginOnlyWrite` (admin UI: `plugin_only_write`) cannot be updated or deleted through the admin HTTP API (`403 plugin_only_field_immutable`). Making an ordinary field plugin-only via `PUT /api/v1/admin/extensions/fields/{code}` is a **one-way latch** through that API.
 
-**Before retiring:** remove or disable the owning plugin in this binary/config so it no longer calls `RegisterField` for that code on `Init`. The CLI refuses to retire a code that plugin init still registers. Boot does **not** rewrite the soft-deleted `extension_fields` row; if a plugin still registers the code, `serve` keeps an in-memory definition while the DB row stays deleted — admin `DELETE` then returns `plugin_only_field_immutable` from the in-memory guard, and `extension-field retire` returns not found.
+**Before retiring:** remove or disable the owning plugin in this binary/config so it no longer calls `RegisterField` for that code on `Init`. The CLI boots plugins (postgres queue/cache/search only — no Redis/RabbitMQ/Kafka dial) and refuses with `plugin still registers` when that boot still registers the code. Boot does **not** rewrite a soft-deleted `extension_fields` row; if a plugin still registers the code after a prior soft-delete, `serve` keeps an in-memory definition while the DB row stays deleted — admin `DELETE` then returns `plugin_only_field_immutable` from the in-memory guard.
 
-**Stop `serve` and `worker` before `--purge-values`.** Live processes keep the field in their registries and can write `extension_values` during or after the purge. Restart alone is not enough to make a prior purge safe.
+**Stop `serve` and `worker` before `--purge-values`.** Live processes keep the field in their registries and can write `extension_values` during or after the purge. Restart alone is not enough to make a prior purge safe. `--purge-values` without `--confirm-idle` is rejected before the database or plugin boot opens.
 
 ```bash
 # Soft-delete the definition only (safe while serve is up; new plugin writes still need the plugin gone + restart)
 app extension-field retire <code>
 
-# Soft-delete + purge values in one transaction (requires idle processes)
+# Soft-delete, then purge values in short batches (requires idle processes)
 app extension-field retire <code> --purge-values --confirm-idle
 ```
 
-- Audited as `extension_field.retire` (`cli:<os-user>`), including refusals (still-registered plugin, missing `--confirm-idle`).
-- Soft-delete commits first; value deletes run in separate short batches afterward. A purge timeout or error leaves the definition retired and keeps completed batches — re-run with `--purge-values --confirm-idle` to finish. The CLI refuses the command when any plugin fails `Init` / migration verify, or when plugin boot still registers the code (any definition, not only plugin-only).
+- Audited as `extension_field.retire` (`cli:<os-user>`), including still-registered refusals (missing `--confirm-idle` is rejected before audit).
+- Soft-delete commits first; value deletes run in separate short batches (each batch locks the field row). A purge timeout or incomplete error keeps completed batches and returns `definition retired; value purge incomplete` with a re-run hint — re-run with `--purge-values --confirm-idle` to finish. The CLI refuses when any plugin fails `Init` / migration verify, or when plugin boot still registers the code (`plugin still registers`, any definition, not only plugin-only).
 - After a successful retire, restart `serve` / `worker` so their registries drop the code (`LoadPersisted` will not reload a soft-deleted row).
 - Ordinary (non-plugin-only) fields keep using admin `DELETE`; `extension-field retire` refuses them.
-- Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`).
+- Restoring a retired code is possible by creating/saving a new definition with the same code (Save clears `deleted_at`). While a purge batch holds `FOR UPDATE` on the field row, Save cannot clear `deleted_at`; if the row is restored between batches, purge stops and reports incomplete.
 
 ## Rate limiting and login lockout
 

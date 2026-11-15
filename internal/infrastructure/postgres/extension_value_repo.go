@@ -193,7 +193,7 @@ func (r *ExtensionValueRepo) DeleteByFieldCode(ctx context.Context, fieldCode st
 	if fieldCode == "" {
 		return 0, fmt.Errorf("extension_value_repo: delete by field code: empty code")
 	}
-	return purgeExtensionValuesByFieldCode(ctx, r.db, fieldCode, extensionValuePurgeBatchSize)
+	return purgeExtensionValuesByFieldCode(ctx, r.db, fieldCode, extensionValuePurgeBatchSize, false)
 }
 
 func scanExtensionValue(scan func(dest ...interface{}) error, target domainext.Target) (domainext.Value, error) {

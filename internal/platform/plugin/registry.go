@@ -137,6 +137,23 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 		entries = r.entries
 	}
 	for i := range entries {
+		if err := ctx.Err(); err != nil {
+			// Deadline/cancel: mark every remaining Loaded plugin failed so callers
+			// fail closed. Plugins that already finished Init stay Active.
+			for j := i; j < len(entries); j++ {
+				live := r.entryByName(entries[j].Name)
+				if live == nil || live.State != StateLoaded {
+					continue
+				}
+				live.State = StateFailed
+				live.Err = err
+				summary.Failed++
+			}
+			r.log.Error("plugin.init.canceled", err, map[string]interface{}{
+				"remaining": summary.Failed,
+			})
+			break
+		}
 		e := &entries[i]
 		// Resolve the live registry entry so State updates persist under depends_on sorts.
 		live := r.entryByName(e.Name)
