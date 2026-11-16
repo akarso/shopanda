@@ -16,6 +16,9 @@ type fakeCatalogPort struct{}
 func (fakeCatalogPort) FindVariant(context.Context, string) (*extapi.CatalogVariant, error) {
 	return nil, nil
 }
+func (fakeCatalogPort) FindVariants(context.Context, []string) (map[string]*extapi.CatalogVariant, error) {
+	return nil, nil
+}
 func (fakeCatalogPort) FindProduct(context.Context, string) (*extapi.CatalogProduct, error) {
 	return nil, nil
 }

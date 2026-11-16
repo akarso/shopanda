@@ -6,7 +6,7 @@
 - Keep live Actions on this upstream repo; ship **samples only** for product consumers.
 - Add `product-init` scaffold + docs so a product site is drop-in: custom plugin work + optional settings.
 - Design (do not fully land) a public extension SDK so products can eventually leave the fork.
-- One PR = one responsibility; PR specs under `prs/` (**PR-1500–1553**). Each PR is **`[oss]`**.
+- One PR = one responsibility; PR specs under `prs/` (**PR-1500–1555**). Each PR is **`[oss]`**.
 
 ---
 
@@ -116,7 +116,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 
 ---
 
-## Track E — Public extension SDK + extension ergonomics (PR-1540–1553)
+## Track E — Public extension SDK + extension ergonomics (PR-1540–1555)
 
 | PR | Title | Status |
 | --- | --- | --- |
@@ -134,6 +134,8 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1551 | Reference plugin + harness | done |
 | PR-1552 | Migrate demos; ImportBoundary pkg-only | done |
 | PR-1553 | CartPort session cart + validate extension visibility | done |
+| PR-1554 | Optional customer identity on plugin public routes | done |
+| PR-1555 | CatalogPort ProductSlug + FindVariants | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -174,12 +176,12 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Hook line view has no extension values | `extapi.CartLineView` has only `VariantID`, `Quantity`. A `cart.validate` handler cannot see a plugin-only line value (e.g. `metaldogs.design_id`). Add values to the view or an `ExtensionReader` on `Host` | **done (PR-1553)** — `CartLineView.Extensions` + `cart.validate` `InvokeAdapted` owner redaction |
 | Reference for design-on-line pattern | Second `extref` example: plugin-only line field, add route with idempotency/conflict, `cart.validate` blocking issue, fail-closed when a dependency is unwired | **done (PR-1553)** — `extref.design_id` + `POST /extref/design-line` |
 | Public route and the guest session cart | Document (or provide a port for) how a plugin `RegisterPublicRoute` handler reaches the storefront session cart without exposing a raw cart id | **done (PR-1553)** — `pkg/storefrontsession` + `CartPort.EnsureStorefrontCart` (keep `cart_id` out of JSON) |
-| Signed-in customer on plugin public routes | `CartPort.EnsureStorefrontCart` handles a signed-in customer, but routes under a prefix that skips customer JWT parsing (Metal Dogs `/api/customizer/*`, owner-token auth) never receive the identity, so the line lands in the guest cart and is not on `/cart` for a logged-in customer. Host should offer an opt-in way to pass the optional customer identity to plugin routes, without making JWT mandatory | to verify, proposed |
-| `CatalogPort` is too narrow for hooks | `FindVariant` has `ProductID`, `FindProduct` has `Slug`: "variant belongs to product X" costs 2 queries per cart line on every `cart.validate`. Add `ProductSlug` to the variant read model or a batch lookup | proposed |
+| Signed-in customer on plugin public routes | `CartPort.EnsureStorefrontCart` handles a signed-in customer, but routes under a prefix that skips customer JWT parsing (Metal Dogs `/api/customizer/*`, owner-token auth) never receive the identity, so the line lands in the guest cart and is not on `/cart` for a logged-in customer. Host should offer an opt-in way to pass the optional customer identity to plugin routes, without making JWT mandatory | **done (PR-1554)** — AuthMiddleware: failed/non-customer Bearer falls back to session cookie; non-Bearer Authorization does not 401; `pluginsdk.CustomerID` |
+| `CatalogPort` is too narrow for hooks | `FindVariant` has `ProductID`, `FindProduct` has `Slug`: "variant belongs to product X" costs 2 queries per cart line on every `cart.validate`. Add `ProductSlug` to the variant read model or a batch lookup | **done (PR-1555)** — `CatalogVariant.ProductSlug` + `CatalogPort.FindVariants` (batch via FindByIDs/ListByIDs when available) |
 
 ---
 
-## Extension ergonomics (Track E input → PR-1541–1553)
+## Extension ergonomics (Track E input → PR-1541–1555)
 
 Goal: a plugin author follows a convention and does not need to read the whole codebase. Evidence: Metal Dogs E1 and E2.
 
@@ -191,5 +193,7 @@ Goal: a plugin author follows a convention and does not need to read the whole c
 | 4 | Reference plugin + harness | 1551 |
 | 5 | Recipes in `AGENTS.md` | 1550 |
 | 6 | CartPort session cart + validate extension visibility | **1553** |
+| 7 | Optional customer identity on plugin public routes | **1554** |
+| 8 | CatalogPort ProductSlug + FindVariants | **1555** |
 
-Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547), session cart / owner scoping (1553).
+Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547), session cart / owner scoping (1553), owner-token + session identity (1554), catalog slug batch (1555).

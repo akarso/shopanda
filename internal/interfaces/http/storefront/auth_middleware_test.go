@@ -158,11 +158,72 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_MalformedHeader(t *testing.T) {
+func TestAuthMiddleware_InvalidBearerFallsBackToSessionCookie(t *testing.T) {
+	id, err := identity.NewIdentity("user-session", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	p := &countingParser{failFirst: true, identity: id}
+	mw := storefront.AuthMiddleware(p)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/customizer/save", nil)
+	req.Header.Set("Authorization", "Bearer owner-token")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if gotID.UserID != "user-session" {
+		t.Fatalf("UserID = %q, want user-session", gotID.UserID)
+	}
+	if p.calls < 2 {
+		t.Fatalf("parser calls = %d, want >= 2", p.calls)
+	}
+}
+
+func TestAuthMiddleware_NonBearerAuthorizationUsesSessionCookie(t *testing.T) {
+	id, err := identity.NewIdentity("user-4", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parser := &stubTokenParser{identity: id}
+	mw := storefront.AuthMiddleware(parser)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/customizer/save", nil)
+	req.Header.Set("Authorization", "Owner abc")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if gotID.UserID != "user-4" {
+		t.Fatalf("UserID = %q, want user-4", gotID.UserID)
+	}
+}
+
+func TestAuthMiddleware_MalformedHeaderWithoutSessionIsGuest(t *testing.T) {
 	parser := &stubTokenParser{}
 	mw := storefront.AuthMiddleware(parser)
 
+	var gotID identity.Identity
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -171,9 +232,28 @@ func TestAuthMiddleware_MalformedHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
+	if !gotID.IsGuest() {
+		t.Fatalf("expected guest, got %+v", gotID)
+	}
+}
+
+type countingParser struct {
+	failFirst bool
+	identity  identity.Identity
+	calls     int
+	lastToken string
+}
+
+func (p *countingParser) Parse(_ context.Context, token string) (identity.Identity, error) {
+	p.calls++
+	p.lastToken = token
+	if p.failFirst && p.calls == 1 {
+		return identity.Identity{}, errors.New("not a customer jwt")
+	}
+	return p.identity, nil
 }
 
 func TestRequireAuth_Authenticated(t *testing.T) {

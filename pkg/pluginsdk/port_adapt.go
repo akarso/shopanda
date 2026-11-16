@@ -30,22 +30,134 @@ type catalogPort struct {
 }
 
 func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.CatalogVariant, error) {
-	if p == nil || p.variants == nil {
-		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
-	}
-	v, err := p.variants.FindByID(ctx, id)
+	out, err := p.FindVariants(ctx, []string{id})
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
-		return nil, nil
+	return out[id], nil
+}
+
+type variantBatchLookup interface {
+	FindByIDs(ctx context.Context, ids []string) (map[string]*catalog.Variant, error)
+}
+
+type productIDLister interface {
+	ListByIDs(ctx context.Context, ids []string) (map[string]*catalog.Product, error)
+}
+
+func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[string]*extapi.CatalogVariant, error) {
+	if p == nil || p.variants == nil {
+		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
 	}
-	return &extapi.CatalogVariant{
-		ID:        v.ID,
-		ProductID: v.ProductID,
-		SKU:       v.SKU,
-		Name:      v.Name,
-	}, nil
+	clean := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		clean = append(clean, id)
+	}
+	if len(clean) == 0 {
+		return map[string]*extapi.CatalogVariant{}, nil
+	}
+
+	variants, err := p.lookupVariants(ctx, clean)
+	if err != nil {
+		return nil, err
+	}
+	productIDs := make([]string, 0, len(variants))
+	seenProduct := make(map[string]struct{}, len(variants))
+	for _, v := range variants {
+		if v == nil || strings.TrimSpace(v.ProductID) == "" {
+			continue
+		}
+		if _, ok := seenProduct[v.ProductID]; ok {
+			continue
+		}
+		seenProduct[v.ProductID] = struct{}{}
+		productIDs = append(productIDs, v.ProductID)
+	}
+	products, err := p.lookupProducts(ctx, productIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]*extapi.CatalogVariant, len(variants))
+	for id, v := range variants {
+		if v == nil {
+			continue
+		}
+		cv := &extapi.CatalogVariant{
+			ID:        v.ID,
+			ProductID: v.ProductID,
+			SKU:       v.SKU,
+			Name:      v.Name,
+		}
+		if prod := products[v.ProductID]; prod != nil {
+			cv.ProductSlug = prod.Slug
+		}
+		out[id] = cv
+	}
+	return out, nil
+}
+
+func (p *catalogPort) lookupVariants(ctx context.Context, ids []string) (map[string]*catalog.Variant, error) {
+	if batch, ok := p.variants.(variantBatchLookup); ok {
+		found, err := batch.FindByIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		if found == nil {
+			return map[string]*catalog.Variant{}, nil
+		}
+		return found, nil
+	}
+	out := make(map[string]*catalog.Variant, len(ids))
+	for _, id := range ids {
+		v, err := p.variants.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if v != nil {
+			out[id] = v
+		}
+	}
+	return out, nil
+}
+
+func (p *catalogPort) lookupProducts(ctx context.Context, ids []string) (map[string]*catalog.Product, error) {
+	if len(ids) == 0 {
+		return map[string]*catalog.Product{}, nil
+	}
+	if p.products == nil {
+		return map[string]*catalog.Product{}, nil
+	}
+	if batch, ok := p.products.(productIDLister); ok {
+		found, err := batch.ListByIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		if found == nil {
+			return map[string]*catalog.Product{}, nil
+		}
+		return found, nil
+	}
+	out := make(map[string]*catalog.Product, len(ids))
+	for _, id := range ids {
+		prod, err := p.products.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if prod != nil {
+			out[id] = prod
+		}
+	}
+	return out, nil
 }
 
 func (p *catalogPort) FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error) {

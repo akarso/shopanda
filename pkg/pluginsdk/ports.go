@@ -53,6 +53,9 @@ type CartPort interface {
 // CatalogPort provides minimal catalog reads for seed and integration plugins.
 type CatalogPort interface {
 	FindVariant(ctx context.Context, id string) (*extapi.CatalogVariant, error)
+	// FindVariants returns variants keyed by id. Missing ids are omitted.
+	// Prefer this in cart.validate hooks over per-line FindVariant.
+	FindVariants(ctx context.Context, ids []string) (map[string]*extapi.CatalogVariant, error)
 	FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error)
 }
 

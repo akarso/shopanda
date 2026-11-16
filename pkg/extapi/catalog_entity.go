@@ -11,8 +11,9 @@ type CatalogProduct struct {
 
 // CatalogVariant is a minimal variant read model for plugin seed/sync paths.
 type CatalogVariant struct {
-	ID        string
-	ProductID string
-	SKU       string
-	Name      string
+	ID          string
+	ProductID   string
+	ProductSlug string // parent product slug when known (avoids a second FindProduct)
+	SKU         string
+	Name        string
 }

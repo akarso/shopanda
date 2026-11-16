@@ -92,6 +92,16 @@ func TestCatalogPort_Find(t *testing.T) {
 	if err != nil || v == nil || v.SKU != "SKU-1" {
 		t.Fatalf("FindVariant = %+v, err=%v", v, err)
 	}
+	if v.ProductSlug != "shirt" {
+		t.Fatalf("ProductSlug = %q, want shirt", v.ProductSlug)
+	}
+	batch, err := port.FindVariants(context.Background(), []string{"v1", "missing"})
+	if err != nil || batch["v1"] == nil || batch["v1"].ProductSlug != "shirt" {
+		t.Fatalf("FindVariants = %+v, err=%v", batch, err)
+	}
+	if _, ok := batch["missing"]; ok {
+		t.Fatal("missing id must be omitted")
+	}
 }
 
 func TestOrdersPort_FindByID(t *testing.T) {

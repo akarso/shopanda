@@ -40,15 +40,16 @@ See [`ROADMAP.md`](ROADMAP.md), [`specs/`](specs/), and [`prs/`](prs/).
 ## Status
 
 **Tracks A–D done** (PR-1500–1534).
-**Track E done** (PR-1540–1553): ADR, Host facade, public pricing/checkout/
+**Track E done** (PR-1540–1555): ADR, Host facade, public pricing/checkout/
 composition/port contracts, declarative Needs, reference plugin + harness,
 (PR-1552) all non-core plugins migrated to `pluginsdk.Host` so
 `plugins/*` compiles against `pkg/*` only (`plugins/core/*` remains exempt
-as the driver-adapter layer the SDK wraps), and (PR-1553) CartPort session
-cart + validate extension visibility. E2–E4 (external module publish +
-fork→module guide) remain for later.
+as the driver-adapter layer the SDK wraps), (PR-1553) CartPort session
+cart + validate extension visibility, (PR-1554) optional customer identity
+on plugin routes, (PR-1555) CatalogPort ProductSlug + FindVariants. E2–E4
+(external module publish + fork→module guide) remain for later.
 
-PR range **PR-1500–1553**.
+PR range **PR-1500–1555**.
 
 ## Relationship
 
