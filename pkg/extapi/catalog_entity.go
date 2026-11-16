@@ -13,6 +13,11 @@ type CatalogProduct struct {
 type CatalogVariant struct {
 	ID        string
 	ProductID string
-	SKU       string
-	Name      string
+	// ProductSlug is the parent product slug when the products repo is wired
+	// and the parent is visible under the current read scope (storefront
+	// omits non-active). Empty with a nil error means unavailable — hooks
+	// checking "variant belongs to slug X" must fail closed, not skip.
+	ProductSlug string
+	SKU         string
+	Name        string
 }

@@ -680,6 +680,98 @@ func TestCartHandler_RemoveItem_ItemNotFound(t *testing.T) {
 	}
 }
 
+// selectiveCartVariants omits unknown ids (nil) so ensureTaxClasses can treat
+// them as Validation rather than inventing TaxClassCode("").
+type selectiveCartVariants struct {
+	byID map[string]*catalog.Variant
+}
+
+func (s selectiveCartVariants) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return s.byID[id], nil
+}
+func (selectiveCartVariants) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (selectiveCartVariants) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (selectiveCartVariants) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (selectiveCartVariants) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (selectiveCartVariants) Create(context.Context, *catalog.Variant) error { return nil }
+func (selectiveCartVariants) Update(context.Context, *catalog.Variant) error { return nil }
+
+type selectiveCartProducts struct {
+	byID map[string]*catalog.Product
+}
+
+func (s selectiveCartProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return s.byID[id], nil
+}
+func (selectiveCartProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (selectiveCartProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (selectiveCartProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (selectiveCartProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (selectiveCartProducts) Update(context.Context, *catalog.Product) error { return nil }
+
+func TestCartHandler_BadTaxClassLine_Update422_RemoveOK(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-ok", "EUR", 500)
+	prices.set("bad", "EUR", 500)
+	bus := event.NewBus(cartTestLogger())
+	vr := selectiveCartVariants{byID: map[string]*catalog.Variant{
+		"var-ok": {ID: "var-ok", ProductID: "p-ok"},
+	}}
+	pr := selectiveCartProducts{byID: map[string]*catalog.Product{
+		"p-ok": {ID: "p-ok", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+	}}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	h := storefront.NewCartHandler(svc, nil)
+	mux := newCartRouter(h)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	c.AddItem("var-ok", 1, shared.MustNewMoney(500, "EUR"))
+	c.AddItem("bad", 1, shared.MustNewMoney(500, "EUR"))
+	_ = carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/carts/cart-1/items/var-ok", strings.NewReader(`{"quantity":2}`))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("update status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bad") {
+		t.Fatalf("body = %s, want variant id in message", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("DELETE", "/api/v1/carts/cart-1/items/bad", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove bad line status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	resp := parseCartBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	cart := data["cart"].(map[string]interface{})
+	items := cart["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1 (var-ok remains)", len(items))
+	}
+}
+
 func TestCartHandler_Create_Guest_OK(t *testing.T) {
 	_, _, _, mux := cartSetup()
 

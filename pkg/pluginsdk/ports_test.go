@@ -78,6 +78,42 @@ func (stubOrders) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([
 	return nil, nil
 }
 
+type batchVariants struct {
+	stubVariants
+	findByIDs int
+}
+
+func (b *batchVariants) FindByIDs(_ context.Context, ids []string) (map[string]*catalog.Variant, error) {
+	b.findByIDs++
+	out := make(map[string]*catalog.Variant, len(ids))
+	for _, id := range ids {
+		if v := b.byID[id]; v != nil {
+			out[v.ID] = v
+		}
+	}
+	return out, nil
+}
+
+type batchProducts struct {
+	stubProducts
+	listByIDs int
+	err       error
+}
+
+func (b *batchProducts) ListByIDs(_ context.Context, ids []string) (map[string]*catalog.Product, error) {
+	b.listByIDs++
+	if b.err != nil {
+		return nil, b.err
+	}
+	out := make(map[string]*catalog.Product, len(ids))
+	for _, id := range ids {
+		if p := b.byID[id]; p != nil {
+			out[p.ID] = p
+		}
+	}
+	return out, nil
+}
+
 func TestCatalogPort_Find(t *testing.T) {
 	port := pluginsdk.NewCatalogPort(stubProducts{byID: map[string]*catalog.Product{
 		"p1": {ID: "p1", Slug: "shirt", Name: "Shirt", Type: catalog.TypeSimple, Status: catalog.StatusActive},
@@ -91,6 +127,98 @@ func TestCatalogPort_Find(t *testing.T) {
 	v, err := port.FindVariant(context.Background(), "v1")
 	if err != nil || v == nil || v.SKU != "SKU-1" {
 		t.Fatalf("FindVariant = %+v, err=%v", v, err)
+	}
+	if v.ProductSlug != "shirt" {
+		t.Fatalf("ProductSlug = %q, want shirt", v.ProductSlug)
+	}
+	batch, err := port.FindVariants(context.Background(), []string{"v1", "missing"})
+	if err != nil || batch["v1"] == nil || batch["v1"].ProductSlug != "shirt" {
+		t.Fatalf("FindVariants = %+v, err=%v", batch, err)
+	}
+	if _, ok := batch["missing"]; ok {
+		t.Fatal("missing id must be omitted")
+	}
+}
+
+func TestCatalogPort_FindVariants_BatchOnce(t *testing.T) {
+	variants := &batchVariants{stubVariants: stubVariants{byID: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "A"},
+		"v2": {ID: "v2", ProductID: "p1", SKU: "B"},
+	}}}
+	products := &batchProducts{stubProducts: stubProducts{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Slug: "shirt", Status: catalog.StatusActive},
+	}}}
+	port := pluginsdk.NewCatalogPort(products, variants)
+	got, err := port.FindVariants(context.Background(), []string{"v1", "v2", "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variants.findByIDs != 1 {
+		t.Fatalf("FindByIDs calls = %d, want 1", variants.findByIDs)
+	}
+	if products.listByIDs != 1 {
+		t.Fatalf("ListByIDs calls = %d, want 1", products.listByIDs)
+	}
+	if got["v1"].ProductSlug != "shirt" || got["v2"].ProductSlug != "shirt" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestCatalogPort_FindVariants_NilProductsRepo(t *testing.T) {
+	port := pluginsdk.NewCatalogPort(nil, stubVariants{byID: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "A"},
+	}})
+	got, err := port.FindVariants(context.Background(), []string{"v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["v1"] == nil || got["v1"].ProductSlug != "" {
+		t.Fatalf("want empty ProductSlug with nil products, got %+v", got["v1"])
+	}
+}
+
+func TestCatalogPort_FindVariants_ProductRepoError(t *testing.T) {
+	variants := &batchVariants{stubVariants: stubVariants{byID: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1"},
+	}}}
+	port := pluginsdk.NewCatalogPort(errProducts{err: context.DeadlineExceeded}, variants)
+	_, err := port.FindVariants(context.Background(), []string{"v1"})
+	if err == nil {
+		t.Fatal("expected parent product error")
+	}
+}
+
+type errProducts struct {
+	err error
+}
+
+func (e errProducts) FindByID(context.Context, string) (*catalog.Product, error) {
+	return nil, e.err
+}
+func (errProducts) FindBySlug(context.Context, string) (*catalog.Product, error) { return nil, nil }
+func (errProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (errProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (errProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (errProducts) Update(context.Context, *catalog.Product) error { return nil }
+
+func (e errProducts) ListByIDs(context.Context, []string) (map[string]*catalog.Product, error) {
+	return nil, e.err
+}
+
+func TestCatalogPort_FindVariants_MissingParentEmptySlug(t *testing.T) {
+	port := pluginsdk.NewCatalogPort(stubProducts{byID: map[string]*catalog.Product{}}, stubVariants{byID: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "gone", SKU: "A"},
+	}})
+	got, err := port.FindVariants(context.Background(), []string{"v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["v1"] == nil || got["v1"].ProductSlug != "" {
+		t.Fatalf("missing parent must yield empty slug, got %+v", got["v1"])
 	}
 }
 

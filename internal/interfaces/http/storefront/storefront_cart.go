@@ -625,11 +625,7 @@ func storefrontCurrency(r *http.Request) string {
 }
 
 func storefrontCustomerID(r *http.Request) string {
-	identity := platformAuth.IdentityFrom(r.Context())
-	if identity.IsGuest() {
-		return ""
-	}
-	return identity.UserID
+	return platformAuth.StorefrontActorID(platformAuth.IdentityFrom(r.Context()))
 }
 
 func (h *StorefrontHandler) storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID string) {

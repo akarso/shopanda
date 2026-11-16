@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	platformauth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 )
 
@@ -47,6 +49,9 @@ func NewValidatingTokenParser(issuer *jwt.Issuer, customers customer.CustomerRep
 func (p *ValidatingTokenParser) Parse(ctx context.Context, token string) (identity.Identity, error) {
 	claims, err := p.issuer.Parse(token)
 	if err != nil {
+		if errors.Is(err, jwt.ErrMalformedToken) {
+			return identity.Identity{}, fmt.Errorf("%w: %v", platformauth.ErrNotCustomerToken, err)
+		}
 		return identity.Identity{}, fmt.Errorf("validating parser: %w", err)
 	}
 

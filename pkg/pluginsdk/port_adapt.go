@@ -14,7 +14,6 @@ import (
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
@@ -33,19 +32,63 @@ func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.Catal
 	if p == nil || p.variants == nil {
 		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
 	}
-	v, err := p.variants.FindByID(ctx, id)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		// Same as FindVariants: empty id is a miss, not a repository call.
+		return nil, nil
+	}
+	out, err := p.FindVariants(ctx, []string{id})
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
-		return nil, nil
+	return out[id], nil
+}
+
+func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[string]*extapi.CatalogVariant, error) {
+	if p == nil || p.variants == nil {
+		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
 	}
-	return &extapi.CatalogVariant{
-		ID:        v.ID,
-		ProductID: v.ProductID,
-		SKU:       v.SKU,
-		Name:      v.Name,
-	}, nil
+	variants, err := catalog.LookupVariants(ctx, p.variants, ids)
+	if err != nil {
+		return nil, err
+	}
+	productIDs := make([]string, 0, len(variants))
+	seenProduct := make(map[string]struct{}, len(variants))
+	for _, v := range variants {
+		if v == nil || strings.TrimSpace(v.ProductID) == "" {
+			continue
+		}
+		if _, ok := seenProduct[v.ProductID]; ok {
+			continue
+		}
+		seenProduct[v.ProductID] = struct{}{}
+		productIDs = append(productIDs, v.ProductID)
+	}
+	products, err := catalog.LookupProducts(ctx, p.products, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog port: parent products: %w", err)
+	}
+
+	out := make(map[string]*extapi.CatalogVariant, len(variants))
+	for reqID, v := range variants {
+		if v == nil {
+			continue
+		}
+		cv := &extapi.CatalogVariant{
+			ID:        v.ID,
+			ProductID: v.ProductID,
+			SKU:       v.SKU,
+			Name:      v.Name,
+		}
+		if prod := products[v.ProductID]; prod != nil {
+			cv.ProductSlug = prod.Slug
+		}
+		// Empty ProductSlug with nil error: parent missing, non-active under
+		// storefront read scope, empty slug column, or products repo nil.
+		// Hooks must treat empty as fail-closed for "belongs to slug X", not skip.
+		out[reqID] = cv
+	}
+	return out, nil
 }
 
 func (p *catalogPort) FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error) {
@@ -233,13 +276,7 @@ func (p *cartPort) EnsureStorefrontCart(ctx context.Context, w http.ResponseWrit
 		return nil, fmt.Errorf("pluginsdk: cart port: not configured")
 	}
 	currency = resolveStorefrontCurrency(ctx, currency)
-	customerID := ""
-	if r != nil {
-		id := auth.IdentityFrom(r.Context())
-		if !id.IsGuest() {
-			customerID = id.UserID
-		}
-	}
+	customerID := CustomerID(r)
 	if customerID != "" {
 		return p.EnsureActive(ctx, customerID, currency)
 	}

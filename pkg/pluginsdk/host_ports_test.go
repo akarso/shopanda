@@ -32,6 +32,9 @@ type hostFakeCatalog struct{}
 func (hostFakeCatalog) FindVariant(context.Context, string) (*extapi.CatalogVariant, error) {
 	return nil, nil
 }
+func (hostFakeCatalog) FindVariants(context.Context, []string) (map[string]*extapi.CatalogVariant, error) {
+	return nil, nil
+}
 func (hostFakeCatalog) FindProduct(context.Context, string) (*extapi.CatalogProduct, error) {
 	return nil, nil
 }
