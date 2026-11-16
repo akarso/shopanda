@@ -95,6 +95,10 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 		PluginMigrateMode: plugin.PluginMigrateVerify,
 	}
 	pluginApp.SetExtensionRegistry(extReg)
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	preparePermissionRegistry(pluginApp)
 
 	ctx, cancel := context.WithTimeout(context.Background(), extensionFieldRetireTimeout)
@@ -107,6 +111,13 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 	if summary.Failed > 0 {
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize (refuse retire while boot is incomplete)", summary.Failed)
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("plugin capabilities: %w", err)
 	}
 	// A finished boot that merely ran long is still usable for the registration check;
 	// InitAllContext already marks any plugin that did not finish as Failed.

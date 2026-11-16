@@ -4,8 +4,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
 	b2bpricing "github.com/akarso/shopanda/plugins/b2b/pricing"
 )
@@ -38,9 +37,10 @@ func LegacyBareMigrationBasenamesForTest() []string {
 
 // NewAdminHandlersForTest exposes newAdminHandlers for wiring unit tests.
 func NewAdminHandlersForTest(
-	boot *plugin.Bootstrap,
-	groupRepo customergroup.Repository,
-	groupPriceRepo customergroup.GroupPriceRepository,
+	customers pluginsdk.CustomerPort,
+	variants pluginsdk.CatalogPort,
+	groupRepo groups.Repository,
+	groupPriceRepo b2bpricing.GroupPriceRepository,
 ) (*groups.AdminHandler, *b2bpricing.AdminHandler) {
-	return newAdminHandlers(boot, groupRepo, groupPriceRepo)
+	return newAdminHandlers(customers, variants, groupRepo, groupPriceRepo)
 }

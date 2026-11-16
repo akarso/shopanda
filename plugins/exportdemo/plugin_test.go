@@ -8,6 +8,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/exportdemo"
 )
 
@@ -25,7 +26,7 @@ func TestPlugin_Init_Disabled(t *testing.T) {
 	cfg := &config.Config{Plugins: config.PluginsConfig{
 		ExportDemo: config.ExportDemoPluginConfig{Enabled: false},
 	}}
-	if err := exportdemo.New().Init(testApp(cfg)); err == nil {
+	if err := exportdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("expected error when disabled")
 	}
 }

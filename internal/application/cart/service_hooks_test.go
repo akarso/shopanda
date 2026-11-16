@@ -252,7 +252,11 @@ func (s *goldTierPricingStep) Apply(_ context.Context, pctx *domainpricing.Prici
 	}
 	uplift := shared.MustNewMoney(500, pctx.Currency)
 	for i := range pctx.Items {
-		pctx.Items[i].UnitPrice = pctx.Items[i].UnitPrice.Add(uplift)
+		lifted, err := pctx.Items[i].UnitPrice.Add(uplift)
+		if err != nil {
+			return err
+		}
+		pctx.Items[i].UnitPrice = lifted
 		total, err := pctx.Items[i].UnitPrice.MulChecked(int64(pctx.Items[i].Quantity))
 		if err != nil {
 			return err

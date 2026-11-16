@@ -4,62 +4,61 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	sdkgraphql "github.com/akarso/shopanda/pkg/integrationsdk/graphql"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Plugin demonstrates outbound PIM GraphQL enrichment on the PDP composition pipeline.
 type Plugin struct{}
 
 // New returns the PIM enrichment reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "pimdemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("pimdemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("pimdemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("pimdemo plugin: config not configured")
-	}
-	cfg := app.Config.Plugins.PimDemo
-	if !cfg.Enabled {
+	if !h.ConfigBool("plugins.pimdemo.enabled") {
 		return fmt.Errorf("pimdemo plugin: disabled (plugins.pimdemo.enabled=false)")
 	}
-	if cfg.PimGraphQLEndpoint == "" {
+	endpoint := h.ConfigValue("plugins.pimdemo.pim_graphql_endpoint")
+	if endpoint == "" {
 		return fmt.Errorf("pimdemo plugin: pim_graphql_endpoint is required")
 	}
+	apiKey := h.ConfigValue("plugins.pimdemo.pim_api_key")
+	cacheTTLStr := h.ConfigValue("plugins.pimdemo.cache_ttl")
 
 	headers := map[string]string{}
-	if cfg.PimAPIKey != "" {
-		headers["Authorization"] = "Bearer " + cfg.PimAPIKey
+	if apiKey != "" {
+		headers["Authorization"] = "Bearer " + apiKey
 	}
 	client, err := sdkgraphql.New(sdkgraphql.Config{
-		Endpoint: cfg.PimGraphQLEndpoint,
+		Endpoint: endpoint,
 		Timeout:  2 * time.Second,
 		Headers:  headers,
-		Logger:   app.Logger,
+		Logger:   h.Logger(),
 	})
 	if err != nil {
 		return fmt.Errorf("pimdemo plugin: graphql client: %w", err)
 	}
 
 	cacheTTL := 5 * time.Minute
-	if cfg.CacheTTL != "" {
-		parsed, err := time.ParseDuration(cfg.CacheTTL)
+	if cacheTTLStr != "" {
+		parsed, err := time.ParseDuration(cacheTTLStr)
 		if err != nil {
-			return fmt.Errorf("pimdemo plugin: invalid cache_ttl %q: %w", cfg.CacheTTL, err)
+			return fmt.Errorf("pimdemo plugin: invalid cache_ttl %q: %w", cacheTTLStr, err)
 		}
 		if parsed > 0 {
 			cacheTTL = parsed
 		}
 	}
 
-	step := NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(cacheTTL), app.Logger)
-	app.RegisterCompositionStep("pdp", step)
-	if app.Logger != nil {
-		app.Logger.Info("pimdemo plugin: PDP enrichment step registered", map[string]interface{}{
+	step := NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(cacheTTL), h.Logger())
+	h.RegisterCompositionStep("pdp", step)
+	if log := h.Logger(); log != nil {
+		log.Info("pimdemo plugin: PDP enrichment step registered", map[string]interface{}{
 			"step":      StepName,
 			"cache_ttl": cacheTTL.String(),
 		})

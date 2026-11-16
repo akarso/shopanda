@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// PostgresRepo implements customergroup.Repository.
+// PostgresRepo implements Repository.
 type PostgresRepo struct {
 	db *sql.DB
 }
@@ -24,7 +23,7 @@ func NewPostgresRepo(db *sql.DB) (*PostgresRepo, error) {
 	return &PostgresRepo{db: db}, nil
 }
 
-func (r *PostgresRepo) List(ctx context.Context, offset, limit int) ([]customergroup.Group, error) {
+func (r *PostgresRepo) List(ctx context.Context, offset, limit int) ([]Group, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("b2b groups repo: offset must be >= 0")
 	}
@@ -41,7 +40,7 @@ func (r *PostgresRepo) List(ctx context.Context, offset, limit int) ([]customerg
 	return scanGroups(rows)
 }
 
-func (r *PostgresRepo) FindByID(ctx context.Context, id string) (*customergroup.Group, error) {
+func (r *PostgresRepo) FindByID(ctx context.Context, id string) (*Group, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("b2b groups repo: empty id")
 	}
@@ -57,7 +56,7 @@ func (r *PostgresRepo) FindByID(ctx context.Context, id string) (*customergroup.
 	return g, nil
 }
 
-func (r *PostgresRepo) FindByCode(ctx context.Context, code string) (*customergroup.Group, error) {
+func (r *PostgresRepo) FindByCode(ctx context.Context, code string) (*Group, error) {
 	code = strings.ToLower(strings.TrimSpace(code))
 	if code == "" {
 		return nil, fmt.Errorf("b2b groups repo: empty code")
@@ -74,7 +73,7 @@ func (r *PostgresRepo) FindByCode(ctx context.Context, code string) (*customergr
 	return g, nil
 }
 
-func (r *PostgresRepo) Save(ctx context.Context, group *customergroup.Group) error {
+func (r *PostgresRepo) Save(ctx context.Context, group *Group) error {
 	if group == nil {
 		return fmt.Errorf("b2b groups repo: group must not be nil")
 	}
@@ -148,7 +147,7 @@ func (r *PostgresRepo) RemoveCustomer(ctx context.Context, customerID string) er
 	return nil
 }
 
-func (r *PostgresRepo) FindGroupByCustomerID(ctx context.Context, customerID string) (*customergroup.Group, error) {
+func (r *PostgresRepo) FindGroupByCustomerID(ctx context.Context, customerID string) (*Group, error) {
 	customerID = strings.TrimSpace(customerID)
 	if customerID == "" {
 		return nil, fmt.Errorf("b2b groups repo: empty customer id")
@@ -171,18 +170,18 @@ type groupScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func scanGroup(s groupScanner) (*customergroup.Group, error) {
-	var g customergroup.Group
+func scanGroup(s groupScanner) (*Group, error) {
+	var g Group
 	if err := s.Scan(&g.ID, &g.Code, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &g, nil
 }
 
-func scanGroups(rows *sql.Rows) ([]customergroup.Group, error) {
-	var groups []customergroup.Group
+func scanGroups(rows *sql.Rows) ([]Group, error) {
+	var groups []Group
 	for rows.Next() {
-		var g customergroup.Group
+		var g Group
 		if err := rows.Scan(&g.ID, &g.Code, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("b2b groups repo: scan: %w", err)
 		}
@@ -195,4 +194,4 @@ func scanGroups(rows *sql.Rows) ([]customergroup.Group, error) {
 }
 
 // Compile-time interface check.
-var _ customergroup.Repository = (*PostgresRepo)(nil)
+var _ Repository = (*PostgresRepo)(nil)

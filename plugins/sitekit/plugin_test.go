@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	sitekit "github.com/akarso/shopanda/plugins/sitekit"
 )
 
@@ -19,7 +20,7 @@ func TestName(t *testing.T) {
 func TestInitRegistersHealth(t *testing.T) {
 	t.Parallel()
 	app := &plugin.App{}
-	if err := sitekit.New().Init(app); err != nil {
+	if err := sitekit.New().Init(pluginsdk.AsHost(app)); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	routes := app.PublicRoutes()

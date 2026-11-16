@@ -121,18 +121,18 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR | Title | Status |
 | --- | --- | --- |
 | PR-1540 | ADR accepted + import inventory | done |
-| PR-1541 | `pluginsdk.Host` facade | planned |
-| PR-1542 | Public Money, FieldDef, PluginWrite | planned |
-| PR-1543 | Public pricing step contracts | planned |
-| PR-1544 | Public checkout + composition contracts | planned |
-| PR-1545 | Cart / catalog / order ports on Host | planned |
-| PR-1546 | Declarative Needs | planned |
-| PR-1547 | Unified InitAll port wiring | planned |
-| PR-1548 | Hook sees extensions + auth | planned |
-| PR-1549 | Atomic cart extension + Save | planned |
-| PR-1550 | Extension-point catalog + AGENTS recipes | planned |
-| PR-1551 | Reference plugin + harness | planned |
-| PR-1552 | Migrate demos; ImportBoundary pkg-only | planned |
+| PR-1541 | `pluginsdk.Host` facade | done |
+| PR-1542 | Public Money, FieldDef, PluginWrite | done |
+| PR-1543 | Public pricing step contracts | done |
+| PR-1544 | Public checkout + composition contracts | done |
+| PR-1545 | Cart / catalog / order ports on Host | done |
+| PR-1546 | Declarative Needs | done |
+| PR-1547 | Unified InitAll port wiring | done |
+| PR-1548 | Hook sees extensions + auth | done |
+| PR-1549 | Atomic cart extension + Save | done |
+| PR-1550 | Extension-point catalog + AGENTS recipes | done |
+| PR-1551 | Reference plugin + harness | done |
+| PR-1552 | Migrate demos; ImportBoundary pkg-only | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -168,7 +168,7 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 
 | Item | Detail | Tracking |
 | --- | --- | --- |
-| Cart extension write is not atomic with `carts.Save` | Upsert before Save; concurrent loss possible | **PR-1549** |
+| Cart extension write is not atomic with `carts.Save` | Save-then-upsert + compensate (AddItem); merge CopyTarget after Save | **done (PR-1549)** |
 
 ---
 

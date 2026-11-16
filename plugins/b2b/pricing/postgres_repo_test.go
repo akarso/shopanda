@@ -6,10 +6,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/google/uuid"
+
 	"github.com/akarso/shopanda/internal/platform/migrate"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/plugins/b2b"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
 	b2bpricing "github.com/akarso/shopanda/plugins/b2b/pricing"
@@ -51,8 +51,8 @@ func ensureTables(t *testing.T, db *sql.DB) {
 
 func seedVariant(t *testing.T, db *sql.DB) string {
 	t.Helper()
-	productID := id.New()
-	variantID := id.New()
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
 	if _, err := db.Exec(`INSERT INTO products (id, name, slug, status) VALUES ($1, 'p', $2, 'active')
 		ON CONFLICT (id) DO NOTHING`, productID, "p-"+productID[:8]); err != nil {
 		t.Fatalf("insert product: %v", err)
@@ -72,7 +72,7 @@ func TestPostgresGroupPriceRepo_UpsertZeroAmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPostgresRepo: %v", err)
 	}
-	g, err := customergroup.NewGroup(id.New(), "zero-price-group", "Zero price group", "")
+	g, err := groups.NewGroup(uuid.NewString(), "zero-price-group", "Zero price group", "")
 	if err != nil {
 		t.Fatalf("NewGroup: %v", err)
 	}
@@ -85,8 +85,8 @@ func TestPostgresGroupPriceRepo_UpsertZeroAmount(t *testing.T) {
 		t.Fatalf("NewPostgresGroupPriceRepo: %v", err)
 	}
 	vid := seedVariant(t, db)
-	amount := shared.MustNewMoney(0, "EUR")
-	gp, err := customergroup.NewGroupPrice(id.New(), g.ID, vid, "", amount)
+	amount := extapi.MustNewMoney(0, "EUR")
+	gp, err := b2bpricing.NewGroupPrice(uuid.NewString(), g.ID, vid, "", amount)
 	if err != nil {
 		t.Fatalf("NewGroupPrice: %v", err)
 	}

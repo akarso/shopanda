@@ -17,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/integrationdemo"
 )
 
@@ -116,7 +117,7 @@ func initIntegrationDemoPlugin(t *testing.T) (*plugin.App, *stubOrderStatusUpdat
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(integrationdemo.New())
+	reg.Register(pluginsdk.Adapt(integrationdemo.New()))
 	app := testApp(cfg, orderStub, shipmentStub)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)
@@ -136,7 +137,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			IntegrationDemo: config.IntegrationDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := integrationdemo.New().Init(testApp(cfg, &stubOrderStatusUpdater{}, &stubShipmentStatusUpdater{})); err == nil {
+	if err := integrationdemo.New().Init(pluginsdk.AsHost(testApp(cfg, &stubOrderStatusUpdater{}, &stubShipmentStatusUpdater{}))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }
@@ -320,7 +321,7 @@ func TestPlugin_Init_RequiresHMACWhenConfigured(t *testing.T) {
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(integrationdemo.New())
+	reg.Register(pluginsdk.Adapt(integrationdemo.New()))
 	app := testApp(cfg, orderStub, shipmentStub)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)

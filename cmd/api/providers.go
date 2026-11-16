@@ -61,10 +61,19 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 		PluginMigrateMode: plugin.PluginMigrateVerify, // short-lived CLI: require app migrate
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		return err
+	}
 	preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	// Do not abort on unrelated plugin init failures; only the search provider is required.
 	if summary.Failed > 0 {

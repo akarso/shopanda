@@ -3,7 +3,6 @@ package warehousedemo
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
@@ -12,52 +11,51 @@ import (
 type Plugin struct{}
 
 // New returns the warehouse stock reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "warehousedemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("warehousedemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("warehousedemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("warehousedemo plugin: config not configured")
-	}
-	cfg := app.Config.Plugins.WarehouseDemo
-	if !cfg.Enabled {
+	if !h.ConfigBool("plugins.warehousedemo.enabled") {
 		return fmt.Errorf("warehousedemo plugin: disabled (plugins.warehousedemo.enabled=false)")
 	}
-	if cfg.WarehouseBaseURL == "" {
+	h.Require(pluginsdk.CapIntegrationStock)
+	baseURL := h.ConfigValue("plugins.warehousedemo.warehouse_base_url")
+	if baseURL == "" {
 		return fmt.Errorf("warehousedemo plugin: warehouse_base_url is required")
 	}
-	syncer := app.IntegrationStockSyncer()
+	syncer := h.IntegrationStockSyncer()
 	if syncer == nil {
 		return fmt.Errorf("warehousedemo plugin: stock syncer not configured")
 	}
 
+	apiKey := h.ConfigValue("plugins.warehousedemo.warehouse_api_key")
 	headers := map[string]string{}
-	if cfg.WarehouseAPIKey != "" {
-		headers["Authorization"] = "Bearer " + cfg.WarehouseAPIKey
+	if apiKey != "" {
+		headers["Authorization"] = "Bearer " + apiKey
 	}
 	client, err := sdkhttp.New(sdkhttp.Config{
-		BaseURL: cfg.WarehouseBaseURL,
+		BaseURL: baseURL,
 		Headers: headers,
-		Logger:  app.Logger,
+		Logger:  h.Logger(),
 	})
 	if err != nil {
 		return fmt.Errorf("warehousedemo plugin: http client: %w", err)
 	}
 
-	cronSpec := cfg.SyncCron
+	cronSpec := h.ConfigValue("plugins.warehousedemo.sync_cron")
 	if cronSpec == "" {
 		cronSpec = "@every 5m"
 	}
-	handler := NewStockSyncHandler(client, syncer, app.Logger)
-	if err := pluginsdk.New(app, p.Name()).Integration(RouteSlug).RegisterCron(SyncJobStock, cronSpec, handler); err != nil {
+	handler := NewStockSyncHandler(client, syncer, h.Logger())
+	if err := pluginsdk.NewHost(h, p.Name()).Integration(RouteSlug).RegisterCron(SyncJobStock, cronSpec, handler); err != nil {
 		return fmt.Errorf("warehousedemo plugin: register stock sync job: %w", err)
 	}
-	if app.Logger != nil {
-		app.Logger.Info("warehousedemo plugin: stock sync job registered", map[string]interface{}{
+	if log := h.Logger(); log != nil {
+		log.Info("warehousedemo plugin: stock sync job registered", map[string]interface{}{
 			"job_type":  fmt.Sprintf("integration.sync.%s.%s", RouteSlug, SyncJobStock),
 			"cron_spec": cronSpec,
 		})

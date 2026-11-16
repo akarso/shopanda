@@ -76,7 +76,10 @@ func TestZero_InvalidCurrency(t *testing.T) {
 func TestMoney_Add(t *testing.T) {
 	a := mustMoney(t, 1000, "EUR")
 	b := mustMoney(t, 500, "EUR")
-	result := a.Add(b)
+	result, err := a.Add(b)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result.Amount() != 1500 {
 		t.Errorf("Add: Amount() = %d, want 1500", result.Amount())
 	}
@@ -88,7 +91,10 @@ func TestMoney_Add(t *testing.T) {
 func TestMoney_Sub(t *testing.T) {
 	a := mustMoney(t, 1000, "EUR")
 	b := mustMoney(t, 300, "EUR")
-	result := a.Sub(b)
+	result, err := a.Sub(b)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result.Amount() != 700 {
 		t.Errorf("Sub: Amount() = %d, want 700", result.Amount())
 	}
@@ -157,21 +163,17 @@ func TestMoney_String(t *testing.T) {
 }
 
 func TestMoney_Add_CurrencyMismatch(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Add with mismatched currencies should panic")
-		}
-	}()
-	mustMoney(t, 100, "EUR").Add(mustMoney(t, 100, "USD"))
+	_, err := mustMoney(t, 100, "EUR").Add(mustMoney(t, 100, "USD"))
+	if err == nil {
+		t.Error("Add with mismatched currencies should return an error")
+	}
 }
 
 func TestMoney_Sub_CurrencyMismatch(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Sub with mismatched currencies should panic")
-		}
-	}()
-	mustMoney(t, 100, "EUR").Sub(mustMoney(t, 100, "USD"))
+	_, err := mustMoney(t, 100, "EUR").Sub(mustMoney(t, 100, "USD"))
+	if err == nil {
+		t.Error("Sub with mismatched currencies should return an error")
+	}
 }
 
 func TestMoney_MulChecked(t *testing.T) {
@@ -222,5 +224,23 @@ func TestMoney_AddChecked_Overflow(t *testing.T) {
 	_, err := a.AddChecked(b)
 	if err == nil {
 		t.Fatal("expected overflow error")
+	}
+}
+
+func TestMoney_Add_Overflow(t *testing.T) {
+	a := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	b := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	_, err := a.Add(b)
+	if err == nil {
+		t.Fatal("Add should reject int64 overflow like AddChecked / extapi.Money")
+	}
+}
+
+func TestMoney_Sub_Overflow(t *testing.T) {
+	a := mustMoney(t, -9_000_000_000_000_000_000, "EUR")
+	b := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	_, err := a.Sub(b)
+	if err == nil {
+		t.Fatal("Sub should reject int64 overflow like extapi.Money")
 	}
 }

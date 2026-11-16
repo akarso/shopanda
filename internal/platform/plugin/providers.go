@@ -5,11 +5,13 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
@@ -24,6 +26,9 @@ type Bootstrap struct {
 	DB        *sql.DB
 	Customers customer.CustomerRepository
 	Variants  catalog.VariantRepository
+	Products  catalog.ProductRepository
+	Orders    order.OrderRepository
+	Carts     cart.CartRepository
 }
 
 // RegisterSearchProvider registers the active search backend implementation.

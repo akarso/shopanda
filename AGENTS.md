@@ -249,6 +249,21 @@ Hotfixes and promote PRs update **product docs only** (guides, C4, runbook, READ
 
 ---
 
+## Extension recipes
+
+Short pointers for plugin work (full mechanism choice → [Extension Points](docs/guides/EXTENSION_POINTS.md)).
+
+| Goal | Recipe |
+| --- | --- |
+| Pick hooks vs pipeline vs events | [EXTENSION_POINTS.md — Quick catalog](docs/guides/EXTENSION_POINTS.md#quick-catalog--i-want--use) |
+| Tutorial walkthrough | [DEVELOPER.md](docs/guides/DEVELOPER.md) |
+| Multi-plugin ordering on the same seam | [PLUGIN_COMPOSITION.md](docs/guides/PLUGIN_COMPOSITION.md) |
+| Public SDK plugin (`pkg/pluginsdk` only) | Register `pluginsdk.Adapt(yours)`; copy [`plugins/extref`](plugins/extref/README.md) |
+| Plugin-only cart field + trusted add | `RegisterField` with `PluginOnlyWrite`, then `WithPluginWrite` + `CartPort.AddItem` (pitfalls in EXTENSION_POINTS) |
+| Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
+
+---
+
 ## Guiding Principle
 
 > Build a system where complex things are possible,

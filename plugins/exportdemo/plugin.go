@@ -3,7 +3,6 @@ package exportdemo
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
@@ -12,21 +11,18 @@ import (
 type Plugin struct{}
 
 // New returns the export remap reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "exportdemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("exportdemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("exportdemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("exportdemo plugin: config not configured")
-	}
-	if !app.Config.Plugins.ExportDemo.Enabled {
+	if !h.ConfigBool("plugins.exportdemo.enabled") {
 		return fmt.Errorf("exportdemo plugin: disabled (plugins.exportdemo.enabled=false)")
 	}
-	return pluginsdk.New(app, p.Name()).Export().RegisterProductRow(100, func(ctx *extapi.ExportRowContext) error {
+	return pluginsdk.NewHost(h, p.Name()).Export().RegisterProductRow(100, func(ctx *extapi.ExportRowContext) error {
 		RemapProductRow(ctx)
 		return nil
 	})

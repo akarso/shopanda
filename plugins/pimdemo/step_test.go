@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	sdkgraphql "github.com/akarso/shopanda/pkg/integrationsdk/graphql"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 func mockPIMServer(t *testing.T, body string, calls *atomic.Int32) *httptest.Server {
@@ -32,7 +33,7 @@ func TestEnrichmentStep_FetchesAndCaches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	step := NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(time.Minute), nil)
+	step := pluginsdk.AdaptProductCompositionStep(NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(time.Minute), nil))
 
 	product, err := catalog.NewProduct("p1", "Shirt", "shirt")
 	if err != nil {
@@ -75,7 +76,7 @@ func TestEnrichmentStep_GraphQLErrorDoesNotFailPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	step := NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(time.Minute), nil)
+	step := pluginsdk.AdaptProductCompositionStep(NewEnrichmentStep(newEnrichmentFetcher(client), newTTLCache(time.Minute), nil))
 	product, err := catalog.NewProduct("p1", "Shirt", "shirt")
 	if err != nil {
 		t.Fatalf("NewProduct: %v", err)

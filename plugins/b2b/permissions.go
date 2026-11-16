@@ -1,10 +1,11 @@
 package b2b
 
-import "github.com/akarso/shopanda/internal/domain/rbac"
-
+// Permission strings registered via Host.RegisterPermission. Untyped string
+// constants convert implicitly to internal/domain/rbac.Permission at the
+// framework boundary (see pluginsdk.Host.RegisterPermission).
 const (
-	PermissionGroupsRead  rbac.Permission = "b2b.groups.read"
-	PermissionGroupsWrite rbac.Permission = "b2b.groups.write"
-	PermissionPricesRead  rbac.Permission = "b2b.prices.read"
-	PermissionPricesWrite rbac.Permission = "b2b.prices.write"
+	PermissionGroupsRead  = "b2b.groups.read"
+	PermissionGroupsWrite = "b2b.groups.write"
+	PermissionPricesRead  = "b2b.prices.read"
+	PermissionPricesWrite = "b2b.prices.write"
 )

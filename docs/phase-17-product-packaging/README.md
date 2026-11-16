@@ -40,8 +40,12 @@ See [`ROADMAP.md`](ROADMAP.md), [`specs/`](specs/), and [`prs/`](prs/).
 ## Status
 
 **Tracks A–D done** (PR-1500–1534).
-**Track E** started: ADR accepted (PR-1540); Host facade and ergonomics
-follow as PR-1541–1552 (see ROADMAP).
+**Track E done** (PR-1540–1552): ADR, Host facade, public pricing/checkout/
+composition/port contracts, declarative Needs, reference plugin + harness,
+and (PR-1552) all non-core plugins migrated to `pluginsdk.Host` so
+`plugins/*` compiles against `pkg/*` only (`plugins/core/*` remains exempt
+as the driver-adapter layer the SDK wraps). E2–E4 (external module publish +
+fork→module guide) remain for later.
 
 PR range **PR-1500–1552**.
 

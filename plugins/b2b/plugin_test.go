@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -16,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/b2b"
 )
 
@@ -41,6 +43,12 @@ func testApp(cfg *config.Config, db *sql.DB) *plugin.App {
 			Customers: customers,
 			Variants:  variants,
 		}
+		if err := app.BindCustomerPort(pluginsdk.NewCustomerPort(customers)); err != nil {
+			panic(err)
+		}
+		if err := app.BindCatalogPort(pluginsdk.NewCatalogPort(nil, variants)); err != nil {
+			panic(err)
+		}
 	}
 	return app
 }
@@ -57,8 +65,33 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			B2B: config.B2BPluginConfig{Enabled: false},
 		},
 	}
-	if err := b2b.New().Init(testApp(cfg, nil)); err == nil {
+	if err := b2b.New().Init(pluginsdk.AsHost(testApp(cfg, nil))); err == nil {
 		t.Fatal("Init() expected error when plugins.b2b.enabled is false")
+	}
+}
+
+// TestPlugin_Adapt_Init_ReadsB2BConfigNamespace ensures production Adapt
+// scoping (AsHostFor with Name shopanda/b2b) resolves plugins.b2b.* — not
+// plugins.shopanda.*. Failure mode without the fix: "disabled" / license
+// errors even when B2B is enabled.
+func TestPlugin_Adapt_Init_ReadsB2BConfigNamespace(t *testing.T) {
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			B2B: config.B2BPluginConfig{Enabled: true, LicenseKey: "DEV-local"},
+		},
+	}
+	app := testApp(cfg, nil)
+	err := pluginsdk.Adapt(b2b.New()).Init(app)
+	if err == nil {
+		t.Fatal("expected Init to fail on missing bootstrap DB, not succeed")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "disabled") || strings.Contains(msg, "license") {
+		t.Fatalf("config namespace broken under Adapt (got %q)", msg)
+	}
+	if !strings.Contains(msg, "database") && !strings.Contains(msg, "bootstrap") && !strings.Contains(msg, "db") {
+		// Accept any post-config failure; reject only disabled/license.
+		t.Logf("Init error after config check: %v", err)
 	}
 }
 
@@ -68,7 +101,7 @@ func TestPlugin_Init_InvalidLicenseReturnsError(t *testing.T) {
 			B2B: config.B2BPluginConfig{Enabled: true, LicenseKey: ""},
 		},
 	}
-	if err := b2b.New().Init(testApp(cfg, nil)); err == nil {
+	if err := b2b.New().Init(pluginsdk.AsHost(testApp(cfg, nil))); err == nil {
 		t.Fatal("Init() expected error for missing license key")
 	}
 }
@@ -79,7 +112,7 @@ func TestPlugin_Init_MissingDBReturnsError(t *testing.T) {
 			B2B: config.B2BPluginConfig{Enabled: true, LicenseKey: "DEV-local"},
 		},
 	}
-	if err := b2b.New().Init(testApp(cfg, nil)); err == nil {
+	if err := b2b.New().Init(pluginsdk.AsHost(testApp(cfg, nil))); err == nil {
 		t.Fatal("Init() expected error when database bootstrap is missing")
 	}
 }
@@ -114,7 +147,7 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 	app := testApp(cfg, db)
 	log := app.Logger
 	reg := plugin.NewRegistry(log)
-	reg.Register(b2b.New())
+	reg.Register(pluginsdk.Adapt(b2b.New()))
 	if summary := reg.InitAll(app); summary.Failed != 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll summary = %+v", summary)
 	}

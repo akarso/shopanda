@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/cartdemo"
 )
 
@@ -24,7 +25,7 @@ func TestBuild_IncludesPluginPricingAndHooks(t *testing.T) {
 		},
 	}
 	registry := plugin.NewRegistry(log)
-	registry.Register(cartdemo.New())
+	registry.Register(pluginsdk.Adapt(cartdemo.New()))
 	app := &plugin.App{
 		Logger: log,
 		Bus:    event.NewBus(log),

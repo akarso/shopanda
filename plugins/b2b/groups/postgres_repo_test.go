@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/google/uuid"
+
 	"github.com/akarso/shopanda/internal/platform/migrate"
 	"github.com/akarso/shopanda/plugins/b2b"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
@@ -55,7 +55,7 @@ func TestPostgresRepo_SaveListFind(t *testing.T) {
 		t.Fatalf("NewPostgresRepo: %v", err)
 	}
 
-	g, err := customergroup.NewGroup(id.New(), "wholesale", "Wholesale buyers", "Tier 1")
+	g, err := groups.NewGroup(uuid.NewString(), "wholesale", "Wholesale buyers", "Tier 1")
 	if err != nil {
 		t.Fatalf("NewGroup: %v", err)
 	}

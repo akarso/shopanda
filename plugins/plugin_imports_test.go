@@ -13,14 +13,15 @@ import (
 
 const modulePath = "github.com/akarso/shopanda"
 
-// Allowed shared prefixes (PR-1017 fixed allowlist).
+// Allowed shared prefixes (PR-1552 pkg-only allowlist).
+// Non-core plugins may depend only on the public SDK surface (pkg/*) plus
+// stdlib/external modules and same-plugin siblings — never on any
+// internal/* package. plugins/core/* is exempt (see the "core" SkipDir
+// below) since it implements the driver adapters the SDK itself wraps.
 // Sibling packages are allowed only under the same top-level plugin directory
 // (e.g. plugins/b2b → plugins/b2b/groups), not plugins/core or other plugins.
 var allowedSharedPrefixes = []string{
 	modulePath + "/pkg/",
-	modulePath + "/internal/domain/",
-	modulePath + "/internal/application/",
-	modulePath + "/internal/platform/",
 }
 
 var forbiddenPrefixes = []string{

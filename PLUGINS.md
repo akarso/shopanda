@@ -15,19 +15,32 @@ This document describes the **three-tier model**, extension boundaries, and what
 | **External plugin** | author module, e.g. `plugins/example/` | compile-time register + config | Custom pipeline steps, events, permissions |
 | **B2B module** | `plugins/b2b/` | compile-time register + license key | Commercial wholesale / business-buyer features ([COMMERCIAL.md](docs/COMMERCIAL.md)) |
 
-All tiers implement the same interface:
+Core plugins (`plugins/core/*`) implement the core-internal interface directly, since they
+implement the driver adapters the public SDK itself wraps:
 
 ```go
+// internal/platform/plugin
 type Plugin interface {
     Name() string
     Init(app *App) error
 }
 ```
 
+External plugins and the B2B module implement the public SDK interface instead (PR-1541–1552) —
+they depend only on `pkg/pluginsdk` + `pkg/extapi`, never `internal/*`:
+
+```go
+// pkg/pluginsdk
+type Plugin interface {
+    Name() string
+    Init(h Host) error
+}
+```
+
 Registration is **compile-time**:
 
 - Core plugins: `plugins/core/register.go` (called from `cmd/api/register_plugins.go`)
-- External plugins: add `registry.Register(yours.New())` in `cmd/api/register_plugins.go`
+- External plugins: add `registry.Register(pluginsdk.Adapt(yours.New()))` in `cmd/api/register_plugins.go`
 
 There is no runtime plugin discovery, `.so` loading, or marketplace in the current release.
 
@@ -216,9 +229,18 @@ Reference scaffold output (unregistered): [`plugins/sitekit/`](plugins/sitekit/)
 
 ## Add an external plugin
 
-1. Create a package implementing `plugin.Plugin` (copy from [`plugins/example/`](plugins/example/)).
-2. Register extensions in `Init` via `plugin.App`.
-3. Add `registry.Register(yours.New())` in `cmd/api/register_plugins.go` (optionally behind a config flag).
+1. Create a package implementing `pluginsdk.Plugin` — `Init(pluginsdk.Host) error` (copy from
+   [`plugins/example/`](plugins/example/) or [`plugins/extref/`](plugins/extref/)). Product (non-core)
+   plugins depend **only** on `pkg/pluginsdk` + `pkg/extapi` (plus stdlib/external modules and
+   same-plugin siblings) — never `internal/*`. `plugins/core/*` is the one exemption (it implements
+   the driver adapters the SDK itself wraps).
+2. Register extensions and ports in `Init` via the `pluginsdk.Host` / `pluginsdk.SDK` facade
+   (pricing/checkout/composition steps, hooks, admin routes, permissions, config fields, cart/
+   catalog/order/customer ports, CLI commands — see [DEVELOPER.md](docs/guides/DEVELOPER.md)).
+3. Add `registry.Register(pluginsdk.Adapt(yours.New()))` in `cmd/api/register_plugins.go`
+   (optionally behind a config flag). `pluginsdk.Adapt` bridges the public `Host`-based plugin into
+   the core registry, and also wires `Migration()` automatically if the plugin implements
+   `pluginsdk.Migrator`.
 4. Rebuild and restart.
 
 Example registration:
@@ -228,10 +250,14 @@ Example registration:
 func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
     core.Register(registry, cfg)
     if cfg.Plugins.Example.Enabled {
-        registry.Register(example.New())
+        registry.Register(pluginsdk.Adapt(example.New()))
     }
 }
 ```
+
+Every non-core plugin under `plugins/` (including the commercial [`plugins/b2b/`](plugins/b2b/)
+module) follows this pattern; `plugins/plugin_imports_test.go`'s `TestImportBoundary` enforces the
+`pkg/*`-only import rule at build time.
 
 ---
 
@@ -276,6 +302,7 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
 - [Integrator Platform spec](docs/guides/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
+- [extref SDK reference](plugins/extref/README.md) — `pluginsdk.Adapt` only (`pkg/pluginsdk` + `pkg/extapi`)
 - [Promotion rule reference plugin](plugins/promodemo/README.md) — custom catalog promotion JSON rule types (PR-862)
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)

@@ -14,7 +14,7 @@ func (s *SDK) Export() *Export {
 
 // RegisterRow registers a handler for entity at priority (lower runs first).
 func (e *Export) RegisterRow(entity extapi.ExportEntity, priority int, handler extapi.ExportRowHandler) error {
-	return e.sdk.app.Export(e.sdk.plugin).RegisterRowHook(entity, priority, handler)
+	return coreApp(e.sdk.host).Export(e.sdk.plugin).RegisterRowHook(entity, priority, handler)
 }
 
 // RegisterProductRow registers a product export row hook.

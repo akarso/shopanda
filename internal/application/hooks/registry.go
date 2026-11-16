@@ -95,6 +95,42 @@ func (r *Registry) Invoke(_ context.Context, hookCtx *Context) error {
 	return nil
 }
 
+// InvokeAdapted runs all handlers for hookCtx.Name in priority order, like
+// Invoke, but calls adapt(registrant, hookCtx) before each handler so that
+// handler gets its own view of the payload. Used when a payload value is
+// sensitive to which plugin is receiving it (e.g. a plugin-only extension
+// value that must not leak to every handler just because one handler's
+// registrant is trusted to see it): adapt mutates/returns hookCtx with that
+// value recomputed for the current registrant. Other payload keys are left
+// as-is, so handlers still see each other's hctx.Set calls like plain
+// Invoke. A nil adapt or nil return falls back to the unadapted hookCtx.
+func (r *Registry) InvokeAdapted(ctx context.Context, hookCtx *Context, adapt func(registrant string, src *Context) *Context) error {
+	if adapt == nil {
+		return r.Invoke(ctx, hookCtx)
+	}
+	if r == nil || hookCtx == nil {
+		return nil
+	}
+	if strings.TrimSpace(hookCtx.Name) == "" {
+		return fmt.Errorf("hooks: context name must not be empty")
+	}
+
+	r.mu.RLock()
+	handlers := append([]registeredHandler(nil), r.handlers[hookCtx.Name]...)
+	r.mu.RUnlock()
+
+	for _, h := range handlers {
+		view := adapt(h.registrant, hookCtx)
+		if view == nil {
+			view = hookCtx
+		}
+		if err := r.runHandler(view, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Registry) runHandler(hookCtx *Context, h registeredHandler) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {

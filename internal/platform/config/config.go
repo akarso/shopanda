@@ -580,6 +580,7 @@ type PluginsConfig struct {
 	WarehouseDemo   WarehouseDemoPluginConfig   `yaml:"warehousedemo"`
 	PimDemo         PimDemoPluginConfig         `yaml:"pimdemo"`
 	B2B             B2BPluginConfig             `yaml:"b2b"`
+	ExtRef          ExtRefPluginConfig          `yaml:"extref"`
 	MetalDogs       MetalDogsPluginConfig       `yaml:"metaldogs"`
 }
 
@@ -596,6 +597,11 @@ type ExamplePluginConfig struct {
 
 // SlotsDemoPluginConfig toggles the slots reference plugin in plugins/slotsdemo.
 type SlotsDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// ExtRefPluginConfig toggles the public SDK reference plugin in plugins/extref.
+type ExtRefPluginConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
@@ -791,6 +797,19 @@ func Load(path string) (*LoadResult, error) {
 // Get returns a config value by dot-notation key, or empty string if not found.
 func Get(key string) string {
 	return values[key]
+}
+
+// Flatten returns the dot-notation config value map for cfg, scoped to a
+// specific *Config instance rather than the last Load (test- and
+// instance-safe). Unlike the package-level Get/GetOrDefault cache, secret
+// fields are returned unredacted — plugins need their real API
+// keys/HMAC secrets, and this map is never written to an HTTP response.
+// Used by pluginsdk.Host.ConfigValue/ConfigBool/ConfigInt(64).
+func Flatten(cfg *Config) map[string]string {
+	if cfg == nil {
+		return nil
+	}
+	return flattenWith(cfg, func(v string) string { return v })
 }
 
 // GetOrDefault returns the value for key, or fallback if not found.
@@ -1228,6 +1247,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_SLOTSDEMO_ENABLED"); v != "" {
 		cfg.Plugins.SlotsDemo.Enabled = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_EXTREF_ENABLED"); v != "" {
+		cfg.Plugins.ExtRef.Enabled = parseEnvBool(v)
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.CartDemo.Enabled = parseEnvBool(v)
 	}
@@ -1453,8 +1475,18 @@ func redactSecret(value string) string {
 	return "***"
 }
 
-// flatten converts the Config struct into a dot-notation key-value map.
+// flatten converts the Config struct into a dot-notation key-value map,
+// redacting secret-bearing fields (passwords, API keys, webhook/tracing
+// secrets) as "***". Used for the package-level Get/GetOrDefault cache and
+// anywhere a value may reach an HTTP response (e.g. admin config display).
 func flatten(cfg *Config) map[string]string {
+	return flattenWith(cfg, redactSecret)
+}
+
+// flattenWith builds the same dot-notation map as flatten but applies redact
+// to secret-bearing fields instead of the fixed redactSecret. Pass through a
+// no-op identity function to get real values back (see FlattenSecrets).
+func flattenWith(cfg *Config, redact func(string) string) map[string]string {
 	m := make(map[string]string)
 	m["server.host"] = cfg.Server.Host
 	m["server.port"] = strconv.Itoa(cfg.Server.Port)
@@ -1466,7 +1498,7 @@ func flatten(cfg *Config) map[string]string {
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User
-	m["database.password"] = redactSecret(cfg.Database.Password)
+	m["database.password"] = redact(cfg.Database.Password)
 	m["database.name"] = cfg.Database.Name
 	m["database.sslmode"] = cfg.Database.SSLMode
 	m["database.query_exec_mode"] = cfg.Database.QueryExecMode
@@ -1543,6 +1575,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
 	m["plugins.slotsdemo.enabled"] = strconv.FormatBool(cfg.Plugins.SlotsDemo.Enabled)
+	m["plugins.extref.enabled"] = strconv.FormatBool(cfg.Plugins.ExtRef.Enabled)
 	m["plugins.cartdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CartDemo.Enabled)
 	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
@@ -1555,17 +1588,18 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)
 	m["plugins.checkoutdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CheckoutDemo.Enabled)
 	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
-	m["plugins.integrationdemo.integration_api_key"] = redactSecret(cfg.Plugins.IntegrationDemo.IntegrationAPIKey)
-	m["plugins.integrationdemo.integration_hmac_secret"] = redactSecret(cfg.Plugins.IntegrationDemo.IntegrationHMACSecret)
+	m["plugins.integrationdemo.integration_api_key"] = redact(cfg.Plugins.IntegrationDemo.IntegrationAPIKey)
+	m["plugins.integrationdemo.integration_hmac_secret"] = redact(cfg.Plugins.IntegrationDemo.IntegrationHMACSecret)
 	m["plugins.warehousedemo.enabled"] = strconv.FormatBool(cfg.Plugins.WarehouseDemo.Enabled)
 	m["plugins.warehousedemo.warehouse_base_url"] = cfg.Plugins.WarehouseDemo.WarehouseBaseURL
-	m["plugins.warehousedemo.warehouse_api_key"] = redactSecret(cfg.Plugins.WarehouseDemo.WarehouseAPIKey)
+	m["plugins.warehousedemo.warehouse_api_key"] = redact(cfg.Plugins.WarehouseDemo.WarehouseAPIKey)
 	m["plugins.warehousedemo.sync_cron"] = cfg.Plugins.WarehouseDemo.SyncCron
 	m["plugins.pimdemo.enabled"] = strconv.FormatBool(cfg.Plugins.PimDemo.Enabled)
 	m["plugins.pimdemo.pim_graphql_endpoint"] = cfg.Plugins.PimDemo.PimGraphQLEndpoint
-	m["plugins.pimdemo.pim_api_key"] = redactSecret(cfg.Plugins.PimDemo.PimAPIKey)
+	m["plugins.pimdemo.pim_api_key"] = redact(cfg.Plugins.PimDemo.PimAPIKey)
 	m["plugins.pimdemo.cache_ttl"] = cfg.Plugins.PimDemo.CacheTTL
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
+	m["plugins.b2b.license_key"] = redact(cfg.Plugins.B2B.LicenseKey)
 	m["plugins.metaldogs.enabled"] = strconv.FormatBool(cfg.Plugins.MetalDogs.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
@@ -1576,7 +1610,7 @@ func flatten(cfg *Config) map[string]string {
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)
 	for k, v := range cfg.Webhooks.Secrets {
-		m["webhooks.secrets."+k] = redactSecret(v)
+		m["webhooks.secrets."+k] = redact(v)
 	}
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
 	m["rate_limit.driver"] = cfg.RateLimit.Driver
@@ -1595,7 +1629,7 @@ func flatten(cfg *Config) map[string]string {
 	// Redacted, same as webhooks.secrets.* above — tracing.headers commonly
 	// carries a collector API key (Grafana Cloud, Honeycomb).
 	for k, v := range cfg.Tracing.Headers {
-		m["tracing.headers."+k] = redactSecret(v)
+		m["tracing.headers."+k] = redact(v)
 	}
 	return m
 }

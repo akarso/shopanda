@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/pimdemo"
 )
 
@@ -35,7 +36,7 @@ func initPimDemoPlugin(t *testing.T, endpoint string) *plugin.App {
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(pimdemo.New())
+	reg.Register(pluginsdk.Adapt(pimdemo.New()))
 	app := testApp(cfg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)
@@ -55,7 +56,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			PimDemo: config.PimDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := pimdemo.New().Init(testApp(cfg)); err == nil {
+	if err := pimdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }
@@ -87,7 +88,7 @@ func TestPlugin_Init_InvalidCacheTTL(t *testing.T) {
 			},
 		},
 	}
-	if err := pimdemo.New().Init(testApp(cfg)); err == nil {
+	if err := pimdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected cache_ttl error")
 	}
 }
