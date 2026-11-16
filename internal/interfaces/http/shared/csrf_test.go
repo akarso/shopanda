@@ -196,3 +196,16 @@ func TestCSRFMiddleware_IgnoresCartHTMLPath(t *testing.T) {
 		t.Fatalf("HTML /cart/add must stay outside CSRF (called=%v code=%d)", called, rec.Code)
 	}
 }
+
+func TestCSRFMiddleware_RequiresExtrefPath(t *testing.T) {
+	next := shared.CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/extref/design-line", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	next.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /extref/* without CSRF: status = %d, want 403", rec.Code)
+	}
+}

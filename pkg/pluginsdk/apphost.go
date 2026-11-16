@@ -173,6 +173,12 @@ func (h *appHost) Hooks(registrant string) HookAPI {
 }
 
 func (h *appHost) RegisterField(def extapi.FieldDef) error {
+	// Adapt/AsHostFor always set pluginName — attribute ownership even when
+	// Init is called outside InitAllContext (tests/harness) so plugin-only
+	// fields are not left unowned and filtered away on CartPort.Get.
+	if h.pluginName != "" {
+		return h.app.ExtensionsFor(h.pluginName).RegisterField(fieldDefToDomain(def))
+	}
 	return h.app.Extensions().RegisterField(fieldDefToDomain(def))
 }
 
@@ -181,10 +187,17 @@ func (h *appHost) RegisterFieldFor(owner string, def extapi.FieldDef) error {
 }
 
 func (h *appHost) PluginWriteContext(ctx context.Context, pluginName string, fieldCodes ...string) (context.Context, error) {
+	// Attributed Hosts cannot impersonate another plugin's write grant.
+	if h.pluginName != "" {
+		pluginName = h.pluginName
+	}
 	return h.app.PluginWriteContext(ctx, pluginName, fieldCodes...)
 }
 
 func (h *appHost) WithPluginWrite(ctx context.Context, pluginName string, fieldCodes ...string) context.Context {
+	if h.pluginName != "" {
+		pluginName = h.pluginName
+	}
 	return h.app.WithPluginWrite(ctx, pluginName, fieldCodes...)
 }
 
@@ -206,7 +219,19 @@ func (h *appHost) Cart() (CartPort, bool) {
 		return nil, false
 	}
 	cp, ok := p.(CartPort)
-	return cp, ok
+	if !ok {
+		return nil, false
+	}
+	// Attributed Hosts must receive an owner-scoped *cartPort. Any other
+	// concrete CartPort cannot apply owner filtering — fail closed.
+	if h.pluginName != "" {
+		base, ok := cp.(*cartPort)
+		if !ok {
+			return nil, false
+		}
+		return base.withOwner(h.pluginName), true
+	}
+	return cp, true
 }
 
 // declaredOrUnscoped reports whether it's safe to hand this plugin a

@@ -77,6 +77,10 @@ func (s *extValueRepoStub) UpsertBatch(ctx context.Context, values []domainext.V
 	return nil
 }
 
+func (s *extValueRepoStub) UpsertBatchSelective(ctx context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	return s.UpsertBatch(ctx, values)
+}
+
 func (s *extValueRepoStub) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := targetKey(target)
 	if s.values[key] != nil {

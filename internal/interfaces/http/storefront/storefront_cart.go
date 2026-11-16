@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -16,14 +15,11 @@ import (
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
-)
-
-const (
-	storefrontCartCookieName   = "shopanda_storefront_cart"
-	storefrontCartCookieMaxAge = 60 * 60 * 24 * 30
+	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
 var storefrontMiniCartTemplate = template.Must(template.New("storefront-mini-cart").Parse(`
@@ -580,14 +576,11 @@ func (h *StorefrontHandler) currentCart(r *http.Request) (*cart.Cart, error) {
 		}
 		return currentCart, nil
 	}
-	cookie, err := r.Cookie(storefrontCartCookieName)
-	if err == http.ErrNoCookie {
+	cartID, ok := storefrontsession.CartIDFromRequest(r)
+	if !ok {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	currentCart, err := h.carts.GetCart(r.Context(), cookie.Value, storefrontCustomerID(r))
+	currentCart, err := h.carts.GetCart(r.Context(), cartID, storefrontCustomerID(r))
 	if apperror.Is(err, apperror.CodeNotFound) {
 		return nil, nil
 	}
@@ -619,7 +612,7 @@ func (h *StorefrontHandler) loadOrCreateStorefrontCart(r *http.Request, w http.R
 		return nil, false, err
 	}
 	if setGuestCookie && storefrontCustomerID(r) == "" {
-		storefrontSetCartCookie(w, r, created.ID)
+		h.storefrontSetCartCookie(w, r, created.ID)
 	}
 	return created, true, nil
 }
@@ -639,29 +632,12 @@ func storefrontCustomerID(r *http.Request) string {
 	return identity.UserID
 }
 
-func storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     storefrontCartCookieName,
-		Value:    cartID,
-		Path:     "/",
-		MaxAge:   storefrontCartCookieMaxAge,
-		HttpOnly: true,
-		Secure:   r != nil && r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-	})
+func (h *StorefrontHandler) storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID string) {
+	storefrontsession.SetCartCookieSecure(w, cartID, httpshared.IsRequestSecure(r, h.trustedProxies))
 }
 
-func storefrontClearCartCookie(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     storefrontCartCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-		HttpOnly: true,
-		Secure:   r != nil && r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-	})
+func (h *StorefrontHandler) storefrontClearCartCookie(w http.ResponseWriter, r *http.Request) {
+	storefrontsession.ClearCartCookieSecure(w, httpshared.IsRequestSecure(r, h.trustedProxies))
 }
 
 func (h *StorefrontHandler) addLineToStorefrontCart(r *http.Request, currentCart *cart.Cart, customerID, variantID string, quantity int, exts []domainext.ValueInput) (*cart.Cart, error) {

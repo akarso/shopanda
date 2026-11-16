@@ -29,6 +29,10 @@ func (storefrontFormTestValueRepo) UpsertBatch(_ context.Context, _ []domainext.
 	return nil
 }
 
+func (storefrontFormTestValueRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	return storefrontFormTestValueRepo{}.UpsertBatch(ctx, values)
+}
+
 func (storefrontFormTestValueRepo) Delete(_ context.Context, _ domainext.Target, _ string) error {
 	return apperror.NotFound("extension value not found")
 }

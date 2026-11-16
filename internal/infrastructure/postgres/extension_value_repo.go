@@ -144,6 +144,72 @@ func (r *ExtensionValueRepo) upsertTx(ctx context.Context, tx *sql.Tx, value dom
 	return nil
 }
 
+// UpsertBatchSelective upserts plain and ExclusiveString fields in one
+// transaction. Exclusive codes use the conditional WHERE predicate; a conflict
+// rolls back the whole batch (including already-written plain rows in this tx).
+func (r *ExtensionValueRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	if len(values) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, value := range values {
+		if _, exclusive := exclusiveFieldCodes[value.FieldCode]; exclusive {
+			if err := r.upsertPreserveDistinctStringTx(ctx, tx, value); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.upsertTx(ctx, tx, value); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("extension_value_repo: commit: %w", err)
+	}
+	return nil
+}
+
+func (r *ExtensionValueRepo) upsertPreserveDistinctStringTx(ctx context.Context, tx *sql.Tx, value domainext.Value) error {
+	payload, err := json.Marshal(value.Payload)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: upsert marshal: %w", err)
+	}
+	updatedAt := value.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	// INSERT wins when no row exists. ON CONFLICT DO UPDATE only applies when
+	// the stored string is null, blank, or equal — otherwise zero rows → conflict.
+	const q = `INSERT INTO extension_values (target_type, target_id, field_code, value, updated_by, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (target_type, target_id, field_code) DO UPDATE SET
+			value = EXCLUDED.value,
+			updated_by = EXCLUDED.updated_by,
+			updated_at = EXCLUDED.updated_at
+		WHERE extension_values.value->>'string_value' IS NULL
+			OR btrim(extension_values.value->>'string_value') = ''
+			OR btrim(extension_values.value->>'string_value') = btrim(EXCLUDED.value->>'string_value')`
+	res, err := tx.ExecContext(ctx, q,
+		string(value.TargetType), value.TargetID, value.FieldCode, payload, value.UpdatedBy, updatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: exclusive upsert: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: exclusive upsert rows: %w", err)
+	}
+	if n == 0 {
+		return domainext.ErrStringValueConflict
+	}
+	return nil
+}
+
 // ReplaceTarget atomically restores target to exactly values: upserts the
 // snapshot rows, then deletes any other field codes for that target, and
 // commits once. Upsert-first means a mid-replace failure never leaves the

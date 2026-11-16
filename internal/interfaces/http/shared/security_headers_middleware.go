@@ -2,6 +2,8 @@ package shared
 
 import (
 	"net/http"
+
+	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
 // Security header values (exact; covered by tests).
@@ -29,10 +31,12 @@ func SecurityHeadersMiddleware(trustedProxies ...string) Middleware {
 			h.Set("X-Content-Type-Options", HeaderContentTypeOptions)
 			h.Set("X-Frame-Options", HeaderFrameOptions)
 			h.Set("Referrer-Policy", HeaderReferrerPolicy)
-			if IsRequestSecure(r, trusted) {
+			secure := IsRequestSecure(r, trusted)
+			if secure {
 				h.Set("Strict-Transport-Security", HeaderHSTS)
 			}
-			next.ServeHTTP(w, r)
+			// Propagate proxy-aware Secure for guest cart cookies (EnsureStorefrontCart).
+			next.ServeHTTP(w, r.WithContext(storefrontsession.WithCookieSecure(r.Context(), secure)))
 		})
 	}
 }

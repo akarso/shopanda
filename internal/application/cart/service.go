@@ -63,6 +63,8 @@ type Service struct {
 type extensionValueWriter interface {
 	ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error
 	UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error)
+	UpsertBatchSelective(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool, exclusiveFieldCodes map[string]struct{}) ([]domainext.Value, error)
+	Delete(ctx context.Context, target domainext.Target, fieldCode string, canAccessPrivate bool) error
 	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
 	DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error
 	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
@@ -73,6 +75,8 @@ type extensionValueWriter interface {
 	ListByTarget(ctx context.Context, target domainext.Target) ([]domainext.Value, error)
 	ReplaceTarget(ctx context.Context, target domainext.Target, values []domainext.Value) error
 	ListTargetIDsByTypeAndIDPrefix(ctx context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error)
+	// ListByCartItems is the plugin-facing read (private filtered unless includePrivate).
+	ListByCartItems(ctx context.Context, cartID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error)
 }
 
 // NewService creates a cart application service.
@@ -254,6 +258,175 @@ func (s *Service) GetActiveCartByCustomer(ctx context.Context, customerID string
 		return nil, apperror.NotFound("no active cart for customer")
 	}
 	return c, nil
+}
+
+// EnsureActiveCart returns the customer's active cart or creates one.
+// customerID must be non-empty. FindActiveByCustomerID only returns active
+// carts, so a non-active leftover does not block creating a fresh cart.
+func (s *Service) EnsureActiveCart(ctx context.Context, customerID, currency string) (*domainCart.Cart, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return nil, apperror.Validation("customer id must not be empty")
+	}
+	c, err := s.carts.FindActiveByCustomerID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: ensure active: %w", err)
+	}
+	if c != nil {
+		return c, nil
+	}
+	return s.CreateCart(ctx, customerID, currency)
+}
+
+// DeleteLineExtension removes one stored extension value on a cart line.
+// Verifies cart ownership first; PluginOnlyWrite still requires WithPluginWrite.
+func (s *Service) DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error {
+	if s.extensions == nil {
+		return apperror.Validation("extension values are not supported")
+	}
+	if _, err := s.GetCart(ctx, cartID, customerID); err != nil {
+		return err
+	}
+	variantID = strings.TrimSpace(variantID)
+	fieldCode = strings.TrimSpace(fieldCode)
+	if variantID == "" || fieldCode == "" {
+		return apperror.Validation("variant id and field code must not be empty")
+	}
+	if err := s.extensions.Delete(ctx, domainext.CartItemTarget(cartID, variantID), fieldCode, false); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpsertLineExtension writes extension values on an existing cart line without
+// changing quantity. ExclusiveString fields return Conflict when a stored
+// non-empty string already differs; other strings may be rewritten.
+func (s *Service) UpsertLineExtension(ctx context.Context, cartID, customerID, variantID string, inputs []domainext.ValueInput, updatedBy string) error {
+	if s.extensions == nil {
+		return apperror.Validation("extension values are not supported")
+	}
+	writeCtx := ctx
+	ctx = extensionapp.StripPluginWrite(ctx)
+	c, err := s.GetCart(ctx, cartID, customerID)
+	if err != nil {
+		return err
+	}
+	if !c.IsActive() {
+		return apperror.Validation("cart: cannot modify non-active cart")
+	}
+	variantID = strings.TrimSpace(variantID)
+	if variantID == "" || len(inputs) == 0 {
+		return apperror.Validation("variant id and extension inputs must not be empty")
+	}
+	found := false
+	for _, it := range c.Items {
+		if it.VariantID == variantID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return apperror.NotFound("cart line not found")
+	}
+	target := domainext.CartItemTarget(cartID, variantID)
+	if err := s.extensions.ValidateBatch(writeCtx, target, inputs, false); err != nil {
+		return mapExtensionWriteErr(err)
+	}
+	if err := s.rejectExclusiveStringConflicts(ctx, cartID, variantID, inputs); err != nil {
+		return err
+	}
+	return s.writeLineExtensions(writeCtx, target, inputs, cartExtensionUpdatedBy(customerID, updatedBy))
+}
+
+// rejectExclusiveStringConflicts returns Conflict when an ExclusiveString field
+// already has a different non-empty value (fail-fast before cart Save).
+func (s *Service) rejectExclusiveStringConflicts(ctx context.Context, cartID, variantID string, inputs []domainext.ValueInput) error {
+	if s.extensions == nil || len(inputs) == 0 {
+		return nil
+	}
+	var exclusive exclusiveStringChecker
+	if e, ok := s.extensions.(exclusiveStringChecker); ok {
+		exclusive = e
+	}
+	existing, err := s.extensions.ListByCartItems(ctx, cartID, []string{variantID}, false)
+	if err != nil {
+		return fmt.Errorf("cart service: list line extensions: %w", err)
+	}
+	byCode := map[string]domainext.Value{}
+	for _, v := range existing[variantID] {
+		byCode[v.FieldCode] = v
+	}
+	for _, in := range inputs {
+		if exclusive == nil || !exclusive.IsExclusiveString(in.FieldCode) {
+			continue
+		}
+		prev, ok := byCode[in.FieldCode]
+		if !ok || prev.Payload.StringValue == nil {
+			continue
+		}
+		stored := strings.TrimSpace(*prev.Payload.StringValue)
+		want, _ := in.Value.(string)
+		want = strings.TrimSpace(want)
+		if stored != "" && stored != want {
+			return apperror.Conflict(fmt.Sprintf("extension field %q already set to a different value", in.FieldCode))
+		}
+	}
+	return nil
+}
+
+// writeLineExtensions upserts plain and ExclusiveString fields in one
+// repository transaction so an exclusive conflict rolls back gift_note writes too.
+func (s *Service) writeLineExtensions(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string) error {
+	var exclusive exclusiveStringChecker
+	if e, ok := s.extensions.(exclusiveStringChecker); ok {
+		exclusive = e
+	}
+	exclCodes := map[string]struct{}{}
+	for _, in := range inputs {
+		if exclusive != nil && exclusive.IsExclusiveString(in.FieldCode) {
+			exclCodes[in.FieldCode] = struct{}{}
+		}
+	}
+	if _, err := s.extensions.UpsertBatchSelective(ctx, target, inputs, updatedBy, false, exclCodes); err != nil {
+		return mapExtensionWriteErr(err)
+	}
+	return nil
+}
+
+func mapExtensionWriteErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, domainext.ErrStringValueConflict) {
+		return apperror.Conflict("extension field already set to a different value")
+	}
+	// Leave domain ValidationError / unknown-field / plugin-only errors as-is;
+	// HTTP adapters call extension.MapValueError.
+	return err
+}
+
+// ExtensionFieldOwner returns the registrant that owns code, or "".
+func (s *Service) ExtensionFieldOwner(code string) string {
+	if po, ok := s.extensions.(pluginOnlyFieldChecker); ok {
+		return po.FieldOwner(code)
+	}
+	return ""
+}
+
+// ExtensionFieldPluginOnly reports whether code is PluginOnlyWrite.
+func (s *Service) ExtensionFieldPluginOnly(code string) bool {
+	if po, ok := s.extensions.(pluginOnlyFieldChecker); ok {
+		return po.IsPluginOnlyWrite(code)
+	}
+	return false
+}
+
+// ExtensionFieldExclusiveString reports whether code opts into exclusive string upsert.
+func (s *Service) ExtensionFieldExclusiveString(code string) bool {
+	if e, ok := s.extensions.(exclusiveStringChecker); ok {
+		return e.IsExclusiveString(code)
+	}
+	return false
 }
 
 // ClaimGuestCart assigns a guest cart to a customer or merges it into the
@@ -791,6 +964,10 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		}
 		target := domainext.CartItemTarget(cartID, variantID)
 		if err := s.extensions.ValidateBatch(writeCtx, target, opts.Extensions, false); err != nil {
+			return nil, mapExtensionWriteErr(err)
+		}
+		// Fail before Save so a known exclusive conflict never commits quantity first.
+		if err := s.rejectExclusiveStringConflicts(ctx, cartID, variantID, opts.Extensions); err != nil {
 			return nil, err
 		}
 	}
@@ -832,7 +1009,8 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 
 	if len(opts.Extensions) > 0 {
 		target := domainext.CartItemTarget(cartID, variantID)
-		if _, err := s.extensions.UpsertBatch(writeCtx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
+		// ExclusiveString fields use conditional ON CONFLICT upsert; others use plain UpsertBatch.
+		if err := s.writeLineExtensions(writeCtx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy)); err != nil {
 			if compErr := s.compensateAddItemCart(ctx, c, linesSnap); compErr != nil {
 				return nil, fmt.Errorf("cart service: add item: extension upsert failed (%v); compensate: %w", err, compErr)
 			}

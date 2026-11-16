@@ -62,6 +62,10 @@ func (m *memSnapshotValueRepo) UpsertBatch(_ context.Context, values []domainext
 	return nil
 }
 
+func (m *memSnapshotValueRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	return m.UpsertBatch(ctx, values)
+}
+
 func (m *memSnapshotValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
 	prefix := strings.TrimSuffix(idPrefix, "%")
 	seen := make(map[string]struct{})

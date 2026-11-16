@@ -13,9 +13,25 @@ func (s *Service) validationIssues(ctx context.Context, c *domainCart.Cart) ([]e
 	hookCtx := hooks.NewContext(hooks.HookCartValidate)
 	hookCtx.Set("cart_id", c.ID)
 	hookCtx.Set("customer_id", c.CustomerID)
-	hookCtx.Set("cart", cartViewFromDomain(c))
 	hookCtx.Set("validation_errors", &issues)
-	if err := s.invokeCartHook(ctx, hooks.HookCartValidate, hookCtx); err != nil {
+
+	view, err := s.CartView(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	hookCtx.Set("cart", view)
+
+	var checker pluginOnlyFieldChecker
+	if po, ok := s.extensions.(pluginOnlyFieldChecker); ok {
+		checker = po
+	}
+	// Per-registrant cart view so plugin-only line values (e.g. design_id)
+	// are visible only to the owning handler — same rule as add_item.before.
+	adapt := func(registrant string, src *hooks.Context) *hooks.Context {
+		src.Set("cart", redactCartViewForRegistrant(view, registrant, checker))
+		return src
+	}
+	if err := s.invokeCartHookAdapted(ctx, hooks.HookCartValidate, hookCtx, adapt); err != nil {
 		return nil, err
 	}
 	return hooks.ValidationIssuesFromContext(hookCtx), nil

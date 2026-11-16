@@ -1,7 +1,6 @@
 package storefront
 
 import (
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
 const (
@@ -323,18 +323,15 @@ func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *ht
 	if h.carts == nil {
 		return nil
 	}
-	cookie, err := r.Cookie(storefrontCartCookieName)
-	if errors.Is(err, http.ErrNoCookie) {
+	cartID, ok := storefrontsession.CartIDFromRequest(r)
+	if !ok {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cookie.Value), customerID); err != nil {
+	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cartID), customerID); err != nil {
 		return err
 	}
 	// Clear stale or foreign cart cookies even when ClaimGuestCart becomes a no-op.
-	storefrontClearCartCookie(w, r)
+	h.storefrontClearCartCookie(w, r)
 	return nil
 }
 
