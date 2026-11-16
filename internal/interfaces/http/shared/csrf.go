@@ -147,6 +147,7 @@ func shopandaRequiresCSRFValidation(method string) bool {
 func shopandaRequiresCSRFPath(path string) bool {
 	return strings.HasPrefix(path, "/checkout/") ||
 		strings.HasPrefix(path, "/account/") ||
+		strings.HasPrefix(path, "/extref/") ||
 		shopandaStorefrontCSRFPath(path)
 }
 

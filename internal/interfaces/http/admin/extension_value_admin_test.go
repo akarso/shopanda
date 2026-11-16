@@ -66,6 +66,10 @@ func (m *mockExtensionValueRepo) UpsertBatch(_ context.Context, values []domaine
 	return nil
 }
 
+func (m *mockExtensionValueRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	return m.UpsertBatch(ctx, values)
+}
+
 func (m *mockExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := valueStoreKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {

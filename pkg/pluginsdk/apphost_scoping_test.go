@@ -3,6 +3,7 @@ package pluginsdk_test
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -157,6 +158,21 @@ type scopingFakeCart struct{}
 func (scopingFakeCart) AddItem(context.Context, string, string, string, int, pluginsdk.CartAddItemOpts) error {
 	return nil
 }
+func (scopingFakeCart) Get(context.Context, string, string) (*extapi.CartView, error) {
+	return nil, nil
+}
+func (scopingFakeCart) EnsureActive(context.Context, string, string) (*extapi.CartView, error) {
+	return nil, nil
+}
+func (scopingFakeCart) EnsureStorefrontCart(context.Context, http.ResponseWriter, *http.Request, string) (*extapi.CartView, error) {
+	return nil, nil
+}
+func (scopingFakeCart) DeleteLineExtension(context.Context, string, string, string, string) error {
+	return nil
+}
+func (scopingFakeCart) UpsertLineExtension(context.Context, string, string, string, []pluginsdk.CartExtensionValue, string) error {
+	return nil
+}
 
 func TestAsHostFor_Cart_DeniedWithoutDeclaredNeed(t *testing.T) {
 	app := &plugin.App{}
@@ -169,14 +185,15 @@ func TestAsHostFor_Cart_DeniedWithoutDeclaredNeed(t *testing.T) {
 	}
 }
 
-func TestAsHostFor_Cart_AllowedAfterRequire(t *testing.T) {
+func TestAsHostFor_Cart_NonCartPortDeniedWhenAttributed(t *testing.T) {
 	app := &plugin.App{}
 	if err := app.BindCartPort(scopingFakeCart{}); err != nil {
 		t.Fatalf("BindCartPort: %v", err)
 	}
 	h := pluginsdk.AsHostFor(app, "acme/demo")
 	h.Require(pluginsdk.CapCart)
-	if _, ok := h.Cart(); !ok {
-		t.Fatal("expected Cart() after Require(CapCart)")
+	// Fake CartPort cannot be owner-scoped — fail closed instead of returning unscoped.
+	if _, ok := h.Cart(); ok {
+		t.Fatal("expected Cart() denied for non-*cartPort binding on attributed Host")
 	}
 }

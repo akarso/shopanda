@@ -9,6 +9,9 @@ var (
 	ErrForbiddenPrivateField = errors.New("forbidden private field")
 	// ErrForbiddenPluginOnlyField indicates a write to a plugin-only field from an untrusted path.
 	ErrForbiddenPluginOnlyField = errors.New("field can only be written by a plugin")
+	// ErrStringValueConflict indicates an exclusive string upsert found a different
+	// non-empty stored string_value (e.g. cart line design_id).
+	ErrStringValueConflict = errors.New("extension string value conflict")
 	// ErrPurgeIncomplete indicates the plugin-only definition was soft-deleted but
 	// deleting extension_values did not finish; retry with purge on the soft-deleted row.
 	ErrPurgeIncomplete = errors.New("definition retired; value purge incomplete")

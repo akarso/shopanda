@@ -57,6 +57,9 @@ type Access struct {
 	ReadRoles       []string
 	WriteRoles      []string
 	PluginOnlyWrite bool
+	// ExclusiveString: once a non-empty string is stored, a different value is
+	// Conflict (design_id). Leave false for notes that may be rewritten.
+	ExclusiveString bool
 }
 
 // Validation holds static constraints applied at write time.

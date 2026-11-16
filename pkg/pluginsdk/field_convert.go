@@ -18,6 +18,7 @@ func fieldDefToDomain(def extapi.FieldDef) domainext.FieldDef {
 			ReadRoles:       append([]string(nil), def.Access.ReadRoles...),
 			WriteRoles:      append([]string(nil), def.Access.WriteRoles...),
 			PluginOnlyWrite: def.Access.PluginOnlyWrite,
+			ExclusiveString: def.Access.ExclusiveString,
 		},
 		Validation: domainext.Validation{
 			Required: def.Validation.Required,

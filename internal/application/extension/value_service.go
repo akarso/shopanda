@@ -29,6 +29,16 @@ func (s *ValueService) IsPluginOnlyWrite(code string) bool {
 	return ok && field.Access.PluginOnlyWrite
 }
 
+// IsExclusiveString reports whether code opts into exclusive string upsert
+// (differing non-empty stored value → conflict).
+func (s *ValueService) IsExclusiveString(code string) bool {
+	if s == nil || s.registry == nil {
+		return false
+	}
+	field, ok := s.registry.Get(code)
+	return ok && field.Access.ExclusiveString
+}
+
 // FieldOwner returns the registrant that owns code, or "" when the field is
 // unowned or unknown. Used by cart hooks: a plugin-only value is shown only
 // when the handler's registrant matches this owner. An empty owner means
@@ -90,6 +100,52 @@ func (s *ValueService) List(ctx context.Context, target domainext.Target, includ
 			continue
 		}
 		out = append(out, value)
+	}
+	return out, nil
+}
+
+// ListByCartItems returns stored values grouped by variant ID for a cart,
+// filtering private fields unless includePrivate is true. One repo round-trip.
+func (s *ValueService) ListByCartItems(ctx context.Context, cartID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error) {
+	cartID = strings.TrimSpace(cartID)
+	if cartID == "" || len(variantIDs) == 0 {
+		return map[string][]domainext.Value{}, nil
+	}
+
+	targetIDs := make([]string, 0, len(variantIDs))
+	variantByTargetID := make(map[string]string, len(variantIDs))
+	for _, variantID := range variantIDs {
+		variantID = strings.TrimSpace(variantID)
+		if variantID == "" {
+			continue
+		}
+		targetID := domainext.CartItemTargetID(cartID, variantID)
+		targetIDs = append(targetIDs, targetID)
+		variantByTargetID[targetID] = variantID
+	}
+	if len(targetIDs) == 0 {
+		return map[string][]domainext.Value{}, nil
+	}
+
+	stored, err := s.repo.ListByTargets(ctx, domainext.TargetCartItem, targetIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]domainext.Value, len(variantByTargetID))
+	for _, value := range stored {
+		field, ok := s.registry.Get(value.FieldCode)
+		if !ok {
+			continue
+		}
+		if field.Visibility == domainext.VisibilityPrivate && !includePrivate {
+			continue
+		}
+		variantID := variantByTargetID[value.TargetID]
+		if variantID == "" {
+			continue
+		}
+		out[variantID] = append(out[variantID], value)
 	}
 	return out, nil
 }
@@ -209,6 +265,22 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 		return nil, err
 	}
 	if err := s.repo.UpsertBatch(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpsertBatchSelective validates then upserts plain and ExclusiveString fields
+// in one repository transaction (exclusive codes use the conditional predicate).
+func (s *ValueService) UpsertBatchSelective(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool, exclusiveFieldCodes map[string]struct{}) ([]domainext.Value, error) {
+	if len(inputs) == 0 {
+		return nil, domainext.ValidationErr("values must not be empty")
+	}
+	out, err := s.validateBatchValues(ctx, target, inputs, updatedBy, canAccessPrivate, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertBatchSelective(ctx, out, exclusiveFieldCodes); err != nil {
 		return nil, err
 	}
 	return out, nil
