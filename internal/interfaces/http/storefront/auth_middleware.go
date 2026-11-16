@@ -93,8 +93,13 @@ func tryBearerIdentity(r *http.Request, parser auth.TokenParser) (bearer *identi
 
 // bearerWinsOverSession is true for admin and auth APIs where a valid Bearer
 // must not be replaced by the Path=/ storefront session cookie.
+// Matches isAdminAPIPath: exact root or root+"/…" (not /api/v1/administrator).
 func bearerWinsOverSession(path string) bool {
-	return strings.HasPrefix(path, "/api/v1/admin") || strings.HasPrefix(path, "/api/v1/auth")
+	return pathIsAPIRootOrChild(path, "/api/v1/admin") || pathIsAPIRootOrChild(path, "/api/v1/auth")
+}
+
+func pathIsAPIRootOrChild(path, root string) bool {
+	return path == root || strings.HasPrefix(path, root+"/")
 }
 
 func trySessionIdentity(r *http.Request, parser auth.TokenParser) (identity.Identity, bool) {

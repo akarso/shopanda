@@ -1275,6 +1275,9 @@ func TestService_Recalculate_TaxClassesRejectsSkippedVariantID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when a line variant id is invalid/skipped")
 	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want CodeValidation", err)
+	}
 	if !strings.Contains(err.Error(), "bad") {
 		t.Fatalf("err = %v, want mention of bad variant id", err)
 	}

@@ -1359,11 +1359,11 @@ func (s *Service) ensureTaxClasses(ctx context.Context, c *domainCart.Cart, meta
 		v := variants[item.VariantID]
 		if v == nil {
 			// Skipped/invalid lookup id must not become TaxClassCode("") (standard).
-			return fmt.Errorf("cart service: tax class: variant %q not found or invalid", item.VariantID)
+			return apperror.Validation(fmt.Sprintf("variant %q not found or invalid", item.VariantID))
 		}
 		p := products[v.ProductID]
 		if p == nil {
-			return fmt.Errorf("cart service: tax class: product %q for variant %q not found", v.ProductID, item.VariantID)
+			return apperror.NotFound(fmt.Sprintf("product for variant %q not found", item.VariantID))
 		}
 		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: p.Type})
 	}

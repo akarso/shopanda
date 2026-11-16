@@ -240,7 +240,7 @@ func TestAuthMiddleware_StaffBearerWinsOnAdminAndAuthAPIs(t *testing.T) {
 	}}
 	mw := storefront.AuthMiddleware(p)
 
-	for _, path := range []string{"/api/v1/admin/products", "/api/v1/auth/me"} {
+	for _, path := range []string{"/api/v1/admin", "/api/v1/admin/products", "/api/v1/auth", "/api/v1/auth/me"} {
 		var gotID identity.Identity
 		handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotID = auth.IdentityFrom(r.Context())
@@ -256,6 +256,41 @@ func TestAuthMiddleware_StaffBearerWinsOnAdminAndAuthAPIs(t *testing.T) {
 		}
 		if gotID.UserID != "admin-1" {
 			t.Fatalf("%s: UserID = %q, want admin-1 (bearer wins over session)", path, gotID.UserID)
+		}
+	}
+}
+
+func TestAuthMiddleware_StaffBearerDefersOnAdminLookalikePaths(t *testing.T) {
+	admin, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shopper, err := identity.NewIdentity("cust-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &mapParser{byToken: map[string]parseResult{
+		"admin-jwt":    {id: admin},
+		"cookie-token": {id: shopper},
+	}}
+	mw := storefront.AuthMiddleware(p)
+
+	for _, path := range []string{"/api/v1/administrator", "/api/v1/authors"} {
+		var gotID identity.Identity
+		handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotID = auth.IdentityFrom(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}))
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "Bearer admin-jwt")
+		req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d", path, rec.Code)
+		}
+		if gotID.UserID != "cust-1" {
+			t.Fatalf("%s: UserID = %q, want cust-1 (lookalike path must not treat as admin API)", path, gotID.UserID)
 		}
 	}
 }
