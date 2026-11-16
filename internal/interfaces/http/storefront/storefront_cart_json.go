@@ -133,7 +133,7 @@ func (h *StorefrontHandler) AddToStorefrontCartJSON() http.HandlerFunc {
 			return
 		}
 		if customerID == "" {
-			storefrontSetCartCookie(w, r, updated.ID)
+			h.storefrontSetCartCookie(w, r, updated.ID)
 		}
 		h.writeStorefrontCartJSON(w, r, updated)
 	}

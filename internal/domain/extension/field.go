@@ -76,6 +76,11 @@ type Access struct {
 	ReadRoles       []string
 	WriteRoles      []string
 	PluginOnlyWrite bool
+	// ExclusiveString: once a non-empty string_value is stored, a different
+	// string is Conflict (e.g. cart-line design_id). Concurrent writers use a
+	// conditional ON CONFLICT upsert so the insert race cannot overwrite.
+	// Leave false for updatable notes (gift_note).
+	ExclusiveString bool
 }
 
 // Validation holds static constraints applied at write time.

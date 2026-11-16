@@ -2,6 +2,7 @@ package shared_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
 func TestSecurityHeadersMiddleware_ExactValues(t *testing.T) {
@@ -56,7 +58,10 @@ func TestSecurityHeadersMiddleware_HSTSOnTLS(t *testing.T) {
 
 func TestSecurityHeadersMiddleware_HSTSOnTrustedForwardedProto(t *testing.T) {
 	mw := shared.SecurityHeadersMiddleware("10.0.0.0/8")
+	var cookieSecure bool
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Middleware stores the bit on r.Context(); empty ctx still reads it via r.
+		cookieSecure = storefrontsession.CookieSecure(context.Background(), r)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -69,11 +74,16 @@ func TestSecurityHeadersMiddleware_HSTSOnTrustedForwardedProto(t *testing.T) {
 	if got := rec.Header().Get("Strict-Transport-Security"); got != shared.HeaderHSTS {
 		t.Fatalf("HSTS via trusted proto = %q, want %q", got, shared.HeaderHSTS)
 	}
+	if !cookieSecure {
+		t.Fatal("CookieSecure must be true after trusted X-Forwarded-Proto: https")
+	}
 }
 
 func TestSecurityHeadersMiddleware_HSTSAbsentUntrustedForwardedProto(t *testing.T) {
 	mw := shared.SecurityHeadersMiddleware("10.0.0.0/8")
+	var cookieSecure bool
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookieSecure = storefrontsession.CookieSecure(context.Background(), r)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -85,6 +95,9 @@ func TestSecurityHeadersMiddleware_HSTSAbsentUntrustedForwardedProto(t *testing.
 
 	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
 		t.Fatalf("HSTS from untrusted peer = %q, want absent", got)
+	}
+	if cookieSecure {
+		t.Fatal("CookieSecure must be false for untrusted forwarded proto")
 	}
 }
 

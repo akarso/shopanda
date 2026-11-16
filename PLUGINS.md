@@ -119,7 +119,8 @@ Available today through `plugin.App`:
 | **Permissions** | `RegisterPermission` | Admin RBAC strings on the app-owned `rbac.Registry` |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
-| **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
+| **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll`. For the storefront session cart use `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`) — keep `cart_id` out of response JSON (see `plugins/extref` design-line) |
+| **CartPort** (Needs `CapCart`) | `Host.Cart()` | `AddItem`, `Get`, `EnsureActive`, `EnsureStorefrontCart`, `DeleteLineExtension`, `UpsertLineExtension`; trusted plugin-only writes via `WithPluginWrite` on the call ctx (Host pins the plugin name) |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
@@ -302,7 +303,7 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
 - [Integrator Platform spec](docs/guides/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
-- [extref SDK reference](plugins/extref/README.md) — `pluginsdk.Adapt` only (`pkg/pluginsdk` + `pkg/extapi`)
+- [extref SDK reference](plugins/extref/README.md) — `pluginsdk.Adapt` only; gift_note + design-on-line (`POST /extref/design-line`, PR-1553)
 - [Promotion rule reference plugin](plugins/promodemo/README.md) — custom catalog promotion JSON rule types (PR-862)
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)

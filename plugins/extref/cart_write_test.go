@@ -3,6 +3,7 @@ package extref_test
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,39 @@ func TestAddItemWithGiftNote_ThroughCartService(t *testing.T) {
 	}
 }
 
+func TestGiftNote_CanRewrite_NotExclusive(t *testing.T) {
+	h, cartID := bootExtrefCartHost(t)
+	port, ok := h.Cart()
+	if !ok {
+		t.Fatal("Cart()")
+	}
+	ctx := h.WithPluginWrite(context.Background(), extref.PluginName, extref.FieldCodeGiftNote)
+	if err := port.AddItem(ctx, cartID, "cust-1", "var-1", 1, pluginsdk.CartAddItemOpts{
+		Extensions: []pluginsdk.CartExtensionValue{{Code: extref.FieldCodeGiftNote, Value: "first"}},
+		UpdatedBy:  "plugin:" + extref.PluginName,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := port.UpsertLineExtension(ctx, cartID, "cust-1", "var-1", []pluginsdk.CartExtensionValue{
+		{Code: extref.FieldCodeGiftNote, Value: "second"},
+	}, "plugin:"+extref.PluginName); err != nil {
+		t.Fatalf("gift_note rewrite: %v", err)
+	}
+	view, err := port.Get(context.Background(), cartID, "cust-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ""
+	for _, e := range view.Items[0].Extensions {
+		if e.Code == extref.FieldCodeGiftNote {
+			got, _ = e.Value.(string)
+		}
+	}
+	if got != "second" {
+		t.Fatalf("gift_note = %q, want second", got)
+	}
+}
+
 func mustID(t *testing.T, userID string, role identity.Role) identity.Identity {
 	t.Helper()
 	id, err := identity.NewIdentity(userID, role)
@@ -64,8 +98,21 @@ func (m *memExtRepo) ListByTarget(_ context.Context, target domainext.Target) ([
 	}
 	return out, nil
 }
-func (m *memExtRepo) ListByTargets(context.Context, domainext.TargetType, []string) ([]domainext.Value, error) {
-	return nil, nil
+func (m *memExtRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	want := map[string]struct{}{}
+	for _, id := range targetIDs {
+		want[id] = struct{}{}
+	}
+	var out []domainext.Value
+	for _, v := range m.values {
+		if v.TargetType != targetType {
+			continue
+		}
+		if _, ok := want[v.TargetID]; ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 func (m *memExtRepo) Upsert(_ context.Context, value domainext.Value) error {
 	if m.values == nil {
@@ -81,6 +128,23 @@ func (m *memExtRepo) UpsertBatch(_ context.Context, values []domainext.Value) er
 		}
 	}
 	return nil
+}
+
+func (m *memExtRepo) UpsertBatchSelective(_ context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	for _, value := range values {
+		if _, ok := exclusiveFieldCodes[value.FieldCode]; !ok || value.Payload.StringValue == nil {
+			continue
+		}
+		key := string(value.TargetType) + ":" + value.TargetID + ":" + value.FieldCode
+		if existing, ok := m.values[key]; ok && existing.Payload.StringValue != nil {
+			stored := strings.TrimSpace(*existing.Payload.StringValue)
+			want := strings.TrimSpace(*value.Payload.StringValue)
+			if stored != "" && stored != want {
+				return domainext.ErrStringValueConflict
+			}
+		}
+	}
+	return m.UpsertBatch(context.Background(), values)
 }
 func (m *memExtRepo) Delete(context.Context, domainext.Target, string) error { return nil }
 func (m *memExtRepo) ListTargetIDsByTypeAndIDPrefix(context.Context, domainext.TargetType, string) ([]string, error) {

@@ -6,7 +6,7 @@
 - Keep live Actions on this upstream repo; ship **samples only** for product consumers.
 - Add `product-init` scaffold + docs so a product site is drop-in: custom plugin work + optional settings.
 - Design (do not fully land) a public extension SDK so products can eventually leave the fork.
-- One PR = one responsibility; PR specs under `prs/` (**PR-1500–1540**). Each PR is **`[oss]`**.
+- One PR = one responsibility; PR specs under `prs/` (**PR-1500–1553**). Each PR is **`[oss]`**.
 
 ---
 
@@ -116,7 +116,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 
 ---
 
-## Track E — Public extension SDK + extension ergonomics (PR-1540–1552)
+## Track E — Public extension SDK + extension ergonomics (PR-1540–1553)
 
 | PR | Title | Status |
 | --- | --- | --- |
@@ -133,6 +133,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1550 | Extension-point catalog + AGENTS recipes | done |
 | PR-1551 | Reference plugin + harness | done |
 | PR-1552 | Migrate demos; ImportBoundary pkg-only | done |
+| PR-1553 | CartPort session cart + validate extension visibility | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -169,14 +170,14 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Item | Detail | Tracking |
 | --- | --- | --- |
 | Cart extension write is not atomic with `carts.Save` | Save-then-upsert + compensate (AddItem); merge CopyTarget after Save | **done (PR-1549)** |
-| `CartPort` covers only `AddItem` | Metal Dogs E2 also needs: get/create the session cart (replace a non-active one), read lines with extension values (same design on same variant = no-op, other design = 409), remove a stale plugin-only value after a failed add. Trusted-write context must stay limited to the call that writes. Without this a product plugin still needs its own port in `cmd/api` | proposed |
-| Hook line view has no extension values | `extapi.CartLineView` has only `VariantID`, `Quantity`. A `cart.validate` handler cannot see a plugin-only line value (e.g. `metaldogs.design_id`). Add values to the view or an `ExtensionReader` on `Host` | proposed |
-| Reference for design-on-line pattern | Second `extref` example: plugin-only line field, add route with idempotency/conflict, `cart.validate` blocking issue, fail-closed when a dependency is unwired | proposed |
-| Public route and the guest session cart | Document (or provide a port for) how a plugin `RegisterPublicRoute` handler reaches the storefront session cart without exposing a raw cart id | to verify |
+| `CartPort` covers only `AddItem` | Metal Dogs E2 also needs: get/create the session cart (replace a non-active one), read lines with extension values (same design on same variant = no-op, other design = 409), remove a stale plugin-only value after a failed add. Trusted-write context must stay limited to the call that writes. Without this a product plugin still needs its own port in `cmd/api` | **done (PR-1553)** — `Get` / `EnsureActive` / `EnsureStorefrontCart` / `DeleteLineExtension` |
+| Hook line view has no extension values | `extapi.CartLineView` has only `VariantID`, `Quantity`. A `cart.validate` handler cannot see a plugin-only line value (e.g. `metaldogs.design_id`). Add values to the view or an `ExtensionReader` on `Host` | **done (PR-1553)** — `CartLineView.Extensions` + `cart.validate` `InvokeAdapted` owner redaction |
+| Reference for design-on-line pattern | Second `extref` example: plugin-only line field, add route with idempotency/conflict, `cart.validate` blocking issue, fail-closed when a dependency is unwired | **done (PR-1553)** — `extref.design_id` + `POST /extref/design-line` |
+| Public route and the guest session cart | Document (or provide a port for) how a plugin `RegisterPublicRoute` handler reaches the storefront session cart without exposing a raw cart id | **done (PR-1553)** — `pkg/storefrontsession` + `CartPort.EnsureStorefrontCart` (keep `cart_id` out of JSON) |
 
 ---
 
-## Extension ergonomics (Track E input → PR-1541–1552)
+## Extension ergonomics (Track E input → PR-1541–1553)
 
 Goal: a plugin author follows a convention and does not need to read the whole codebase. Evidence: Metal Dogs E1 and E2.
 
@@ -187,5 +188,6 @@ Goal: a plugin author follows a convention and does not need to read the whole c
 | 3 | Extension-point catalog + pitfalls | 1550 |
 | 4 | Reference plugin + harness | 1551 |
 | 5 | Recipes in `AGENTS.md` | 1550 |
+| 6 | CartPort session cart + validate extension visibility | **1553** |
 
-Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547).
+Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547), session cart / owner scoping (1553).

@@ -3,6 +3,8 @@ package pluginsdk
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	domaincart "github.com/akarso/shopanda/internal/domain/cart"
@@ -10,7 +12,11 @@ import (
 	domaincustomer "github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
 // NewCatalogPort adapts catalog repositories to CatalogPort.
@@ -123,6 +129,15 @@ func (p *customerPort) FindByID(ctx context.Context, id string) (*extapi.Custome
 // cartService is the cart application surface CartPort needs (keeps plugins off internal/application).
 type cartService interface {
 	AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int, opts cartApp.AddItemOptions) (*domaincart.Cart, error)
+	GetCart(ctx context.Context, cartID, customerID string) (*domaincart.Cart, error)
+	CreateCart(ctx context.Context, customerID, currency string) (*domaincart.Cart, error)
+	EnsureActiveCart(ctx context.Context, customerID, currency string) (*domaincart.Cart, error)
+	CartView(ctx context.Context, c *domaincart.Cart) (*extapi.CartView, error)
+	FilterCartViewForPlugin(view *extapi.CartView, pluginName string) *extapi.CartView
+	DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error
+	UpsertLineExtension(ctx context.Context, cartID, customerID, variantID string, inputs []domainext.ValueInput, updatedBy string) error
+	ExtensionFieldOwner(code string) string
+	ExtensionFieldPluginOnly(code string) bool
 }
 
 // NewCartPort adapts cart application Service to CartPort.
@@ -131,7 +146,17 @@ func NewCartPort(svc *cartApp.Service) CartPort {
 }
 
 type cartPort struct {
-	svc cartService
+	svc   cartService
+	owner string // non-empty when returned from AsHostFor / Adapt
+}
+
+func (p *cartPort) withOwner(pluginName string) *cartPort {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.owner = pluginName
+	return &out
 }
 
 func (p *cartPort) AddItem(ctx context.Context, cartID, customerID, variantID string, qty int, opts CartAddItemOpts) error {
@@ -142,12 +167,136 @@ func (p *cartPort) AddItem(ctx context.Context, cartID, customerID, variantID st
 	if len(opts.Extensions) > 0 {
 		domainOpts.Extensions = make([]domainext.ValueInput, 0, len(opts.Extensions))
 		for _, e := range opts.Extensions {
+			code := strings.TrimSpace(e.Code)
+			if p.owner != "" && p.svc.ExtensionFieldPluginOnly(code) {
+				owner := p.svc.ExtensionFieldOwner(code)
+				if owner == "" || owner != p.owner {
+					return apperror.Forbidden("cannot add another plugin's line extension")
+				}
+			}
 			domainOpts.Extensions = append(domainOpts.Extensions, domainext.ValueInput{
-				FieldCode: e.Code,
+				FieldCode: code,
 				Value:     e.Value,
 			})
 		}
 	}
 	_, err := p.svc.AddItem(ctx, cartID, customerID, variantID, qty, domainOpts)
 	return err
+}
+
+func (p *cartPort) viewFor(ctx context.Context, c *domaincart.Cart) (*extapi.CartView, error) {
+	view, err := p.svc.CartView(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	if p.owner != "" {
+		return p.svc.FilterCartViewForPlugin(view, p.owner), nil
+	}
+	return view, nil
+}
+
+func (p *cartPort) Get(ctx context.Context, cartID, customerID string) (*extapi.CartView, error) {
+	if p == nil || p.svc == nil {
+		return nil, fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	c, err := p.svc.GetCart(ctx, cartID, customerID)
+	if err != nil {
+		return nil, err
+	}
+	return p.viewFor(ctx, c)
+}
+
+func (p *cartPort) EnsureActive(ctx context.Context, customerID, currency string) (*extapi.CartView, error) {
+	if p == nil || p.svc == nil {
+		return nil, fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	c, err := p.svc.EnsureActiveCart(ctx, customerID, currency)
+	if err != nil {
+		return nil, err
+	}
+	return p.viewFor(ctx, c)
+}
+
+func resolveStorefrontCurrency(ctx context.Context, currency string) string {
+	currency = strings.TrimSpace(currency)
+	if currency != "" {
+		return currency
+	}
+	if s := store.FromContext(ctx); s != nil && strings.TrimSpace(s.Currency) != "" {
+		return strings.TrimSpace(s.Currency)
+	}
+	return "EUR"
+}
+
+func (p *cartPort) EnsureStorefrontCart(ctx context.Context, w http.ResponseWriter, r *http.Request, currency string) (*extapi.CartView, error) {
+	if p == nil || p.svc == nil {
+		return nil, fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	currency = resolveStorefrontCurrency(ctx, currency)
+	customerID := ""
+	if r != nil {
+		id := auth.IdentityFrom(r.Context())
+		if !id.IsGuest() {
+			customerID = id.UserID
+		}
+	}
+	if customerID != "" {
+		return p.EnsureActive(ctx, customerID, currency)
+	}
+	if cartID, ok := storefrontsession.CartIDFromRequest(r); ok {
+		c, err := p.svc.GetCart(ctx, cartID, "")
+		if err != nil {
+			if apperror.Is(err, apperror.CodeNotFound) || apperror.Is(err, apperror.CodeForbidden) {
+				// Stale cookie or claimed (customer) cart id: replace below.
+			} else {
+				// DB / timeout / other — do not orphan by rewriting the cookie.
+				return nil, err
+			}
+		} else if c != nil && c.IsActive() {
+			// GetCart("", guest) only succeeds for guest-owned carts.
+			return p.viewFor(ctx, c)
+		}
+		// Non-active guest cart: replace below (no silent reuse).
+	}
+	c, err := p.svc.CreateCart(ctx, "", currency)
+	if err != nil {
+		return nil, err
+	}
+	storefrontsession.SetCartCookieSecure(w, c.ID, storefrontsession.CookieSecure(ctx, r))
+	return p.viewFor(ctx, c)
+}
+
+func (p *cartPort) DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error {
+	if p == nil || p.svc == nil {
+		return fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	fieldCode = strings.TrimSpace(fieldCode)
+	if p.owner != "" && p.svc.ExtensionFieldPluginOnly(fieldCode) {
+		owner := p.svc.ExtensionFieldOwner(fieldCode)
+		if owner == "" || owner != p.owner {
+			return apperror.Forbidden("cannot delete another plugin's line extension")
+		}
+	}
+	return p.svc.DeleteLineExtension(ctx, cartID, customerID, variantID, fieldCode)
+}
+
+func (p *cartPort) UpsertLineExtension(ctx context.Context, cartID, customerID, variantID string, values []CartExtensionValue, updatedBy string) error {
+	if p == nil || p.svc == nil {
+		return fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	if len(values) == 0 {
+		return apperror.Validation("extension values must not be empty")
+	}
+	inputs := make([]domainext.ValueInput, 0, len(values))
+	for _, e := range values {
+		code := strings.TrimSpace(e.Code)
+		if p.owner != "" && p.svc.ExtensionFieldPluginOnly(code) {
+			owner := p.svc.ExtensionFieldOwner(code)
+			if owner == "" || owner != p.owner {
+				return apperror.Forbidden("cannot upsert another plugin's line extension")
+			}
+		}
+		inputs = append(inputs, domainext.ValueInput{FieldCode: code, Value: e.Value})
+	}
+	return p.svc.UpsertLineExtension(ctx, cartID, customerID, variantID, inputs, updatedBy)
 }

@@ -68,6 +68,23 @@ func (m *memCartExtensionValueRepo) UpsertBatch(_ context.Context, values []doma
 	return nil
 }
 
+func (m *memCartExtensionValueRepo) UpsertBatchSelective(_ context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	for _, value := range values {
+		if _, ok := exclusiveFieldCodes[value.FieldCode]; !ok || value.Payload.StringValue == nil {
+			continue
+		}
+		key := cartExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)
+		if existing, ok := m.values[key]; ok && existing.Payload.StringValue != nil {
+			stored := strings.TrimSpace(*existing.Payload.StringValue)
+			want := strings.TrimSpace(*value.Payload.StringValue)
+			if stored != "" && stored != want {
+				return domainext.ErrStringValueConflict
+			}
+		}
+	}
+	return m.UpsertBatch(context.Background(), values)
+}
+
 func (m *memCartExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := cartExtKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {
@@ -133,6 +150,20 @@ func (w *trackingExtWriter) UpsertBatch(ctx context.Context, target domainext.Ta
 	return w.inner.UpsertBatch(ctx, target, inputs, updatedBy, canAccessPrivate)
 }
 
+func (w *trackingExtWriter) UpsertBatchSelective(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool, exclusiveFieldCodes map[string]struct{}) ([]domainext.Value, error) {
+	if w.inner == nil {
+		return nil, nil
+	}
+	return w.inner.UpsertBatchSelective(ctx, target, inputs, updatedBy, canAccessPrivate, exclusiveFieldCodes)
+}
+
+func (w *trackingExtWriter) Delete(ctx context.Context, target domainext.Target, fieldCode string, canAccessPrivate bool) error {
+	if w.inner == nil {
+		return nil
+	}
+	return w.inner.Delete(ctx, target, fieldCode, canAccessPrivate)
+}
+
 func (w *trackingExtWriter) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
 	w.deleted = append(w.deleted, target.ID)
 	if w.failDeleteCount > 0 {
@@ -171,6 +202,27 @@ func (w *trackingExtWriter) ListByTarget(ctx context.Context, target domainext.T
 		return nil, nil
 	}
 	return w.inner.ListByTarget(ctx, target)
+}
+
+func (w *trackingExtWriter) ListByCartItems(ctx context.Context, cartID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error) {
+	if w.inner == nil {
+		return map[string][]domainext.Value{}, nil
+	}
+	return w.inner.ListByCartItems(ctx, cartID, variantIDs, includePrivate)
+}
+
+func (w *trackingExtWriter) FieldOwner(code string) string {
+	if w.inner == nil {
+		return ""
+	}
+	return w.inner.FieldOwner(code)
+}
+
+func (w *trackingExtWriter) IsExclusiveString(code string) bool {
+	if w.inner == nil {
+		return false
+	}
+	return w.inner.IsExclusiveString(code)
 }
 
 func (w *trackingExtWriter) ReplaceTarget(ctx context.Context, target domainext.Target, values []domainext.Value) error {
@@ -375,6 +427,10 @@ type failUpsertExtWriter struct {
 }
 
 func (w *failUpsertExtWriter) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
+	return nil, errors.New("upsert boom")
+}
+
+func (w *failUpsertExtWriter) UpsertBatchSelective(context.Context, domainext.Target, []domainext.ValueInput, string, bool, map[string]struct{}) ([]domainext.Value, error) {
 	return nil, errors.New("upsert boom")
 }
 

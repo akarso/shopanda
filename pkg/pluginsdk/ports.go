@@ -2,6 +2,7 @@ package pluginsdk
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/akarso/shopanda/pkg/extapi"
 )
@@ -20,9 +21,33 @@ type CartAddItemOpts struct {
 	UpdatedBy  string
 }
 
-// CartPort adds lines to a cart with pricing, hooks, and optional extensions.
+// CartPort is the Host-visible cart surface for plugins that declare CapCart.
+//
+// EnsureStorefrontCart resolves the same guest cookie as the storefront
+// (see pkg/storefrontsession) or the signed-in customer's active cart.
+// Do not put CartView.ID into public JSON responses — keep it server-side.
 type CartPort interface {
 	AddItem(ctx context.Context, cartID, customerID, variantID string, qty int, opts CartAddItemOpts) error
+	// Get returns a cart the caller may access (guest: empty customerID).
+	// Plugin-only extension values are visible only to the field owner when
+	// the port is obtained via AsHostFor / Adapt (scoped Host).
+	Get(ctx context.Context, cartID, customerID string) (*extapi.CartView, error)
+	// EnsureActive returns the customer's active cart or creates one.
+	// customerID must be non-empty.
+	EnsureActive(ctx context.Context, customerID, currency string) (*extapi.CartView, error)
+	// EnsureStorefrontCart loads or creates the storefront session cart for
+	// the request (signed-in → EnsureActive; guest → cookie / create + Set-Cookie).
+	// Guest: missing cookie, not-found, or non-active cart → create + Set-Cookie.
+	// Other GetCart errors propagate without rewriting the cookie.
+	// Blank currency uses store.FromContext then "EUR" (same as storefront).
+	EnsureStorefrontCart(ctx context.Context, w http.ResponseWriter, r *http.Request, currency string) (*extapi.CartView, error)
+	// DeleteLineExtension removes one stored value on a line. Plugin-only
+	// fields require WithPluginWrite on ctx; scoped Hosts may only delete
+	// fields they own.
+	DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error
+	// UpsertLineExtension sets extension values on an existing line without
+	// changing quantity. Conflict when a stored string value already differs.
+	UpsertLineExtension(ctx context.Context, cartID, customerID, variantID string, values []CartExtensionValue, updatedBy string) error
 }
 
 // CatalogPort provides minimal catalog reads for seed and integration plugins.

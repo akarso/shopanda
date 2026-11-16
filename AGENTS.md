@@ -260,6 +260,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Multi-plugin ordering on the same seam | [PLUGIN_COMPOSITION.md](docs/guides/PLUGIN_COMPOSITION.md) |
 | Public SDK plugin (`pkg/pluginsdk` only) | Register `pluginsdk.Adapt(yours)`; copy [`plugins/extref`](plugins/extref/README.md) |
 | Plugin-only cart field + trusted add | `RegisterField` with `PluginOnlyWrite`, then `WithPluginWrite` + `CartPort.AddItem` (pitfalls in EXTENSION_POINTS) |
+| Session cart from a public route | `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`); keep `cart_id` out of JSON — see `plugins/extref` design-line |
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
 
 ---
