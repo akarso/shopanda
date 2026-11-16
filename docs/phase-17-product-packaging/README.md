@@ -39,11 +39,11 @@ See [`ROADMAP.md`](ROADMAP.md), [`specs/`](specs/), and [`prs/`](prs/).
 
 ## Status
 
-**Tracks A–D done** on branch `phase-17-product-packaging` (PR-1500–1534).
-**Track E** ADR/spec landed as planned (`PUBLIC_EXTENSION_SDK.md`, PR-1540) —
-implementation deferred until A–D are proven in the field.
+**Tracks A–D done** (PR-1500–1534).
+**Track E** started: ADR accepted (PR-1540); Host facade and ergonomics
+follow as PR-1541–1552 (see ROADMAP).
 
-PR range **PR-1500–1540**.
+PR range **PR-1500–1552**.
 
 ## Relationship
 
