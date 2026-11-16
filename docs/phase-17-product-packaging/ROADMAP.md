@@ -169,6 +169,10 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Item | Detail | Tracking |
 | --- | --- | --- |
 | Cart extension write is not atomic with `carts.Save` | Save-then-upsert + compensate (AddItem); merge CopyTarget after Save | **done (PR-1549)** |
+| `CartPort` covers only `AddItem` | Metal Dogs E2 also needs: get/create the session cart (replace a non-active one), read lines with extension values (same design on same variant = no-op, other design = 409), remove a stale plugin-only value after a failed add. Trusted-write context must stay limited to the call that writes. Without this a product plugin still needs its own port in `cmd/api` | proposed |
+| Hook line view has no extension values | `extapi.CartLineView` has only `VariantID`, `Quantity`. A `cart.validate` handler cannot see a plugin-only line value (e.g. `metaldogs.design_id`). Add values to the view or an `ExtensionReader` on `Host` | proposed |
+| Reference for design-on-line pattern | Second `extref` example: plugin-only line field, add route with idempotency/conflict, `cart.validate` blocking issue, fail-closed when a dependency is unwired | proposed |
+| Public route and the guest session cart | Document (or provide a port for) how a plugin `RegisterPublicRoute` handler reaches the storefront session cart without exposing a raw cart id | to verify |
 
 ---
 
