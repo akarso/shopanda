@@ -144,6 +144,61 @@ func (r *ExtensionValueRepo) upsertTx(ctx context.Context, tx *sql.Tx, value dom
 	return nil
 }
 
+// ReplaceTarget atomically restores target to exactly values: upserts the
+// snapshot rows, then deletes any other field codes for that target, and
+// commits once. Upsert-first means a mid-replace failure never leaves the
+// target empty the way delete-all-then-upsert did with autocommit deletes.
+func (r *ExtensionValueRepo) ReplaceTarget(ctx context.Context, target domainext.Target, values []domainext.Value) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: replace begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	keep := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.TargetType = target.Type
+		value.TargetID = target.ID
+		if err := r.upsertTx(ctx, tx, value); err != nil {
+			return err
+		}
+		keep[value.FieldCode] = struct{}{}
+	}
+
+	const listQ = `SELECT field_code FROM extension_values WHERE target_type = $1 AND target_id = $2`
+	rows, err := tx.QueryContext(ctx, listQ, string(target.Type), target.ID)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: replace list: %w", err)
+	}
+	var extras []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			rows.Close()
+			return fmt.Errorf("extension_value_repo: replace list scan: %w", err)
+		}
+		if _, ok := keep[code]; !ok {
+			extras = append(extras, code)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("extension_value_repo: replace list rows: %w", err)
+	}
+	rows.Close()
+
+	const delQ = `DELETE FROM extension_values WHERE target_type = $1 AND target_id = $2 AND field_code = $3`
+	for _, code := range extras {
+		if _, err := tx.ExecContext(ctx, delQ, string(target.Type), target.ID, code); err != nil {
+			return fmt.Errorf("extension_value_repo: replace delete: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("extension_value_repo: replace commit: %w", err)
+	}
+	return nil
+}
+
 // ListTargetIDsByTypeAndIDPrefix returns distinct target_ids matching type and id prefix (SQL LIKE pattern).
 func (r *ExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(ctx context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
 	const q = `SELECT DISTINCT target_id FROM extension_values

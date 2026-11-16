@@ -11,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/slots"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/slotsdemo"
 )
 
@@ -41,7 +42,7 @@ func defaultThemeDir(t *testing.T) string {
 
 func TestSlotsDemo_ProductPageDOMPositions(t *testing.T) {
 	app := testApp(t, true)
-	if err := slotsdemo.New().Init(app); err != nil {
+	if err := slotsdemo.New().Init(pluginsdk.AsHost(app)); err != nil {
 		t.Fatalf("Init(): %v", err)
 	}
 

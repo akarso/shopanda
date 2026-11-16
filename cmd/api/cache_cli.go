@@ -40,6 +40,10 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 		Bootstrap:         boot,
 		PluginMigrateMode: plugin.PluginMigrateVerify, // require app migrate; no DDL lock
 	}
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
 	preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	if err := plugin.InitSummaryError(summary); err != nil {
@@ -49,6 +53,13 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 	if summary.Failed > 0 {
 		conn.Close()
 		return nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp)
 

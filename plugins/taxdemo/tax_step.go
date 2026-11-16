@@ -3,23 +3,22 @@ package taxdemo
 import (
 	"context"
 
-	domainpricing "github.com/akarso/shopanda/internal/domain/pricing"
-	"github.com/akarso/shopanda/internal/domain/tax"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
-// TaxStep delegates tax calculation to a registered tax.Calculator port.
+// TaxStep delegates tax calculation to a registered extapi.TaxCalculator port.
 type TaxStep struct {
-	calc tax.Calculator
+	calc extapi.TaxCalculator
 }
 
 // NewTaxStep returns a pricing pipeline step that invokes calc.
-func NewTaxStep(calc tax.Calculator) *TaxStep {
+func NewTaxStep(calc extapi.TaxCalculator) *TaxStep {
 	return &TaxStep{calc: calc}
 }
 
 func (s *TaxStep) Name() string { return TaxStepName }
 
-func (s *TaxStep) Apply(ctx context.Context, pctx *domainpricing.PricingContext) error {
+func (s *TaxStep) Apply(ctx context.Context, pctx extapi.PricingContext) error {
 	if s == nil || s.calc == nil {
 		return nil
 	}

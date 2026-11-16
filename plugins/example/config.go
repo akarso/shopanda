@@ -3,34 +3,30 @@ package example
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/platform/config"
-	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 const configKeyFeeMinorUnits = "plugins.example.fee_minor_units"
 
-func examplePluginConfigDefinition() plugin.ConfigDefinition {
-	return plugin.ConfigDefinition{
+// exampleFeeConfigDefinition builds the admin-editable config definition for
+// feeMinorUnits. Get/Apply close over feeMinorUnits directly — the plugin
+// owns its own live value, rather than reaching back into core config.
+func exampleFeeConfigDefinition(feeMinorUnits *int64) extapi.ConfigDefinition {
+	return extapi.ConfigDefinition{
 		Plugin: "example/demo",
-		Fields: []plugin.ConfigField{
+		Fields: []extapi.ConfigField{
 			{
 				Key:         configKeyFeeMinorUnits,
 				Label:       "Example fee (minor units)",
 				Description: "Fixed fee added by the example pricing step (e.g. 100 = 1.00 for two-decimal currencies).",
-				Type:        plugin.ConfigFieldInt,
-				Get: func(cfg *config.Config) interface{} {
-					if cfg == nil {
-						return int64(defaultExampleFeeMinorUnits)
-					}
-					if cfg.Plugins.Example.FeeMinorUnits > 0 {
-						return cfg.Plugins.Example.FeeMinorUnits
+				Type:        extapi.ConfigFieldInt,
+				Get: func() interface{} {
+					if feeMinorUnits != nil && *feeMinorUnits > 0 {
+						return *feeMinorUnits
 					}
 					return int64(defaultExampleFeeMinorUnits)
 				},
-				Apply: func(cfg *config.Config, value interface{}) error {
-					if cfg == nil {
-						return fmt.Errorf("example plugin: config must not be nil")
-					}
+				Apply: func(value interface{}) error {
 					n, err := toInt64(value)
 					if err != nil {
 						return err
@@ -38,7 +34,7 @@ func examplePluginConfigDefinition() plugin.ConfigDefinition {
 					if n <= 0 {
 						return fmt.Errorf("example plugin: fee_minor_units must be positive")
 					}
-					cfg.Plugins.Example.FeeMinorUnits = n
+					*feeMinorUnits = n
 					return nil
 				},
 			},

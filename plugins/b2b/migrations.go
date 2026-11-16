@@ -5,8 +5,7 @@ import (
 	"database/sql"
 	"embed"
 
-	"github.com/akarso/shopanda/internal/platform/migrate"
-	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 //go:embed migrations/*.sql
@@ -28,23 +27,23 @@ var legacyBareMigrationBasenames = []string{
 }
 
 // initMigrateLockWait bounds how long plugin migrate waits per file for the
-// advisory lock. Matches DefaultPluginLockWait so a peer running a long
+// advisory lock. Matches DefaultMigrationLockWait so a peer running a long
 // VALIDATE CONSTRAINT does not crash-loop waiters while the holder is healthy.
-const initMigrateLockWait = migrate.DefaultPluginLockWait
+const initMigrateLockWait = pluginsdk.DefaultMigrationLockWait
 
-func migrationOptions() migrate.PluginFSOptions {
-	return migrate.PluginFSOptions{
+func migrationOptions() pluginsdk.MigrationFSOptions {
+	return pluginsdk.MigrationFSOptions{
 		LockWait:           initMigrateLockWait,
 		AdoptBareBasenames: legacyBareMigrationBasenames,
 	}
 }
 
-var _ plugin.Migrator = (*Plugin)(nil)
+var _ pluginsdk.Migrator = (*Plugin)(nil)
 
-// Migration implements plugin.Migrator. Declared once for migrate CLI and
+// Migration implements pluginsdk.Migrator. Declared once for migrate CLI and
 // InitAll (applied before Init when Bootstrap.DB is set).
-func (p *Plugin) Migration() plugin.MigrationSpec {
-	return plugin.MigrationSpec{
+func (p *Plugin) Migration() pluginsdk.MigrationSpec {
+	return pluginsdk.MigrationSpec{
 		FS:      migrationFiles,
 		Dir:     "migrations",
 		Options: migrationOptions(),
@@ -52,6 +51,10 @@ func (p *Plugin) Migration() plugin.MigrationSpec {
 }
 
 // RunMigrationsForTest applies embedded B2B migrations (integration tests only).
-func RunMigrationsForTest(db *sql.DB) (migrate.PluginFSResult, error) {
-	return migrate.RunPluginFSOptions(context.Background(), db, pluginName, migrationFiles, "migrations", migrationOptions())
+func RunMigrationsForTest(db *sql.DB) (pluginsdk.MigrationResult, error) {
+	return pluginsdk.ApplyMigrationFS(context.Background(), db, pluginName, pluginsdk.MigrationSpec{
+		FS:      migrationFiles,
+		Dir:     "migrations",
+		Options: migrationOptions(),
+	})
 }

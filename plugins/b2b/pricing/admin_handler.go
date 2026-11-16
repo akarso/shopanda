@@ -5,35 +5,34 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/domain/catalog"
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/akarso/shopanda/internal/platform/httpx"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/google/uuid"
+
+	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
+	"github.com/akarso/shopanda/plugins/b2b/groups"
 )
 
 // AdminHandler serves group price admin endpoints.
 type AdminHandler struct {
-	groups   customergroup.Repository
-	prices   customergroup.GroupPriceRepository
-	variants catalog.VariantRepository
+	groups   groups.Repository
+	prices   GroupPriceRepository
+	variants pluginsdk.CatalogPort
 }
 
 // NewAdminHandler creates an AdminHandler.
 func NewAdminHandler(
-	groups customergroup.Repository,
-	prices customergroup.GroupPriceRepository,
-	variants catalog.VariantRepository,
+	groupRepo groups.Repository,
+	prices GroupPriceRepository,
+	variants pluginsdk.CatalogPort,
 ) *AdminHandler {
-	if groups == nil || prices == nil || variants == nil {
+	if groupRepo == nil || prices == nil || variants == nil {
 		panic("b2b group price admin: repositories must not be nil")
 	}
-	return &AdminHandler{groups: groups, prices: prices, variants: variants}
+	return &AdminHandler{groups: groupRepo, prices: prices, variants: variants}
 }
 
 // VariantRepository returns the variants port wired into this handler.
-func (h *AdminHandler) VariantRepository() catalog.VariantRepository {
+func (h *AdminHandler) VariantRepository() pluginsdk.CatalogPort {
 	return h.variants
 }
 
@@ -46,14 +45,14 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := httpx.ResolveCurrencyScopeID(r)
-		storeID := httpx.ResolveStoreScopeID(r)
+		currency := pluginsdk.AdminCurrencyScope(r)
+		storeID := pluginsdk.AdminStoreScope(r)
 		if groupID == "" || variantID == "" {
-			httpx.JSONError(w, apperror.Validation("group id and variant id are required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("group id and variant id are required"))
 			return
 		}
 		if currency == "" {
-			httpx.JSONError(w, apperror.Validation("currency context is required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("currency context is required"))
 			return
 		}
 		if err := h.ensureGroupAndVariant(w, r, groupID, variantID); err != nil {
@@ -62,7 +61,7 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 
 		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
-			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
+			pluginsdk.JSONError(w, pluginsdk.InternalError("get group price failed", err))
 			return
 		}
 
@@ -77,13 +76,13 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 		} else if storeID != "" {
 			globalPrice, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, "")
 			if err != nil {
-				httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
+				pluginsdk.JSONError(w, pluginsdk.InternalError("get group price failed", err))
 				return
 			}
 			globalFallback = groupPricePayload(globalPrice)
 		}
 
-		httpx.JSON(w, http.StatusOK, map[string]interface{}{
+		pluginsdk.JSON(w, http.StatusOK, map[string]interface{}{
 			"price":           groupPricePayload(price),
 			"global_fallback": globalFallback,
 			"price_scope":     priceScope,
@@ -99,14 +98,14 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := httpx.ResolveCurrencyScopeID(r)
-		storeID := httpx.ResolveStoreScopeID(r)
+		currency := pluginsdk.AdminCurrencyScope(r)
+		storeID := pluginsdk.AdminStoreScope(r)
 		if groupID == "" || variantID == "" {
-			httpx.JSONError(w, apperror.Validation("group id and variant id are required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("group id and variant id are required"))
 			return
 		}
 		if currency == "" {
-			httpx.JSONError(w, apperror.Validation("currency context is required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("currency context is required"))
 			return
 		}
 
@@ -114,11 +113,11 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			httpx.JSONError(w, apperror.Validation("invalid request body"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("invalid request body"))
 			return
 		}
 		if req.Amount == nil {
-			httpx.JSONError(w, apperror.Validation("amount is required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("amount is required"))
 			return
 		}
 
@@ -126,26 +125,26 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
-		money, err := shared.NewMoney(*req.Amount, currency)
+		money, err := extapi.NewMoney(*req.Amount, currency)
 		if err != nil {
-			httpx.JSONError(w, apperror.Validation(err.Error()))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError(err.Error()))
 			return
 		}
-		price, err := customergroup.NewGroupPrice(id.New(), groupID, variantID, storeID, money)
+		price, err := NewGroupPrice(uuid.NewString(), groupID, variantID, storeID, money)
 		if err != nil {
-			httpx.JSONError(w, apperror.Validation(err.Error()))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError(err.Error()))
 			return
 		}
 		if err := h.prices.Upsert(r.Context(), &price); err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				httpx.JSONError(w, apperror.NotFound("group or variant not found"))
+				pluginsdk.JSONError(w, pluginsdk.NotFoundError("group or variant not found"))
 				return
 			}
-			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "update group price failed", err))
+			pluginsdk.JSONError(w, pluginsdk.InternalError("update group price failed", err))
 			return
 		}
 
-		httpx.JSON(w, http.StatusOK, map[string]interface{}{
+		pluginsdk.JSON(w, http.StatusOK, map[string]interface{}{
 			"price":           groupPricePayload(&price),
 			"global_fallback": nil,
 			"price_scope":     groupPriceScopeForStore(storeID),
@@ -161,10 +160,10 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := httpx.ResolveCurrencyScopeID(r)
-		storeID := httpx.ResolveStoreScopeID(r)
+		currency := pluginsdk.AdminCurrencyScope(r)
+		storeID := pluginsdk.AdminStoreScope(r)
 		if groupID == "" || variantID == "" || currency == "" {
-			httpx.JSONError(w, apperror.Validation("group id, variant id, and currency are required"))
+			pluginsdk.JSONError(w, pluginsdk.ValidationError("group id, variant id, and currency are required"))
 			return
 		}
 		if err := h.ensureGroupAndVariant(w, r, groupID, variantID); err != nil {
@@ -173,19 +172,19 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 
 		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
-			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
+			pluginsdk.JSONError(w, pluginsdk.InternalError("delete group price failed", err))
 			return
 		}
 		if price == nil {
-			httpx.JSONError(w, apperror.NotFound("group price not found"))
+			pluginsdk.JSONError(w, pluginsdk.NotFoundError("group price not found"))
 			return
 		}
 		if err := h.prices.Delete(r.Context(), price.ID); err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				httpx.JSONError(w, apperror.NotFound("group price not found"))
+				pluginsdk.JSONError(w, pluginsdk.NotFoundError("group price not found"))
 				return
 			}
-			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
+			pluginsdk.JSONError(w, pluginsdk.InternalError("delete group price failed", err))
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -195,26 +194,26 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 func (h *AdminHandler) ensureGroupAndVariant(w http.ResponseWriter, r *http.Request, groupID, variantID string) error {
 	group, err := h.groups.FindByID(r.Context(), groupID)
 	if err != nil {
-		httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup group failed", err))
+		pluginsdk.JSONError(w, pluginsdk.InternalError("lookup group failed", err))
 		return err
 	}
 	if group == nil {
-		httpx.JSONError(w, apperror.NotFound("customer group not found"))
-		return apperror.NotFound("customer group not found")
+		pluginsdk.JSONError(w, pluginsdk.NotFoundError("customer group not found"))
+		return pluginsdk.NotFoundError("customer group not found")
 	}
-	variant, err := h.variants.FindByID(r.Context(), variantID)
+	variant, err := h.variants.FindVariant(r.Context(), variantID)
 	if err != nil {
-		httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup variant failed", err))
+		pluginsdk.JSONError(w, pluginsdk.InternalError("lookup variant failed", err))
 		return err
 	}
 	if variant == nil {
-		httpx.JSONError(w, apperror.NotFound("variant not found"))
-		return apperror.NotFound("variant not found")
+		pluginsdk.JSONError(w, pluginsdk.NotFoundError("variant not found"))
+		return pluginsdk.NotFoundError("variant not found")
 	}
 	return nil
 }
 
-func groupPricePayload(p *customergroup.GroupPrice) map[string]interface{} {
+func groupPricePayload(p *GroupPrice) map[string]interface{} {
 	if p == nil {
 		return nil
 	}

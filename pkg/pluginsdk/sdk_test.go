@@ -60,17 +60,17 @@ func TestCheckoutPositionHelpers(t *testing.T) {
 func TestCheckout_Register(t *testing.T) {
 	app := testApp()
 	sdk := pluginsdk.New(app, "acme/demo")
-	sdk.Checkout().Register("step-a")
-	sdk.Checkout().Register("step-b", pluginsdk.CheckoutBefore("create_order"))
+	sdk.Checkout().Register(fakeCheckoutStep{name: "step-a"})
+	sdk.Checkout().Register(fakeCheckoutStep{name: "step-b"}, pluginsdk.CheckoutBefore("create_order"))
 
 	regs := app.CheckoutStepRegistrations()
 	if len(regs) != 2 {
 		t.Fatalf("registrations = %+v", regs)
 	}
-	if regs[0].Step != "step-a" || regs[0].Position != "end" {
+	if regs[0].Step.(named).Name() != "step-a" || regs[0].Position != "end" {
 		t.Fatalf("first = %+v", regs[0])
 	}
-	if regs[1].Step != "step-b" || regs[1].Position != "before:create_order" {
+	if regs[1].Step.(named).Name() != "step-b" || regs[1].Position != "before:create_order" {
 		t.Fatalf("second = %+v", regs[1])
 	}
 }
@@ -78,17 +78,17 @@ func TestCheckout_Register(t *testing.T) {
 func TestPricing_Register(t *testing.T) {
 	app := testApp()
 	sdk := pluginsdk.New(app, "acme/demo")
-	sdk.Pricing().Register("step-a")
-	sdk.Pricing().Register("step-b", pluginsdk.After("promotions"))
+	sdk.Pricing().Register(fakePricingStep{name: "step-a"})
+	sdk.Pricing().Register(fakePricingStep{name: "step-b"}, pluginsdk.After("promotions"))
 
 	regs := app.PricingStepRegistrations()
 	if len(regs) != 2 {
 		t.Fatalf("registrations = %+v", regs)
 	}
-	if regs[0].Step != "step-a" || regs[0].Position != "after:base" {
+	if regs[0].Step.(named).Name() != "step-a" || regs[0].Position != "after:base" {
 		t.Fatalf("first = %+v", regs[0])
 	}
-	if regs[1].Step != "step-b" || regs[1].Position != "after:promotions" {
+	if regs[1].Step.(named).Name() != "step-b" || regs[1].Position != "after:promotions" {
 		t.Fatalf("second = %+v", regs[1])
 	}
 }

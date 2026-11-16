@@ -9,28 +9,28 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/customer"
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/google/uuid"
+
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
 )
 
 type stubGroupRepo struct {
-	byID   map[string]customergroup.Group
-	byCode map[string]customergroup.Group
+	byID   map[string]groups.Group
+	byCode map[string]groups.Group
 	byCust map[string]string
 }
 
 func newStubGroupRepo() *stubGroupRepo {
 	return &stubGroupRepo{
-		byID:   make(map[string]customergroup.Group),
-		byCode: make(map[string]customergroup.Group),
+		byID:   make(map[string]groups.Group),
+		byCode: make(map[string]groups.Group),
 		byCust: make(map[string]string),
 	}
 }
 
-func (s *stubGroupRepo) List(_ context.Context, offset, limit int) ([]customergroup.Group, error) {
-	var out []customergroup.Group
+func (s *stubGroupRepo) List(_ context.Context, offset, limit int) ([]groups.Group, error) {
+	var out []groups.Group
 	for _, g := range s.byID {
 		out = append(out, g)
 	}
@@ -44,7 +44,7 @@ func (s *stubGroupRepo) List(_ context.Context, offset, limit int) ([]customergr
 	return out[offset:end], nil
 }
 
-func (s *stubGroupRepo) FindByID(_ context.Context, groupID string) (*customergroup.Group, error) {
+func (s *stubGroupRepo) FindByID(_ context.Context, groupID string) (*groups.Group, error) {
 	g, ok := s.byID[groupID]
 	if !ok {
 		return nil, nil
@@ -52,7 +52,7 @@ func (s *stubGroupRepo) FindByID(_ context.Context, groupID string) (*customergr
 	return &g, nil
 }
 
-func (s *stubGroupRepo) FindByCode(_ context.Context, code string) (*customergroup.Group, error) {
+func (s *stubGroupRepo) FindByCode(_ context.Context, code string) (*groups.Group, error) {
 	g, ok := s.byCode[code]
 	if !ok {
 		return nil, nil
@@ -60,7 +60,7 @@ func (s *stubGroupRepo) FindByCode(_ context.Context, code string) (*customergro
 	return &g, nil
 }
 
-func (s *stubGroupRepo) Save(_ context.Context, group *customergroup.Group) error {
+func (s *stubGroupRepo) Save(_ context.Context, group *groups.Group) error {
 	if existing, ok := s.byCode[group.Code]; ok && existing.ID != group.ID {
 		return fmt.Errorf("b2b groups repo: code already exists")
 	}
@@ -89,7 +89,7 @@ func (s *stubGroupRepo) RemoveCustomer(_ context.Context, customerID string) err
 	return nil
 }
 
-func (s *stubGroupRepo) FindGroupByCustomerID(_ context.Context, customerID string) (*customergroup.Group, error) {
+func (s *stubGroupRepo) FindGroupByCustomerID(_ context.Context, customerID string) (*groups.Group, error) {
 	groupID, ok := s.byCust[customerID]
 	if !ok {
 		return nil, nil
@@ -101,37 +101,18 @@ func (s *stubGroupRepo) FindGroupByCustomerID(_ context.Context, customerID stri
 	return &g, nil
 }
 
+// stubCustomerRepo implements pluginsdk.CustomerPort.
 type stubCustomerRepo struct {
-	byID map[string]*customer.Customer
+	byID map[string]*extapi.CustomerView
 }
 
 func newStubCustomerRepo() *stubCustomerRepo {
-	return &stubCustomerRepo{byID: make(map[string]*customer.Customer)}
+	return &stubCustomerRepo{byID: make(map[string]*extapi.CustomerView)}
 }
 
-func (s *stubCustomerRepo) FindByID(_ context.Context, customerID string) (*customer.Customer, error) {
+func (s *stubCustomerRepo) FindByID(_ context.Context, customerID string) (*extapi.CustomerView, error) {
 	return s.byID[customerID], nil
 }
-
-func (s *stubCustomerRepo) FindByEmail(_ context.Context, _ string) (*customer.Customer, error) {
-	return nil, nil
-}
-
-func (s *stubCustomerRepo) Create(_ context.Context, _ *customer.Customer) error { return nil }
-
-func (s *stubCustomerRepo) Update(_ context.Context, _ *customer.Customer) error { return nil }
-
-func (s *stubCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
-	return nil, nil
-}
-
-func (s *stubCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
-
-func (s *stubCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, _, _ string) error {
-	return nil
-}
-
-func (s *stubCustomerRepo) Delete(_ context.Context, _ string) error { return nil }
 
 func newGroupAdminRouter(h *groups.AdminHandler) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -184,7 +165,7 @@ func TestAdminHandler_CreateAndGet(t *testing.T) {
 
 func TestAdminHandler_CreateDuplicateCodeRejected(t *testing.T) {
 	repo := newStubGroupRepo()
-	g, err := customergroup.NewGroup(id.New(), "vip", "VIP", "")
+	g, err := groups.NewGroup(uuid.NewString(), "vip", "VIP", "")
 	if err != nil {
 		t.Fatalf("NewGroup: %v", err)
 	}
@@ -206,7 +187,7 @@ func TestAdminHandler_CreateDuplicateCodeRejected(t *testing.T) {
 func TestAdminHandler_AssignCustomerGroup(t *testing.T) {
 	groupRepo := newStubGroupRepo()
 	customerRepo := newStubCustomerRepo()
-	g, err := customergroup.NewGroup(id.New(), "b2b", "B2B", "")
+	g, err := groups.NewGroup(uuid.NewString(), "b2b", "B2B", "")
 	if err != nil {
 		t.Fatalf("NewGroup: %v", err)
 	}
@@ -214,8 +195,8 @@ func TestAdminHandler_AssignCustomerGroup(t *testing.T) {
 		t.Fatalf("Save group: %v", err)
 	}
 
-	customerID := id.New()
-	customerRepo.byID[customerID] = &customer.Customer{ID: customerID, Email: "buyer@example.com"}
+	customerID := uuid.NewString()
+	customerRepo.byID[customerID] = &extapi.CustomerView{ID: customerID}
 
 	h := groups.NewAdminHandler(groupRepo, customerRepo)
 	router := newGroupAdminRouter(h)
@@ -237,8 +218,8 @@ func TestAdminHandler_AssignCustomerGroup(t *testing.T) {
 
 func TestAdminHandler_GetCustomerGroup_UnassignedReturnsNull(t *testing.T) {
 	customerRepo := newStubCustomerRepo()
-	customerID := id.New()
-	customerRepo.byID[customerID] = &customer.Customer{ID: customerID, Email: "buyer@example.com"}
+	customerID := uuid.NewString()
+	customerRepo.byID[customerID] = &extapi.CustomerView{ID: customerID}
 
 	h := groups.NewAdminHandler(newStubGroupRepo(), customerRepo)
 	router := newGroupAdminRouter(h)
@@ -256,7 +237,7 @@ func TestAdminHandler_GetCustomerGroup_UnassignedReturnsNull(t *testing.T) {
 func TestAdminHandler_GetCustomerGroup_CustomerNotFound(t *testing.T) {
 	h := groups.NewAdminHandler(newStubGroupRepo(), newStubCustomerRepo())
 	router := newGroupAdminRouter(h)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/"+id.New()+"/customer-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/"+uuid.NewString()+"/customer-group", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -266,8 +247,8 @@ func TestAdminHandler_GetCustomerGroup_CustomerNotFound(t *testing.T) {
 
 func TestAdminHandler_AssignCustomer_BlankGroupID(t *testing.T) {
 	customerRepo := newStubCustomerRepo()
-	customerID := id.New()
-	customerRepo.byID[customerID] = &customer.Customer{ID: customerID, Email: "buyer@example.com"}
+	customerID := uuid.NewString()
+	customerRepo.byID[customerID] = &extapi.CustomerView{ID: customerID}
 
 	h := groups.NewAdminHandler(newStubGroupRepo(), customerRepo)
 	router := newGroupAdminRouter(h)

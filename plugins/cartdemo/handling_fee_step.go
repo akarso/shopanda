@@ -3,8 +3,7 @@ package cartdemo
 import (
 	"context"
 
-	"github.com/akarso/shopanda/internal/domain/pricing"
-	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 const (
@@ -26,23 +25,22 @@ func NewHandlingFeeStep(amountMinor *int64) *HandlingFeeStep {
 
 func (s *HandlingFeeStep) Name() string { return HandlingFeeStepName }
 
-func (s *HandlingFeeStep) Apply(_ context.Context, pctx *pricing.PricingContext) error {
-	if len(pctx.Items) == 0 {
+func (s *HandlingFeeStep) Apply(_ context.Context, pctx extapi.PricingContext) error {
+	if len(pctx.Items()) == 0 {
 		return nil
 	}
 	amount := int64(DefaultHandlingFeeMinorUnits)
 	if s.amountMinor != nil && *s.amountMinor > 0 {
 		amount = *s.amountMinor
 	}
-	fee, err := shared.NewMoney(amount, pctx.Currency)
+	fee, err := extapi.NewMoney(amount, pctx.Currency())
 	if err != nil {
 		return err
 	}
-	adj, err := pricing.NewAdjustment(pricing.AdjustmentFee, "cartdemo.handling_fee", fee)
-	if err != nil {
-		return err
-	}
-	adj.Description = "Handling fee"
-	pctx.Adjustments = append(pctx.Adjustments, adj)
-	return nil
+	return pctx.AddAdjustment(extapi.PricingAdjustment{
+		Type:        extapi.AdjustmentFee,
+		Code:        "cartdemo.handling_fee",
+		Description: "Handling fee",
+		Amount:      fee,
+	})
 }

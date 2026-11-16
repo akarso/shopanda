@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/slotsdemo"
 )
 
@@ -37,14 +38,14 @@ func TestPlugin_Name(t *testing.T) {
 }
 
 func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
-	if err := slotsdemo.New().Init(testApp(t, false)); err == nil {
+	if err := slotsdemo.New().Init(pluginsdk.AsHost(testApp(t, false))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }
 
 func TestPlugin_Init_RegistersSlotRenderers(t *testing.T) {
 	app := testApp(t, true)
-	if err := slotsdemo.New().Init(app); err != nil {
+	if err := slotsdemo.New().Init(pluginsdk.AsHost(app)); err != nil {
 		t.Fatalf("Init(): %v", err)
 	}
 

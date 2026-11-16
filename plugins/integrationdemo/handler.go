@@ -4,13 +4,13 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // NewOrderStatusHandler handles inbound ERP order status callbacks.
-func NewOrderStatusHandler(updater extapi.IntegrationOrderStatusUpdater, log logger.Logger) http.Handler {
+func NewOrderStatusHandler(updater extapi.IntegrationOrderStatusUpdater, log pluginsdk.Logger) http.Handler {
 	if updater == nil {
 		panic("integrationdemo: order status updater must not be nil")
 	}

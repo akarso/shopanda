@@ -136,8 +136,11 @@ func (o *Order) ApplyStoreCredit(amount shared.Money) error {
 // PayableAmount returns the amount still due after store credit.
 // Store credit applies to the line-item subtotal; tax remains payable unless covered by the remainder.
 func (o Order) PayableAmount() (shared.Money, error) {
-	due := o.TotalAmount.Add(o.TaxAmount)
-	return due.Sub(o.StoreCreditApplied), nil
+	due, err := o.TotalAmount.Add(o.TaxAmount)
+	if err != nil {
+		return shared.Money{}, err
+	}
+	return due.Sub(o.StoreCreditApplied)
 }
 
 // SetTaxSnapshot records the shipping destination and VAT total for OSS reporting.

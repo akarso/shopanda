@@ -3,41 +3,36 @@ package taxdemo
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/domain/tax"
-	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Compile-time check that the demo calculator satisfies the tax port.
-var _ tax.Calculator = (*FlatRateCalculator)(nil)
+var _ extapi.TaxCalculator = (*FlatRateCalculator)(nil)
 
 // Plugin demonstrates integrator tax port replacement and replace-by-name pricing step.
 type Plugin struct{}
 
 // New returns the tax replacement reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "taxdemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("taxdemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("taxdemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("taxdemo plugin: config not configured")
-	}
-	cfg := app.Config.Plugins.TaxDemo
-	if !cfg.Enabled {
+	if !h.ConfigBool("plugins.taxdemo.enabled") {
 		return fmt.Errorf("taxdemo plugin: disabled (plugins.taxdemo.enabled=false)")
 	}
 
-	rateBPS := cfg.FlatRateBPS
+	rateBPS := h.ConfigInt("plugins.taxdemo.flat_rate_bps")
 	if rateBPS <= 0 {
 		rateBPS = DefaultFlatRateBPS
 	}
 
 	calc := NewFlatRateCalculator(rateBPS)
-	app.RegisterTaxCalculator(calc)
-	pluginsdk.New(app, p.Name()).Pricing().Register(NewTaxStep(calc), pluginsdk.Replace("tax"))
+	h.RegisterTaxCalculator(calc)
+	pluginsdk.NewHost(h, p.Name()).Pricing().Register(NewTaxStep(calc), pluginsdk.Replace("tax"))
 	return nil
 }

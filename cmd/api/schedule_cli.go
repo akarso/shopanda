@@ -248,6 +248,9 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if _, err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		return err
+	}
 	preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	if err := plugin.InitSummaryError(summary); err != nil {
@@ -255,6 +258,12 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	}
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp)
 

@@ -3,7 +3,6 @@ package cartdemo
 import (
 	"fmt"
 
-	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
@@ -24,7 +23,7 @@ func minQuantityValidateHandler(minQty int) extapi.HookHandler {
 		if !ok || raw == nil {
 			return nil
 		}
-		c, ok := raw.(*domainCart.Cart)
+		c, ok := raw.(*extapi.CartView)
 		if !ok || c == nil {
 			return nil
 		}

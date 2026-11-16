@@ -13,27 +13,31 @@ Package: [`pkg/extapi`](../../pkg/extapi)
 | Slot placements | `extapi.PlacementBefore`, `PlacementAfter`, `PlacementPrepend`, `PlacementAppend` |
 | Handler types | `extapi.HookHandler`, `extapi.SlotRenderer` with `HookContext` / `SlotRenderContext` |
 
-Use these constants with `plugin.App` registration APIs:
+Use these constants with `pluginsdk.Host` registration APIs (product plugins depend only on
+`pkg/pluginsdk` + `pkg/extapi` — see [PLUGINS.md](../../PLUGINS.md) and
+[DEVELOPER.md](DEVELOPER.md#create-an-external-plugin)):
 
 ```go
 import (
-    "github.com/akarso/shopanda/internal/platform/plugin"
     "github.com/akarso/shopanda/pkg/extapi"
+    "github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
-func (p *Plugin) Init(app *plugin.App) error {
-    if err := app.Hooks("acme/demo").Register(extapi.HookCartAddItemAfter, 100, func(ctx *extapi.HookContext) error {
+func (p *Plugin) Init(h pluginsdk.Host) error {
+    if err := h.Hooks("acme/demo").Register(extapi.HookCartAddItemAfter, 100, func(ctx *extapi.HookContext) error {
         return nil
     }); err != nil {
         return err
     }
-    return app.Slots("acme/demo").RegisterRenderer(extapi.SlotPDPInfo, extapi.PlacementAppend, 100, func(ctx *extapi.SlotRenderContext) string {
+    return h.Slots("acme/demo").RegisterRenderer(extapi.SlotPDPInfo, extapi.PlacementAppend, 100, func(ctx *extapi.SlotRenderContext) string {
         return "<span>Eco badge</span>"
     })
 }
 ```
 
-`plugin.App` is compile-time wiring (internal); hook/slot names, placements, and handler types come from `pkg/extapi`.
+`pluginsdk.Host` wraps the core-internal `plugin.App` wiring; hook/slot names, placements, and
+handler types come from `pkg/extapi`. Core plugins (`plugins/core/*`) register against
+`*plugin.App` directly instead, since they implement the driver adapters the SDK wraps.
 
 ## Internal (not stable)
 

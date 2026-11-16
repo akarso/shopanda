@@ -116,12 +116,24 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 
 ---
 
-## Track E — Public extension SDK (PR-1540+)
+## Track E — Public extension SDK + extension ergonomics (PR-1540–1552)
 
-| Slice | Title | Status |
+| PR | Title | Status |
 | --- | --- | --- |
-| PR-1540 | ADR / spec: public extension SDK surface | planned (spec landed; implement later) |
-| E1–E4 | Move ports, dual-mode module, migration guide | deferred until A–D proven in the field |
+| PR-1540 | ADR accepted + import inventory | done |
+| PR-1541 | `pluginsdk.Host` facade | done |
+| PR-1542 | Public Money, FieldDef, PluginWrite | done |
+| PR-1543 | Public pricing step contracts | done |
+| PR-1544 | Public checkout + composition contracts | done |
+| PR-1545 | Cart / catalog / order ports on Host | done |
+| PR-1546 | Declarative Needs | done |
+| PR-1547 | Unified InitAll port wiring | done |
+| PR-1548 | Hook sees extensions + auth | done |
+| PR-1549 | Atomic cart extension + Save | done |
+| PR-1550 | Extension-point catalog + AGENTS recipes | done |
+| PR-1551 | Reference plugin + harness | done |
+| PR-1552 | Migrate demos; ImportBoundary pkg-only | done |
+| E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 
@@ -149,3 +161,27 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 - `bash scripts/product-init/product-init_test.sh` and `bash scripts/ci/docs-policy_test.sh` pass (`make phase17-scripts-test`).
 - Docs state job types as `integration.sync.{slug}.{name}` only.
 - `git check-ignore -v storefront/src/main.js` reports not ignored.
+
+---
+
+## Follow-ups from product consumers
+
+| Item | Detail | Tracking |
+| --- | --- | --- |
+| Cart extension write is not atomic with `carts.Save` | Save-then-upsert + compensate (AddItem); merge CopyTarget after Save | **done (PR-1549)** |
+
+---
+
+## Extension ergonomics (Track E input → PR-1541–1552)
+
+Goal: a plugin author follows a convention and does not need to read the whole codebase. Evidence: Metal Dogs E1 and E2.
+
+| # | Proposal | PR |
+| --- | --- | --- |
+| 1 | Stable public SDK; plugins never import `internal/*` | 1541–1545, 1552 |
+| 2 | Declarative Needs | 1546–1547 |
+| 3 | Extension-point catalog + pitfalls | 1550 |
+| 4 | Reference plugin + harness | 1551 |
+| 5 | Recipes in `AGENTS.md` | 1550 |
+
+Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547).

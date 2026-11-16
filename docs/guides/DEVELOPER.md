@@ -213,29 +213,43 @@ Manual pay is always registered as a core plugin. Stripe registers additionally 
 
 ## Create an External Plugin
 
-The current plugin contract lives in `internal/platform/plugin`.
+Core plugins (`plugins/core/*`) implement the core-internal contract (`internal/platform/plugin.Plugin`,
+`Init(app *plugin.App) error`) directly, because they *are* the driver adapters the public SDK wraps.
 
-Actual interface today:
+**Every other plugin — external authors and the commercial B2B module — implements the public SDK
+contract instead (PR-1541–1552):**
 
 ```go
+// pkg/pluginsdk
 type Plugin interface {
     Name() string
-    Init(app *plugin.App) error
+    Init(h Host) error
 }
 ```
 
-The plugin app currently exposes:
+Product (non-core) plugins depend **only** on `pkg/pluginsdk` + `pkg/extapi` (plus stdlib/external
+modules and their own sibling packages) — never `internal/*`. `plugins/plugin_imports_test.go`'s
+`TestImportBoundary` enforces this at build time; `plugins/core/*` is the sole exemption.
 
-- `Logger`
-- `Bus`
-- `Config`
-- `RegisterPricingStep`
-- `RegisterCheckoutStep`
-- `RegisterCompositionStep`
-- `RegisterPermission` — writes the app-owned `rbac.Registry` (wired before `InitAll`, frozen after; serve binds it for auth)
-- `Bootstrap` — `DB` (restricted to plugin-owned tables; non-core plugins must not query core tables directly) plus domain ports (`Customers`, `Variants`, …) injected by the composition root for accessing core data
+`pluginsdk.Host` (passed to `Init`) exposes:
 
-Non-core plugins must not import `internal/infrastructure` or `internal/interfaces` (see [PLUGINS.md import allowlist](../../PLUGINS.md#import-allowlist-pr-1017)); use `internal/platform/httpx` for admin JSON helpers.
+- `Logger()`, `Context()`
+- `RegisterPricingStep`, `RegisterCheckoutStep`, `RegisterCompositionStep` (accept `extapi.*Step`
+  implementations)
+- `RegisterTaxCalculator`, `RegisterMailSender` — replace the matching core port
+- `RegisterPublicRoute`, `RegisterAdminRoute`, `RegisterPermission`
+- `RegisterConfig` — admin-editable settings (string/int/bool) for this plugin
+- `Slots(registrant)`, `Hooks(registrant)` — storefront slots and hook registration
+- `RegisterField` / `RegisterFieldFor` — extension fields
+- `Cart()`, `Catalog()`, `Orders()`, `Customers()` — minimal read/write ports bound by the
+  composition root (`(port, bool)`; declare the dependency up front with `Require(cap)` so
+  `AssertNeedsMet` fails fast if the root never binds it)
+- `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own config
+- `BootstrapDB()` — the composition-root `*sql.DB`, for `pluginsdk.Migrator` plugins
+
+See [`docs/guides/PLUGIN_COMPOSITION.md`](PLUGIN_COMPOSITION.md) for the full extension-point
+catalog and [`plugins/b2b/`](../../plugins/b2b/) for a plugin that owns local repository interfaces
+and Postgres adapters while still staying inside the `pkg/*` import boundary.
 
 Minimal example:
 
@@ -245,10 +259,8 @@ package myplugin
 import (
     "context"
 
-    "github.com/akarso/shopanda/internal/application/composition"
-    "github.com/akarso/shopanda/internal/domain/pricing"
-    "github.com/akarso/shopanda/internal/platform/event"
-    "github.com/akarso/shopanda/internal/platform/plugin"
+    "github.com/akarso/shopanda/pkg/extapi"
+    "github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 type Plugin struct{}
@@ -257,52 +269,53 @@ func New() *Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "my-plugin" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-    app.RegisterPricingStep(priceStep{})
-    app.RegisterCompositionStep("pdp", productStep{})
+func (p *Plugin) Init(h pluginsdk.Host) error {
+    h.RegisterPricingStep(priceStep{})
+    h.RegisterCompositionStep("pdp", productStep{})
 
-    app.Bus.OnAsync("catalog.product.created", func(ctx context.Context, evt event.Event) error {
-        app.Logger.Info("myplugin.catalog.product.created", map[string]interface{}{
-            "event_id": evt.ID,
-        })
+    return h.Hooks(p.Name()).Register(extapi.HookCartAddItemBefore, 0, func(hc *extapi.HookContext) error {
+        h.Logger().Info("myplugin.cart.add_item.before", nil)
         return nil
     })
-
-    return nil
 }
 
 type priceStep struct{}
 
 func (priceStep) Name() string { return "my_plugin_price" }
-func (priceStep) Apply(ctx context.Context, pctx *pricing.PricingContext) error {
+func (priceStep) Apply(ctx context.Context, pctx extapi.PricingContext) error {
     return nil
 }
 
 type productStep struct{}
 
 func (productStep) Name() string { return "my_plugin_pdp" }
-func (productStep) Apply(ctx *composition.ProductContext) error {
+func (productStep) Apply(ctx context.Context, pctx extapi.ProductCompositionContext) error {
     return nil
 }
 ```
 
 ### Register the plugin at startup
 
-External plugins are registered in `cmd/api/register_plugins.go` (not discovered at runtime):
+External plugins are registered in `cmd/api/register_plugins.go` (not discovered at runtime).
+`pluginsdk.Adapt` bridges the public `Host`-based plugin into the core registry (and wires
+`Migration()` automatically when the plugin implements `pluginsdk.Migrator`):
 
 ```go
 func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
     core.Register(registry, cfg)
     if cfg.Plugins.Example.Enabled {
-        registry.Register(example.New())
+        registry.Register(pluginsdk.Adapt(example.New()))
     }
-    // registry.Register(acme.New())  // your plugin
+    // registry.Register(pluginsdk.Adapt(acme.New()))  // your plugin
 }
 ```
 
-`main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, and runs `registry.InitAll(pluginApp)`.
+`main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, binds the service
+ports `Host` exposes (`bindProductPorts`), and runs `registry.InitAll(pluginApp)`.
 
-Reference implementation: [`plugins/example/`](../../plugins/example/) — pricing step, `order.created` listener, admin permission.
+Reference implementations: [`plugins/example/`](../../plugins/example/) — pricing step,
+`order.created` listener, admin permission, CLI command; [`plugins/extref/`](../../plugins/extref/)
+— minimal SDK-only reference plugin + test harness.
 
 Current behavior to keep in mind:
 
@@ -653,17 +666,19 @@ app.Bus.OnAsync(order.EventOrderPaid, func(ctx context.Context, evt event.Event)
 
 ## Add Custom CLI Commands
 
-Core commands are defined in `cmd/api/main.go`. Plugins register additional commands during `Init`:
+Core commands are defined in `cmd/api/main.go`. Core plugins (`plugins/core/*`) register additional
+commands during `Init` via `*plugin.App` + `internal/platform/cli.Command` directly. External
+plugins use `pluginsdk.SDK.CLI()` instead, which wraps the same registry without importing
+`internal/platform/cli`:
 
 ```go
-import "github.com/akarso/shopanda/internal/platform/cli"
-
-func (p *Plugin) Init(app *plugin.App) error {
-    app.RegisterCommand(cli.Command{
+func (p *Plugin) Init(h pluginsdk.Host) error {
+    sdk := pluginsdk.NewHost(h, p.Name())
+    sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
         Name:        "acme:sync",
         Description: "Sync vendor catalog",
-        Run: func(ctx cli.Context, args []string) error {
-            // ctx.Config, ctx.Logger, ctx.DB available
+        Run: func(ctx pluginsdk.CLIContext, args []string) error {
+            // ctx.Ctx, ctx.Logger available
             return nil
         },
     })
@@ -671,7 +686,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 }
 ```
 
-Commands use the `domain:action` naming convention (e.g. `example:ping`). Names must be unique across all plugins. Registered commands appear in `app help` and dispatch through the plugin CLI registry.
+Commands use the `domain:action` naming convention (e.g. `example:ping`). Names must be unique across all plugins. Registered commands appear in `app help` and dispatch through the plugin CLI registry. See [`plugins/example/cli.go`](../../plugins/example/cli.go) for a full reference.
 
 For core-owned operational commands, add a `case` in the subcommand switch and a `runXxx` helper in `main.go` (unchanged pattern from earlier phases).
 

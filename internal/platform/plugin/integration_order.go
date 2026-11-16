@@ -7,8 +7,11 @@ import (
 // SetIntegrationOrderStatusUpdater wires the shared order status updater before plugin Init.
 func (a *App) SetIntegrationOrderStatusUpdater(updater extapi.IntegrationOrderStatusUpdater) {
 	a.integrationOrderStatusMu.Lock()
-	defer a.integrationOrderStatusMu.Unlock()
 	a.integrationOrderStatus = updater
+	a.integrationOrderStatusMu.Unlock()
+	if updater != nil {
+		a.MarkCapabilitySatisfied(CapIntegrationOrder)
+	}
 }
 
 // IntegrationOrderStatusUpdater returns the shared order status updater.

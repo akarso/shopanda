@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
-// PostgresGroupPriceRepo implements customergroup.GroupPriceRepository.
+// PostgresGroupPriceRepo implements GroupPriceRepository.
 type PostgresGroupPriceRepo struct {
 	db *sql.DB
 }
@@ -25,7 +25,7 @@ func NewPostgresGroupPriceRepo(db *sql.DB) (*PostgresGroupPriceRepo, error) {
 	return &PostgresGroupPriceRepo{db: db}, nil
 }
 
-func (r *PostgresGroupPriceRepo) FindByVariantsGroupCurrencyAndStore(ctx context.Context, variantIDs []string, groupID, currency, storeID string) (map[string]*customergroup.GroupPrice, error) {
+func (r *PostgresGroupPriceRepo) FindByVariantsGroupCurrencyAndStore(ctx context.Context, variantIDs []string, groupID, currency, storeID string) (map[string]*GroupPrice, error) {
 	if len(variantIDs) == 0 {
 		return nil, nil
 	}
@@ -70,7 +70,7 @@ func (r *PostgresGroupPriceRepo) FindByVariantsGroupCurrencyAndStore(ctx context
 	return out, nil
 }
 
-func (r *PostgresGroupPriceRepo) FindExactByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*customergroup.GroupPrice, error) {
+func (r *PostgresGroupPriceRepo) FindExactByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*GroupPrice, error) {
 	variantID = strings.TrimSpace(variantID)
 	groupID = strings.TrimSpace(groupID)
 	currency = strings.TrimSpace(currency)
@@ -90,7 +90,7 @@ func (r *PostgresGroupPriceRepo) FindExactByVariantGroupCurrencyAndStore(ctx con
 	return p, nil
 }
 
-func (r *PostgresGroupPriceRepo) FindByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*customergroup.GroupPrice, error) {
+func (r *PostgresGroupPriceRepo) FindByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*GroupPrice, error) {
 	out, err := r.FindByVariantsGroupCurrencyAndStore(ctx, []string{variantID}, groupID, currency, storeID)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func (r *PostgresGroupPriceRepo) FindByVariantGroupCurrencyAndStore(ctx context.
 	return out[variantID], nil
 }
 
-func (r *PostgresGroupPriceRepo) Upsert(ctx context.Context, price *customergroup.GroupPrice) error {
+func (r *PostgresGroupPriceRepo) Upsert(ctx context.Context, price *GroupPrice) error {
 	if price == nil {
 		return fmt.Errorf("b2b group price repo: price must not be nil")
 	}
@@ -143,14 +143,14 @@ type groupPriceScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func scanGroupPrice(s groupPriceScanner) (*customergroup.GroupPrice, error) {
-	var p customergroup.GroupPrice
+func scanGroupPrice(s groupPriceScanner) (*GroupPrice, error) {
+	var p GroupPrice
 	var amount int64
 	var currency string
 	if err := s.Scan(&p.ID, &p.GroupID, &p.VariantID, &p.StoreID, &currency, &amount, &p.CreatedAt); err != nil {
 		return nil, err
 	}
-	money, err := shared.NewMoney(amount, currency)
+	money, err := extapi.NewMoney(amount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("b2b group price repo: reconstruct money: %w", err)
 	}
@@ -158,8 +158,8 @@ func scanGroupPrice(s groupPriceScanner) (*customergroup.GroupPrice, error) {
 	return &p, nil
 }
 
-func scanGroupPricesByVariant(rows *sql.Rows) (map[string]*customergroup.GroupPrice, error) {
-	out := make(map[string]*customergroup.GroupPrice)
+func scanGroupPricesByVariant(rows *sql.Rows) (map[string]*GroupPrice, error) {
+	out := make(map[string]*GroupPrice)
 	for rows.Next() {
 		p, err := scanGroupPrice(rows)
 		if err != nil {
@@ -173,4 +173,4 @@ func scanGroupPricesByVariant(rows *sql.Rows) (map[string]*customergroup.GroupPr
 	return out, nil
 }
 
-var _ customergroup.GroupPriceRepository = (*PostgresGroupPriceRepo)(nil)
+var _ GroupPriceRepository = (*PostgresGroupPriceRepo)(nil)

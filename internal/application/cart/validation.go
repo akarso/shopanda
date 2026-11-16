@@ -13,7 +13,7 @@ func (s *Service) validationIssues(ctx context.Context, c *domainCart.Cart) ([]e
 	hookCtx := hooks.NewContext(hooks.HookCartValidate)
 	hookCtx.Set("cart_id", c.ID)
 	hookCtx.Set("customer_id", c.CustomerID)
-	hookCtx.Set("cart", c)
+	hookCtx.Set("cart", cartViewFromDomain(c))
 	hookCtx.Set("validation_errors", &issues)
 	if err := s.invokeCartHook(ctx, hooks.HookCartValidate, hookCtx); err != nil {
 		return nil, err
