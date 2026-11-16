@@ -14,7 +14,6 @@ import (
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
@@ -30,6 +29,20 @@ type catalogPort struct {
 }
 
 func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.CatalogVariant, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		if p == nil || p.variants == nil {
+			return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
+		}
+		v, err := p.variants.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			return nil, nil
+		}
+		return p.catalogVariant(ctx, v)
+	}
 	out, err := p.FindVariants(ctx, []string{id})
 	if err != nil {
 		return nil, err
@@ -37,36 +50,11 @@ func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.Catal
 	return out[id], nil
 }
 
-type variantBatchLookup interface {
-	FindByIDs(ctx context.Context, ids []string) (map[string]*catalog.Variant, error)
-}
-
-type productIDLister interface {
-	ListByIDs(ctx context.Context, ids []string) (map[string]*catalog.Product, error)
-}
-
 func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[string]*extapi.CatalogVariant, error) {
 	if p == nil || p.variants == nil {
 		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
 	}
-	clean := make([]string, 0, len(ids))
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		clean = append(clean, id)
-	}
-	if len(clean) == 0 {
-		return map[string]*extapi.CatalogVariant{}, nil
-	}
-
-	variants, err := p.lookupVariants(ctx, clean)
+	variants, err := catalog.LookupVariants(ctx, p.variants, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -82,13 +70,13 @@ func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[strin
 		seenProduct[v.ProductID] = struct{}{}
 		productIDs = append(productIDs, v.ProductID)
 	}
-	products, err := p.lookupProducts(ctx, productIDs)
+	products, err := catalog.LookupProducts(ctx, p.products, productIDs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pluginsdk: catalog port: parent products: %w", err)
 	}
 
 	out := make(map[string]*extapi.CatalogVariant, len(variants))
-	for id, v := range variants {
+	for reqID, v := range variants {
 		if v == nil {
 			continue
 		}
@@ -101,63 +89,32 @@ func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[strin
 		if prod := products[v.ProductID]; prod != nil {
 			cv.ProductSlug = prod.Slug
 		}
-		out[id] = cv
+		// Empty ProductSlug with nil error: parent missing, non-active under
+		// storefront read scope, empty slug column, or products repo nil.
+		// Hooks must treat empty as fail-closed for "belongs to slug X", not skip.
+		out[reqID] = cv
 	}
 	return out, nil
 }
 
-func (p *catalogPort) lookupVariants(ctx context.Context, ids []string) (map[string]*catalog.Variant, error) {
-	if batch, ok := p.variants.(variantBatchLookup); ok {
-		found, err := batch.FindByIDs(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		if found == nil {
-			return map[string]*catalog.Variant{}, nil
-		}
-		return found, nil
+func (p *catalogPort) catalogVariant(ctx context.Context, v *catalog.Variant) (*extapi.CatalogVariant, error) {
+	cv := &extapi.CatalogVariant{
+		ID:        v.ID,
+		ProductID: v.ProductID,
+		SKU:       v.SKU,
+		Name:      v.Name,
 	}
-	out := make(map[string]*catalog.Variant, len(ids))
-	for _, id := range ids {
-		v, err := p.variants.FindByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if v != nil {
-			out[id] = v
-		}
+	if p.products == nil || strings.TrimSpace(v.ProductID) == "" {
+		return cv, nil
 	}
-	return out, nil
-}
-
-func (p *catalogPort) lookupProducts(ctx context.Context, ids []string) (map[string]*catalog.Product, error) {
-	if len(ids) == 0 {
-		return map[string]*catalog.Product{}, nil
+	products, err := catalog.LookupProducts(ctx, p.products, []string{v.ProductID})
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog port: parent products: %w", err)
 	}
-	if p.products == nil {
-		return map[string]*catalog.Product{}, nil
+	if prod := products[v.ProductID]; prod != nil {
+		cv.ProductSlug = prod.Slug
 	}
-	if batch, ok := p.products.(productIDLister); ok {
-		found, err := batch.ListByIDs(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		if found == nil {
-			return map[string]*catalog.Product{}, nil
-		}
-		return found, nil
-	}
-	out := make(map[string]*catalog.Product, len(ids))
-	for _, id := range ids {
-		prod, err := p.products.FindByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if prod != nil {
-			out[id] = prod
-		}
-	}
-	return out, nil
+	return cv, nil
 }
 
 func (p *catalogPort) FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error) {
@@ -345,13 +302,7 @@ func (p *cartPort) EnsureStorefrontCart(ctx context.Context, w http.ResponseWrit
 		return nil, fmt.Errorf("pluginsdk: cart port: not configured")
 	}
 	currency = resolveStorefrontCurrency(ctx, currency)
-	customerID := ""
-	if r != nil {
-		id := auth.IdentityFrom(r.Context())
-		if !id.IsGuest() {
-			customerID = id.UserID
-		}
-	}
+	customerID := CustomerID(r)
 	if customerID != "" {
 		return p.EnsureActive(ctx, customerID, currency)
 	}

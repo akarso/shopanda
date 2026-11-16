@@ -17,8 +17,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/pkg/storefrontsession"
 )
 
@@ -625,11 +625,7 @@ func storefrontCurrency(r *http.Request) string {
 }
 
 func storefrontCustomerID(r *http.Request) string {
-	identity := platformAuth.IdentityFrom(r.Context())
-	if identity.IsGuest() {
-		return ""
-	}
-	return identity.UserID
+	return pluginsdk.CustomerID(r)
 }
 
 func (h *StorefrontHandler) storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID string) {

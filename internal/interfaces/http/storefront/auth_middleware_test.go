@@ -3,6 +3,7 @@ package storefront_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -76,6 +77,36 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_BearerCaseAndPadding(t *testing.T) {
+	id, err := identity.NewIdentity("user-pad", identity.RoleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parser := &stubTokenParser{identity: id}
+	mw := storefront.AuthMiddleware(parser)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "bearer  padded-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if gotID.UserID != "user-pad" {
+		t.Fatalf("UserID = %q, want user-pad", gotID.UserID)
+	}
+	if parser.lastToken != "padded-token" {
+		t.Fatalf("parser received %q, want padded-token", parser.lastToken)
+	}
+}
+
 func TestAuthMiddleware_UsesStorefrontSessionCookie(t *testing.T) {
 	id, err := identity.NewIdentity("user-2", identity.RoleCustomer)
 	if err != nil {
@@ -137,8 +168,8 @@ func TestAuthMiddleware_BearerTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_InvalidToken(t *testing.T) {
-	parser := &stubTokenParser{err: errors.New("bad token")}
+func TestAuthMiddleware_InvalidCustomerTokenIs401EvenWithSession(t *testing.T) {
+	parser := &stubTokenParser{err: errors.New("jwt: token expired")}
 	mw := storefront.AuthMiddleware(parser)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,24 +177,28 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer bad-token")
+	req.Header.Set("Authorization", "Bearer expired-customer-jwt")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if parser.lastToken != "bad-token" {
-		t.Errorf("parser received token %q, want %q", parser.lastToken, "bad-token")
+	if parser.lastToken != "expired-customer-jwt" {
+		t.Errorf("parser received token %q, want expired-customer-jwt", parser.lastToken)
 	}
 }
 
-func TestAuthMiddleware_InvalidBearerFallsBackToSessionCookie(t *testing.T) {
+func TestAuthMiddleware_OpaqueBearerFallsBackToSessionCookie(t *testing.T) {
 	id, err := identity.NewIdentity("user-session", identity.RoleCustomer)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	p := &countingParser{failFirst: true, identity: id}
+	p := &mapParser{byToken: map[string]parseResult{
+		"owner-token":  {err: fmt.Errorf("%w: opaque", auth.ErrNotCustomerToken)},
+		"cookie-token": {id: id},
+	}}
 	mw := storefront.AuthMiddleware(p)
 
 	var gotID identity.Identity
@@ -184,8 +219,60 @@ func TestAuthMiddleware_InvalidBearerFallsBackToSessionCookie(t *testing.T) {
 	if gotID.UserID != "user-session" {
 		t.Fatalf("UserID = %q, want user-session", gotID.UserID)
 	}
-	if p.calls < 2 {
-		t.Fatalf("parser calls = %d, want >= 2", p.calls)
+	if p.lastToken != "cookie-token" {
+		t.Fatalf("lastToken = %q, want cookie-token", p.lastToken)
+	}
+}
+
+func TestAuthMiddleware_OpaqueBearerWithoutSessionIsGuest(t *testing.T) {
+	p := &mapParser{byToken: map[string]parseResult{
+		"owner-token": {err: auth.ErrNotCustomerToken},
+	}}
+	mw := storefront.AuthMiddleware(p)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/customizer/save", nil)
+	req.Header.Set("Authorization", "Bearer owner-token")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !gotID.IsGuest() {
+		t.Fatalf("expected guest, got %+v", gotID)
+	}
+}
+
+func TestAuthMiddleware_OpaqueBearerExpiredSessionIsGuest(t *testing.T) {
+	p := &mapParser{byToken: map[string]parseResult{
+		"owner-token":  {err: auth.ErrNotCustomerToken},
+		"cookie-token": {err: errors.New("jwt: token expired")},
+	}}
+	mw := storefront.AuthMiddleware(p)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/customizer/save", nil)
+	req.Header.Set("Authorization", "Bearer owner-token")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !gotID.IsGuest() {
+		t.Fatalf("expected guest, got %+v", gotID)
 	}
 }
 
@@ -217,7 +304,7 @@ func TestAuthMiddleware_NonBearerAuthorizationUsesSessionCookie(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_MalformedHeaderWithoutSessionIsGuest(t *testing.T) {
+func TestAuthMiddleware_NonBearerWithoutSessionIsGuest(t *testing.T) {
 	parser := &stubTokenParser{}
 	mw := storefront.AuthMiddleware(parser)
 
@@ -240,20 +327,25 @@ func TestAuthMiddleware_MalformedHeaderWithoutSessionIsGuest(t *testing.T) {
 	}
 }
 
-type countingParser struct {
-	failFirst bool
-	identity  identity.Identity
-	calls     int
-	lastToken string
+type parseResult struct {
+	id  identity.Identity
+	err error
 }
 
-func (p *countingParser) Parse(_ context.Context, token string) (identity.Identity, error) {
+type mapParser struct {
+	byToken   map[string]parseResult
+	lastToken string
+	calls     int
+}
+
+func (p *mapParser) Parse(_ context.Context, token string) (identity.Identity, error) {
 	p.calls++
 	p.lastToken = token
-	if p.failFirst && p.calls == 1 {
-		return identity.Identity{}, errors.New("not a customer jwt")
+	res, ok := p.byToken[token]
+	if !ok {
+		return identity.Identity{}, errors.New("unexpected token: " + token)
 	}
-	return p.identity, nil
+	return res.id, res.err
 }
 
 func TestRequireAuth_Authenticated(t *testing.T) {

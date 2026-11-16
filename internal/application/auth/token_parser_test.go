@@ -8,6 +8,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/auth"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	platformauth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
@@ -68,6 +69,9 @@ func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 	_, err := parser.Parse(context.Background(), "garbage")
 	if err == nil {
 		t.Fatal("expected error for invalid token")
+	}
+	if !platformauth.IsNotCustomerToken(err) {
+		t.Fatalf("err = %v, want ErrNotCustomerToken (opaque / malformed)", err)
 	}
 }
 
