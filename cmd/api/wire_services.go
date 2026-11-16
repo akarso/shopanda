@@ -82,6 +82,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	"github.com/akarso/shopanda/internal/seed"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
@@ -268,7 +269,13 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 			DB:        conn,
 			Customers: repos.customerRepo,
 			Variants:  repos.variantRepo,
+			Products:  repos.productRepo,
+			Orders:    repos.orderRepo,
+			Carts:     repos.cartRepo,
 		},
+	}
+	if err := bindProductPorts(pluginApp, pluginApp.Bootstrap); err != nil {
+		return nil, err
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)
@@ -729,6 +736,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts, visibilityOpts).
 		WithAssignmentFlow(assignmentFlow).
 		WithDownloadableFiles(repos.downloadableFileRepo)
+	if err := pluginApp.BindCartPort(pluginsdk.NewCartPort(cartService)); err != nil {
+		return nil, err
+	}
+	if err := pluginApp.AssertNeedsMet(); err != nil {
+		return nil, fmt.Errorf("plugin capabilities: %w", err)
+	}
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 

@@ -3,7 +3,6 @@ package promodemo
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
@@ -11,21 +10,18 @@ import (
 type Plugin struct{}
 
 // New returns the promotion rule reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "promodemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("promodemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("promodemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("promodemo plugin: config not configured")
-	}
-	if !app.Config.Plugins.PromoDemo.Enabled {
+	if !h.ConfigBool("plugins.promodemo.enabled") {
 		return fmt.Errorf("promodemo plugin: disabled (plugins.promodemo.enabled=false)")
 	}
-	sdk := pluginsdk.New(app, p.Name())
+	sdk := pluginsdk.NewHost(h, p.Name())
 	promo := sdk.Promotion()
 	if err := promo.RegisterCatalogCondition(RuleMinLineTotal, evalMinLineTotal); err != nil {
 		return err

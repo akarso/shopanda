@@ -282,6 +282,8 @@ queue:
 #     fee_minor_units: 100
 #   slotsdemo:
 #     enabled: false
+#   extref:
+#     enabled: false   # public SDK reference (pluginsdk.Adapt); GET /extref/health
 #   promodemo:
 #     enabled: false   # custom catalog promotion rule types (min_line_total, line_bonus_percent)
 

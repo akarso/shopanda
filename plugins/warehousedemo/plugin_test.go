@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/warehousedemo"
 )
 
@@ -56,7 +57,7 @@ func initWarehouseDemoPlugin(t *testing.T, baseURL string) (*plugin.App, *stubSt
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(warehousedemo.New())
+	reg.Register(pluginsdk.Adapt(warehousedemo.New()))
 	app := testApp(cfg, stub)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)
@@ -76,7 +77,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			WarehouseDemo: config.WarehouseDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := warehousedemo.New().Init(testApp(cfg, &stubStockSyncer{})); err == nil {
+	if err := warehousedemo.New().Init(pluginsdk.AsHost(testApp(cfg, &stubStockSyncer{}))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }

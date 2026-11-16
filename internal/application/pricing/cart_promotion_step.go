@@ -45,7 +45,14 @@ func (s *CartPromotionStep) Apply(ctx context.Context, pctx *domain.PricingConte
 
 	subtotal := shared.MustZero(pctx.Currency)
 	for _, item := range pctx.Items {
-		subtotal = subtotal.Add(itemNetTotal(item))
+		net, err := itemNetTotal(item)
+		if err != nil {
+			return fmt.Errorf("cart promotions: item net total: %w", err)
+		}
+		subtotal, err = subtotal.Add(net)
+		if err != nil {
+			return fmt.Errorf("cart promotions: subtotal: %w", err)
+		}
 	}
 
 	now := time.Now()
@@ -200,12 +207,16 @@ func (a cartAction) compute(ctx context.Context, subtotal shared.Money, currency
 	}
 }
 
-func itemNetTotal(item domain.PricingItem) shared.Money {
+func itemNetTotal(item domain.PricingItem) (shared.Money, error) {
 	net := item.Total
 	for _, adj := range item.Adjustments {
 		if adj.Type == domain.AdjustmentDiscount {
-			net = net.Sub(adj.Amount)
+			reduced, err := net.Sub(adj.Amount)
+			if err != nil {
+				return shared.Money{}, err
+			}
+			net = reduced
 		}
 	}
-	return net
+	return net, nil
 }

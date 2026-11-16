@@ -159,7 +159,11 @@ func TestCreateOrderStep_ExplodeInclusiveTaxMatchesPreTaxTotal(t *testing.T) {
 		t.Fatalf("adjustment: %v", err)
 	}
 	adj.Included = true
-	pctx.Items[0].Total = pctx.Items[0].Total.Sub(tax)
+	netTotal, err := pctx.Items[0].Total.Sub(tax)
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	pctx.Items[0].Total = netTotal
 	pctx.Items[0].Adjustments = append(pctx.Items[0].Adjustments, adj)
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)

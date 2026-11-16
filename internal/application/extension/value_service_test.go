@@ -2,9 +2,11 @@ package extension_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -406,6 +408,62 @@ func TestValueService_PluginOnlyWrite_TrustedContextAllowed(t *testing.T) {
 		if v.UpdatedBy != "plugin:acme" {
 			t.Fatalf("UpdatedBy = %q, want plugin:acme", v.UpdatedBy)
 		}
+	}
+}
+
+// failUpsertRepo fails the next UpsertBatch call. Used to prove ReplaceTarget
+// upserts before deleting extras: a failed upsert must leave existing rows.
+type failUpsertRepo struct {
+	*memValueRepo
+	fail error
+}
+
+func (f *failUpsertRepo) UpsertBatch(ctx context.Context, values []domainext.Value) error {
+	if f.fail != nil {
+		err := f.fail
+		f.fail = nil
+		return err
+	}
+	return f.memValueRepo.UpsertBatch(ctx, values)
+}
+
+// TestValueService_ReplaceTarget_UpsertFailurePreservesExisting covers the
+// review blocker: the old DeleteAll-then-UpsertBatch order wiped the target
+// when UpsertBatch failed after deletes. Upsert-first keeps "Keep me".
+func TestValueService_ReplaceTarget_UpsertFailurePreservesExisting(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+	})
+	inner := newMemValueRepo()
+	repo := &failUpsertRepo{memValueRepo: inner}
+	svc := extensionapp.NewValueService(reg, repo)
+	ctx := context.Background()
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	keep := "Keep me"
+	if _, err := svc.UpsertBatch(ctx, target, []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: keep}}, "cust", false); err != nil {
+		t.Fatal(err)
+	}
+	repo.fail = errors.New("upsert boom")
+	overwrite := "Overwrite"
+	err := svc.ReplaceTarget(ctx, target, []domainext.Value{{
+		FieldCode:  "acme.gift.message",
+		TargetType: target.Type,
+		TargetID:   target.ID,
+		Payload:    domainext.ValuePayload{StringValue: &overwrite},
+		UpdatedBy:  "restore",
+		UpdatedAt:  time.Now().UTC(),
+	}})
+	if err == nil {
+		t.Fatal("expected UpsertBatch failure")
+	}
+	got, err := repo.ListByTarget(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Payload.StringValue == nil || *got[0].Payload.StringValue != keep {
+		t.Fatalf("after failed ReplaceTarget = %+v, want %q preserved", got, keep)
 	}
 }
 

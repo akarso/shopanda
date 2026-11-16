@@ -35,6 +35,10 @@ type AddItemOptions struct {
 	UpdatedBy  string
 }
 
+// mergeRestoreAttempts is how many times ReplaceTarget is tried before a
+// claim returns with the pre-merge snapshot still held for the next claim.
+const mergeRestoreAttempts = 3
+
 // Service orchestrates cart use cases.
 type Service struct {
 	carts             domainCart.CartRepository
@@ -62,6 +66,13 @@ type extensionValueWriter interface {
 	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
 	DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error
 	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
+	// ListByTarget / ReplaceTarget / ListTargetIDsByTypeAndIDPrefix back
+	// merge compensation: CopyTarget commits independently of carts.Save,
+	// so a Save failure must restore pre-merge rows. Backups use
+	// TargetCartItemMergeBackup so a failed restore survives process restart.
+	ListByTarget(ctx context.Context, target domainext.Target) ([]domainext.Value, error)
+	ReplaceTarget(ctx context.Context, target domainext.Target, values []domainext.Value) error
+	ListTargetIDsByTypeAndIDPrefix(ctx context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error)
 }
 
 // NewService creates a cart application service.
@@ -277,6 +288,11 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
 	}
 	if customerCart != nil && customerCart.MergedGuestID == guestCart.ID {
+		// MergedGuestID is durable only after CopyTarget finished for every
+		// claimable line; heal must not re-copy (see finishMergedGuestExtensionCopies).
+		if err := s.finishMergedGuestExtensionCopies(ctx, guestCart, customerCart); err != nil {
+			return nil, err
+		}
 		if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
 			return nil, err
 		}
@@ -430,13 +446,18 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
-	// Validate every guest line before copying extensions so a late failure
-	// cannot leave earlier guest targets half-migrated. CopyTarget commits on
-	// its own, while the customer cart is saved only after the loop. A later
-	// assignment conflict must not overwrite custom values on a shared variant
-	// while leaving quantities unchanged. Guest extension deletes wait until
-	// after that Save so a failed Save leaves guest values intact (same
-	// ordering as assignGuestCart).
+	// Apply any durable pre-merge backup left when a prior claim's CopyTarget
+	// committed but ReplaceTarget restore failed (possibly on another
+	// process). Must run before a new snapshot — otherwise the retry would
+	// capture the guest overwrite as the "pre-merge" state.
+	if err := s.applyPendingMergeRestore(ctx, customerCart.ID, guestCart.ID); err != nil {
+		return nil, err
+	}
+
+	// Validate every guest line before mutating. CopyTarget runs before
+	// MergedGuestID is persisted so a failed copy never looks like a finished
+	// merge on retry (which would delete guest rows via finishMergedGuestCleanup).
+	// Guest extension deletes wait until after a successful Save with MergedGuestID.
 	dropped, err := s.unclaimableGuestLines(ctx, customerCart.CustomerID, guestCart, customerCart)
 	if err != nil {
 		return nil, err
@@ -449,6 +470,7 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 			return nil, apperror.Validation(conflictingLinkedParentAssignmentMessage)
 		}
 	}
+	var copiedVariants []string
 	for _, item := range guestCart.Items {
 		if _, skip := dropped[item.VariantID]; skip {
 			continue
@@ -457,20 +479,59 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
 		stampLineAssignment(customerCart, item.VariantID, lineAssignment(item))
-		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
-			return nil, err
-		}
+		copiedVariants = append(copiedVariants, item.VariantID)
 	}
 	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
 		return nil, err
 	}
-	customerCart.MergedGuestID = guestCart.ID
 	if err := s.recalculate(ctx, customerCart); err != nil {
 		return nil, err
 	}
+
+	// Snapshot + durable backup before any CopyTarget. CopyTarget commits
+	// independently of carts.Save; backups live in extension_values so a
+	// failed restore (or process death) can still recover the customer value.
+	snapshots, err := s.snapshotCustomerCartExtensions(ctx, customerCart.ID, copiedVariants)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.writeMergeBackups(ctx, customerCart.ID, guestCart.ID, snapshots); err != nil {
+		return nil, err
+	}
+
+	// Copy while guest rows still exist and before MergedGuestID is durable.
+	// A failure partway through must restore only variants CopyTarget already
+	// changed. A Save conflict after another claim already committed this
+	// merge must NOT restore (that would wipe the winner's guest values).
+	var copiedOK []string
+	for _, variantID := range copiedVariants {
+		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, variantID); err != nil {
+			toRestore := snapshotsForVariants(snapshots, copiedOK)
+			if restoreErr := s.restoreCustomerCartExtensions(ctx, customerCart.ID, guestCart.ID, toRestore); restoreErr != nil {
+				return nil, fmt.Errorf("cart service: claim guest cart: copy extensions failed (%v); restore customer extensions: %w", err, restoreErr)
+			}
+			return nil, err
+		}
+		copiedOK = append(copiedOK, variantID)
+	}
+	customerCart.MergedGuestID = guestCart.ID
 	if err := s.carts.Save(ctx, customerCart); err != nil {
+		// Concurrent claim may have already committed this merge.
+		if latest, findErr := s.carts.FindByID(ctx, customerCart.ID); findErr == nil && latest != nil && latest.MergedGuestID == guestCart.ID {
+			_ = s.clearMergeBackups(ctx, customerCart.ID, guestCart.ID)
+			if cleanupErr := s.finishMergedGuestCleanup(ctx, guestCart.ID); cleanupErr != nil {
+				return nil, cleanupErr
+			}
+			return latest, nil
+		}
+		toRestore := snapshotsForVariants(snapshots, copiedOK)
+		if restoreErr := s.restoreCustomerCartExtensions(ctx, customerCart.ID, guestCart.ID, toRestore); restoreErr != nil {
+			return nil, fmt.Errorf("cart service: claim guest cart: save merged cart failed (%v); restore customer extensions: %w", err, restoreErr)
+		}
 		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
 	}
+	// Merge is durable — guest overwrite is intentional; drop backups.
+	_ = s.clearMergeBackups(ctx, customerCart.ID, guestCart.ID)
 	if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
 		return nil, err
 	}
@@ -481,6 +542,194 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		"customer_id":      customerCart.CustomerID,
 	})
 	return customerCart, nil
+}
+
+// finishMergedGuestExtensionCopies used to re-copy every guest variant that
+// also existed on the customer cart. That is unsafe: unclaimableGuestLines
+// drops a guest line without removing it from the guest cart, and a
+// pre-existing customer line for the same variant stays in place — so a heal
+// after durable MergedGuestID would overwrite that customer line's
+// extensions with the dropped guest's values.
+//
+// CopyTarget now always runs to completion before MergedGuestID is saved, so
+// a durable MergedGuestID already means every claimable guest line was
+// copied. Heal therefore must not copy again; it only exists so the claim
+// retry path still has a named step before finishMergedGuestCleanup.
+func (s *Service) finishMergedGuestExtensionCopies(ctx context.Context, guestCart, customerCart *domainCart.Cart) error {
+	_ = ctx
+	_ = guestCart
+	_ = customerCart
+	return nil
+}
+
+// customerCartExtensionSnapshot is a point-in-time copy of one target's
+// stored extension rows, taken before a destructive write that is not
+// atomic with the cart Save that follows it.
+type customerCartExtensionSnapshot struct {
+	target domainext.Target
+	values []domainext.Value
+}
+
+// snapshotCustomerCartExtensions reads the customer cart's current extension
+// rows for each variant in variantIDs, before any CopyTarget touches them.
+func (s *Service) snapshotCustomerCartExtensions(ctx context.Context, customerCartID string, variantIDs []string) ([]customerCartExtensionSnapshot, error) {
+	if s.extensions == nil || len(variantIDs) == 0 {
+		return nil, nil
+	}
+	out := make([]customerCartExtensionSnapshot, 0, len(variantIDs))
+	for _, variantID := range variantIDs {
+		target := domainext.CartItemTarget(customerCartID, variantID)
+		values, err := s.extensions.ListByTarget(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("cart service: claim guest cart: snapshot customer extensions: %w", err)
+		}
+		out = append(out, customerCartExtensionSnapshot{target: target, values: values})
+	}
+	return out, nil
+}
+
+// snapshotsForVariants returns the subset of snapshots whose cart-item
+// target variant is in variantIDs (the variants CopyTarget already changed).
+func snapshotsForVariants(snapshots []customerCartExtensionSnapshot, variantIDs []string) []customerCartExtensionSnapshot {
+	if len(snapshots) == 0 || len(variantIDs) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(variantIDs))
+	for _, id := range variantIDs {
+		want[id] = struct{}{}
+	}
+	out := make([]customerCartExtensionSnapshot, 0, len(variantIDs))
+	for _, snap := range snapshots {
+		_, variantID, ok := domainext.ParseCartItemTargetID(snap.target.ID)
+		if !ok {
+			continue
+		}
+		if _, ok := want[variantID]; !ok {
+			continue
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
+// writeMergeBackups persists pre-merge snapshots under TargetCartItemMergeBackup
+// so a failed restore (or another API process) can still recover them.
+func (s *Service) writeMergeBackups(ctx context.Context, customerCartID, guestCartID string, snapshots []customerCartExtensionSnapshot) error {
+	if s.extensions == nil || len(snapshots) == 0 {
+		return nil
+	}
+	for _, snap := range snapshots {
+		_, variantID, ok := domainext.ParseCartItemTargetID(snap.target.ID)
+		if !ok {
+			continue
+		}
+		backup := domainext.MergeBackupTarget(customerCartID, guestCartID, variantID)
+		vals := make([]domainext.Value, len(snap.values))
+		for i, v := range snap.values {
+			v.TargetType = backup.Type
+			v.TargetID = backup.ID
+			vals[i] = v
+		}
+		if err := s.extensions.ReplaceTarget(ctx, backup, vals); err != nil {
+			return fmt.Errorf("cart service: claim guest cart: write merge backup for %q: %w", variantID, err)
+		}
+	}
+	return nil
+}
+
+// clearMergeBackups deletes durable pre-merge backups for this guest merge.
+func (s *Service) clearMergeBackups(ctx context.Context, customerCartID, guestCartID string) error {
+	if s.extensions == nil || customerCartID == "" || guestCartID == "" {
+		return nil
+	}
+	prefix := customerCartID + ":" + guestCartID + ":"
+	ids, err := s.extensions.ListTargetIDsByTypeAndIDPrefix(ctx, domainext.TargetCartItemMergeBackup, prefix+"%")
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: list merge backups: %w", err)
+	}
+	for _, id := range ids {
+		if err := s.extensions.DeleteAllForTarget(ctx, domainext.Target{Type: domainext.TargetCartItemMergeBackup, ID: id}); err != nil {
+			return fmt.Errorf("cart service: claim guest cart: clear merge backup %q: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// loadMergeBackups reads durable pre-merge snapshots for this guest merge.
+func (s *Service) loadMergeBackups(ctx context.Context, customerCartID, guestCartID string) ([]customerCartExtensionSnapshot, error) {
+	if s.extensions == nil || customerCartID == "" || guestCartID == "" {
+		return nil, nil
+	}
+	prefix := customerCartID + ":" + guestCartID + ":"
+	ids, err := s.extensions.ListTargetIDsByTypeAndIDPrefix(ctx, domainext.TargetCartItemMergeBackup, prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]customerCartExtensionSnapshot, 0, len(ids))
+	for _, id := range ids {
+		_, _, variantID, ok := domainext.ParseMergeBackupTargetID(id)
+		if !ok {
+			continue
+		}
+		backup := domainext.Target{Type: domainext.TargetCartItemMergeBackup, ID: id}
+		values, err := s.extensions.ListByTarget(ctx, backup)
+		if err != nil {
+			return nil, err
+		}
+		// Remap to the live cart_item target for ReplaceTarget restore.
+		live := domainext.CartItemTarget(customerCartID, variantID)
+		remapped := make([]domainext.Value, len(values))
+		for i, v := range values {
+			v.TargetType = live.Type
+			v.TargetID = live.ID
+			remapped[i] = v
+		}
+		out = append(out, customerCartExtensionSnapshot{target: live, values: remapped})
+	}
+	return out, nil
+}
+
+// applyPendingMergeRestore restores durable pre-merge backups (if any) before
+// a new claim may snapshot or CopyTarget.
+func (s *Service) applyPendingMergeRestore(ctx context.Context, customerCartID, guestCartID string) error {
+	snapshots, err := s.loadMergeBackups(ctx, customerCartID, guestCartID)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: load merge backups: %w", err)
+	}
+	if len(snapshots) == 0 {
+		return nil
+	}
+	return s.restoreCustomerCartExtensions(ctx, customerCartID, guestCartID, snapshots)
+}
+
+// restoreCustomerCartExtensions puts each snapshotted target back exactly as
+// it was via ReplaceTarget, retrying each target before giving up. On success
+// durable merge backups for this guest are cleared. On failure the backups
+// remain so another process (or retry) can restore instead of snapshotting
+// the guest overwrite. Callers must pass only snapshots for variants
+// CopyTarget already changed (or the full backup set when applying a prior
+// failed restore).
+func (s *Service) restoreCustomerCartExtensions(ctx context.Context, customerCartID, guestCartID string, snapshots []customerCartExtensionSnapshot) error {
+	if s.extensions == nil || len(snapshots) == 0 {
+		_ = s.clearMergeBackups(ctx, customerCartID, guestCartID)
+		return nil
+	}
+	for _, snap := range snapshots {
+		var lastErr error
+		for attempt := 0; attempt < mergeRestoreAttempts; attempt++ {
+			lastErr = s.extensions.ReplaceTarget(ctx, snap.target, snap.values)
+			if lastErr == nil {
+				break
+			}
+		}
+		if lastErr != nil {
+			return fmt.Errorf("cart service: claim guest cart: restore customer extensions for %q: %w", snap.target.ID, lastErr)
+		}
+	}
+	if err := s.clearMergeBackups(ctx, customerCartID, guestCartID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *domainCart.Cart, code string) error {
@@ -551,9 +800,16 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
-	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemBefore, cartID, customerID, variantID, quantity, c, cartItemHookOpts{
+		extensions: opts.Extensions,
+		writeCtx:   writeCtx,
+	}); err != nil {
 		return nil, err
 	}
+
+	// Snapshot every line before AddItem+recalculate: a failed extension
+	// upsert must restore sibling unit prices too, not only the touched line.
+	linesSnap := snapshotCartLines(c)
 
 	if err := c.AddItem(variantID, quantity, price); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot add item", err)
@@ -568,15 +824,20 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
+	// Persist cart first; extension upsert runs only after successful Save.
+	// On upsert failure, compensate by restoring the prior cart-line snapshot.
+	if err := s.carts.Save(ctx, c); err != nil {
+		return nil, fmt.Errorf("cart service: add item: save: %w", err)
+	}
+
 	if len(opts.Extensions) > 0 {
 		target := domainext.CartItemTarget(cartID, variantID)
 		if _, err := s.extensions.UpsertBatch(writeCtx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
+			if compErr := s.compensateAddItemCart(ctx, c, linesSnap); compErr != nil {
+				return nil, fmt.Errorf("cart service: add item: extension upsert failed (%v); compensate: %w", err, compErr)
+			}
 			return nil, err
 		}
-	}
-
-	if err := s.carts.Save(ctx, c); err != nil {
-		return nil, fmt.Errorf("cart service: add item: save: %w", err)
 	}
 
 	s.log.Info("cart.item.added", map[string]interface{}{
@@ -589,13 +850,80 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		VariantID: variantID,
 		Quantity:  quantity,
 	}))
-	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemAfter, c.ID, customerID, variantID, quantity, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemAfter, c.ID, customerID, variantID, quantity, c, cartItemHookOpts{
+		extensions: opts.Extensions,
+		writeCtx:   writeCtx,
+	}); err != nil {
 		s.log.Error("cart.add_item.after_hook_failed", err, map[string]interface{}{
 			"cart_id":    c.ID,
 			"variant_id": variantID,
 		})
 	}
 	return c, nil
+}
+
+type lineSnapshot struct {
+	variantID string
+	quantity  int
+	unit      shared.Money
+	assign    catalog.AssignmentContext
+}
+
+// snapshotCartLines captures every line's quantity, unit price, and
+// assignment before AddItem+recalculate mutates the cart.
+func snapshotCartLines(c *domainCart.Cart) []lineSnapshot {
+	if c == nil || len(c.Items) == 0 {
+		return nil
+	}
+	out := make([]lineSnapshot, 0, len(c.Items))
+	for _, item := range c.Items {
+		out = append(out, lineSnapshot{
+			variantID: item.VariantID,
+			quantity:  item.Quantity,
+			unit:      item.UnitPrice,
+			assign:    lineAssignment(item),
+		})
+	}
+	return out
+}
+
+// compensateAddItemCart restores the cart to its pre-AddItem line shape
+// (including sibling unit prices that recalculate may have rewritten) and
+// re-saves. It deliberately does not call recalculate: compensation must
+// undo the mutation, not reprice against the current catalog.
+func (s *Service) compensateAddItemCart(ctx context.Context, c *domainCart.Cart, snap []lineSnapshot) error {
+	keep := make(map[string]lineSnapshot, len(snap))
+	for _, line := range snap {
+		keep[line.variantID] = line
+	}
+	// Remove lines that were not present before AddItem (the newly added variant).
+	for _, item := range append([]domainCart.Item(nil), c.Items...) {
+		if _, ok := keep[item.VariantID]; ok {
+			continue
+		}
+		if err := c.RemoveItem(item.VariantID); err != nil {
+			return err
+		}
+	}
+	for _, line := range snap {
+		if err := c.UpdateItemQuantity(line.variantID, line.quantity); err != nil {
+			return err
+		}
+		for i := range c.Items {
+			if c.Items[i].VariantID != line.variantID {
+				continue
+			}
+			c.Items[i].UnitPrice = line.unit
+			c.Items[i].AssignmentParentProductID = line.assign.ParentProductID
+			c.Items[i].AssignmentParentUnitID = line.assign.ParentUnitID
+			c.Items[i].AssignmentDeferred = line.assign.Deferred
+			break
+		}
+	}
+	if err := s.carts.Save(ctx, c); err != nil {
+		return fmt.Errorf("re-save after extension failure: %w", err)
+	}
+	return nil
 }
 
 // UpdateItemQuantity sets the quantity of an existing item and recalculates pricing.
@@ -611,7 +939,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
-	if err := s.invokeCartItemHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c, cartItemHookOpts{}); err != nil {
 		return nil, err
 	}
 
@@ -701,7 +1029,7 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		CartID:    c.ID,
 		VariantID: variantID,
 	}))
-	if err := s.invokeCartItemHook(ctx, hooks.HookCartRemoveItemAfter, c.ID, customerID, variantID, 0, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartRemoveItemAfter, c.ID, customerID, variantID, 0, c, cartItemHookOpts{}); err != nil {
 		s.log.Error("cart.remove_item.after_hook_failed", err, map[string]interface{}{
 			"cart_id":    c.ID,
 			"variant_id": variantID,
@@ -722,7 +1050,7 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	hookCtx := hooks.NewContext(hooks.HookCartRecalculateBefore)
 	hookCtx.Set("cart_id", c.ID)
 	hookCtx.Set("customer_id", c.CustomerID)
-	hookCtx.Set("cart", c)
+	hookCtx.Set("cart", cartViewFromDomain(c))
 	hookCtx.Set("pricing_meta", pricingMeta)
 	if err := s.invokeCartHook(ctx, hooks.HookCartRecalculateBefore, hookCtx); err != nil {
 		return err

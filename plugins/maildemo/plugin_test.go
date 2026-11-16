@@ -11,6 +11,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/maildemo"
 )
 
@@ -31,7 +33,7 @@ func TestPlugin_Init_Disabled(t *testing.T) {
 	cfg := &config.Config{Plugins: config.PluginsConfig{
 		MailDemo: config.MailDemoPluginConfig{Enabled: false},
 	}}
-	if err := maildemo.New().Init(testApp(cfg)); err == nil {
+	if err := maildemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("expected error when disabled")
 	}
 }
@@ -41,7 +43,7 @@ func TestPlugin_Init_RegistersMailSender(t *testing.T) {
 		MailDemo: config.MailDemoPluginConfig{Enabled: true, SubjectPrefix: "[test]"},
 	}}
 	app := testApp(cfg)
-	if err := maildemo.New().Init(app); err != nil {
+	if err := maildemo.New().Init(pluginsdk.AsHost(app)); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	v, ok := app.MailSender()
@@ -65,7 +67,7 @@ func TestLogMailer_SubjectPrefix(t *testing.T) {
 	var buf bytes.Buffer
 	log := logger.NewWithWriter(&buf, "info")
 	m := maildemo.NewLogMailer(log, "[demo]")
-	if err := m.Send(context.Background(), mail.Message{
+	if err := m.Send(context.Background(), extapi.MailMessage{
 		To:      "a@b.com",
 		Subject: "Order shipped",
 		Body:    "Thanks",
@@ -79,7 +81,7 @@ func TestLogMailer_SubjectPrefix(t *testing.T) {
 
 func TestLogMailer_EmptyRecipient(t *testing.T) {
 	m := maildemo.NewLogMailer(logger.NewWithWriter(io.Discard, "error"), "")
-	if err := m.Send(context.Background(), mail.Message{Subject: "x"}); err == nil {
+	if err := m.Send(context.Background(), extapi.MailMessage{Subject: "x"}); err == nil {
 		t.Fatal("expected error for empty recipient")
 	}
 }

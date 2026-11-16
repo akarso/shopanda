@@ -3,30 +3,27 @@ package slotsdemo
 import (
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Plugin demonstrates storefront slot renderer registration for plugin authors.
 type Plugin struct{}
 
 // New returns the slots demo reference plugin.
-func New() *Plugin { return &Plugin{} }
+func New() pluginsdk.Plugin { return &Plugin{} }
 
 func (p *Plugin) Name() string { return "slotsdemo/reference" }
 
-func (p *Plugin) Init(app *plugin.App) error {
-	if app == nil {
-		return fmt.Errorf("slotsdemo plugin: app not configured")
+func (p *Plugin) Init(h pluginsdk.Host) error {
+	if h == nil {
+		return fmt.Errorf("slotsdemo plugin: host not configured")
 	}
-	if app.Config == nil {
-		return fmt.Errorf("slotsdemo plugin: config not configured")
-	}
-	if !app.Config.Plugins.SlotsDemo.Enabled {
+	if !h.ConfigBool("plugins.slotsdemo.enabled") {
 		return fmt.Errorf("slotsdemo plugin: disabled (plugins.slotsdemo.enabled=false)")
 	}
 
-	slots := app.Slots(p.Name())
+	slots := h.Slots(p.Name())
 	registrations := []struct {
 		anchor    extapi.SlotAnchor
 		placement extapi.Placement

@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/pkg/extapi"
 	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // NewStockSyncHandler returns a sync job handler that pulls stock and upserts via the port.
-func NewStockSyncHandler(client *sdkhttp.Client, syncer extapi.IntegrationStockSyncer, log logger.Logger) extapi.SyncJobHandler {
+func NewStockSyncHandler(client *sdkhttp.Client, syncer extapi.IntegrationStockSyncer, log pluginsdk.Logger) extapi.SyncJobHandler {
 	return func(ctx context.Context, job extapi.SyncJobContext) error {
 		if client == nil {
 			return fmt.Errorf("warehousedemo: http client not configured")

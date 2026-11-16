@@ -14,7 +14,7 @@ func (s *SDK) Import() *Import {
 
 // RegisterRow registers a handler for entity at priority (lower runs first).
 func (i *Import) RegisterRow(entity extapi.ImportEntity, priority int, handler extapi.ImportRowHandler) error {
-	return i.sdk.app.Import(i.sdk.plugin).RegisterRowHook(entity, priority, handler)
+	return coreApp(i.sdk.host).Import(i.sdk.plugin).RegisterRowHook(entity, priority, handler)
 }
 
 // RegisterProductRow registers a product import row hook.

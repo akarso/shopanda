@@ -2,8 +2,10 @@ package pluginsdk
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
 // SyncJobOption configures optional sync job fields.
@@ -75,9 +77,21 @@ func (sj *SyncJobs) RegisterManual(name string, handler extapi.SyncJobHandler, o
 // Enqueue queues a previously registered sync job for this slug ("run now").
 // Works for manual, cron, or event jobs; the envelope trigger is always "manual".
 func (sj *SyncJobs) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
-	return sj.sdk.app.Integration(sj.slug).Enqueue(ctx, name, payload)
+	return coreApp(sj.sdk.host).Integration(sj.slug).Enqueue(ctx, name, payload)
 }
 
 func (sj *SyncJobs) register(job extapi.SyncJob) error {
-	return sj.sdk.app.Integration(sj.slug).RegisterSyncJob(job)
+	return coreApp(sj.sdk.host).Integration(sj.slug).RegisterSyncJob(job)
+}
+
+// RegisterRoute registers a public inbound integration route under
+// /api/v1/integrations/{slug}/….
+func (sj *SyncJobs) RegisterRoute(method, path string, handler http.Handler) error {
+	return coreApp(sj.sdk.host).Integration(sj.slug).RegisterRoute(method, path, handler)
+}
+
+// RegisterSecureRoute registers an inbound integration route wrapped with
+// API key / HMAC auth middleware (and idempotency dedup when configured).
+func (sj *SyncJobs) RegisterSecureRoute(method, path string, auth integrationhttp.AuthConfig, handler http.Handler) error {
+	return coreApp(sj.sdk.host).Integration(sj.slug).RegisterSecureRoute(method, path, auth, handler)
 }

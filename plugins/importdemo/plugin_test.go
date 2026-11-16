@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/importdemo"
 )
 
@@ -35,7 +36,7 @@ func initImportDemoPlugin(t *testing.T) *importctx.Registry {
 	}
 	importReg := importctx.NewRegistry(nil)
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(importdemo.New())
+	reg.Register(pluginsdk.Adapt(importdemo.New()))
 	app := testApp(cfg)
 	app.SetImportRegistry(importReg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
@@ -56,7 +57,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			ImportDemo: config.ImportDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := importdemo.New().Init(testApp(cfg)); err == nil {
+	if err := importdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }

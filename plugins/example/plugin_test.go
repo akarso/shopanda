@@ -74,7 +74,7 @@ func TestPlugin_Init_DisabledConfigReturnsError(t *testing.T) {
 			Example: config.ExamplePluginConfig{Enabled: false},
 		},
 	}
-	if err := example.New().Init(testApp(cfg)); err == nil {
+	if err := example.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected error when plugins.example.enabled is false")
 	}
 }
@@ -86,7 +86,7 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(example.New())
+	reg.Register(pluginsdk.Adapt(example.New()))
 	app := testApp(cfg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
@@ -126,7 +126,7 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 
 func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(example.New())
+	reg.Register(pluginsdk.Adapt(example.New()))
 	cfg := &config.Config{
 		Plugins: config.PluginsConfig{
 			Example: config.ExamplePluginConfig{Enabled: true},
@@ -144,7 +144,7 @@ func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
 
 func TestPlugin_Init_RegistersAdminConfig(t *testing.T) {
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(example.New())
+	reg.Register(pluginsdk.Adapt(example.New()))
 	cfg := &config.Config{
 		Plugins: config.PluginsConfig{
 			Example: config.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
@@ -178,7 +178,7 @@ func TestExampleFeeStep_AddsFeeToPipeline(t *testing.T) {
 	}
 	pctx.Items = []pricing.PricingItem{item}
 
-	pipe := pricing.NewPipeline(step, pricing.NewFinalizeStep())
+	pipe := pricing.NewPipeline(pluginsdk.AdaptPricingStep(step), pricing.NewFinalizeStep())
 	if err := pipe.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestExampleFeeStep_ReflectsRuntimeConfigChange(t *testing.T) {
 		t.Fatalf("NewPricingItem: %v", err)
 	}
 	pctx.Items = []pricing.PricingItem{item}
-	pipe := pricing.NewPipeline(step, pricing.NewFinalizeStep())
+	pipe := pricing.NewPipeline(pluginsdk.AdaptPricingStep(step), pricing.NewFinalizeStep())
 
 	if err := pipe.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
@@ -238,7 +238,7 @@ func TestPlugin_OrderCreated_EnqueuesEventSyncJob(t *testing.T) {
 		},
 	}
 	reg := plugin.NewRegistry(log)
-	reg.Register(example.New())
+	reg.Register(pluginsdk.Adapt(example.New()))
 	app := testApp(cfg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() = %+v", summary)

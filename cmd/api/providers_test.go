@@ -19,6 +19,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/ratelimit"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/core"
 	"github.com/akarso/shopanda/plugins/maildemo"
 	"github.com/alicebob/miniredis/v2"
@@ -209,7 +210,7 @@ func TestResolveMailer_FromPlugin(t *testing.T) {
 		},
 		Mail: config.MailConfig{Driver: "smtp"},
 	}
-	reg.Register(maildemo.New())
+	reg.Register(pluginsdk.Adapt(maildemo.New()))
 	app := &plugin.App{Logger: log, Bus: event.NewBus(log), Config: cfg}
 	if summary := reg.InitAll(app); summary.Failed != 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)

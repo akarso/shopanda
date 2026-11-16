@@ -58,6 +58,12 @@ type App struct {
 	initCtx   context.Context
 	initCtxMu sync.RWMutex
 
+	// currentPlugin names the plugin whose Init is currently running (set by
+	// InitAllContext), so RecordNeeds can attribute a declared capability to
+	// the plugin that asked for it (see AssertNeedsMet's error message).
+	currentPlugin   string
+	currentPluginMu sync.RWMutex
+
 	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []checkoutStepRegistration
 	compositionSteps map[string][]any
@@ -117,6 +123,8 @@ type App struct {
 	integrationStockSyncMu sync.Mutex
 
 	syncJobs []SyncJobRegistration
+
+	servicePorts *servicePorts
 }
 
 // Context returns the boot context for the current Init call.
@@ -141,6 +149,27 @@ func (a *App) setInitContext(ctx context.Context) {
 	a.initCtxMu.Lock()
 	a.initCtx = ctx
 	a.initCtxMu.Unlock()
+}
+
+// CurrentPluginName returns the name of the plugin whose Init is currently
+// running, or "" outside of Init (e.g. before InitAllContext starts, after
+// it finishes, or when RecordNeeds is called directly in a test).
+func (a *App) CurrentPluginName() string {
+	if a == nil {
+		return ""
+	}
+	a.currentPluginMu.RLock()
+	defer a.currentPluginMu.RUnlock()
+	return a.currentPlugin
+}
+
+func (a *App) setCurrentPluginName(name string) {
+	if a == nil {
+		return
+	}
+	a.currentPluginMu.Lock()
+	a.currentPlugin = name
+	a.currentPluginMu.Unlock()
 }
 
 // RegisterCompositionStep registers a composition pipeline step.

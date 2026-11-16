@@ -577,6 +577,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if _, err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		return err
+	}
 	preparePermissionRegistry(pluginApp)
 	bootSig := startBootSignal()
 	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
@@ -589,6 +592,12 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	if bootInterrupted != nil {
 		return bootInterrupted
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
@@ -1058,6 +1067,9 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		return err
+	}
 	preparePermissionRegistry(pluginApp)
 	bootSig := startBootSignal()
 	summary := registry.InitAllContext(bootSig.Context(), pluginApp)
@@ -1070,6 +1082,12 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	if bootInterrupted != nil {
 		return bootInterrupted
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
@@ -1220,6 +1238,10 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		PluginMigrateMode: plugin.PluginMigrateVerify, // require app migrate; no DDL lock
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if err := bindProductPorts(pluginApp, boot); err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
 	preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	if err := plugin.InitSummaryError(summary); err != nil {
@@ -1229,6 +1251,13 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 	if summary.Failed > 0 {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	// Non-serve process: CartPort is never bound here (only serve constructs
+	// cart.Service and calls BindCartPort), so a plugin declaring
+	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 

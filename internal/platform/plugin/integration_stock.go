@@ -7,8 +7,11 @@ import (
 // SetIntegrationStockSyncer wires the shared stock syncer before plugin Init.
 func (a *App) SetIntegrationStockSyncer(syncer extapi.IntegrationStockSyncer) {
 	a.integrationStockSyncMu.Lock()
-	defer a.integrationStockSyncMu.Unlock()
 	a.integrationStockSync = syncer
+	a.integrationStockSyncMu.Unlock()
+	if syncer != nil {
+		a.MarkCapabilitySatisfied(CapIntegrationStock)
+	}
 }
 
 // IntegrationStockSyncer returns the shared stock syncer.

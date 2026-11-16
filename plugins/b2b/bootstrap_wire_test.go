@@ -8,10 +8,12 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
-	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/b2b"
+	"github.com/akarso/shopanda/plugins/b2b/groups"
+	b2bpricing "github.com/akarso/shopanda/plugins/b2b/pricing"
 )
 
 func TestPlugin_Init_MissingCustomersReturnsError(t *testing.T) {
@@ -25,7 +27,10 @@ func TestPlugin_Init_MissingCustomersReturnsError(t *testing.T) {
 		DB:       &sql.DB{},
 		Variants: &wireStubVariantRepo{},
 	}
-	err := b2b.New().Init(app)
+	if err := app.BindCatalogPort(pluginsdk.NewCatalogPort(nil, &wireStubVariantRepo{})); err != nil {
+		t.Fatalf("BindCatalogPort: %v", err)
+	}
+	err := b2b.New().Init(pluginsdk.AsHost(app))
 	if err == nil || !strings.Contains(err.Error(), "customer repository not configured") {
 		t.Fatalf("Init() error = %v, want customer repository not configured", err)
 	}
@@ -42,23 +47,25 @@ func TestPlugin_Init_MissingVariantsReturnsError(t *testing.T) {
 		DB:        &sql.DB{},
 		Customers: &wireStubCustomerRepo{},
 	}
-	err := b2b.New().Init(app)
+	if err := app.BindCustomerPort(pluginsdk.NewCustomerPort(&wireStubCustomerRepo{})); err != nil {
+		t.Fatalf("BindCustomerPort: %v", err)
+	}
+	err := b2b.New().Init(pluginsdk.AsHost(app))
 	if err == nil || !strings.Contains(err.Error(), "variant repository not configured") {
 		t.Fatalf("Init() error = %v, want variant repository not configured", err)
 	}
 }
 
 func TestNewAdminHandlers_UsesBootstrapRepos(t *testing.T) {
-	customers := &wireStubCustomerRepo{label: "customers"}
-	variants := &wireStubVariantRepo{label: "variants"}
-	boot := &plugin.Bootstrap{Customers: customers, Variants: variants}
+	customers := pluginsdk.NewCustomerPort(&wireStubCustomerRepo{label: "customers"})
+	variants := pluginsdk.NewCatalogPort(nil, &wireStubVariantRepo{label: "variants"})
 
-	groupAdmin, priceAdmin := b2b.NewAdminHandlersForTest(boot, &wireStubGroupRepo{}, &wireStubPriceRepo{})
+	groupAdmin, priceAdmin := b2b.NewAdminHandlersForTest(customers, variants, &wireStubGroupRepo{}, &wireStubPriceRepo{})
 	if groupAdmin.CustomerRepository() != customers {
-		t.Fatal("group admin did not receive Bootstrap.Customers")
+		t.Fatal("group admin did not receive customer port")
 	}
 	if priceAdmin.VariantRepository() != variants {
-		t.Fatal("price admin did not receive Bootstrap.Variants")
+		t.Fatal("price admin did not receive catalog port")
 	}
 }
 
@@ -105,35 +112,35 @@ func (s *wireStubVariantRepo) Update(context.Context, *catalog.Variant) error { 
 
 type wireStubGroupRepo struct{}
 
-func (wireStubGroupRepo) List(context.Context, int, int) ([]customergroup.Group, error) {
+func (wireStubGroupRepo) List(context.Context, int, int) ([]groups.Group, error) {
 	return nil, nil
 }
-func (wireStubGroupRepo) FindByID(context.Context, string) (*customergroup.Group, error) {
+func (wireStubGroupRepo) FindByID(context.Context, string) (*groups.Group, error) {
 	return nil, nil
 }
-func (wireStubGroupRepo) FindByCode(context.Context, string) (*customergroup.Group, error) {
+func (wireStubGroupRepo) FindByCode(context.Context, string) (*groups.Group, error) {
 	return nil, nil
 }
-func (wireStubGroupRepo) Save(context.Context, *customergroup.Group) error { return nil }
-func (wireStubGroupRepo) Delete(context.Context, string) error             { return nil }
+func (wireStubGroupRepo) Save(context.Context, *groups.Group) error { return nil }
+func (wireStubGroupRepo) Delete(context.Context, string) error      { return nil }
 func (wireStubGroupRepo) AssignCustomer(context.Context, string, string) error {
 	return nil
 }
 func (wireStubGroupRepo) RemoveCustomer(context.Context, string) error { return nil }
-func (wireStubGroupRepo) FindGroupByCustomerID(context.Context, string) (*customergroup.Group, error) {
+func (wireStubGroupRepo) FindGroupByCustomerID(context.Context, string) (*groups.Group, error) {
 	return nil, nil
 }
 
 type wireStubPriceRepo struct{}
 
-func (wireStubPriceRepo) FindByVariantsGroupCurrencyAndStore(context.Context, []string, string, string, string) (map[string]*customergroup.GroupPrice, error) {
+func (wireStubPriceRepo) FindByVariantsGroupCurrencyAndStore(context.Context, []string, string, string, string) (map[string]*b2bpricing.GroupPrice, error) {
 	return nil, nil
 }
-func (wireStubPriceRepo) FindExactByVariantGroupCurrencyAndStore(context.Context, string, string, string, string) (*customergroup.GroupPrice, error) {
+func (wireStubPriceRepo) FindExactByVariantGroupCurrencyAndStore(context.Context, string, string, string, string) (*b2bpricing.GroupPrice, error) {
 	return nil, nil
 }
-func (wireStubPriceRepo) FindByVariantGroupCurrencyAndStore(context.Context, string, string, string, string) (*customergroup.GroupPrice, error) {
+func (wireStubPriceRepo) FindByVariantGroupCurrencyAndStore(context.Context, string, string, string, string) (*b2bpricing.GroupPrice, error) {
 	return nil, nil
 }
-func (wireStubPriceRepo) Upsert(context.Context, *customergroup.GroupPrice) error { return nil }
-func (wireStubPriceRepo) Delete(context.Context, string) error                    { return nil }
+func (wireStubPriceRepo) Upsert(context.Context, *b2bpricing.GroupPrice) error { return nil }
+func (wireStubPriceRepo) Delete(context.Context, string) error                 { return nil }

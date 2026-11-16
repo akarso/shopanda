@@ -120,7 +120,11 @@ func (c *RateTableCalculator) Calculate(ctx context.Context, pctx *domain.Pricin
 
 		if mode == tax.ModeInclusive {
 			adj.Included = true
-			item.Total = item.Total.Sub(taxAmount)
+			reduced, err := item.Total.Sub(taxAmount)
+			if err != nil {
+				return fmt.Errorf("tax calculator: variant %s: %w", item.VariantID, err)
+			}
+			item.Total = reduced
 		}
 
 		item.Adjustments = append(item.Adjustments, adj)

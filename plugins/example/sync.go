@@ -3,9 +3,6 @@ package example
 import (
 	"context"
 
-	"github.com/akarso/shopanda/internal/domain/order"
-	"github.com/akarso/shopanda/internal/platform/logger"
-	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
@@ -19,16 +16,15 @@ const (
 // composition root (serve) wires Bus.OnAsync → queue via
 // RegisterSyncJobEventTriggers; do not hand-roll OnAsync+Enqueue here or
 // every run is stamped trigger=manual.
-func registerOrderCreatedSync(app *plugin.App) error {
-	sdk := pluginsdk.New(app, "example/demo")
+func registerOrderCreatedSync(sdk *pluginsdk.SDK) error {
 	return sdk.Integration(integrationSlug).RegisterOnEvent(
 		orderCreatedJob,
-		order.EventOrderCreated,
-		orderCreatedSyncHandler(app.Logger),
+		extapi.EventOrderCreated,
+		orderCreatedSyncHandler(sdk.Host().Logger()),
 	)
 }
 
-func orderCreatedSyncHandler(log logger.Logger) extapi.SyncJobHandler {
+func orderCreatedSyncHandler(log pluginsdk.Logger) extapi.SyncJobHandler {
 	return func(_ context.Context, job extapi.SyncJobContext) error {
 		if log == nil {
 			return nil
@@ -48,8 +44,7 @@ func orderCreatedSyncHandler(log logger.Logger) extapi.SyncJobHandler {
 }
 
 // orderCreatedFields reads eventPayload's {"data": …} after a real queue
-// JSON round-trip (map[string]interface{}). Also accepts the in-process
-// typed struct used by in-memory test queues.
+// JSON round-trip (map[string]interface{}).
 func orderCreatedFields(payload map[string]interface{}) (orderID string, itemCount int, ok bool) {
 	if payload == nil {
 		return "", 0, false
@@ -58,18 +53,15 @@ func orderCreatedFields(payload map[string]interface{}) (orderID string, itemCou
 	if !exists {
 		return "", 0, false
 	}
-	switch data := raw.(type) {
-	case order.OrderCreatedData:
-		return data.OrderID, data.ItemCount, true
-	case map[string]interface{}:
-		id, _ := data["order_id"].(string)
-		if id == "" {
-			return "", 0, false
-		}
-		return id, jsonInt(data["item_count"]), true
-	default:
+	data, ok := raw.(map[string]interface{})
+	if !ok {
 		return "", 0, false
 	}
+	id, _ := data["order_id"].(string)
+	if id == "" {
+		return "", 0, false
+	}
+	return id, jsonInt(data["item_count"]), true
 }
 
 func jsonInt(v interface{}) int {

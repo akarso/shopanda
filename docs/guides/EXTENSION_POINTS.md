@@ -14,6 +14,39 @@ Related:
 
 ---
 
+## Quick catalog — I want → use
+
+| I want to… | Use |
+| --- | --- |
+| Validate or veto a cart mutation in the same request | **Hooks** — `Host.Hooks(name).Register(extapi.HookCart…, priority, handler)` |
+| Adjust line/totals during pricing recalculate | **Pricing pipeline** — `Host.RegisterPricingStep` + `pluginsdk.After/Before/Replace` |
+| Run ordered checkout-side effects inside checkout | **Checkout workflow** — `Host.RegisterCheckoutStep` |
+| Enrich PDP/PLP API JSON | **Composition steps** — `Host.RegisterCompositionStep("pdp"\|"plp", step)` |
+| Persist custom fields on entities | **Extension fields** — `Host.RegisterField`; plugin-only values need `Host.WithPluginWrite` / `PluginWriteContext` before service/port writes |
+| Declare dependency on cart/catalog/orders/DB wiring | **Needs** — optional `NeedsDeclarer` + `Host.Require(pluginsdk.Cap…)`; root binds ports before `AssertNeedsMet` |
+| Add lines or read catalog/orders from plugin code | **Host ports** — `Cart()`, `Catalog()`, `Orders()` (`pluginsdk.CartPort.AddItem`, …) |
+| Scheduled / event / manual outbound work | **Sync jobs** — `pluginsdk` integration helpers → `integration.sync.{slug}.{name}` only |
+| Map import/export rows | **Row hooks** — `pluginsdk` import/export helpers on Host (scoped by plugin name) |
+| React after something happened (webhooks, cache, notify) | **Events** — core `Bus.On` / `OnAsync` via integration registration (not hooks) |
+
+Product plugins on the public SDK: register with `pluginsdk.Adapt(p)` and implement `pluginsdk.Plugin` — see [`plugins/extref`](../../plugins/extref/README.md).
+
+---
+
+## Pitfalls
+
+- **Trusted-write strip sites** — `WithPluginWrite` / `PluginWriteContext` trust is removed at `Bus.Publish`, `pricing.Pipeline.Execute`, `checkout.Workflow.Execute`, jobs `Worker.safeHandle`, and for cart **hooks** / pricing recalculate (retained only through extension validate/upsert on `AddItem`). Do not assume the marker survives into hook handlers or async work.
+- **Guest merge / claim** — `CopyTarget` runs **before** `MergedGuestID` is persisted. A failed copy leaves guest rows intact so a retry can finish. Hooks are **not** re-fired. Plugin-only line fields dropped on remove/re-add must be written again on the next trusted `CartPort.AddItem` (or your plugin add path).
+- **Hook payloads** — `cart.add_item.before` sees extension **field codes** and `actor_*`; plugin-only **values** are redacted unless `plugin_write_codes` lists that code (pre-strip grant). Enforcement of PluginOnlyWrite stays in `ValidateBatch` / upsert, not in hooks.
+- **Needs must be bound** — `CapCart` is bound late when `serve` wires `CartPort`; `InitAll` + `AssertNeedsMet` run only after `bindProductPorts` (same bindings for CLI/worker paths that init plugins).
+- **CLI / worker** — any process that runs `InitAll` on plugins must call the same product port binding as HTTP serve (`bindProductPorts`); otherwise `Needs()` for `CapCatalog` / `CapOrders` fails at startup.
+- **`CapCart` is serve-only** — only `serve` constructs `cart.Service` and calls `BindCartPort`; worker, scheduler, search-reindex, and the cache/schedule/extension-field CLIs never bind `CartPort`. Those processes call `AssertNeedsMetExcept(plugin.CapCart)` instead of `AssertNeedsMet` after `InitAll`, so a plugin that declares `Needs(CapCart)` (e.g. [`plugins/extref`](../../plugins/extref/README.md)) does not block their boot. `serve` keeps the strict `AssertNeedsMet()` after `BindCartPort`. `Host.Cart()` also returns `ok=false` unless that plugin declared `CapCart` — binding the port for serve does not open it to every plugin that kept a Host handle.
+- **Integration writers** — `IntegrationOrderStatusUpdater` / `ShipmentStatusUpdater` / `StockSyncer` require `CapIntegrationOrder` / `CapIntegrationShipment` / `CapIntegrationStock` (declare via `Require` when the plugin is enabled).
+
+Details on plugin-only fields: [§ Plugin-only writes](#plugin-only-writes-accesspluginonlywrite) below.
+
+---
+
 ## Pick a mechanism
 
 Answer these in order:

@@ -36,7 +36,7 @@ shopanda
 .DS_Store
 *.swp
 *.swo
-# .idea/
+.idea/
 # .vscode/
 
 # Legacy local scratch dir at repo root only — do not ignore storefront/src or

@@ -62,16 +62,18 @@ func (m Money) Currency() string {
 	return m.currency
 }
 
-// Add returns the sum of two Money values. Panics on currency mismatch.
-func (m Money) Add(other Money) Money {
-	m.mustMatch(other)
-	return Money{amount: m.amount + other.amount, currency: m.currency}
+// Add returns the sum of two Money values. Returns an error on currency
+// mismatch or int64 overflow, matching extapi.Money.Add / AddChecked.
+func (m Money) Add(other Money) (Money, error) {
+	return m.AddChecked(other)
 }
 
 // AddChecked returns the sum of two Money values.
-// Returns an error if the addition would overflow int64.
+// Returns an error on currency mismatch or if the addition would overflow int64.
 func (m Money) AddChecked(other Money) (Money, error) {
-	m.mustMatch(other)
+	if m.currency != other.currency {
+		return Money{}, fmt.Errorf("money: currency mismatch: %s vs %s", m.currency, other.currency)
+	}
 	sum := m.amount + other.amount
 	// Overflow: both positive but sum negative, or both negative but sum positive.
 	if (other.amount > 0 && sum < m.amount) || (other.amount < 0 && sum > m.amount) {
@@ -80,10 +82,17 @@ func (m Money) AddChecked(other Money) (Money, error) {
 	return Money{amount: sum, currency: m.currency}, nil
 }
 
-// Sub returns the difference of two Money values. Panics on currency mismatch.
-func (m Money) Sub(other Money) Money {
-	m.mustMatch(other)
-	return Money{amount: m.amount - other.amount, currency: m.currency}
+// Sub returns the difference of two Money values. Returns an error on
+// currency mismatch or int64 overflow, matching extapi.Money.Sub.
+func (m Money) Sub(other Money) (Money, error) {
+	if m.currency != other.currency {
+		return Money{}, fmt.Errorf("money: currency mismatch: %s vs %s", m.currency, other.currency)
+	}
+	diff := m.amount - other.amount
+	if (other.amount < 0 && diff < m.amount) || (other.amount > 0 && diff > m.amount) {
+		return Money{}, errors.New("money: subtraction overflow")
+	}
+	return Money{amount: diff, currency: m.currency}, nil
 }
 
 // Mul returns the Money value multiplied by a quantity.
@@ -92,12 +101,22 @@ func (m Money) Mul(qty int64) Money {
 }
 
 // MulChecked returns the Money value multiplied by a quantity.
-// Returns an error if the multiplication would overflow int64.
+// Returns an error if the multiplication would overflow int64. Handles
+// negative qty (including math.MinInt64) correctly: the product is
+// validated by dividing back and comparing, with an explicit guard for the
+// MinInt64 * -1 case that would otherwise wrap around and defeat that check.
 func (m Money) MulChecked(qty int64) (Money, error) {
-	if qty != 0 && (m.amount > math.MaxInt64/qty || m.amount < math.MinInt64/qty) {
+	if qty == 0 || m.amount == 0 {
+		return Money{amount: 0, currency: m.currency}, nil
+	}
+	if (m.amount == -1 && qty == math.MinInt64) || (qty == -1 && m.amount == math.MinInt64) {
 		return Money{}, errors.New("money: multiplication overflow")
 	}
-	return Money{amount: m.amount * qty, currency: m.currency}, nil
+	result := m.amount * qty
+	if result/qty != m.amount {
+		return Money{}, errors.New("money: multiplication overflow")
+	}
+	return Money{amount: result, currency: m.currency}, nil
 }
 
 // IsZero returns true if the amount is zero.
@@ -123,12 +142,6 @@ func (m Money) Equal(other Money) bool {
 // String returns a human-readable representation (e.g. "1299 EUR").
 func (m Money) String() string {
 	return fmt.Sprintf("%d %s", m.amount, m.currency)
-}
-
-func (m Money) mustMatch(other Money) {
-	if m.currency != other.currency {
-		panic(fmt.Sprintf("money: currency mismatch: %s vs %s", m.currency, other.currency))
-	}
 }
 
 // IsValidCurrency returns true if code is a 3-letter uppercase ASCII string.

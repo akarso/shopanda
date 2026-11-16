@@ -169,9 +169,13 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 			continue
 		}
 		name := live.Name
+		app.setCurrentPluginName(name)
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
+		if nd, ok := live.Plugin.(NeedsDeclarer); ok {
+			app.RecordNeeds(nd.Needs()...)
+		}
 		if err := applyPluginMigrator(ctx, app, name, live.Plugin); err != nil {
 			live.State = StateFailed
 			live.Err = err
@@ -221,6 +225,8 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 	}
 	app.cliRegistry = r.cliRegistry
 	app.WarnUnownedPluginOnlyFields()
+	app.setCurrentPluginName("")
+	app.FreezePluginNeeds()
 	return summary
 }
 

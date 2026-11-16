@@ -1,7 +1,15 @@
 // Package pluginsdk provides typed registration helpers for plugin authors.
 //
+// Preferred Init shape (Track E): implement pluginsdk.Plugin with Init(Host),
+// then register via pluginsdk.Adapt(p) on the core plugin.Registry.
+// Host covers hooks, routes, permissions, and pricing/checkout/composition
+// registration without importing internal/platform/plugin in product Init code.
+//
+// Dual-mode: existing plugins may still use Init(*plugin.App). SDK.New accepts
+// *plugin.App; NewHost accepts Host.
+//
 // Use pluginsdk to reduce ceremony when registering pricing steps, import row hooks,
-// and outbound integration sync jobs on plugin.App during Init.
+// and outbound integration sync jobs during Init.
 //
 // Sync jobs: Integration(slug).RegisterCron / RegisterOnEvent / RegisterManual.
 // Event-driven durable work → RegisterOnEvent (serve wires enqueue with

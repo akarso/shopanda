@@ -24,7 +24,11 @@ func (s *FinalizeStep) Apply(_ context.Context, pctx *PricingContext) error {
 
 	subtotal := zero
 	for _, item := range pctx.Items {
-		subtotal = subtotal.Add(item.Total)
+		sum, err := subtotal.Add(item.Total)
+		if err != nil {
+			return err
+		}
+		subtotal = sum
 	}
 	pctx.Subtotal = subtotal
 
@@ -33,26 +37,34 @@ func (s *FinalizeStep) Apply(_ context.Context, pctx *PricingContext) error {
 	fees := zero
 
 	for _, item := range pctx.Items {
+		var err error
 		for _, adj := range item.Adjustments {
 			switch adj.Type {
 			case AdjustmentDiscount:
-				discounts = discounts.Add(adj.Amount)
+				discounts, err = discounts.Add(adj.Amount)
 			case AdjustmentTax:
-				taxes = taxes.Add(adj.Amount)
+				taxes, err = taxes.Add(adj.Amount)
 			case AdjustmentFee:
-				fees = fees.Add(adj.Amount)
+				fees, err = fees.Add(adj.Amount)
+			}
+			if err != nil {
+				return err
 			}
 		}
 	}
 
 	for _, adj := range pctx.Adjustments {
+		var err error
 		switch adj.Type {
 		case AdjustmentDiscount:
-			discounts = discounts.Add(adj.Amount)
+			discounts, err = discounts.Add(adj.Amount)
 		case AdjustmentTax:
-			taxes = taxes.Add(adj.Amount)
+			taxes, err = taxes.Add(adj.Amount)
 		case AdjustmentFee:
-			fees = fees.Add(adj.Amount)
+			fees, err = fees.Add(adj.Amount)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
@@ -60,6 +72,18 @@ func (s *FinalizeStep) Apply(_ context.Context, pctx *PricingContext) error {
 	pctx.TaxTotal = taxes
 	pctx.FeesTotal = fees
 
-	pctx.GrandTotal = subtotal.Sub(discounts).Add(taxes).Add(fees)
+	grand, err := subtotal.Sub(discounts)
+	if err != nil {
+		return err
+	}
+	grand, err = grand.Add(taxes)
+	if err != nil {
+		return err
+	}
+	grand, err = grand.Add(fees)
+	if err != nil {
+		return err
+	}
+	pctx.GrandTotal = grand
 	return nil
 }

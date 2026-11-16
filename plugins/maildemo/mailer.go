@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/domain/mail"
-	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 const (
@@ -14,15 +14,15 @@ const (
 	DefaultSubjectPrefix = "[maildemo]"
 )
 
-// LogMailer implements mail.Mailer by logging outbound messages.
+// LogMailer implements extapi.MailSender by logging outbound messages.
 // Reference integrators can swap this for SendGrid/Postmark HTTP clients.
 type LogMailer struct {
-	log           logger.Logger
+	log           pluginsdk.Logger
 	subjectPrefix string
 }
 
 // NewLogMailer creates a mail sender that logs instead of delivering externally.
-func NewLogMailer(log logger.Logger, subjectPrefix string) *LogMailer {
+func NewLogMailer(log pluginsdk.Logger, subjectPrefix string) *LogMailer {
 	prefix := strings.TrimSpace(subjectPrefix)
 	if prefix == "" {
 		prefix = DefaultSubjectPrefix
@@ -31,7 +31,7 @@ func NewLogMailer(log logger.Logger, subjectPrefix string) *LogMailer {
 }
 
 // Send logs the message and returns nil. Attachments are counted but not logged.
-func (m *LogMailer) Send(_ context.Context, msg mail.Message) error {
+func (m *LogMailer) Send(_ context.Context, msg extapi.MailMessage) error {
 	if m == nil || m.log == nil {
 		return fmt.Errorf("maildemo: logger not configured")
 	}

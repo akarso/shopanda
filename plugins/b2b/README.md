@@ -9,7 +9,7 @@ Optional commercial extension for wholesale and business-buyer workflows.
 
 ## Status
 
-**Customer groups (PR-500)** and **group-aware pricing (PR-501)** — domain ports in open core; schema, repository, pricing step, and admin API in this plugin. Quotes, PO, and approvals remain planned.
+**Customer groups (PR-500)** and **group-aware pricing (PR-501)** — `Group`/`GroupPrice` domain types, repository interfaces, Postgres implementations, the pricing step, and the admin API all live in this plugin (`groups/`, `pricing/`); open core exposes only the generic `pluginsdk.CustomerPort` / `pluginsdk.CatalogPort` read ports B2B composes against (PR-1552). Quotes, PO, and approvals remain planned.
 
 ---
 
@@ -72,15 +72,31 @@ Requires admin currency context (same as variant price admin).
 
 ## Architecture
 
-B2B extends Shopanda through the same `plugin.Plugin` contract as external plugins:
+B2B extends Shopanda through the same **public SDK** contract as every other external plugin
+(`pluginsdk.Plugin` — `Init(pluginsdk.Host) error`; PR-1552):
 
-- Implements domain **ports** defined in open core (never the reverse)
-- Registers admin permissions, HTTP routes, pricing/checkout steps via `plugin.App`
+- Imports only `pkg/pluginsdk` + `pkg/extapi` (plus stdlib/external modules and its own siblings
+  `groups/`, `pricing/`) — never `internal/*`. `plugins/plugin_imports_test.go`'s
+  `TestImportBoundary` enforces this at build time.
+- Owns its `Group` / `GroupPrice` domain types and `Repository` / `GroupPriceRepository` interfaces
+  locally (`groups/group.go`, `pricing/group_price.go`); Postgres implementations stay in-plugin.
+  Cross-cutting reads (customer lookup, variant lookup) go through `pluginsdk.CustomerPort` /
+  `pluginsdk.CatalogPort`, obtained via `Host.Customers()` / `Host.Catalog()`.
+- Registers admin permissions, HTTP routes, and the pricing step via `pluginsdk.Host`
+  (`RegisterPermission`, `RegisterAdminRoute`, `RegisterPricingStep`); declares `CapDB`,
+  `CapCustomers`, `CapCatalog` needs via `Host.Require`.
 - Does not modify core schema directly; plugin-owned tables ship via embedded migrations under `migrations/`
 
 ### Schema migrations (PR-1085)
 
-B2B implements `plugin.Migrator` once (`Migration()` returns the embed FS + adopt options). `app migrate` / `setup` apply that FS after core migrations **without** calling `Init` (and without a license check — schema is separate from enabling the commercial module). `serve` / worker / scheduler call `InitAllContext` and apply the same spec before `Init`; short-lived CLIs verify pending versions instead. A Migrator failure fails those processes. Direct `Init` without prior migrate/`InitAll` does not create tables. Versions are `plugin:shopanda/b2b:{basename}`. Each file uses its own transaction; the advisory lock key is per plugin (released between files so 003/004 lock-splitting still works).
+B2B implements `pluginsdk.Migrator` once (`Migration()` returns the embed FS + adopt options via
+`pluginsdk.MigrationSpec`). `app migrate` / `setup` apply that FS after core migrations **without**
+calling `Init` (and without a license check — schema is separate from enabling the commercial
+module). `serve` / worker / scheduler call `InitAllContext` and apply the same spec before `Init`;
+short-lived CLIs verify pending versions instead. A Migrator failure fails those processes. Direct
+`Init` without prior migrate/`InitAll` does not create tables. Versions are
+`plugin:shopanda/b2b:{basename}`. Each file uses its own transaction; the advisory lock key is per
+plugin (released between files so 003/004 lock-splitting still works).
 
 **Legacy adopt:** only the frozen pre-1085 set (`001`–`004`) may be remapped from bare basename rows. Later files never consult bare keys. Fresh applies of `001`–`004` also dual-write the bare key (those basenames are reserved in global `schema_migrations`) so rolling the binary back to pre-1085 `RunFS` still skips those files. Rolling back a release does not undo that release’s schema. Do not rename existing `migrations/*.sql` files — that would desync tracking.
 

@@ -41,8 +41,8 @@ func (s *SDK) Checkout() *Checkout {
 // Omit position to use the default (end — same as legacy append-only behavior).
 func (c *Checkout) Register(step any, position ...CheckoutPosition) {
 	if len(position) == 0 || position[0] == "" {
-		c.sdk.app.RegisterCheckoutStep(step)
+		c.sdk.host.RegisterCheckoutStep(step)
 		return
 	}
-	c.sdk.app.RegisterCheckoutStep(step, string(position[0]))
+	c.sdk.host.RegisterCheckoutStep(step, string(position[0]))
 }

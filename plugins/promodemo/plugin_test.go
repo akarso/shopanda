@@ -8,6 +8,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/promodemo"
 )
 
@@ -30,7 +31,7 @@ func TestPlugin_Init_Disabled(t *testing.T) {
 	cfg := &config.Config{Plugins: config.PluginsConfig{
 		PromoDemo: config.PromoDemoPluginConfig{Enabled: false},
 	}}
-	if err := promodemo.New().Init(testApp(cfg)); err == nil {
+	if err := promodemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("expected error when disabled")
 	}
 }
@@ -40,7 +41,7 @@ func TestPlugin_Init_RegistersRuleTypes(t *testing.T) {
 		PromoDemo: config.PromoDemoPluginConfig{Enabled: true},
 	}}
 	app := testApp(cfg)
-	if err := promodemo.New().Init(app); err != nil {
+	if err := promodemo.New().Init(pluginsdk.AsHost(app)); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	reg := app.PromotionEvaluatorRegistry()

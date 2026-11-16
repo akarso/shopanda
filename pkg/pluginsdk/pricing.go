@@ -36,8 +36,8 @@ func (s *SDK) Pricing() *Pricing {
 // Omit position to use the default (after base price).
 func (p *Pricing) Register(step any, position ...PricingPosition) {
 	if len(position) == 0 || position[0] == "" {
-		p.sdk.app.RegisterPricingStep(step)
+		p.sdk.host.RegisterPricingStep(step)
 		return
 	}
-	p.sdk.app.RegisterPricingStep(step, string(position[0]))
+	p.sdk.host.RegisterPricingStep(step, string(position[0]))
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/taxdemo"
 )
 
@@ -35,7 +36,7 @@ func initTaxDemoPlugin(t *testing.T, rateBPS int) *plugin.App {
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(taxdemo.New())
+	reg.Register(pluginsdk.Adapt(taxdemo.New()))
 	app := testApp(cfg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)
@@ -71,7 +72,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			TaxDemo: config.TaxDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := taxdemo.New().Init(testApp(cfg)); err == nil {
+	if err := taxdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }
@@ -100,7 +101,7 @@ func TestPlugin_Init_RegistersCalculatorAndReplaceStep(t *testing.T) {
 }
 
 func TestFlatRateCalculator_Exclusive(t *testing.T) {
-	calc := taxdemo.NewFlatRateCalculator(2000)
+	calc := pluginsdk.AdaptTaxCalculator(taxdemo.NewFlatRateCalculator(2000))
 	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", 10000)
 
 	if err := calc.Calculate(context.Background(), &pctx); err != nil {
@@ -118,7 +119,7 @@ func TestFlatRateCalculator_Exclusive(t *testing.T) {
 }
 
 func TestFlatRateCalculator_NoOpWithoutMeta(t *testing.T) {
-	calc := taxdemo.NewFlatRateCalculator(2000)
+	calc := pluginsdk.AdaptTaxCalculator(taxdemo.NewFlatRateCalculator(2000))
 	pctx, err := pricing.NewPricingContext("EUR")
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +145,7 @@ func TestTaxStep_ReplacesCoreTaxInMergedPipeline(t *testing.T) {
 		&stubStep{name: "base"},
 		&stubStep{name: "catalog_promotions"},
 		&stubStep{name: "cart_promotions"},
-		appPricing.NewTaxStep(taxdemo.NewFlatRateCalculator(1900)),
+		appPricing.NewTaxStep(pluginsdk.AdaptTaxCalculator(taxdemo.NewFlatRateCalculator(1900))),
 		pricing.NewFinalizeStep(),
 	}
 	regs := make([]appPricing.PluginStepRegistration, 0, len(app.PricingStepRegistrations()))

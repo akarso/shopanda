@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	"github.com/akarso/shopanda/plugins/cartdemo"
 )
 
@@ -41,7 +42,7 @@ func initCartDemoPlugin(t *testing.T, minQty int, feeMinor int64) (*plugin.App, 
 		},
 	}
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
-	reg.Register(cartdemo.New())
+	reg.Register(pluginsdk.Adapt(cartdemo.New()))
 	app := testApp(cfg)
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v", summary)
@@ -61,7 +62,7 @@ func TestPlugin_Init_DisabledReturnsError(t *testing.T) {
 			CartDemo: config.CartDemoPluginConfig{Enabled: false},
 		},
 	}
-	if err := cartdemo.New().Init(testApp(cfg)); err == nil {
+	if err := cartdemo.New().Init(pluginsdk.AsHost(testApp(cfg))); err == nil {
 		t.Fatal("Init() expected error when disabled")
 	}
 }
@@ -107,7 +108,7 @@ func TestHandlingFeeStep_AddsFeeToPipeline(t *testing.T) {
 	}
 	pctx.Items = []pricing.PricingItem{item}
 
-	pipe := pricing.NewPipeline(step, pricing.NewFinalizeStep())
+	pipe := pricing.NewPipeline(pluginsdk.AdaptPricingStep(step), pricing.NewFinalizeStep())
 	if err := pipe.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -132,7 +133,11 @@ func TestValidateHook_AppendsIssueBelowMinQuantity(t *testing.T) {
 
 	hookCtx := hooks.NewContext(hooks.HookCartValidate)
 	issues := []extapi.CartValidationIssue{}
-	hookCtx.Set("cart", &c)
+	hookCtx.Set("cart", &extapi.CartView{
+		ID:         c.ID,
+		CustomerID: c.CustomerID,
+		Items:      []extapi.CartLineView{{VariantID: "var-1", Quantity: 1}},
+	})
 	hookCtx.Set("validation_errors", &issues)
 	if err := hookReg.Invoke(context.Background(), hookCtx); err != nil {
 		t.Fatalf("Invoke: %v", err)

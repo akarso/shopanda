@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // NewShipmentStatusHandler handles inbound warehouse/ERP shipment status callbacks.
-func NewShipmentStatusHandler(updater extapi.IntegrationShipmentStatusUpdater, log logger.Logger) http.Handler {
+func NewShipmentStatusHandler(updater extapi.IntegrationShipmentStatusUpdater, log pluginsdk.Logger) http.Handler {
 	if updater == nil {
 		panic("integrationdemo: shipment status updater must not be nil")
 	}
