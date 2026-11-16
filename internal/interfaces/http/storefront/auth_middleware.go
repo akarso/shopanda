@@ -17,16 +17,18 @@ import (
 //
 // Order for Authorization:
 //  1. Valid Bearer with RoleCustomer → that identity (session cookie ignored).
-//  2. Valid Bearer with a staff role → try session cookie first (so an admin
-//     API token does not replace a shopper session); if no session, use the
-//     staff identity (staff may shop on their own account).
-//  3. Bearer that is not a customer JWT (auth.ErrNotCustomerToken / opaque
+//  2. Valid Bearer with a staff role on /api/v1/admin or /api/v1/auth → that
+//     identity (session cookie ignored — admin/auth APIs must not become the
+//     shopper from Path=/ session cookie).
+//  3. Valid Bearer with a staff role on storefront/plugin paths → try session
+//     cookie first; if no session, use the staff identity (staff may shop).
+//  4. Bearer that is not a customer JWT (auth.ErrNotCustomerToken / opaque
 //     owner token — wrong shape, not three JWT segments) → session cookie if
 //     valid, else guest. Two-dot bearers that fail signature/expiry stay 401.
-//  4. Bearer that fails as a customer JWT (expired, revoked, tampered) → 401;
+//  5. Bearer that fails as a customer JWT (expired, revoked, tampered) → 401;
 //     the session cookie is not consulted.
-//  5. Non-Bearer Authorization → session cookie if valid, else guest.
-//  6. No Authorization → session cookie if valid, else guest.
+//  6. Non-Bearer Authorization → session cookie if valid, else guest.
+//  7. No Authorization → session cookie if valid, else guest.
 func AuthMiddleware(parser auth.TokenParser) httpshared.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,8 +58,9 @@ func AuthMiddleware(parser auth.TokenParser) httpshared.Middleware {
 }
 
 // tryBearerIdentity parses Authorization when present.
-// bearer non-nil → use immediately (RoleCustomer).
-// hardFail → 401. hasStaff → parsed staff identity deferred behind session.
+// bearer non-nil → use immediately.
+// hardFail → 401. hasStaff → parsed staff identity deferred behind session
+// (only when the path is not admin/auth API).
 func tryBearerIdentity(r *http.Request, parser auth.TokenParser) (bearer *identity.Identity, hardFail bool, staff identity.Identity, hasStaff bool) {
 	raw := strings.TrimSpace(r.Header.Get("Authorization"))
 	if raw == "" {
@@ -81,11 +84,17 @@ func tryBearerIdentity(r *http.Request, parser auth.TokenParser) (bearer *identi
 		}
 		return nil, true, identity.Identity{}, false
 	}
-	if id.HasRole(identity.RoleCustomer) {
+	if id.HasRole(identity.RoleCustomer) || bearerWinsOverSession(r.URL.Path) {
 		return &id, false, identity.Identity{}, false
 	}
-	// Staff (or other non-customer) bearer: prefer session cookie when present.
+	// Staff on storefront/plugin paths: prefer session cookie when present.
 	return nil, false, id, true
+}
+
+// bearerWinsOverSession is true for admin and auth APIs where a valid Bearer
+// must not be replaced by the Path=/ storefront session cookie.
+func bearerWinsOverSession(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/admin") || strings.HasPrefix(path, "/api/v1/auth")
 }
 
 func trySessionIdentity(r *http.Request, parser auth.TokenParser) (identity.Identity, bool) {

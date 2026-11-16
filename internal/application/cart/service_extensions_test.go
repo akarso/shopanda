@@ -1832,15 +1832,25 @@ type countingBatchVariants struct {
 	mapVariantRepo
 	findByIDCalls  int
 	findByIDsCalls int
+	batchErr       error
+	findByIDErr    map[string]error
 }
 
 func (r *countingBatchVariants) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
 	r.findByIDCalls++
+	if r.findByIDErr != nil {
+		if err := r.findByIDErr[id]; err != nil {
+			return nil, err
+		}
+	}
 	return r.mapVariantRepo.FindByID(ctx, id)
 }
 
 func (r *countingBatchVariants) FindByIDs(_ context.Context, ids []string) (map[string]*catalog.Variant, error) {
 	r.findByIDsCalls++
+	if r.batchErr != nil {
+		return nil, r.batchErr
+	}
 	out := make(map[string]*catalog.Variant, len(ids))
 	for _, id := range ids {
 		if v := r.variants[id]; v != nil {

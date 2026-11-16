@@ -138,13 +138,6 @@ func rekeyVariants(requested []string, found map[string]*Variant) map[string]*Va
 	for _, reqID := range requested {
 		if v := found[reqID]; v != nil {
 			out[reqID] = v
-			continue
-		}
-		for _, v := range found {
-			if v != nil && strings.EqualFold(v.ID, reqID) {
-				out[reqID] = v
-				break
-			}
 		}
 	}
 	return out
@@ -158,13 +151,6 @@ func rekeyProducts(requested []string, found map[string]*Product) map[string]*Pr
 	for _, reqID := range requested {
 		if p := found[reqID]; p != nil {
 			out[reqID] = p
-			continue
-		}
-		for _, p := range found {
-			if p != nil && strings.EqualFold(p.ID, reqID) {
-				out[reqID] = p
-				break
-			}
 		}
 	}
 	return out

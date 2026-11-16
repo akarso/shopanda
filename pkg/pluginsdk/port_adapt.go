@@ -29,6 +29,9 @@ type catalogPort struct {
 }
 
 func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.CatalogVariant, error) {
+	if p == nil || p.variants == nil {
+		return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		// Same as FindVariants: empty id is a miss, not a repository call.

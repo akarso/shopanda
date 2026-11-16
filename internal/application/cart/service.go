@@ -1356,13 +1356,16 @@ func (s *Service) ensureTaxClasses(ctx context.Context, c *domainCart.Cart, meta
 				continue
 			}
 		}
-		var typ catalog.Type
-		if v := variants[item.VariantID]; v != nil {
-			if p := products[v.ProductID]; p != nil {
-				typ = p.Type
-			}
+		v := variants[item.VariantID]
+		if v == nil {
+			// Skipped/invalid lookup id must not become TaxClassCode("") (standard).
+			return fmt.Errorf("cart service: tax class: variant %q not found or invalid", item.VariantID)
 		}
-		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: typ})
+		p := products[v.ProductID]
+		if p == nil {
+			return fmt.Errorf("cart service: tax class: product %q for variant %q not found", v.ProductID, item.VariantID)
+		}
+		lines = append(lines, appPricing.LineTaxClass{VariantID: item.VariantID, ProductType: p.Type})
 	}
 	return appPricing.EnsureTaxClasses(meta, lines)
 }

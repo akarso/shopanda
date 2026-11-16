@@ -149,4 +149,7 @@ func TestValidatingTokenParser_Parse_GenerationMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for generation mismatch")
 	}
+	if platformauth.IsNotCustomerToken(err) {
+		t.Fatalf("revoked/generation mismatch must not be ErrNotCustomerToken: %v", err)
+	}
 }
