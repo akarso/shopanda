@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 type memVariants struct {
@@ -21,6 +22,9 @@ func (m *memVariants) FindByID(_ context.Context, id string) (*catalog.Variant, 
 	m.findByID++
 	if m.batchOnly {
 		return nil, errors.New("FindByID should not be called")
+	}
+	if id == "bad" {
+		return nil, apperror.Validation("invalid variant id")
 	}
 	return m.byID[id], nil
 }
@@ -70,10 +74,10 @@ func TestLookupVariants_BatchOnce(t *testing.T) {
 	}
 }
 
-func TestLookupVariants_BatchErrorFallsBackPerID(t *testing.T) {
+func TestLookupVariants_BatchValidationFallsBackAndSkipsBadID(t *testing.T) {
 	repo := &memVariants{
 		byID:     map[string]*catalog.Variant{"v1": {ID: "v1", ProductID: "p1"}},
-		batchErr: errors.New("22P02"),
+		batchErr: apperror.Validation("invalid variant id"),
 	}
 	got, err := catalog.LookupVariants(context.Background(), repo, []string{"v1", "bad"})
 	if err != nil {
@@ -82,21 +86,39 @@ func TestLookupVariants_BatchErrorFallsBackPerID(t *testing.T) {
 	if repo.findByIDs != 1 {
 		t.Fatalf("FindByIDs calls = %d, want 1", repo.findByIDs)
 	}
-	if repo.findByID < 1 {
-		t.Fatal("expected per-id fallback")
+	if repo.findByID < 2 {
+		t.Fatalf("FindByID calls = %d, want >= 2", repo.findByID)
 	}
 	if got["v1"] == nil {
 		t.Fatal("expected v1")
 	}
+	if _, ok := got["bad"]; ok {
+		t.Fatal("bad id must be omitted")
+	}
 }
 
-func TestNormalizeLookupIDs_Cap(t *testing.T) {
-	ids := make([]string, catalog.MaxLookupIDs+5)
+func TestLookupVariants_BatchTimeoutDoesNotFallBack(t *testing.T) {
+	repo := &memVariants{
+		byID:      map[string]*catalog.Variant{"v1": {ID: "v1"}},
+		batchErr:  context.DeadlineExceeded,
+		batchOnly: true,
+	}
+	_, err := catalog.LookupVariants(context.Background(), repo, []string{"v1"})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if repo.findByID != 0 {
+		t.Fatalf("FindByID calls = %d, want 0", repo.findByID)
+	}
+}
+
+func TestNormalizeLookupIDs_TooMany(t *testing.T) {
+	ids := make([]string, catalog.MaxLookupIDs+1)
 	for i := range ids {
 		ids[i] = "id-" + strconv.Itoa(i)
 	}
-	got := catalog.NormalizeLookupIDs(ids)
-	if len(got) != catalog.MaxLookupIDs {
-		t.Fatalf("len = %d, want %d", len(got), catalog.MaxLookupIDs)
+	_, err := catalog.NormalizeLookupIDs(ids)
+	if err == nil {
+		t.Fatal("expected ErrTooManyLookupIDs")
 	}
 }

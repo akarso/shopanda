@@ -190,6 +190,84 @@ func TestAuthMiddleware_InvalidCustomerTokenIs401EvenWithSession(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_StaffBearerDefersToCustomerSession(t *testing.T) {
+	admin, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shopper, err := identity.NewIdentity("cust-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &mapParser{byToken: map[string]parseResult{
+		"admin-jwt":    {id: admin},
+		"cookie-token": {id: shopper},
+	}}
+	mw := storefront.AuthMiddleware(p)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/cart", nil)
+	req.Header.Set("Authorization", "Bearer admin-jwt")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if gotID.UserID != "cust-1" {
+		t.Fatalf("UserID = %q, want cust-1 (session over staff bearer)", gotID.UserID)
+	}
+}
+
+func TestAuthMiddleware_StaffBearerAloneUsesStaff(t *testing.T) {
+	admin, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &mapParser{byToken: map[string]parseResult{
+		"admin-jwt": {id: admin},
+	}}
+	mw := storefront.AuthMiddleware(p)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/account", nil)
+	req.Header.Set("Authorization", "Bearer admin-jwt")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if gotID.UserID != "admin-1" || !gotID.HasRole(identity.RoleAdmin) {
+		t.Fatalf("got %+v, want admin-1", gotID)
+	}
+}
+
+func TestAuthMiddleware_EmptyBearerIs401(t *testing.T) {
+	mw := storefront.AuthMiddleware(&stubTokenParser{})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
 func TestAuthMiddleware_OpaqueBearerFallsBackToSessionCookie(t *testing.T) {
 	id, err := identity.NewIdentity("user-session", identity.RoleCustomer)
 	if err != nil {

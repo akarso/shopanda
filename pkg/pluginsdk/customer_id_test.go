@@ -38,7 +38,7 @@ func TestCustomerID(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminReq := req.WithContext(auth.WithIdentity(req.Context(), admin))
-	if got := pluginsdk.CustomerID(adminReq); got != "" {
-		t.Fatalf("admin = %q, want empty (staff must not select storefront cart)", got)
+	if got := pluginsdk.CustomerID(adminReq); got != "admin-1" {
+		t.Fatalf("admin storefront actor = %q, want admin-1", got)
 	}
 }

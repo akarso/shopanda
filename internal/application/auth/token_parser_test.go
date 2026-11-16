@@ -75,6 +75,53 @@ func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 	}
 }
 
+func TestValidatingTokenParser_Parse_ExpiredIsNotOpaque(t *testing.T) {
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Second)
+	repo := newMockRepo()
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
+	c, _ := customer.NewCustomer("user-1", "alice@example.com")
+	_ = repo.Create(context.Background(), &c)
+	token, _, _ := issuer.Create("user-1", "customer", 0)
+	time.Sleep(2 * time.Second)
+	_, err := parser.Parse(context.Background(), token)
+	if err == nil {
+		t.Fatal("expected expired error")
+	}
+	if platformauth.IsNotCustomerToken(err) {
+		t.Fatalf("expired JWT must not be ErrNotCustomerToken: %v", err)
+	}
+}
+
+func TestValidatingTokenParser_Parse_BadSignatureIsNotOpaque(t *testing.T) {
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
+	other, _ := jwt.NewIssuer(jwttest.TestSecretOther, time.Hour)
+	repo := newMockRepo()
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
+	c, _ := customer.NewCustomer("user-1", "alice@example.com")
+	_ = repo.Create(context.Background(), &c)
+	token, _, _ := other.Create("user-1", "customer", 0)
+	_, err := parser.Parse(context.Background(), token)
+	if err == nil {
+		t.Fatal("expected signature error")
+	}
+	if platformauth.IsNotCustomerToken(err) {
+		t.Fatalf("bad signature must not be ErrNotCustomerToken: %v", err)
+	}
+}
+
+func TestValidatingTokenParser_Parse_TwoDotBearerIsNotOpaque(t *testing.T) {
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
+	repo := newMockRepo()
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
+	_, err := parser.Parse(context.Background(), "a.b.c")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if platformauth.IsNotCustomerToken(err) {
+		t.Fatalf("JWT-shaped a.b.c must not be ErrNotCustomerToken (signature path): %v", err)
+	}
+}
+
 func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
 	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()

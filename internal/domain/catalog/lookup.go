@@ -4,11 +4,18 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // MaxLookupIDs caps batch catalog reads (same order of magnitude as list
-// limits elsewhere — e.g. variant list max 100).
+// limits elsewhere — e.g. variant list max 100). Callers that exceed this
+// get an error; the tail is not dropped.
 const MaxLookupIDs = 100
+
+// ErrTooManyLookupIDs is returned when NormalizeLookupIDs sees more than
+// MaxLookupIDs distinct non-empty ids.
+var ErrTooManyLookupIDs = fmt.Errorf("catalog: at most %d ids per lookup", MaxLookupIDs)
 
 // VariantBatchLookup is an optional batch read (postgres FindByIDs).
 type VariantBatchLookup interface {
@@ -20,8 +27,9 @@ type ProductBatchLookup interface {
 	ListByIDs(ctx context.Context, ids []string) (map[string]*Product, error)
 }
 
-// NormalizeLookupIDs trims, dedupes, drops blanks, and caps at MaxLookupIDs.
-func NormalizeLookupIDs(ids []string) []string {
+// NormalizeLookupIDs trims, dedupes, and drops blanks. Returns
+// ErrTooManyLookupIDs when more than MaxLookupIDs distinct ids remain.
+func NormalizeLookupIDs(ids []string) ([]string, error) {
 	clean := make([]string, 0, len(ids))
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
@@ -34,21 +42,26 @@ func NormalizeLookupIDs(ids []string) []string {
 		}
 		seen[id] = struct{}{}
 		clean = append(clean, id)
-		if len(clean) >= MaxLookupIDs {
-			break
+		if len(clean) > MaxLookupIDs {
+			return nil, ErrTooManyLookupIDs
 		}
 	}
-	return clean
+	return clean, nil
 }
 
 // LookupVariants loads variants keyed by the requested id. Uses FindByIDs when
-// the repository implements VariantBatchLookup; on batch error falls back to
-// per-id FindByID so one malformed id does not fail the whole set.
+// the repository implements VariantBatchLookup. Falls back to per-id FindByID
+// only when the batch error is apperror.Validation (e.g. one bad UUID in
+// ANY($1)); other batch errors (timeout, connection) propagate immediately.
+// On the per-id pass, validation errors for individual ids are skipped.
 func LookupVariants(ctx context.Context, repo VariantRepository, ids []string) (map[string]*Variant, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("catalog: variants repository not configured")
 	}
-	clean := NormalizeLookupIDs(ids)
+	clean, err := NormalizeLookupIDs(ids)
+	if err != nil {
+		return nil, err
+	}
 	if len(clean) == 0 {
 		return map[string]*Variant{}, nil
 	}
@@ -57,13 +70,18 @@ func LookupVariants(ctx context.Context, repo VariantRepository, ids []string) (
 		if err == nil {
 			return rekeyVariants(clean, found), nil
 		}
-		// Fall through to per-id (e.g. 22P02 on ANY with one bad UUID).
+		if !apperror.Is(err, apperror.CodeValidation) {
+			return nil, err
+		}
 	}
 	out := make(map[string]*Variant, len(clean))
 	for _, id := range clean {
 		v, err := repo.FindByID(ctx, id)
 		if err != nil {
-			return nil, err
+			if apperror.Is(err, apperror.CodeValidation) {
+				continue
+			}
+			return nil, fmt.Errorf("catalog: lookup variant %q: %w", id, err)
 		}
 		if v != nil {
 			out[id] = v
@@ -73,14 +91,17 @@ func LookupVariants(ctx context.Context, repo VariantRepository, ids []string) (
 }
 
 // LookupProducts loads products keyed by the requested id. Uses ListByIDs when
-// available; on batch error falls back to per-id FindByID. A nil repository
-// returns an empty map (callers that require products must check separately).
-// Non-active parents follow the same IncludeNonActiveProducts scope as FindByID.
+// available; falls back to per-id only on apperror.Validation batch errors.
+// A nil repository returns an empty map. Non-active parents follow the same
+// IncludeNonActiveProducts scope as FindByID.
 func LookupProducts(ctx context.Context, repo ProductRepository, ids []string) (map[string]*Product, error) {
 	if repo == nil {
 		return map[string]*Product{}, nil
 	}
-	clean := NormalizeLookupIDs(ids)
+	clean, err := NormalizeLookupIDs(ids)
+	if err != nil {
+		return nil, err
+	}
 	if len(clean) == 0 {
 		return map[string]*Product{}, nil
 	}
@@ -89,12 +110,18 @@ func LookupProducts(ctx context.Context, repo ProductRepository, ids []string) (
 		if err == nil {
 			return rekeyProducts(clean, found), nil
 		}
+		if !apperror.Is(err, apperror.CodeValidation) {
+			return nil, err
+		}
 	}
 	out := make(map[string]*Product, len(clean))
 	for _, id := range clean {
 		p, err := repo.FindByID(ctx, id)
 		if err != nil {
-			return nil, err
+			if apperror.Is(err, apperror.CodeValidation) {
+				continue
+			}
+			return nil, fmt.Errorf("catalog: lookup product %q: %w", id, err)
 		}
 		if p != nil {
 			out[id] = p

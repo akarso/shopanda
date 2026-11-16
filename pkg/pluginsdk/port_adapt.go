@@ -31,17 +31,8 @@ type catalogPort struct {
 func (p *catalogPort) FindVariant(ctx context.Context, id string) (*extapi.CatalogVariant, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		if p == nil || p.variants == nil {
-			return nil, fmt.Errorf("pluginsdk: catalog port: variants not configured")
-		}
-		v, err := p.variants.FindByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if v == nil {
-			return nil, nil
-		}
-		return p.catalogVariant(ctx, v)
+		// Same as FindVariants: empty id is a miss, not a repository call.
+		return nil, nil
 	}
 	out, err := p.FindVariants(ctx, []string{id})
 	if err != nil {
@@ -95,26 +86,6 @@ func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[strin
 		out[reqID] = cv
 	}
 	return out, nil
-}
-
-func (p *catalogPort) catalogVariant(ctx context.Context, v *catalog.Variant) (*extapi.CatalogVariant, error) {
-	cv := &extapi.CatalogVariant{
-		ID:        v.ID,
-		ProductID: v.ProductID,
-		SKU:       v.SKU,
-		Name:      v.Name,
-	}
-	if p.products == nil || strings.TrimSpace(v.ProductID) == "" {
-		return cv, nil
-	}
-	products, err := catalog.LookupProducts(ctx, p.products, []string{v.ProductID})
-	if err != nil {
-		return nil, fmt.Errorf("pluginsdk: catalog port: parent products: %w", err)
-	}
-	if prod := products[v.ProductID]; prod != nil {
-		cv.ProductSlug = prod.Slug
-	}
-	return cv, nil
 }
 
 func (p *catalogPort) FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error) {
