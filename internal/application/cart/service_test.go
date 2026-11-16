@@ -1238,6 +1238,96 @@ func TestService_Recalculate_TaxClassesBatchLoadsCatalog(t *testing.T) {
 	}
 }
 
+func TestService_Recalculate_TaxClassesRejectsSkippedVariantID(t *testing.T) {
+	prices := newStubPriceRepo()
+	prices.set("v-ok", "EUR", 1000)
+	prices.set("bad", "EUR", 1000)
+	unit := shared.MustNewMoney(1000, "EUR")
+	vr := &countingBatchVariants{
+		mapVariantRepo: mapVariantRepo{variants: map[string]*catalog.Variant{
+			"v-ok": {ID: "v-ok", ProductID: "p-ok"},
+		}},
+		batchErr:    apperror.Validation("invalid variant id"),
+		findByIDErr: map[string]error{"bad": apperror.Validation("invalid variant id")},
+	}
+	pr := &countingBatchProducts{mapProductRepo: mapProductRepo{products: map[string]*catalog.Product{
+		"p-ok": {ID: "p-ok", Status: catalog.StatusActive, Type: catalog.TypeDownloadable},
+	}}}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		pricing.NewFinalizeStep(),
+	)
+	carts := newStubCartRepo()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, testLogger(), testBus(), nil, nil).
+		WithDownloadableFiles(stubDownloadableFileCount{n: 1})
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	carts.carts[c.ID].Items = []domainCart.Item{
+		{VariantID: "v-ok", Quantity: 1, UnitPrice: unit},
+		{VariantID: "bad", Quantity: 1, UnitPrice: unit},
+	}
+
+	_, err = svc.RemoveCoupon(ctx, c.ID, "cust-1")
+	if err == nil {
+		t.Fatal("expected error when a line variant id is invalid/skipped")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want CodeValidation", err)
+	}
+	if !strings.Contains(err.Error(), "bad") {
+		t.Fatalf("err = %v, want mention of bad variant id", err)
+	}
+}
+
+func TestService_Recalculate_TaxClassesRejectsOverMaxLookupIDs(t *testing.T) {
+	n := catalog.MaxLookupIDs + 1
+	variants := make(map[string]*catalog.Variant, n)
+	products := make(map[string]*catalog.Product, n)
+	prices := newStubPriceRepo()
+	unit := shared.MustNewMoney(1000, "EUR")
+	items := make([]domainCart.Item, 0, n)
+	for i := 0; i < n; i++ {
+		vid := fmt.Sprintf("v-%d", i)
+		pid := fmt.Sprintf("prod-%d", i)
+		variants[vid] = &catalog.Variant{ID: vid, ProductID: pid}
+		typ := catalog.TypeSimple
+		if i == n-1 {
+			typ = catalog.TypeDownloadable
+		}
+		products[pid] = &catalog.Product{ID: pid, Status: catalog.StatusActive, Type: typ}
+		prices.set(vid, "EUR", 1000)
+		items = append(items, domainCart.Item{VariantID: vid, Quantity: 1, UnitPrice: unit})
+	}
+	vr := &countingBatchVariants{mapVariantRepo: mapVariantRepo{variants: variants}}
+	pr := &countingBatchProducts{mapProductRepo: mapProductRepo{products: products}}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		pricing.NewFinalizeStep(),
+	)
+	carts := newStubCartRepo()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, testLogger(), testBus(), nil, nil).
+		WithDownloadableFiles(stubDownloadableFileCount{n: 1})
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	carts.carts[c.ID].Items = items
+
+	_, err = svc.RemoveCoupon(ctx, c.ID, "cust-1")
+	if err == nil {
+		t.Fatal("expected error when cart lines exceed MaxLookupIDs")
+	}
+	if !errors.Is(err, catalog.ErrTooManyLookupIDs) && !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("err = %v, want ErrTooManyLookupIDs", err)
+	}
+}
+
 func TestService_AddItem_WithoutStoreTaxContext_SkipsTaxStep(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()

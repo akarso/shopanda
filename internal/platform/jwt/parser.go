@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 // TokenParser adapts Issuer to the auth.TokenParser interface.
@@ -25,6 +26,9 @@ func (p *TokenParser) Parse(_ context.Context, token string) (identity.Identity,
 	}
 	claims, err := p.issuer.Parse(token)
 	if err != nil {
+		if errors.Is(err, ErrMalformedToken) {
+			return identity.Identity{}, fmt.Errorf("%w: %v", auth.ErrNotCustomerToken, err)
+		}
 		return identity.Identity{}, fmt.Errorf("jwt parser: %w", err)
 	}
 

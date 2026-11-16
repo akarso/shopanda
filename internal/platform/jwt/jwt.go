@@ -96,11 +96,15 @@ func (i *Issuer) CreateWithDisplayName(subject, role string, gen int64, displayN
 	return unsigned + "." + sig, exp, nil
 }
 
+// ErrMalformedToken is returned when the token is not a three-part JWT
+// (opaque plugin owner tokens and other non-JWT bearers).
+var ErrMalformedToken = errors.New("jwt: malformed token")
+
 // Parse validates a token and returns its claims.
 func (i *Issuer) Parse(token string) (Claims, error) {
 	parts := strings.SplitN(token, ".", 3)
 	if len(parts) != 3 {
-		return Claims{}, errors.New("jwt: malformed token")
+		return Claims{}, ErrMalformedToken
 	}
 
 	unsigned := parts[0] + "." + parts[1]

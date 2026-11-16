@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	storefrontSessionCookieName   = "shopanda_storefront_session"
 	storefrontSessionCookieMaxAge = 60 * 60 * 24 * 14
 )
 
@@ -580,14 +579,7 @@ func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 }
 
 func storefrontSessionToken(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	cookie, err := r.Cookie(storefrontSessionCookieName)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(cookie.Value)
+	return storefrontsession.SessionTokenFromRequest(r)
 }
 
 func storefrontSetSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
@@ -599,7 +591,7 @@ func storefrontSetSessionCookie(w http.ResponseWriter, r *http.Request, token st
 		}
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     storefrontSessionCookieName,
+		Name:     storefrontsession.SessionCookieName,
 		Value:    token,
 		Path:     "/",
 		MaxAge:   maxAge,
@@ -611,7 +603,7 @@ func storefrontSetSessionCookie(w http.ResponseWriter, r *http.Request, token st
 
 func storefrontClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     storefrontSessionCookieName,
+		Name:     storefrontsession.SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,

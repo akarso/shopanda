@@ -54,6 +54,9 @@ type scopingFakeCatalog struct{}
 func (scopingFakeCatalog) FindVariant(context.Context, string) (*extapi.CatalogVariant, error) {
 	return nil, nil
 }
+func (scopingFakeCatalog) FindVariants(context.Context, []string) (map[string]*extapi.CatalogVariant, error) {
+	return nil, nil
+}
 func (scopingFakeCatalog) FindProduct(context.Context, string) (*extapi.CatalogProduct, error) {
 	return nil, nil
 }
