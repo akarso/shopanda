@@ -37,7 +37,8 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 }
 func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
 func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error  { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Requeue(context.Context, string) error { return nil }
 
 func (q *memQueue) len() int {
 	q.mu.Lock()

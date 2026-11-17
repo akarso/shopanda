@@ -326,6 +326,25 @@ func (q *JobQueue) CountsByType(ctx context.Context, jobType string) (map[jobs.S
 	return out, nil
 }
 
+// Requeue moves a processing job back to pending without resetting attempts.
+// Distinct from Retry (failed→pending, attempts=0). Stale-claim reclaim.
+func (q *JobQueue) Requeue(ctx context.Context, id string) error {
+	const query = `UPDATE jobs SET status = 'pending', run_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'processing'`
+	result, err := q.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("job_queue: requeue: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("job_queue: requeue rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("job_queue: job %s not found or not processing", id)
+	}
+	return nil
+}
+
 // Retry resets a failed job back to pending so the worker picks it up
 // again. See jobs.Admin for the full contract.
 func (q *JobQueue) Retry(ctx context.Context, id string) error {

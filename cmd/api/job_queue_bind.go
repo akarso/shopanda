@@ -17,6 +17,11 @@ func resolveAndBindJobQueue(app *plugin.App, conn *sql.DB, cfg *config.Config) (
 	if err != nil {
 		return nil, fmt.Errorf("job queue: %w", err)
 	}
+	if app == nil {
+		return nil, fmt.Errorf("job queue: plugin app is nil")
+	}
+	jobQueue = app.ApplyQueueBoundHooks(jobQueue)
+	jobQueue = app.WrapRequeueNotify(jobQueue)
 	if err := app.BindQueue(jobQueue); err != nil {
 		return nil, err
 	}
