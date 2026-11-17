@@ -206,10 +206,12 @@ func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (
 	return &c, nil
 }
 
-// DiscardEmptyGuestCart deletes a guest cart that still has no lines and
-// purges leftover cart_item extension rows for that cart ID. Customer carts
-// and carts with items are left untouched. discarded is true only when a row
-// was deleted (callers may clear the storefront cookie).
+// DiscardEmptyGuestCart deletes a guest cart that still has no lines when the
+// conditional delete wins (guest, empty, same version). Customer carts, carts
+// with items, and lost races return discarded=false. Orphan cart_item extension
+// rows are purged only after a successful delete. Callers pass the cart id
+// EnsureStorefrontCart / CreateCart just returned — not an id read only from
+// the request cookie.
 func (s *Service) DiscardEmptyGuestCart(ctx context.Context, cartID string) (discarded bool, err error) {
 	cartID = strings.TrimSpace(cartID)
 	if cartID == "" {
@@ -222,13 +224,17 @@ func (s *Service) DiscardEmptyGuestCart(ctx context.Context, cartID string) (dis
 	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 {
 		return false, nil
 	}
+	ok, err := s.carts.DeleteEmptyGuestIfUnchanged(ctx, cartID, c.Version)
+	if err != nil {
+		return false, fmt.Errorf("cart service: discard empty guest: delete: %w", err)
+	}
+	if !ok {
+		return false, nil
+	}
 	if s.extensions != nil {
 		if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cartID, nil); err != nil {
-			return false, fmt.Errorf("cart service: discard empty guest: purge extensions: %w", err)
+			return true, fmt.Errorf("cart service: discard empty guest: purge extensions: %w", err)
 		}
-	}
-	if err := s.carts.Delete(ctx, cartID); err != nil {
-		return false, fmt.Errorf("cart service: discard empty guest: delete: %w", err)
 	}
 	return true, nil
 }

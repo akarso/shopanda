@@ -51,6 +51,9 @@ func (r *mockCartRepo) FindActiveByCustomerID(_ context.Context, _ string) (*car
 }
 func (r *mockCartRepo) Save(_ context.Context, _ *cart.Cart) error { return nil }
 func (r *mockCartRepo) Delete(_ context.Context, _ string) error   { return nil }
+func (r *mockCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, _ string, _ int) (bool, error) {
+	return false, nil
+}
 func (r *mockCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*cart.Cart, error) {
 	return nil, nil
 }

@@ -305,15 +305,12 @@ func (p *cartPort) EnsureStorefrontCart(ctx context.Context, w http.ResponseWrit
 	return p.viewFor(ctx, c)
 }
 
-func (p *cartPort) DiscardEmptyGuestCart(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+func (p *cartPort) DiscardEmptyGuestCart(ctx context.Context, w http.ResponseWriter, r *http.Request, cartID string) error {
 	if p == nil || p.svc == nil {
 		return fmt.Errorf("pluginsdk: cart port: not configured")
 	}
-	if CustomerID(r) != "" {
-		return nil
-	}
-	cartID, ok := storefrontsession.CartIDFromRequest(r)
-	if !ok {
+	cartID = strings.TrimSpace(cartID)
+	if cartID == "" {
 		return nil
 	}
 	discarded, err := p.svc.DiscardEmptyGuestCart(ctx, cartID)

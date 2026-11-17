@@ -142,6 +142,21 @@ func (r *cartPortMemCarts) Delete(_ context.Context, id string) error {
 	delete(r.carts, id)
 	return nil
 }
+
+func (r *cartPortMemCarts) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *cartPortMemCarts) FindRecoveryCandidates(context.Context, time.Time, int) ([]*domainCart.Cart, error) {
 	return nil, nil
 }
@@ -247,34 +262,47 @@ func TestEnsureStorefrontCart_ReplacesNonActiveGuest(t *testing.T) {
 	}
 }
 
-func TestDiscardEmptyGuestCart_ClearsCookie(t *testing.T) {
-	app, svc, _, _, _ := bootCartPortFixture(t)
-	c, err := svc.CreateCart(context.Background(), "", "EUR")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestDiscardEmptyGuestCart_EnsureThenFailedAdd(t *testing.T) {
+	app, svc, carts, _, _ := bootCartPortFixture(t)
 	h := pluginsdk.AsHostFor(app, "acme")
 	h.Require(pluginsdk.CapCart)
 	port, _ := h.Cart()
+
+	// First visit: no request cookie. Ensure creates a guest cart and queues Set-Cookie.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.AddCookie(&http.Cookie{Name: storefrontsession.CartCookieName, Value: c.ID})
-	if err := port.DiscardEmptyGuestCart(req.Context(), rec, req); err != nil {
-		t.Fatalf("DiscardEmptyGuestCart: %v", err)
+	view, err := port.EnsureStorefrontCart(req.Context(), rec, req, "EUR")
+	if err != nil || view == nil {
+		t.Fatalf("EnsureStorefrontCart: %v %+v", err, view)
 	}
-	got, _ := svc.GetCart(context.Background(), c.ID, "")
-	if got != nil {
-		t.Fatal("empty guest cart should be deleted")
-	}
-	cleared := false
-	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == storefrontsession.CartCookieName && cookie.MaxAge < 0 {
-			cleared = true
+	setCookies := 0
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == storefrontsession.CartCookieName && c.Value == view.ID && c.MaxAge > 0 {
+			setCookies++
 		}
 	}
-	if !cleared {
-		t.Fatal("expected cleared storefront cart cookie")
+	if setCookies != 1 {
+		t.Fatalf("want one new-cart Set-Cookie, got %d cookies=%v", setCookies, rec.Result().Cookies())
 	}
+
+	// Simulate failed first AddItem: discard the Ensure id (not CartIDFromRequest).
+	if err := port.DiscardEmptyGuestCart(req.Context(), rec, req, view.ID); err != nil {
+		t.Fatalf("DiscardEmptyGuestCart: %v", err)
+	}
+	if got, _ := carts.FindByID(context.Background(), view.ID); got != nil {
+		t.Fatal("empty guest cart created by Ensure must be deleted")
+	}
+	// Result().Cookies() omits Max-Age=-1 expiry headers; inspect raw Set-Cookie.
+	raw := rec.Header().Values("Set-Cookie")
+	if len(raw) < 2 {
+		t.Fatalf("want Ensure Set-Cookie then clear, got %v", raw)
+	}
+	last := raw[len(raw)-1]
+	if !strings.Contains(last, storefrontsession.CartCookieName+"=") ||
+		(!strings.Contains(last, "Max-Age=0") && !strings.Contains(last, "Max-Age=-1")) {
+		t.Fatalf("last Set-Cookie must clear the cart, got %q (all=%v)", last, raw)
+	}
+	_ = svc
 }
 
 func TestEnsureStorefrontCart_PropagatesGetCartErrors(t *testing.T) {

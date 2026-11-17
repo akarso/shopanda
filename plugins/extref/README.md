@@ -22,8 +22,8 @@ Track E / follow-up (**PR-1551**, **PR-1553**) reference that uses **only** [`pk
 3. Same `design_id` on the same variant → `200` `{"status":"unchanged"}` (quantity ignored).
 4. Different `design_id` already on that variant → `409` `design_conflict` (`Access.ExclusiveString` + conditional upsert; `gift_note` stays updatable).
 5. Variant line exists without design → `UpsertLineExtension` (`attached`) — does **not** increase quantity.
-6. Otherwise trusted `AddItem` with `extref.design_id` (`cart.validate` sees values on `pending_line` before upsert).
-7. Failed `AddItem` → `DiscardEmptyGuestCart` (empty guest cart + cookie cleanup).
+6. Otherwise trusted `AddItem` with `extref.design_id` (`cart.validate` sees the effective line: stored + pending overlay).
+7. Failed first `AddItem` on an empty guest cart → `DiscardEmptyGuestCart(…, cart.ID)` (Ensure id; clears cookie only if deleted).
 8. Fail-closed: unbound `Cart()` → `503` (per request; CapCart is late-bound on serve).
 
 ## Enable

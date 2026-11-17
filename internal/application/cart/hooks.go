@@ -234,23 +234,91 @@ func redactPendingLine(pending *extapi.PendingCartLine, registrant string, plugi
 	return out
 }
 
+// pendingLineFromAdd builds the cart.validate pending_line payload. Nil when
+// there are no extension inputs (quantity-only AddItem must not look like a
+// second line with a missing design_id).
 func pendingLineFromAdd(variantID string, resultingQty int, inputs []domainext.ValueInput) *extapi.PendingCartLine {
-	pending := &extapi.PendingCartLine{
-		VariantID: variantID,
-		Quantity:  resultingQty,
-	}
 	if len(inputs) == 0 {
-		return pending
+		return nil
 	}
 	exts := make([]extapi.CartLineExtension, 0, len(inputs))
 	for _, in := range inputs {
 		exts = append(exts, extapi.CartLineExtension{
 			Code:  in.FieldCode,
-			Value: in.Value,
+			Value: cloneExtensionValue(in.Value),
 		})
 	}
-	pending.Extensions = exts
-	return pending
+	return &extapi.PendingCartLine{
+		VariantID:  variantID,
+		Quantity:   resultingQty,
+		Extensions: exts,
+	}
+}
+
+// overlayPendingOnCartView returns a shallow cart copy where the pending
+// variant's extensions are the stored set with pending codes overlaid
+// (pending wins on the same code). One effective line for cart.validate.
+func overlayPendingOnCartView(view *extapi.CartView, pending *extapi.PendingCartLine) *extapi.CartView {
+	if view == nil || pending == nil {
+		return view
+	}
+	out := &extapi.CartView{
+		ID:         view.ID,
+		CustomerID: view.CustomerID,
+		Items:      make([]extapi.CartLineView, len(view.Items)),
+	}
+	copy(out.Items, view.Items)
+	for i, line := range out.Items {
+		if line.VariantID != pending.VariantID {
+			continue
+		}
+		byCode := make(map[string]extapi.CartLineExtension, len(line.Extensions)+len(pending.Extensions))
+		order := make([]string, 0, len(line.Extensions)+len(pending.Extensions))
+		seen := make(map[string]struct{}, len(line.Extensions)+len(pending.Extensions))
+		for _, e := range line.Extensions {
+			byCode[e.Code] = e
+			if _, ok := seen[e.Code]; !ok {
+				seen[e.Code] = struct{}{}
+				order = append(order, e.Code)
+			}
+		}
+		for _, e := range pending.Extensions {
+			byCode[e.Code] = e
+			if _, ok := seen[e.Code]; !ok {
+				seen[e.Code] = struct{}{}
+				order = append(order, e.Code)
+			}
+		}
+		merged := make([]extapi.CartLineExtension, 0, len(order))
+		for _, code := range order {
+			merged = append(merged, byCode[code])
+		}
+		out.Items[i] = extapi.CartLineView{
+			VariantID:  line.VariantID,
+			Quantity:   pending.Quantity,
+			Extensions: merged,
+		}
+	}
+	return out
+}
+
+func cloneExtensionValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, val := range t {
+			out[k] = cloneExtensionValue(val)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, val := range t {
+			out[i] = cloneExtensionValue(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func filterCartViewExtensions(view *extapi.CartView, pluginName string, pluginOnly pluginOnlyFieldChecker) *extapi.CartView {

@@ -170,7 +170,7 @@ func (scopingFakeCart) EnsureActive(context.Context, string, string) (*extapi.Ca
 func (scopingFakeCart) EnsureStorefrontCart(context.Context, http.ResponseWriter, *http.Request, string) (*extapi.CartView, error) {
 	return nil, nil
 }
-func (scopingFakeCart) DiscardEmptyGuestCart(context.Context, http.ResponseWriter, *http.Request) error {
+func (scopingFakeCart) DiscardEmptyGuestCart(context.Context, http.ResponseWriter, *http.Request, string) error {
 	return nil
 }
 func (scopingFakeCart) DeleteLineExtension(context.Context, string, string, string, string) error {

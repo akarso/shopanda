@@ -220,6 +220,28 @@ func TestCatalogPort_FindVariants_MissingParentEmptySlug(t *testing.T) {
 	if got["v1"] == nil || got["v1"].ProductVisible || got["v1"].ProductSlug != "" {
 		t.Fatalf("missing parent must yield ProductVisible=false, got %+v", got["v1"])
 	}
+	if extapi.BelongsToProductSlug(got["v1"], "shirt") {
+		t.Fatal("missing parent must not belong to slug")
+	}
+}
+
+func TestCatalogPort_FindVariants_BlankSlugStillVisible(t *testing.T) {
+	port := pluginsdk.NewCatalogPort(stubProducts{byID: map[string]*catalog.Product{
+		"p1": {ID: "p1", Slug: "", Status: catalog.StatusActive},
+	}}, stubVariants{byID: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "A"},
+	}})
+	got, err := port.FindVariants(context.Background(), []string{"v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := got["v1"]
+	if v == nil || !v.ProductVisible || v.ProductSlug != "" {
+		t.Fatalf("blank slug column: want ProductVisible=true empty slug, got %+v", v)
+	}
+	if extapi.BelongsToProductSlug(v, "shirt") {
+		t.Fatal("blank slug must fail closed for BelongsToProductSlug")
+	}
 }
 
 func TestOrdersPort_FindByID(t *testing.T) {

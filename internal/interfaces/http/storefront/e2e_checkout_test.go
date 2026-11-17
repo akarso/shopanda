@@ -67,6 +67,21 @@ func (r *e2eCartRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *e2eCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+
 func (r *e2eCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
 	return nil, nil
 }

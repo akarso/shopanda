@@ -74,6 +74,21 @@ func (r *stubCartRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *stubCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+
 func (r *stubCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
 	return nil, nil
 }
@@ -222,6 +237,20 @@ func (r *deleteFailCartRepo) Delete(ctx context.Context, id string) error {
 		return r.deleteErr
 	}
 	return r.stubCartRepo.Delete(ctx, id)
+}
+
+func (r *deleteFailCartRepo) DeleteEmptyGuestIfUnchanged(ctx context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(ctx, cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(ctx, cartID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type probeStep struct {
