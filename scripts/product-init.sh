@@ -303,6 +303,29 @@ install_dir_from_stage "${STAGE}" "${DEST}"
 # PRODUCT_README is a suggested root banner (does not overwrite README.md).
 mv "${STAGE_ROOT}/PRODUCT_README.${SLUG}.md.new" "${PRODUCT_README_OUT}"
 
+# Ensure the product-owned registration hook exists (upstream ships it empty;
+# older forks may lack the file until they bump).
+REGISTER_PRODUCTS="${ROOT}/cmd/api/register_products.go"
+if [[ ! -f "${REGISTER_PRODUCTS}" ]]; then
+  mkdir -p "${ROOT}/cmd/api"
+  cat >"${REGISTER_PRODUCTS}" <<'GO'
+package main
+
+import (
+	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/plugin"
+)
+
+// registerProductPlugins is the product-owned registration hook.
+// Product forks register their plugins here (and only here).
+func registerProductPlugins(registry *plugin.Registry, cfg *config.Config) {
+	_ = registry
+	_ = cfg
+}
+GO
+  echo "    seeded ${REGISTER_PRODUCTS}"
+fi
+
 # Restore CI trees only after the plugin is in place.
 if [[ "${WITH_CI_SAMPLES}" -eq 1 ]]; then
   restore_ci_samples_from_seed
@@ -318,15 +341,20 @@ OK: created ${DEST}
     wrote ${PRODUCT_README_OUT} (optional root README banner — review before replacing README.md)
 
 Next steps:
-  1. Add registration in cmd/api/register_plugins.go:
+  1. Add registration in cmd/api/register_products.go (product-owned; do not
+     edit register_plugins.go):
 
-       import "github.com/akarso/shopanda/plugins/${SLUG}"
+       import (
+         "github.com/akarso/shopanda/pkg/pluginsdk"
+         "github.com/akarso/shopanda/plugins/${SLUG}"
+       )
 
-       // inside registerPlugins:
-       registry.Register(${PACKAGE}.New())
+       // inside registerProductPlugins:
+       registry.Register(pluginsdk.Adapt(${PACKAGE}.New()))
 
-  2. Optional config gate: add plugins.${SLUG}.enabled to internal/platform/config
-     and wrap the Register call.
+  2. Optional config gate: prefer Host.Config* / plugins.${SLUG}.* flatten
+     keys (see PRODUCT_SITES.md). Avoid adding a typed field in
+     internal/platform/config for product plugins.
 
   3. Build and test:
 

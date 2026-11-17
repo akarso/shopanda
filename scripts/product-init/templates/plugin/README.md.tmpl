@@ -10,16 +10,21 @@
 
 ## Enable
 
-1. Register in `cmd/api/register_plugins.go`:
+1. Register in `cmd/api/register_products.go` (product-owned; do not edit
+   `register_plugins.go`):
 
 ```go
-import "github.com/akarso/shopanda/plugins/{{.Slug}}"
+import (
+	"github.com/akarso/shopanda/pkg/pluginsdk"
+	"github.com/akarso/shopanda/plugins/{{.Slug}}"
+)
 
-// inside registerPlugins:
-registry.Register({{.Package}}.New())
+// inside registerProductPlugins:
+registry.Register(pluginsdk.Adapt({{.Package}}.New()))
 ```
 
-2. Rebuild and run. Prefer gating on a config flag once you add `plugins.{{.Slug}}.enabled` to `internal/platform/config`.
+2. Rebuild and run. Prefer Host.Config* / `plugins.{{.Slug}}.*` flatten keys
+   over adding a typed field in `internal/platform/config`.
 
 ## Jobs
 

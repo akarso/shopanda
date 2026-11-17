@@ -17,7 +17,7 @@ func New() pluginsdk.Plugin { return &Plugin{} }
 func (p *Plugin) Name() string { return "sitekit" }
 
 // Init registers HTTP routes and optional sync jobs. Enablement is compile-time
-// registration in cmd/api/register_plugins.go (add a config flag when ready).
+// registration in cmd/api/register_products.go (product-owned).
 func (p *Plugin) Init(h pluginsdk.Host) error {
 	if h == nil {
 		return fmt.Errorf("sitekit plugin: host not configured")

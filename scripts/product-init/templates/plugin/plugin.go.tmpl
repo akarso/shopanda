@@ -17,7 +17,7 @@ func New() *Plugin { return &Plugin{} }
 func (p *Plugin) Name() string { return "{{.PluginName}}" }
 
 // Init registers HTTP routes and optional sync jobs. Enablement is compile-time
-// registration in cmd/api/register_plugins.go (add a config flag when ready).
+// registration in cmd/api/register_products.go (product-owned).
 func (p *Plugin) Init(app *plugin.App) error {
 	if app == nil {
 		return fmt.Errorf("{{.Slug}} plugin: app not configured")

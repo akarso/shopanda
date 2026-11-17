@@ -15,6 +15,12 @@ import "time"
 const (
 	OutcomeSuccess = "success"
 	OutcomeFailed  = "failed"
+	// OutcomeSkipped is for JobResult when the handler returned
+	// jobs.ErrSkipOutcome (platform Complete/Fail not written).
+	OutcomeSkipped = "skipped"
+	// OutcomeNotApplied is for JobResult when Complete matched zero rows
+	// (stale attempt / reclaim). Not a handler failure.
+	OutcomeNotApplied = "not_applied"
 
 	// OutcomeSucceededEventFailed is for CheckoutResult only: every checkout
 	// step succeeded (order created, payment captured, etc.) but the final
@@ -56,9 +62,9 @@ type Recorder interface {
 	// that also need duration; JobFailure remains for compatibility.
 	JobFailure(jobType string)
 
-	// JobResult records one finished background job attempt (success or
-	// failure) with duration. jobType and outcome must be bounded
-	// (OutcomeSuccess / OutcomeFailed); never pass attempt numbers, job
+	// JobResult records one finished background job attempt with duration.
+	// jobType and outcome must be bounded (OutcomeSuccess / OutcomeFailed /
+	// OutcomeSkipped / OutcomeNotApplied); never pass attempt numbers, job
 	// IDs, or payload values as labels.
 	JobResult(jobType, outcome string, duration time.Duration)
 

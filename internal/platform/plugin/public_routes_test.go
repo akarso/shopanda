@@ -56,3 +56,36 @@ func TestApp_PublicRoutes_Empty(t *testing.T) {
 		t.Fatalf("PublicRoutes() = %v, want nil", routes)
 	}
 }
+
+func TestApp_RegisterPublicRoute_NoCache(t *testing.T) {
+	app := &plugin.App{}
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	if err := app.RegisterPublicRoute("GET /api/customizer/session", handler, plugin.WithNoCache()); err != nil {
+		t.Fatalf("RegisterPublicRoute: %v", err)
+	}
+	if err := app.RegisterPublicRoute("GET /api/customizer/catalog", handler); err != nil {
+		t.Fatalf("RegisterPublicRoute catalog: %v", err)
+	}
+	routes := app.PublicRoutes()
+	if len(routes) != 2 || !routes[0].NoCache || routes[1].NoCache {
+		t.Fatalf("routes = %+v", routes)
+	}
+	prefixes := plugin.NoCachePathPrefixes(routes)
+	if len(prefixes) != 1 || prefixes[0] != "/api/customizer/session" {
+		t.Fatalf("NoCachePathPrefixes = %#v", prefixes)
+	}
+}
+
+func TestNoCachePathPrefixes_StripsMethod(t *testing.T) {
+	prefixes := plugin.NoCachePathPrefixes([]plugin.PublicRoute{
+		{Pattern: "POST /api/v1/graphql", NoCache: true},
+		{Pattern: "/extref/design-line", NoCache: true},
+		{Pattern: "GET /extref/health", NoCache: false},
+	})
+	if len(prefixes) != 2 {
+		t.Fatalf("prefixes = %#v", prefixes)
+	}
+	if prefixes[0] != "/api/v1/graphql" || prefixes[1] != "/extref/design-line" {
+		t.Fatalf("prefixes = %#v", prefixes)
+	}
+}

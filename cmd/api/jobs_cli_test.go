@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,21 +20,56 @@ import (
 // the same jobsApp.Service — this file doesn't re-test that, only the
 // CLI-specific plumbing (arg parsing, output formatting).
 
-// TestNewJobsService_NonPostgresDriverFailsFast pins the fix for jobs:*
+// TestNewJobsIntrospection_NonPostgresDriverFailsFast pins the fix for jobs:*
 // commands silently querying an unrelated Postgres jobs table when a
 // broker queue driver (redis/rabbitmq/kafka/sqs) is actually configured:
-// newJobsService must fail clearly, before even opening a DB connection,
+// newJobsIntrospection must fail clearly, before even opening a DB connection,
 // rather than construct a Postgres queue nothing else is using.
-func TestNewJobsService_NonPostgresDriverFailsFast(t *testing.T) {
+func TestNewJobsIntrospection_NonPostgresDriverFailsFast(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Queue.Driver = "redis"
 
-	_, _, err := newJobsService(cfg)
+	_, _, err := newJobsIntrospection(cfg)
 	if err == nil {
 		t.Fatal("expected an error for a non-postgres queue driver")
 	}
 	if !strings.Contains(err.Error(), "queue.driver=postgres") {
 		t.Fatalf("err = %v, want it to name the postgres-only requirement", err)
+	}
+}
+
+func TestNewJobsRuntime_NonPostgresDriverFailsFast(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "redis"
+	_, err := newJobsRuntime(cfg, logger.New("error"))
+	if err == nil {
+		t.Fatal("expected an error for a non-postgres queue driver")
+	}
+	if !strings.Contains(err.Error(), "queue.driver=postgres") {
+		t.Fatalf("err = %v, want it to name the postgres-only requirement", err)
+	}
+}
+
+// TestNewJobsRuntime_WarehousedemoReachesBind pins CapIntegrationStock
+// wiring before InitAll — without wireIntegrationStockSyncerFromDB,
+// warehousedemo Init fails and jobs:retry|cancel|requeue abort.
+func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+	t.Setenv("DATABASE_URL", dsn)
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "postgres"
+	cfg.Plugins.WarehouseDemo.Enabled = true
+	cfg.Plugins.WarehouseDemo.WarehouseBaseURL = "http://127.0.0.1:9/warehouse"
+	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(io.Discard, "error"))
+	if err != nil {
+		t.Fatalf("newJobsRuntime with warehousedemo: %v", err)
+	}
+	defer rt.conn.Close()
+	if rt.queue == nil || rt.svc == nil {
+		t.Fatal("expected bound queue and jobs service")
 	}
 }
 

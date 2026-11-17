@@ -3,16 +3,29 @@ package plugin
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // PublicRoute registers a storefront or integrator HTTP handler mounted after InitAll.
 type PublicRoute struct {
 	Pattern string
 	Handler http.Handler
+	// NoCache marks the route path for Cache-Control no-store (merged into the
+	// HTTP cache denylist at mount time).
+	NoCache bool
+}
+
+// PublicRouteOption configures RegisterPublicRoute.
+type PublicRouteOption func(*PublicRoute)
+
+// WithNoCache marks the public route so guest GET/HEAD responses get no-store
+// instead of the default public max-age cache policy.
+func WithNoCache() PublicRouteOption {
+	return func(r *PublicRoute) { r.NoCache = true }
 }
 
 // RegisterPublicRoute adds a public route mounted by the application after InitAll.
-func (a *App) RegisterPublicRoute(pattern string, handler http.Handler) error {
+func (a *App) RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error {
 	if pattern == "" {
 		panic("plugin: public route pattern must not be empty")
 	}
@@ -27,10 +40,16 @@ func (a *App) RegisterPublicRoute(pattern string, handler http.Handler) error {
 			return fmt.Errorf("plugin: duplicate public route pattern %q", pattern)
 		}
 	}
-	a.publicRoutes = append(a.publicRoutes, PublicRoute{
+	route := PublicRoute{
 		Pattern: pattern,
 		Handler: handler,
-	})
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&route)
+		}
+	}
+	a.publicRoutes = append(a.publicRoutes, route)
 	return nil
 }
 
@@ -55,4 +74,48 @@ func (a *App) PublicRoutes() []PublicRoute {
 	out := make([]PublicRoute, len(a.publicRoutes))
 	copy(out, a.publicRoutes)
 	return out
+}
+
+// NoCachePathPrefixes returns URL path prefixes for routes registered with
+// WithNoCache, suitable for CacheControlMiddleware. Patterns like
+// "GET /api/foo" yield "/api/foo".
+func NoCachePathPrefixes(routes []PublicRoute) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, route := range routes {
+		if !route.NoCache {
+			continue
+		}
+		prefix := pathPrefixFromPattern(route.Pattern)
+		if prefix == "" {
+			continue
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		out = append(out, prefix)
+	}
+	return out
+}
+
+func pathPrefixFromPattern(pattern string) string {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		return ""
+	}
+	if i := strings.IndexByte(p, ' '); i >= 0 {
+		p = strings.TrimSpace(p[i+1:])
+	}
+	if p == "" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		if i := strings.IndexByte(p, '/'); i >= 0 {
+			p = p[i:]
+		} else {
+			return ""
+		}
+	}
+	return p
 }
