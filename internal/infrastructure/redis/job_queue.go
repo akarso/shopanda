@@ -37,36 +37,52 @@ end
 return #ids
 `
 
-// completeJobLua atomically checks attempt + processing membership, then
-// writes the done snapshot. Returns 1 ok, 0 not applied, -1 missing key.
+// processingMemberLua is inlined by complete/fail scripts: true when id is
+// on the processing list. Checked before any hash/delayed write so a
+// divergent list/hash cannot publish a second schedule, and encode runs
+// before LREM so an encode error cannot drop the claim.
+const processingMemberCheck = `
+local function on_processing(list_key, id)
+  local list = redis.call('LRANGE', list_key, 0, -1)
+  for _, v in ipairs(list) do
+    if v == id then return true end
+  end
+  return false
+end
+`
+
+// completeJobLua atomically checks attempt + processing membership, encodes,
+// then SET and LREM. Returns 1 ok, 0 not applied, -1 missing key.
 // KEYS: job, processing. ARGV: attempt, id, updated_at RFC3339, ttl_ms (0=persist).
-const completeJobLua = `
+const completeJobLua = processingMemberCheck + `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return -1 end
 local job = cjson.decode(raw)
 if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
   return 0
 end
-local removed = redis.call('LREM', KEYS[2], 1, ARGV[2])
-if removed == 0 then return 0 end
 job['status'] = 'done'
 job['updated_at'] = ARGV[3]
 local encoded = cjson.encode(job)
+if not on_processing(KEYS[2], ARGV[2]) then
+  return 0
+end
 local ttl = tonumber(ARGV[4])
 if ttl > 0 then
   redis.call('SET', KEYS[1], encoded, 'PX', ttl)
 else
   redis.call('SET', KEYS[1], encoded)
 end
+redis.call('LREM', KEYS[2], 1, ARGV[2])
 return 1
 `
 
-// failJobLua atomically checks attempt, then SET (+ ZADD for retry) before
-// LREM so a script error after LREM cannot leave the id with no delayed
-// entry and no processing claim. Returns 1 ok, 0 not applied, -1 missing.
+// failJobLua checks attempt + processing claim, encodes, then SET (+ ZADD)
+// before LREM. Zero membership → not-applied with no write. Returns 1 ok,
+// 0 not applied, -1 missing.
 // KEYS: job, processing, delayed. ARGV: attempt, id, updated_at, last_error,
 // terminal (1=failed/0=retry), run_at RFC3339, run_at_ms, ttl_ms.
-const failJobLua = `
+const failJobLua = processingMemberCheck + `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return -1 end
 local job = cjson.decode(raw)
@@ -78,22 +94,28 @@ if ARGV[4] ~= '' then
   job['last_error'] = ARGV[4]
 end
 local ttl = tonumber(ARGV[8])
+local encoded
 if tonumber(ARGV[5]) == 1 then
   job['status'] = 'failed'
-  local encoded = cjson.encode(job)
+  encoded = cjson.encode(job)
+else
+  job['status'] = 'pending'
+  job['run_at'] = ARGV[6]
+  encoded = cjson.encode(job)
+end
+if not on_processing(KEYS[2], ARGV[2]) then
+  return 0
+end
+if tonumber(ARGV[5]) == 1 then
   if ttl > 0 then
     redis.call('SET', KEYS[1], encoded, 'PX', ttl)
   else
     redis.call('SET', KEYS[1], encoded)
   end
-  redis.call('LREM', KEYS[2], 1, ARGV[2])
-  return 1
+else
+  redis.call('SET', KEYS[1], encoded)
+  redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
 end
-job['status'] = 'pending'
-job['run_at'] = ARGV[6]
-local encoded = cjson.encode(job)
-redis.call('SET', KEYS[1], encoded)
-redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
 redis.call('LREM', KEYS[2], 1, ARGV[2])
 return 1
 `

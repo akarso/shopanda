@@ -154,16 +154,13 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	w.mu.RUnlock()
 
 	if !ok {
-		w.log.Error("worker.handler.not_found", nil, map[string]interface{}{
-			"job_id":   job.ID,
-			"job_type": job.Type,
-		})
-		// A real error, not nil: this is exactly the failure an operator
-		// most needs last_error for — a misconfigured or typo'd job type —
-		// and Fail's COALESCE-based persistence (see job_queue.go) only
-		// records something when jobErr is non-nil. Metrics land only if
-		// Fail applies (CAS miss → not_applied, not JobFailure).
-		w.recordFail(ctx, job.ID, job.Attempts, unknownJobType, fmt.Errorf("no handler registered for job type %q", job.Type), 0)
+		// Log + metrics only if Fail applies (CAS miss → not_applied only).
+		w.recordFail(ctx, job.ID, job.Attempts, unknownJobType,
+			fmt.Errorf("no handler registered for job type %q", job.Type), 0,
+			"worker.handler.not_found", map[string]interface{}{
+				"job_id":   job.ID,
+				"job_type": job.Type,
+			})
 		return true
 	}
 
@@ -201,10 +198,9 @@ func (w *Worker) processNext(ctx context.Context) bool {
 			"duration_ms": duration.Milliseconds(),
 		}
 		mergeJobRequestID(failFields, job.Payload)
-		w.log.Error("worker.job.failed", err, failFields)
-		// JobFailure / outcome failed only after Fail applies — a stale
-		// claim (ErrOutcomeNotApplied) must not look like a job-failure alert.
-		w.recordFail(ctx, job.ID, job.Attempts, job.Type, err, duration)
+		// worker.job.failed + JobFailure only after Fail applies — a stale
+		// claim must not trip error-log alerts or failure metrics.
+		w.recordFail(ctx, job.ID, job.Attempts, job.Type, err, duration, "worker.job.failed", failFields)
 		return true
 	}
 
@@ -257,7 +253,7 @@ func (w *Worker) safeHandle(ctx context.Context, h Handler, job Job) (err error)
 // signal that's asking the worker to stop, or the job ends up neither
 // completed nor properly failed/requeued, an ambiguous state the queue's
 // own retry/visibility-timeout logic wasn't designed to resolve cleanly.
-func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobType string, jobErr error, duration time.Duration) {
+func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobType string, jobErr error, duration time.Duration, appliedLog string, appliedFields map[string]interface{}) {
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
 	if failErr := w.queue.Fail(outcomeCtx, jobID, attempt, jobErr); failErr != nil {
@@ -269,11 +265,17 @@ func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobT
 			return
 		}
 		w.log.Error("worker.fail.error", failErr, fields)
-		// Handler failed and the outcome write also failed — still count
+		// Handler failed and the outcome write also failed — still surface
 		// the handler failure so operators see the attempt.
+		if appliedLog != "" {
+			w.log.Error(appliedLog, jobErr, appliedFields)
+		}
 		w.metrics.JobFailure(jobType)
 		w.metrics.JobResult(jobType, "failed", duration)
 		return
+	}
+	if appliedLog != "" {
+		w.log.Error(appliedLog, jobErr, appliedFields)
 	}
 	w.metrics.JobFailure(jobType)
 	w.metrics.JobResult(jobType, "failed", duration)
