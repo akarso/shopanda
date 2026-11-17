@@ -15,8 +15,8 @@ type bindTestQueue struct{ name string }
 
 func (q *bindTestQueue) Enqueue(context.Context, jobs.Job) error    { return nil }
 func (q *bindTestQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (q *bindTestQueue) Complete(context.Context, string) error     { return nil }
-func (q *bindTestQueue) Fail(context.Context, string, error) error  { return nil }
+func (q *bindTestQueue) Complete(context.Context, string, int) error     { return nil }
+func (q *bindTestQueue) Fail(context.Context, string, int, error) error  { return nil }
 
 // resolveAndBindJobQueue must return the plugin-registered instance (default
 // core/postgres-queue path used by serve/worker/scheduler/CLIs).

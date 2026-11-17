@@ -174,8 +174,8 @@ func (f *fakeSearchQueue) Enqueue(_ context.Context, job domainjobs.Job) error {
 	return nil
 }
 func (f *fakeSearchQueue) Dequeue(context.Context) (*domainjobs.Job, error) { return nil, nil }
-func (f *fakeSearchQueue) Complete(context.Context, string) error           { return nil }
-func (f *fakeSearchQueue) Fail(context.Context, string, error) error        { return nil }
+func (f *fakeSearchQueue) Complete(context.Context, string, int) error           { return nil }
+func (f *fakeSearchQueue) Fail(context.Context, string, int, error) error        { return nil }
 
 type searchAdminDeps struct {
 	runs       *fakeSearchRunStore

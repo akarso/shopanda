@@ -121,7 +121,7 @@ func TestJobQueue_Complete(t *testing.T) {
 		t.Fatal("expected a dequeued job")
 	}
 
-	if err := q.Complete(ctx, got.ID); err != nil {
+	if err := q.Complete(ctx, got.ID, got.Attempts); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 	now := time.Now()
 
 	// Fail the job — should be re-queued since attempts(1) < maxRetries(3).
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestJobQueue_Fail_Permanent(t *testing.T) {
 
 	got, _ := q.Dequeue(ctx) // attempts becomes 1
 
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -227,9 +227,10 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	err = q.Complete(ctx, id.New())
-	if err == nil {
-		t.Fatal("expected error for non-existent job")
+	// Missing / stale attempt is benign (rows=0) so a fence reclaim cannot
+	// fail the worker's Complete path for an already-moved job.
+	if err = q.Complete(ctx, id.New(), 1); err != nil {
+		t.Fatalf("Complete missing job: %v (want nil)", err)
 	}
 }
 
@@ -254,7 +255,7 @@ func TestJobQueue_Fail_RecordsLastError(t *testing.T) {
 	_ = q.Enqueue(ctx, job)
 	got, _ := q.Dequeue(ctx)
 
-	if err := q.Fail(ctx, got.ID, errors.New("boom: upstream timed out")); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom: upstream timed out")); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -291,7 +292,7 @@ func TestJobQueue_Fail_NilErrorLeavesLastErrorUnchanged(t *testing.T) {
 	_ = q.Enqueue(ctx, job)
 	got, _ := q.Dequeue(ctx)
 
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -550,7 +551,7 @@ func TestJobQueue_Retry_ResetsFailedJobToPending(t *testing.T) {
 	job.MaxRetries = 1
 	_ = q.Enqueue(ctx, job)
 	got, _ := q.Dequeue(ctx) // attempts becomes 1
-	if err := q.Fail(ctx, got.ID, errors.New("boom")); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -727,7 +728,7 @@ func TestJobQueue_Cancel_ConflictOnFailedJob(t *testing.T) {
 	job.MaxRetries = 1
 	_ = q.Enqueue(ctx, job)
 	got, _ := q.Dequeue(ctx)
-	if err := q.Fail(ctx, got.ID, errors.New("boom")); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
