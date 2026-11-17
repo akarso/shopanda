@@ -68,21 +68,43 @@ type CatalogPort interface {
 }
 
 // CatalogProductSeed is the EnsureProduct / Import input for CatalogSeedPort.
-// Existing products (matched by Slug) are left unchanged (create-only).
+// Create-only: an existing slug is not updated. When Status or Type is set and
+// disagrees with the stored row, or Attributes fails the match rules below,
+// Ensure / Import returns an error instead of soft-succeeding (created=false).
+// Name / Description on an existing slug are still soft-ignored.
+//
+// Status is case-sensitive (draft|active|archived). Empty / whitespace → draft
+// on create (breaking vs PR-1564, which forced active). Published rows need
+// Status: "active" explicitly. Type is case-sensitive; empty / whitespace →
+// simple. Attributes is deep-copied via JSON (nil leaves NewProduct's empty
+// map; non-nil including {} replaces it on create).
+//
+// Attributes match on existing slug: nil = do not check; {} = assert stored
+// attributes are empty; non-empty = every seed key must equal the stored
+// value (extra stored keys from admin/CSV are OK).
+//
+// Downloadable + active is rejected (no file attachments on seed; same as
+// CSV/admin). Active bundle/grouped/configurable rows are allowed; seed does
+// not compose children — the operator owns that integrity.
 type CatalogProductSeed struct {
 	Name        string
 	Slug        string
 	Description string
+	Status      string         // draft|active|archived; empty → draft; case-sensitive
+	Type        string         // simple|virtual|…; empty → simple; case-sensitive
+	Attributes  map[string]any // optional; deep-copied; see match rules above
 }
 
 // CatalogVariantSeed is the EnsureVariant / Import input for CatalogSeedPort.
-// Existing variants (matched by SKU) are left unchanged. ProductID or
-// ProductSlug (resolved against Import's product map) identifies the parent.
+// Create-only by SKU. ProductID or ProductSlug (resolved against Import's
+// product map) identifies the parent. Attributes match rules match
+// CatalogProductSeed (nil / {} / subset keys). Deep-copied onto create.
 type CatalogVariantSeed struct {
 	ProductID   string
 	ProductSlug string
 	SKU         string
 	Name        string
+	Attributes  map[string]any
 }
 
 // CatalogPriceSeed is the EnsurePrice / Import input. Empty StoreID means the
@@ -121,8 +143,11 @@ type CatalogSeedResult struct {
 // CatalogSeedPort is the Host-visible catalog write surface for plugin CLI
 // seed/import (CapCatalogSeed). Create-only / idempotent: existing products
 // (slug), variants (SKU), and prices (variant+currency+store) are not
-// updated. Import runs the batch in one DB transaction when a tx starter is
-// bound. Distinct from read-only CapCatalog.
+// updated. When a seed supplies Status / Type / Attributes (product) or
+// Attributes (variant) that disagree with the stored row, the call errors —
+// create-only must not pretend Ensure applied those fields. Import runs the
+// batch in one DB transaction when a tx starter is bound. Distinct from
+// read-only CapCatalog.
 type CatalogSeedPort interface {
 	// Import applies Products → Variants → Prices → Stock in one transaction
 	// when possible. Prefer this from plugin CLI seed commands.

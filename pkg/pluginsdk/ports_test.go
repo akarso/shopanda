@@ -2,12 +2,14 @@ package pluginsdk_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
@@ -315,6 +317,244 @@ func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
 	if len(products2.created) != 1 || products2.created[0].Slug != "hoodie" {
 		t.Fatalf("created = %#v", products2.created)
 	}
+	if products2.created[0].Status != catalog.StatusDraft {
+		t.Fatalf("default status = %q, want draft", products2.created[0].Status)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
+	products := &seedProducts{}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	attrs := map[string]any{
+		"parent_sku": "TEE-PARENT",
+		"meta":       map[string]any{"nested": "v"},
+	}
+	_, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee-attrs", Status: "draft", Type: "virtual", Attributes: attrs,
+	})
+	if err != nil || !created {
+		t.Fatalf("create: created=%v err=%v", created, err)
+	}
+	got := products.created[0]
+	if got.Status != catalog.StatusDraft {
+		t.Fatalf("status = %q, want draft", got.Status)
+	}
+	if got.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %q, want virtual", got.Type)
+	}
+	if got.Attributes["parent_sku"] != "TEE-PARENT" {
+		t.Fatalf("attributes = %#v", got.Attributes)
+	}
+	attrs["parent_sku"] = "MUTATED"
+	attrs["meta"].(map[string]any)["nested"] = "MUTATED"
+	if got.Attributes["parent_sku"] != "TEE-PARENT" {
+		t.Fatal("seed Attributes map must be deep-cloned")
+	}
+	nested, _ := got.Attributes["meta"].(map[string]interface{})
+	if nested["nested"] != "v" {
+		t.Fatalf("nested attribute mutated: %#v", got.Attributes["meta"])
+	}
+
+	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Bad", Slug: "bad-status", Status: "nope",
+	}); err == nil || !strings.Contains(err.Error(), catalog.InvalidStatusMessage(catalog.Status("nope"))) {
+		t.Fatalf("invalid status err = %v", err)
+	}
+	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Bad", Slug: "bad-type", Type: "nope",
+	}); err == nil || !strings.Contains(err.Error(), catalog.InvalidTypeMessage(catalog.Type("nope"))) {
+		t.Fatalf("invalid type err = %v", err)
+	}
+
+	productsActive := &seedProducts{}
+	portActive := pluginsdk.NewCatalogSeedPort(productsActive, stubVariants{}, nil, nil, nil, nil)
+	_, _, err = portActive.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Live", Slug: "live", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("explicit active: %v", err)
+	}
+	if productsActive.created[0].Status != catalog.StatusActive {
+		t.Fatalf("explicit active status = %q", productsActive.created[0].Status)
+	}
+
+	productsArchived := &seedProducts{}
+	portArchived := pluginsdk.NewCatalogSeedPort(productsArchived, stubVariants{}, nil, nil, nil, nil)
+	_, _, err = portArchived.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Old", Slug: "old", Status: "archived",
+	})
+	if err != nil {
+		t.Fatalf("archived: %v", err)
+	}
+	if productsArchived.created[0].Status != catalog.StatusArchived {
+		t.Fatalf("archived status = %q", productsArchived.created[0].Status)
+	}
+
+	productsWS := &seedProducts{}
+	portWS := pluginsdk.NewCatalogSeedPort(productsWS, stubVariants{}, nil, nil, nil, nil)
+	_, _, err = portWS.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "WS", Slug: "ws", Status: "   ", Type: "   ",
+	})
+	if err != nil {
+		t.Fatalf("whitespace status/type: %v", err)
+	}
+	if productsWS.created[0].Status != catalog.StatusDraft {
+		t.Fatalf("whitespace status = %q, want draft", productsWS.created[0].Status)
+	}
+	if productsWS.created[0].Type != catalog.TypeSimple {
+		t.Fatalf("whitespace type = %q, want simple", productsWS.created[0].Type)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_StringSliceClone(t *testing.T) {
+	products := &seedProducts{}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	tags := []string{"a", "b"}
+	_, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee-tags", Attributes: map[string]any{"tags": tags},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	tags[0] = "MUTATED"
+	got := products.created[0].Attributes["tags"]
+	// JSON unmarshal → []interface{} of strings
+	arr, ok := got.([]interface{})
+	if !ok || len(arr) != 2 || arr[0] != "a" {
+		t.Fatalf("[]string must be deep-cloned via JSON, got %#v", got)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_DownloadableActiveRejected(t *testing.T) {
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, nil, nil, nil, nil)
+	_, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Ebook", Slug: "ebook", Status: "active", Type: "downloadable",
+	})
+	if err == nil || !strings.Contains(err.Error(), catalog.DownloadableRequiresFileMessage) {
+		t.Fatalf("err = %v, want %q", err, catalog.DownloadableRequiresFileMessage)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
+	products := &seedProducts{bySlug: map[string]*catalog.Product{
+		"tee": {
+			ID: "p1", Slug: "tee", Name: "Tee",
+			Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+			Attributes: map[string]interface{}{"parent_sku": "A", "extra": "from-admin"},
+		},
+	}}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+
+	// Empty seed fields: create-only soft success (no requested Status/Type/Attrs).
+	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee",
+	})
+	if err != nil || created || id != "p1" {
+		t.Fatalf("empty fields: id=%q created=%v err=%v", id, created, err)
+	}
+
+	// nil Attributes: do not check (extra stored keys OK).
+	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Status: "draft",
+	}); err != nil {
+		t.Fatalf("matching status: %v", err)
+	}
+
+	// Subset: seed key matches; extra stored key OK.
+	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Attributes: map[string]any{"parent_sku": "A"},
+	}); err != nil {
+		t.Fatalf("subset attrs: %v", err)
+	}
+
+	// {} asserts empty stored map — fails when extras exist.
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Attributes: map[string]any{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), "attributes not empty") {
+		t.Fatalf("empty-map assert err = %v", err)
+	}
+
+	// Differing Status: error (do not soft-succeed).
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Status: "active",
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") {
+		t.Fatalf("status mismatch err = %v", err)
+	}
+
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Type: "virtual",
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") {
+		t.Fatalf("type mismatch err = %v", err)
+	}
+
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Attributes: map[string]any{"parent_sku": "B"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), `attribute "parent_sku" mismatch`) {
+		t.Fatalf("attrs mismatch err = %v", err)
+	}
+
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "new-bad-attrs", Attributes: map[string]any{"bad": func() {}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not JSON-serializable") {
+		t.Fatalf("non-JSON attrs err = %v", err)
+	}
+
+	// {} vs empty stored: ok.
+	empty := &seedProducts{bySlug: map[string]*catalog.Product{
+		"bare": {ID: "p2", Slug: "bare", Status: catalog.StatusDraft, Type: catalog.TypeSimple, Attributes: map[string]interface{}{}},
+	}}
+	portEmpty := pluginsdk.NewCatalogSeedPort(empty, stubVariants{}, nil, nil, nil, nil)
+	if _, _, err := portEmpty.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Bare", Slug: "bare", Attributes: map[string]any{},
+	}); err != nil {
+		t.Fatalf("empty assert on empty stored: %v", err)
+	}
+}
+
+func TestCatalogSeedPort_EnsureVariant_Attributes(t *testing.T) {
+	variants := &seedVariants{}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, variants, nil, nil, nil, nil)
+	tags := []string{"a", "b"}
+	attrs := map[string]any{"size": "M", "tags": tags}
+	_, created, err := port.EnsureVariant(context.Background(), pluginsdk.CatalogVariantSeed{
+		ProductID: "p1", SKU: "TEE-M", Name: "Tee M", Attributes: attrs,
+	})
+	if err != nil || !created {
+		t.Fatalf("create: created=%v err=%v", created, err)
+	}
+	got := variants.created[0]
+	if got.Attributes["size"] != "M" {
+		t.Fatalf("attributes = %#v", got.Attributes)
+	}
+	attrs["size"] = "L"
+	tags[0] = "Z"
+	if got.Attributes["size"] != "M" {
+		t.Fatal("seed Attributes map must be deep-cloned")
+	}
+	clonedTags, _ := got.Attributes["tags"].([]interface{})
+	if clonedTags[0] != "a" {
+		t.Fatalf("[]string must be deep-cloned, got %#v", got.Attributes["tags"])
+	}
+
+	// Existing SKU + different attrs → error.
+	_, _, err = port.EnsureVariant(context.Background(), pluginsdk.CatalogVariantSeed{
+		ProductID: "p1", SKU: "TEE-M", Name: "Tee M", Attributes: map[string]any{"size": "L"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") {
+		t.Fatalf("variant attrs mismatch err = %v", err)
+	}
+	// Subset match (only size): soft success even if stored has tags.
+	id, created, err := port.EnsureVariant(context.Background(), pluginsdk.CatalogVariantSeed{
+		ProductID: "p1", SKU: "TEE-M", Attributes: map[string]any{"size": "M"},
+	})
+	if err != nil || created || id == "" {
+		t.Fatalf("subset attrs: id=%q created=%v err=%v", id, created, err)
+	}
 }
 
 type seedVariants struct {
@@ -354,5 +594,107 @@ func TestCatalogSeedPort_Import_ResolvesSlugs(t *testing.T) {
 	}
 	if len(variants.created) != 1 || variants.created[0].ProductID != res.ProductIDs["tee"] {
 		t.Fatalf("variant = %#v", variants.created)
+	}
+}
+
+func TestCatalogSeedPort_Import_StatusTypeAttributes(t *testing.T) {
+	products := &seedProducts{}
+	variants := &seedVariants{}
+	port := pluginsdk.NewCatalogSeedPort(products, variants, nil, nil, nil, nil)
+	res, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Products: []pluginsdk.CatalogProductSeed{{
+			Name: "Tee", Slug: "tee", Status: "draft", Type: "virtual",
+			Attributes: map[string]any{"parent_sku": "TEE-PARENT"},
+		}},
+		Variants: []pluginsdk.CatalogVariantSeed{{
+			ProductSlug: "tee", SKU: "TEE-M", Name: "M",
+			Attributes: map[string]any{"size": "M"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if res.ProductIDs["tee"] == "" || res.VariantIDs["TEE-M"] == "" {
+		t.Fatalf("result = %#v", res)
+	}
+	p := products.created[0]
+	if p.Status != catalog.StatusDraft || p.Type != catalog.TypeVirtual || p.Attributes["parent_sku"] != "TEE-PARENT" {
+		t.Fatalf("product = %#v", p)
+	}
+	v := variants.created[0]
+	if v.Attributes["size"] != "M" {
+		t.Fatalf("variant = %#v", v)
+	}
+}
+
+func TestCatalogSeedPort_Import_MismatchFailsBatch(t *testing.T) {
+	products := &seedProducts{bySlug: map[string]*catalog.Product{
+		"tee": {
+			ID: "p1", Slug: "tee", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+			Attributes: map[string]interface{}{},
+		},
+	}}
+	port := pluginsdk.NewCatalogSeedPort(products, &seedVariants{}, nil, nil, nil, nil)
+	_, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Products: []pluginsdk.CatalogProductSeed{{
+			Name: "Tee", Slug: "tee", Status: "active",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") {
+		t.Fatalf("Import mismatch err = %v", err)
+	}
+}
+
+type conflictProducts struct {
+	seedProducts
+	conflictOnce bool
+}
+
+func (s *conflictProducts) FindBySlug(_ context.Context, slug string) (*catalog.Product, error) {
+	// First Ensure lookup: miss so Create runs; after conflict Create stores the row.
+	if s.bySlug == nil {
+		return nil, nil
+	}
+	return s.bySlug[slug], nil
+}
+
+func (s *conflictProducts) Create(_ context.Context, p *catalog.Product) error {
+	if !s.conflictOnce {
+		s.conflictOnce = true
+		if s.bySlug == nil {
+			s.bySlug = map[string]*catalog.Product{}
+		}
+		// Simulate a concurrent create winning the race.
+		existing := *p
+		existing.ID = "p-raced"
+		existing.Status = catalog.StatusDraft
+		existing.Type = catalog.TypeSimple
+		existing.Attributes = map[string]interface{}{}
+		s.bySlug[p.Slug] = &existing
+		return apperror.Conflict("slug taken")
+	}
+	return s.seedProducts.Create(context.Background(), p)
+}
+
+func TestCatalogSeedPort_EnsureProduct_ConflictRereadMatch(t *testing.T) {
+	products := &conflictProducts{}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+
+	// Seed Status matches the raced row → soft success after conflict re-read.
+	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee-race", Status: "draft",
+	})
+	if err != nil || created || id != "p-raced" {
+		t.Fatalf("match after conflict: id=%q created=%v err=%v", id, created, err)
+	}
+
+	// Fresh port: conflict again, but seed Status disagrees with raced row.
+	products2 := &conflictProducts{}
+	port2 := pluginsdk.NewCatalogSeedPort(products2, stubVariants{}, nil, nil, nil, nil)
+	_, _, err = port2.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee-race2", Status: "active",
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") {
+		t.Fatalf("mismatch after conflict err = %v", err)
 	}
 }

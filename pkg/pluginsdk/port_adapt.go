@@ -3,8 +3,10 @@ package pluginsdk
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -310,6 +312,9 @@ func (p *catalogSeedPort) EnsureProduct(ctx context.Context, in CatalogProductSe
 		return "", false, err
 	}
 	if existing != nil {
+		if err := catalogSeedProductMatch(existing, in); err != nil {
+			return "", false, err
+		}
 		return existing.ID, false, nil
 	}
 
@@ -318,7 +323,35 @@ func (p *catalogSeedPort) EnsureProduct(ctx context.Context, in CatalogProductSe
 		return "", false, err
 	}
 	prod.Description = strings.TrimSpace(in.Description)
-	prod.Status = catalog.StatusActive
+	// NewProduct already defaults StatusDraft / TypeSimple. Never force active.
+	if s := strings.TrimSpace(in.Status); s != "" {
+		st := catalog.Status(s)
+		if !st.IsValid() {
+			return "", false, fmt.Errorf("pluginsdk: catalog seed port: %s", catalog.InvalidStatusMessage(st))
+		}
+		prod.Status = st
+	}
+	if t := strings.TrimSpace(in.Type); t != "" {
+		typ := catalog.Type(t)
+		if !typ.IsValid() {
+			return "", false, fmt.Errorf("pluginsdk: catalog seed port: %s", catalog.InvalidTypeMessage(typ))
+		}
+		prod.Type = typ
+	}
+	if in.Attributes != nil {
+		cloned, err := cloneStringAnyMap(in.Attributes)
+		if err != nil {
+			return "", false, err
+		}
+		prod.Attributes = cloned
+	}
+	// Same guard as admin/CSV create: seed never attaches downloadable files.
+	if prod.Type == catalog.TypeDownloadable && prod.Status == catalog.StatusActive {
+		return "", false, fmt.Errorf("pluginsdk: catalog seed port: %s", catalog.DownloadableRequiresFileMessage)
+	}
+	if err := prod.Validate(); err != nil {
+		return "", false, fmt.Errorf("pluginsdk: catalog seed port: %w", err)
+	}
 
 	if err := p.products.Create(ctx, &prod); err != nil {
 		if apperror.Is(err, apperror.CodeConflict) {
@@ -327,6 +360,9 @@ func (p *catalogSeedPort) EnsureProduct(ctx context.Context, in CatalogProductSe
 				return "", false, err2
 			}
 			if ret == nil {
+				return "", false, err
+			}
+			if err := catalogSeedProductMatch(ret, in); err != nil {
 				return "", false, err
 			}
 			return ret.ID, false, nil
@@ -373,6 +409,9 @@ func (p *catalogSeedPort) EnsureVariant(ctx context.Context, in CatalogVariantSe
 			return "", false, fmt.Errorf("pluginsdk: catalog seed port: variant SKU %q belongs to product %q, expected %q",
 				sku, existing.ProductID, productID)
 		}
+		if err := catalogSeedVariantMatch(existing, in); err != nil {
+			return "", false, err
+		}
 		return existing.ID, false, nil
 	}
 
@@ -381,6 +420,13 @@ func (p *catalogSeedPort) EnsureVariant(ctx context.Context, in CatalogVariantSe
 		return "", false, err
 	}
 	v.Name = strings.TrimSpace(in.Name)
+	if in.Attributes != nil {
+		cloned, err := cloneStringAnyMap(in.Attributes)
+		if err != nil {
+			return "", false, err
+		}
+		v.Attributes = cloned
+	}
 
 	if err := p.variants.Create(ctx, &v); err != nil {
 		if apperror.Is(err, apperror.CodeConflict) {
@@ -394,6 +440,9 @@ func (p *catalogSeedPort) EnsureVariant(ctx context.Context, in CatalogVariantSe
 			if ret.ProductID != productID {
 				return "", false, fmt.Errorf("pluginsdk: catalog seed port: variant SKU %q belongs to product %q, expected %q",
 					sku, ret.ProductID, productID)
+			}
+			if err := catalogSeedVariantMatch(ret, in); err != nil {
+				return "", false, err
 			}
 			return ret.ID, false, nil
 		}
@@ -484,6 +533,112 @@ func (p *catalogSeedPort) SetStock(ctx context.Context, variantID string, qty in
 		return err
 	}
 	return p.stock.SetStock(ctx, &entry)
+}
+
+// catalogSeedProductMatch enforces create-only honesty: when the seed sets
+// Status / Type / Attributes, they must already agree with the stored product.
+// Name / Description are still soft-ignored on an existing slug (create-only).
+func catalogSeedProductMatch(existing *catalog.Product, in CatalogProductSeed) error {
+	if existing == nil {
+		return nil
+	}
+	slug := strings.TrimSpace(in.Slug)
+	if s := strings.TrimSpace(in.Status); s != "" {
+		st := catalog.Status(s)
+		if !st.IsValid() {
+			return fmt.Errorf("pluginsdk: catalog seed port: %s", catalog.InvalidStatusMessage(st))
+		}
+		if existing.Status != st {
+			return fmt.Errorf("pluginsdk: catalog seed port: product slug %q already exists with status %q, seed requested %q (create-only)",
+				slug, existing.Status, st)
+		}
+	}
+	if t := strings.TrimSpace(in.Type); t != "" {
+		typ := catalog.Type(t)
+		if !typ.IsValid() {
+			return fmt.Errorf("pluginsdk: catalog seed port: %s", catalog.InvalidTypeMessage(typ))
+		}
+		if existing.Type != typ {
+			return fmt.Errorf("pluginsdk: catalog seed port: product slug %q already exists with type %q, seed requested %q (create-only)",
+				slug, existing.Type, typ)
+		}
+	}
+	if in.Attributes != nil {
+		if err := catalogSeedAttributesMatch(existing.Attributes, in.Attributes); err != nil {
+			return fmt.Errorf("pluginsdk: catalog seed port: product slug %q already exists with different attributes (create-only): %w", slug, err)
+		}
+	}
+	return nil
+}
+
+func catalogSeedVariantMatch(existing *catalog.Variant, in CatalogVariantSeed) error {
+	if existing == nil || in.Attributes == nil {
+		return nil
+	}
+	if err := catalogSeedAttributesMatch(existing.Attributes, in.Attributes); err != nil {
+		return fmt.Errorf("pluginsdk: catalog seed port: variant SKU %q already exists with different attributes (create-only): %w",
+			strings.TrimSpace(in.SKU), err)
+	}
+	return nil
+}
+
+// catalogSeedAttributesMatch: nil seed Attributes is not checked (caller skips).
+// Non-nil empty map asserts the stored map is empty. Non-empty seed requires
+// every seed key to equal the stored value (extra stored keys are OK).
+func catalogSeedAttributesMatch(stored map[string]interface{}, seed map[string]any) error {
+	if seed == nil {
+		return nil
+	}
+	if len(seed) == 0 {
+		if len(stored) != 0 {
+			return fmt.Errorf("attributes not empty")
+		}
+		return nil
+	}
+	for k, want := range seed {
+		got, ok := stored[k]
+		if !ok || !jsonValuesEqual(got, want) {
+			return fmt.Errorf("attribute %q mismatch", k)
+		}
+	}
+	return nil
+}
+
+func jsonValuesEqual(a, b any) bool {
+	aj, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bj, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	var an, bn any
+	if err := json.Unmarshal(aj, &an); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(bj, &bn); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(an, bn)
+}
+
+// cloneStringAnyMap deep-copies via JSON so concrete containers ([]string,
+// map[string]string, …) are not shared with the caller after Ensure*.
+// Non-JSON-serializable values return an error (no shallow fallback).
+func cloneStringAnyMap(in map[string]any) (map[string]interface{}, error) {
+	if in == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: attributes not JSON-serializable: %w", err)
+	}
+	out := make(map[string]interface{})
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: attributes not JSON-serializable: %w", err)
+	}
+	return out, nil
 }
 
 // NewOrdersPort adapts an order repository to OrderPort.
