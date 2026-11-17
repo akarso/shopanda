@@ -326,6 +326,14 @@ func cloneExtensionValue(v interface{}) interface{} {
 		out := make([]string, len(t))
 		copy(out, t)
 		return out
+	case []byte:
+		out := make([]byte, len(t))
+		copy(out, t)
+		return out
+	case json.RawMessage:
+		out := make([]byte, len(t))
+		copy(out, t)
+		return json.RawMessage(out)
 	default:
 		return v
 	}

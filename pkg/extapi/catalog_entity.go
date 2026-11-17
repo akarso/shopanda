@@ -56,6 +56,11 @@ const (
 //	  // fail closed (unknown / blank / not visible)
 //	}
 func ClassifyProductSlug(v *CatalogVariant, want string) ProductSlugClass {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		// Blank target must not become Other (skip-all fail-open).
+		return ProductSlugUnknown
+	}
 	if v == nil || !v.ProductVisible {
 		return ProductSlugUnknown
 	}
@@ -63,14 +68,8 @@ func ClassifyProductSlug(v *CatalogVariant, want string) ProductSlugClass {
 	if slug == "" {
 		return ProductSlugUnknown
 	}
-	if slug == strings.TrimSpace(want) {
+	if slug == want {
 		return ProductSlugMatch
 	}
 	return ProductSlugOther
-}
-
-// BelongsToProductSlug is true only for ProductSlugMatch. Prefer ClassifyProductSlug
-// so Unknown (fail closed) is not confused with Other (skip).
-func BelongsToProductSlug(v *CatalogVariant, want string) bool {
-	return ClassifyProductSlug(v, want) == ProductSlugMatch
 }

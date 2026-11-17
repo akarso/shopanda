@@ -262,6 +262,61 @@ func TestEnsureStorefrontCart_ReplacesNonActiveGuest(t *testing.T) {
 	}
 }
 
+type purgeFailValues struct {
+	*extensionapp.ValueService
+	err error
+}
+
+func (p *purgeFailValues) DeleteOrphanCartItemExtensions(context.Context, string, []string) error {
+	return p.err
+}
+
+func TestDiscardEmptyGuestCart_ClearsCookieWhenPurgeFails(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	app := &plugin.App{Logger: log, Bus: event.NewBus(log)}
+	extReg := extensionapp.NewRegistry()
+	app.SetExtensionRegistry(extReg)
+	prices := &cartPortPrices{currency: "EUR"}
+	pipeline := domainpricing.NewPipeline(appPricing.NewBasePriceStepLegacy(prices), domainpricing.NewFinalizeStep())
+	carts := &cartPortMemCarts{carts: map[string]*domainCart.Cart{}}
+	repo := &cartPortMemExtRepo{values: map[string]domainext.Value{}}
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	inner := extensionapp.NewValueService(extReg, repo)
+	values := &purgeFailValues{ValueService: inner, err: errors.New("purge denied")}
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), pipeline, log, event.NewBus(log), values, nil)
+	if err := app.BindCartPort(pluginsdk.NewCartPort(svc)); err != nil {
+		t.Fatal(err)
+	}
+	h := pluginsdk.AsHostFor(app, "acme")
+	h.Require(pluginsdk.CapCart)
+	port, _ := h.Cart()
+
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	storefrontsession.SetCartCookieSecure(rec, c.ID, false)
+
+	err = port.DiscardEmptyGuestCart(req.Context(), rec, req, c.ID)
+	if err == nil {
+		t.Fatal("expected purge error")
+	}
+	if got, _ := carts.FindByID(context.Background(), c.ID); got != nil {
+		t.Fatal("cart row must still be deleted when purge fails")
+	}
+	raw := rec.Header().Values("Set-Cookie")
+	if len(raw) == 0 {
+		t.Fatal("expected Set-Cookie headers")
+	}
+	last := raw[len(raw)-1]
+	if !strings.Contains(last, storefrontsession.CartCookieName+"=") ||
+		(!strings.Contains(last, "Max-Age=0") && !strings.Contains(last, "Max-Age=-1")) {
+		t.Fatalf("purge failure must still clear cookie, last=%q all=%v", last, raw)
+	}
+}
+
 func TestDiscardEmptyGuestCart_EnsureThenFailedAdd(t *testing.T) {
 	app, svc, carts, _, _ := bootCartPortFixture(t)
 	h := pluginsdk.AsHostFor(app, "acme")
