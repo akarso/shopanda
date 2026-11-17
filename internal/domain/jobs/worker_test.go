@@ -48,7 +48,7 @@ func (m *mockQueue) Dequeue(_ context.Context) (*jobs.Job, error) {
 	return j, nil
 }
 
-func (m *mockQueue) Complete(ctx context.Context, id string) error {
+func (m *mockQueue) Complete(ctx context.Context, id string, attempt int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completeCtxErrs = append(m.completeCtxErrs, ctx.Err())
@@ -61,7 +61,7 @@ func (m *mockQueue) Complete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *mockQueue) Fail(ctx context.Context, id string, jobErr error) error {
+func (m *mockQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failCtxErrs = append(m.failCtxErrs, ctx.Err())
@@ -293,6 +293,29 @@ func TestWorker_FailsUnknownType(t *testing.T) {
 	}
 	if got := q.failErrs[0].Error(); got != `no handler registered for job type "unknown"` {
 		t.Errorf("failErrs[0] = %q, want a message naming the unregistered job type", got)
+	}
+}
+
+func TestWorker_ErrSkipOutcome_SkipsCompleteAndFail(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	handler := &mockHandler{
+		jobType: "skip_job",
+		handleFn: func(context.Context, jobs.Job) error {
+			return jobs.ErrSkipOutcome
+		},
+	}
+	w := jobs.NewWorker(q, log, time.Second)
+	w.Register(handler)
+	job, _ := jobs.NewJob("j-skip", "skip_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.completed) != 0 || len(q.failed) != 0 {
+		t.Fatalf("completed=%v failed=%v, want neither", q.completed, q.failed)
 	}
 }
 

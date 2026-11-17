@@ -115,8 +115,8 @@ func (f *fakeQueue) Enqueue(_ context.Context, job domainjobs.Job) error {
 	return f.enqueueErr
 }
 func (f *fakeQueue) Dequeue(context.Context) (*domainjobs.Job, error) { return nil, nil }
-func (f *fakeQueue) Complete(context.Context, string) error           { return nil }
-func (f *fakeQueue) Fail(context.Context, string, error) error        { return nil }
+func (f *fakeQueue) Complete(context.Context, string, int) error           { return nil }
+func (f *fakeQueue) Fail(context.Context, string, int, error) error        { return nil }
 
 func TestNewReindexService_NilDeps(t *testing.T) {
 	if _, err := searchApp.NewReindexService(nil, &fakeProductSource{}, &fakeQueue{}, logger.New("error"), defaultThreshold); err == nil {

@@ -93,8 +93,8 @@ func (q *recordingQueue) snapshot() []jobs.Job {
 }
 
 func (*recordingQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (*recordingQueue) Complete(context.Context, string) error     { return nil }
-func (*recordingQueue) Fail(context.Context, string, error) error  { return nil }
+func (*recordingQueue) Complete(context.Context, string, int) error     { return nil }
+func (*recordingQueue) Fail(context.Context, string, int, error) error  { return nil }
 
 type stubPoster struct {
 	lastURL      string

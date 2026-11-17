@@ -198,8 +198,8 @@ type stubQueue struct{}
 
 func (stubQueue) Enqueue(context.Context, jobs.Job) error    { return nil }
 func (stubQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (stubQueue) Complete(context.Context, string) error     { return nil }
-func (stubQueue) Fail(context.Context, string, error) error  { return nil }
+func (stubQueue) Complete(context.Context, string, int) error     { return nil }
+func (stubQueue) Fail(context.Context, string, int, error) error  { return nil }
 
 var _ jobs.Queue = stubQueue{}
 

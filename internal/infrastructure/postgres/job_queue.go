@@ -128,19 +128,18 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	return &j, nil
 }
 
-// Complete marks a job as done.
-func (q *JobQueue) Complete(ctx context.Context, id string) error {
-	const query = `UPDATE jobs SET status = 'done', updated_at = NOW() WHERE id = $1 AND status = 'processing'`
-	result, err := q.db.ExecContext(ctx, query, id)
+// Complete marks a job as done for the given dequeue attempt. A mismatched
+// attempt (stale delivery) or non-processing row yields rows=0 and nil —
+// the newer claim owns the outcome.
+func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
+	const query = `UPDATE jobs SET status = 'done', updated_at = NOW()
+		WHERE id = $1 AND status = 'processing' AND attempts = $2`
+	result, err := q.db.ExecContext(ctx, query, id, attempt)
 	if err != nil {
 		return fmt.Errorf("job_queue: complete: %w", err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
+	if _, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("job_queue: complete rows: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
 	}
 	return nil
 }
@@ -162,7 +161,7 @@ func retryDelay(attempt int) time.Duration {
 // leaves last_error unchanged rather than inventing a message on this
 // method's behalf.
 // Uses atomic conditional UPDATEs to avoid read-then-write races.
-func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
+func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	var lastErr interface{}
 	if jobErr != nil {
 		lastErr = jobErr.Error()
@@ -171,8 +170,8 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 	// First, try to permanently fail jobs that have exhausted retries.
 	const failQ = `UPDATE jobs SET status = 'failed', updated_at = NOW(),
 			last_error = COALESCE($2, last_error)
-		WHERE id = $1 AND status = 'processing' AND attempts >= max_retries`
-	result, err := q.db.ExecContext(ctx, failQ, id, lastErr)
+		WHERE id = $1 AND status = 'processing' AND attempts = $3 AND attempts >= max_retries`
+	result, err := q.db.ExecContext(ctx, failQ, id, lastErr, attempt)
 	if err != nil {
 		return fmt.Errorf("job_queue: fail permanent: %w", err)
 	}
@@ -184,13 +183,13 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 		return nil
 	}
 
-	// Otherwise, re-queue with exponential backoff delay.
-	// We read attempts to compute the delay in Go (with jitter), then update atomically.
+	// Otherwise, re-queue with exponential backoff delay for this attempt.
+	const attemptsQ = `SELECT attempts FROM jobs WHERE id = $1 AND status = 'processing' AND attempts = $2 AND attempts < max_retries`
 	var attempts int
-	const attemptsQ = `SELECT attempts FROM jobs WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
-	if err := q.db.QueryRowContext(ctx, attemptsQ, id).Scan(&attempts); err != nil {
+	if err := q.db.QueryRowContext(ctx, attemptsQ, id, attempt).Scan(&attempts); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("job_queue: job %s not found or not processing", id)
+			// Stale attempt or already moved on — benign for fence reclaim.
+			return nil
 		}
 		return fmt.Errorf("job_queue: fail lookup: %w", err)
 	}
@@ -198,17 +197,13 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 	delay := retryDelay(attempts - 1)
 	const retryQ = `UPDATE jobs SET status = 'pending', run_at = NOW() + $2::interval, updated_at = NOW(),
 			last_error = COALESCE($3, last_error)
-		WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
-	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d milliseconds", delay.Milliseconds()), lastErr)
+		WHERE id = $1 AND status = 'processing' AND attempts = $4 AND attempts < max_retries`
+	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d milliseconds", delay.Milliseconds()), lastErr, attempt)
 	if err != nil {
 		return fmt.Errorf("job_queue: fail retry: %w", err)
 	}
-	retryRows, err := result.RowsAffected()
-	if err != nil {
+	if _, err := result.RowsAffected(); err != nil {
 		return fmt.Errorf("job_queue: fail retry rows: %w", err)
-	}
-	if retryRows == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
 	}
 	return nil
 }

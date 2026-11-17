@@ -31,6 +31,7 @@ Related:
 | “Variant belongs to product slug X” in `cart.validate` | **`extapi.ClassifyProductSlug`** / **`FindVariants`** — `Match` → validate; `Other` (loaded different non-blank slug) → skip; `Unknown` (`!ProductVisible` / blank slug) → fail closed. Do not use a single bool. `ProductVisible` is status/read scope only. Drafts: `WithOperatorProductReadScope` |
 | See plugin-only line values in `cart.validate` | **`CartLineView.Extensions`** is the effective line (stored + pending AddItem codes overlaid). **`pending_line`** is set only when AddItem carries extensions — plugin-only rows omitted for non-owners. Private fields never appear |
 | Scheduled / event / manual outbound work | **Sync jobs** — `pluginsdk` integration helpers → `integration.sync.{slug}.{name}` only |
+| Skip platform job Complete/Fail (claim fence) | Return **`jobs.ErrSkipOutcome`** from the handler; worker skips outcome writes. `Complete`/`Fail` take dequeue `attempt` (postgres CAS). Bind/requeue hooks: PR-1565b |
 | Map import/export rows | **Row hooks** — `pluginsdk` import/export helpers on Host (scoped by plugin name) |
 | React after something happened (webhooks, cache, notify) | **Events** — core `Bus.On` / `OnAsync` via integration registration (not hooks) |
 
