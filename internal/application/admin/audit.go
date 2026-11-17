@@ -177,8 +177,9 @@ const (
 	// Job admin operations (PR-1029)
 	AuditJobList   AuditAction = "job.list"
 	AuditJobRead   AuditAction = "job.read"
-	AuditJobRetry  AuditAction = "job.retry"
-	AuditJobCancel AuditAction = "job.cancel"
+	AuditJobRetry   AuditAction = "job.retry"
+	AuditJobRequeue AuditAction = "job.requeue"
+	AuditJobCancel  AuditAction = "job.cancel"
 
 	// Scheduler admin operations (PR-1030)
 	AuditScheduleList    AuditAction = "schedule.list"

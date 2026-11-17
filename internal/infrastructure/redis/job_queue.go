@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -11,6 +12,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// errJobNotFound is returned (wrapped) when the job hash key is missing.
+var errJobNotFound = errors.New("job not found")
 
 var _ jobs.Queue = (*JobQueue)(nil)
 
@@ -31,6 +35,72 @@ for _, id in ipairs(ids) do
   redis.call('LPUSH', ready, id)
 end
 return #ids
+`
+
+// processingMemberLua is inlined by complete/fail scripts: true when id is
+// on the processing list. Checked before any hash/delayed write so a
+// divergent list/hash cannot publish a second schedule, and encode runs
+// before LREM so an encode error cannot drop the claim.
+const processingMemberCheck = `
+local function on_processing(list_key, id)
+  local list = redis.call('LRANGE', list_key, 0, -1)
+  for _, v in ipairs(list) do
+    if v == id then return true end
+  end
+  return false
+end
+`
+
+// completeJobLua CAS-checks attempt/status (decode only), then SETs a
+// Go-marshaled blob. Never cjson.encode — Redis cjson turns empty JSON
+// arrays into objects, which poisons payloads like product_ids:[].
+// KEYS: job, processing. ARGV: attempt, id, encoded_json, ttl_ms (0=persist).
+const completeJobLua = processingMemberCheck + `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return -1 end
+local job = cjson.decode(raw)
+if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
+  return 0
+end
+if not on_processing(KEYS[2], ARGV[2]) then
+  return 0
+end
+local ttl = tonumber(ARGV[4])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
+else
+  redis.call('SET', KEYS[1], ARGV[3])
+end
+redis.call('LREM', KEYS[2], 1, ARGV[2])
+return 1
+`
+
+// failJobLua CAS-checks then SETs a Go-marshaled blob (+ ZADD on retry).
+// Never cjson.encode (empty-array corruption). KEYS: job, processing,
+// delayed. ARGV: attempt, id, encoded_json, terminal (1/0), run_at_ms, ttl_ms.
+const failJobLua = processingMemberCheck + `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return -1 end
+local job = cjson.decode(raw)
+if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
+  return 0
+end
+if not on_processing(KEYS[2], ARGV[2]) then
+  return 0
+end
+local ttl = tonumber(ARGV[6])
+if tonumber(ARGV[4]) == 1 then
+  if ttl > 0 then
+    redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
+  else
+    redis.call('SET', KEYS[1], ARGV[3])
+  end
+else
+  redis.call('SET', KEYS[1], ARGV[3])
+  redis.call('ZADD', KEYS[3], tonumber(ARGV[5]), ARGV[2])
+end
+redis.call('LREM', KEYS[2], 1, ARGV[2])
+return 1
 `
 
 // JobQueue implements jobs.Queue using Redis lists and a delayed sorted set.
@@ -151,7 +221,7 @@ func (q *JobQueue) releaseClaim(ctx context.Context, id string) error {
 func (q *JobQueue) loadJob(ctx context.Context, id string) (storedJob, error) {
 	raw, err := q.client.Get(ctx, q.jobKey(id)).Bytes()
 	if err == goredis.Nil {
-		return storedJob{}, fmt.Errorf("job_queue: job %s not found", id)
+		return storedJob{}, fmt.Errorf("job_queue: job %s: %w", id, errJobNotFound)
 	}
 	if err != nil {
 		return storedJob{}, fmt.Errorf("job_queue: load job %q: %w", id, err)
@@ -242,24 +312,36 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	return &job, nil
 }
 
-// Complete marks a job as done.
+// Complete marks a job as done for the matching attempt.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
-	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
-	if err != nil {
-		return fmt.Errorf("job_queue: complete: %w", err)
-	}
-	if removed == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
-	}
-
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
+		if errors.Is(err, errJobNotFound) {
+			return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+		}
 		return err
+	}
+	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	stored.Status = jobs.StatusDone
 	stored.UpdatedAt = time.Now().UTC()
-	return q.saveJob(ctx, stored)
+	blob, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("job_queue: complete marshal %q: %w", id, err)
+	}
+	ttlMs := int64(terminalJobRetentionTTL / time.Millisecond)
+	n, err := q.client.Eval(ctx, completeJobLua,
+		[]string{q.jobKey(id), q.processingKey()},
+		attempt, id, blob, ttlMs,
+	).Int()
+	if err != nil {
+		return fmt.Errorf("job_queue: complete: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+	}
+	return nil
 }
 
 func queueRetryDelay(attempt int) time.Duration {
@@ -273,18 +355,16 @@ func queueRetryDelay(attempt int) time.Duration {
 
 // Fail re-queues a job for retry or marks it as permanently failed.
 func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
-	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
-	if err != nil {
-		return fmt.Errorf("job_queue: fail: %w", err)
-	}
-	if removed == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
-	}
-
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
+		if errors.Is(err, errJobNotFound) {
+			return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+		}
 		return err
+	}
+	// Pre-check attempt/status without mutating — Lua re-checks under one script.
+	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 
 	now := time.Now().UTC()
@@ -292,24 +372,40 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 	if jobErr != nil {
 		stored.LastError = jobErr.Error()
 	}
-
+	terminal := 0
+	runAtMs := int64(0)
+	ttlMs := int64(0)
 	if stored.Attempts >= stored.MaxRetries {
+		terminal = 1
 		stored.Status = jobs.StatusFailed
-		return q.saveJob(ctx, stored)
+		ttlMs = int64(terminalJobRetentionTTL / time.Millisecond)
+	} else {
+		runAt := now.Add(queueRetryDelay(attempt - 1))
+		stored.Status = jobs.StatusPending
+		stored.RunAt = runAt
+		runAtMs = runAt.UnixMilli()
+	}
+	// encoding/json preserves empty arrays ([]); Redis cjson.encode does not.
+	blob, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("job_queue: fail marshal %q: %w", id, err)
 	}
 
-	delay := queueRetryDelay(stored.Attempts - 1)
-	stored.Status = jobs.StatusPending
-	stored.RunAt = now.Add(delay)
-	if err := q.saveJob(ctx, stored); err != nil {
-		return err
+	n, err := q.client.Eval(ctx, failJobLua,
+		[]string{q.jobKey(id), q.processingKey(), q.delayedKey()},
+		attempt, id, blob, terminal, runAtMs, ttlMs,
+	).Int()
+	if err != nil {
+		return fmt.Errorf("job_queue: fail: %w", err)
 	}
-
-	if err := q.client.ZAdd(ctx, q.delayedKey(), goredis.Z{
-		Score:  float64(stored.RunAt.UnixMilli()),
-		Member: stored.ID,
-	}).Err(); err != nil {
-		return fmt.Errorf("job_queue: fail retry: %w", err)
+	if n != 1 {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	return nil
 }
+
+// Requeue is unsupported on this broker-backed queue (no queryable processing row).
+func (q *JobQueue) Requeue(context.Context, string, int) error {
+	return jobs.ErrRequeueUnsupported
+}
+
