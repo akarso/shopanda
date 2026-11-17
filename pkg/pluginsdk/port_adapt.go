@@ -471,53 +471,73 @@ func (p *catalogSeedPort) EnsurePrice(ctx context.Context, in CatalogPriceSeed) 
 	if err != nil {
 		return false, err
 	}
-	if existing != nil {
-		return false, nil
-	}
 	money, err := shared.NewMoney(in.Amount, currency)
 	if err != nil {
 		return false, fmt.Errorf("pluginsdk: catalog seed port: invalid money: %w", err)
 	}
+	if existing != nil {
+		if !in.Update {
+			return false, nil
+		}
+		if existing.Amount.Equal(money) {
+			return false, nil
+		}
+		price := *existing
+		price.Amount = money
+		return true, p.writePriceWithHistory(ctx, &price, variantID, storeID, money)
+	}
+
 	price, err := pricing.NewPrice(id.New(), variantID, storeID, money)
 	if err != nil {
 		return false, err
 	}
+	return true, p.writePriceWithHistory(ctx, &price, variantID, storeID, money)
+}
+
+// writePriceWithHistory upserts the price and records a snapshot. Prefer one
+// DB transaction when WithTx repos are available outside Import; inside
+// Import, repos are already tx-bound and db is nil.
+func (p *catalogSeedPort) writePriceWithHistory(
+	ctx context.Context,
+	price *pricing.Price,
+	variantID, storeID string,
+	money shared.Money,
+) error {
 	snap, err := pricing.NewPriceSnapshot(id.New(), variantID, storeID, money)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	// When already inside Import's transaction, repos are WithTx-bound and db is nil.
 	if p.db != nil {
 		if txPrices, ok := p.prices.(catalogSeedTxPrice); ok {
 			if txHistory, ok := p.history.(catalogSeedTxHistory); ok {
 				tx, err := p.db.BeginTx(ctx, nil)
 				if err != nil {
-					return false, fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
+					return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
 				}
-				if err := txPrices.WithTx(tx).Upsert(ctx, &price); err != nil {
+				if err := txPrices.WithTx(tx).Upsert(ctx, price); err != nil {
 					_ = tx.Rollback()
-					return false, err
+					return err
 				}
 				if err := txHistory.WithTx(tx).Record(ctx, &snap); err != nil {
 					_ = tx.Rollback()
-					return false, err
+					return err
 				}
 				if err := tx.Commit(); err != nil {
-					return false, fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
+					return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
 				}
-				return true, nil
+				return nil
 			}
 		}
 	}
 
-	if err := p.prices.Upsert(ctx, &price); err != nil {
-		return false, err
+	if err := p.prices.Upsert(ctx, price); err != nil {
+		return err
 	}
 	if err := p.history.Record(ctx, &snap); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 func (p *catalogSeedPort) SetStock(ctx context.Context, variantID string, qty int) error {

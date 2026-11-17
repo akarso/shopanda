@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -696,5 +697,150 @@ func TestCatalogSeedPort_EnsureProduct_ConflictRereadMatch(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "create-only") {
 		t.Fatalf("mismatch after conflict err = %v", err)
+	}
+}
+
+type seedPrices struct {
+	byKey map[string]*pricing.Price
+}
+
+func priceKey(variantID, currency, storeID string) string {
+	return variantID + "|" + currency + "|" + storeID
+}
+
+func (s *seedPrices) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
+	if s.byKey == nil {
+		return nil, nil
+	}
+	return s.byKey[priceKey(variantID, currency, storeID)], nil
+}
+func (s *seedPrices) FindByVariantsCurrencyAndStore(context.Context, []string, string, string) (map[string]*pricing.Price, error) {
+	return nil, nil
+}
+func (s *seedPrices) ListByVariantID(context.Context, string) ([]pricing.Price, error) { return nil, nil }
+func (s *seedPrices) List(context.Context, int, int) ([]pricing.Price, error)          { return nil, nil }
+func (s *seedPrices) Upsert(_ context.Context, p *pricing.Price) error {
+	if s.byKey == nil {
+		s.byKey = map[string]*pricing.Price{}
+	}
+	cp := *p
+	s.byKey[priceKey(p.VariantID, p.Amount.Currency(), p.StoreID)] = &cp
+	return nil
+}
+
+type seedHistory struct {
+	snaps []*pricing.PriceSnapshot
+}
+
+func (s *seedHistory) Record(_ context.Context, snap *pricing.PriceSnapshot) error {
+	cp := *snap
+	s.snaps = append(s.snaps, &cp)
+	return nil
+}
+func (s *seedHistory) LowestSince(context.Context, string, string, string, time.Time) (*pricing.PriceSnapshot, error) {
+	return nil, nil
+}
+func (s *seedHistory) LowestSinceByVariants(context.Context, []string, string, string, time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	return nil, nil
+}
+
+func TestCatalogSeedPort_EnsurePrice_CreateOnlyAndUpdate(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN",
+	})
+	if err != nil || !written {
+		t.Fatalf("create: written=%v err=%v", written, err)
+	}
+	if len(history.snaps) != 1 || history.snaps[0].Amount.Amount() != 1000 {
+		t.Fatalf("history after create = %#v", history.snaps)
+	}
+
+	// Create-only: existing row unchanged, no new history.
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2500, Currency: "PLN",
+	})
+	if err != nil || written {
+		t.Fatalf("create-only hit: written=%v err=%v", written, err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 1000 {
+		t.Fatalf("create-only mutated amount to %d", got.Amount.Amount())
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("create-only wrote history: %#v", history.snaps)
+	}
+
+	// Update=true, same amount: no-op.
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN", Update: true,
+	})
+	if err != nil || written {
+		t.Fatalf("update same: written=%v err=%v", written, err)
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("same-amount history = %#v", history.snaps)
+	}
+
+	// Update=true, new amount: write + history; keep price id.
+	prevID := got.ID
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2500, Currency: "PLN", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("update: written=%v err=%v", written, err)
+	}
+	got = prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 2500 || got.ID != prevID {
+		t.Fatalf("updated price = %#v, want id %q amount 2500", got, prevID)
+	}
+	if len(history.snaps) != 2 || history.snaps[1].Amount.Amount() != 2500 {
+		t.Fatalf("history after update = %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_Import_PriceUpdate(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	money, err := shared.NewMoney(1000, "PLN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prices.byKey = map[string]*pricing.Price{
+		priceKey("v1", "PLN", ""): {ID: "p-existing", VariantID: "v1", Amount: money},
+	}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, prices, history, nil, nil)
+	_, err = port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Prices: []pluginsdk.CatalogPriceSeed{{
+			VariantID: "v1", Amount: 3333, Currency: "PLN", Update: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 3333 || got.ID != "p-existing" {
+		t.Fatalf("import update = %#v", got)
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("import history = %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_EmptyStatusOnActiveIsNoOp(t *testing.T) {
+	// Documented contract: empty Status on an existing active product is soft
+	// success (create-only does not check unset Status).
+	products := &seedProducts{bySlug: map[string]*catalog.Product{
+		"live": {ID: "p1", Slug: "live", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+	}}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Live", Slug: "live",
+	})
+	if err != nil || created || id != "p1" {
+		t.Fatalf("empty status on active: id=%q created=%v err=%v", id, created, err)
 	}
 }

@@ -109,13 +109,17 @@ type CatalogVariantSeed struct {
 
 // CatalogPriceSeed is the EnsurePrice / Import input. Empty StoreID means the
 // global/default price. Amount is minor units (plugin parses "80,49" itself).
-// Existing prices for the same variant+currency+store are left unchanged.
+// Default (Update=false) is create-only: an existing variant+currency+store
+// row is left unchanged. When Update is true, a differing amount is written
+// and a price-history snapshot is recorded in the same transaction (same
+// amount is a no-op). Missing rows are always created regardless of Update.
 type CatalogPriceSeed struct {
 	VariantID  string
 	VariantSKU string // optional Import helper when VariantID is empty
 	StoreID    string
 	Amount     int64
 	Currency   string
+	Update     bool // when true, change amount + history; default create-only
 }
 
 // CatalogStockSeed is the Import stock row. Prefer VariantID; VariantSKU is
@@ -141,13 +145,13 @@ type CatalogSeedResult struct {
 }
 
 // CatalogSeedPort is the Host-visible catalog write surface for plugin CLI
-// seed/import (CapCatalogSeed). Create-only / idempotent: existing products
-// (slug), variants (SKU), and prices (variant+currency+store) are not
-// updated. When a seed supplies Status / Type / Attributes (product) or
-// Attributes (variant) that disagree with the stored row, the call errors —
-// create-only must not pretend Ensure applied those fields. Import runs the
-// batch in one DB transaction when a tx starter is bound. Distinct from
-// read-only CapCatalog.
+// seed/import (CapCatalogSeed). Products (slug) and variants (SKU) are
+// create-only. Prices are create-only unless CatalogPriceSeed.Update is set.
+// When a seed supplies Status / Type / Attributes (product) or Attributes
+// (variant) that disagree with the stored row, the call errors — create-only
+// must not pretend Ensure applied those fields. Import runs the batch in one
+// DB transaction when a tx starter is bound. Distinct from read-only
+// CapCatalog.
 type CatalogSeedPort interface {
 	// Import applies Products → Variants → Prices → Stock in one transaction
 	// when possible. Prefer this from plugin CLI seed commands.
@@ -155,7 +159,10 @@ type CatalogSeedPort interface {
 
 	EnsureProduct(ctx context.Context, in CatalogProductSeed) (id string, created bool, err error)
 	EnsureVariant(ctx context.Context, in CatalogVariantSeed) (id string, created bool, err error)
-	EnsurePrice(ctx context.Context, in CatalogPriceSeed) (created bool, err error)
+	// EnsurePrice returns written=true when a price row was created or an
+	// Update changed the amount (history recorded). written=false on
+	// create-only hit or Update with the same amount.
+	EnsurePrice(ctx context.Context, in CatalogPriceSeed) (written bool, err error)
 	SetStock(ctx context.Context, variantID string, qty int) error
 }
 

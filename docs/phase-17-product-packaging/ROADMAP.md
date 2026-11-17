@@ -148,6 +148,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1565a | Attempt-aware Complete/Fail + ErrSkipOutcome | done |
 | PR-1565b | OnQueueBound / OnRequeued / Queue.Requeue | done |
 | PR-1566 | CatalogSeedPort Status / Type / Attributes | done |
+| PR-1567 | CatalogSeedPort EnsurePrice Update mode | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -200,6 +201,7 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Public route cache policy | A plugin's public routes cannot say "never cache" (Metal Dogs edited `wire_routes.go` and a shared prefix list for `/api/customizer`). Let `RegisterPublicRoute` take an option (e.g. `NoCache`) | **done (PR-1561)** — `pluginsdk.NoCache()` + denylist merge |
 | Platform fixes found by a product | `App.BoundQueue()` (prefer `BindQueue` over `RegisterQueue` on health/read paths) and sync handler re-injecting payload `request_id` into ctx. Both carried by Metal Dogs as deviations; send upstream | **done (PR-1559)** — `BoundQueue` + sync `requestctx` reinjection |
 | `CatalogSeedPort` too thin for a real product seed | PR-1564 `EnsureProduct` hard-coded `StatusActive`; seeds lacked `Type` / `Attributes`. Price history was already written by `EnsurePrice` (PR-1564). | **done (PR-1566)** — `Status` (empty → draft), `Type`, `Attributes` on product/variant; never silently active |
+| `CatalogSeedPort` cannot update an existing price | `EnsurePrice` was create-only. Metal Dogs needs CSV re-seed amount changes with history. Empty `Status` on existing active is a soft no-op; Attributes stay create-only (subset match cannot add keys). | **done (PR-1567)** — `CatalogPriceSeed.Update`; history in same tx; default create-only |
 | Product-owned root files conflict on every bump | `README`, `AGENTS`, `RUNBOOK`, `PLUGINS`, `.gitignore`, `Makefile`, CI workflows differ in every product fork. Document `.gitattributes` `merge=ours` for product-owned files and a `Makefile` `-include Makefile.product` hook; keep product targets out of the shared Makefile | **done (PR-1562)** — PRODUCT_SITES + `-include Makefile.product` |
 
 ---
