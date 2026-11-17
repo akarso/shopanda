@@ -122,6 +122,16 @@ type catalogSeedTxStarter interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+type catalogSeedTxProducts interface {
+	catalog.ProductRepository
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+
+type catalogSeedTxVariants interface {
+	catalog.VariantRepository
+	WithTx(tx *sql.Tx) catalog.VariantRepository
+}
+
 type catalogSeedTxPrice interface {
 	pricing.PriceRepository
 	WithTx(tx *sql.Tx) pricing.PriceRepository
@@ -132,10 +142,13 @@ type catalogSeedTxHistory interface {
 	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
 }
 
+type catalogSeedTxStock interface {
+	inventory.StockRepository
+	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
 // NewCatalogSeedPort adapts catalog/pricing/inventory repositories to CatalogSeedPort.
-// db may be nil: UpsertPrice then writes price and history sequentially. When db
-// is set and both price repos support WithTx (postgres), price+history use one
-// transaction — same pattern as CatalogSeeder.
+// When db is set and repos support WithTx (postgres), Import uses one transaction.
 func NewCatalogSeedPort(
 	products catalog.ProductRepository,
 	variants catalog.VariantRepository,
@@ -161,6 +174,126 @@ type catalogSeedPort struct {
 	history  pricing.PriceHistoryRepository
 	stock    inventory.StockRepository
 	db       catalogSeedTxStarter
+}
+
+func (p *catalogSeedPort) withTx(tx *sql.Tx) (*catalogSeedPort, error) {
+	out := *p
+	if tp, ok := p.products.(catalogSeedTxProducts); ok {
+		out.products = tp.WithTx(tx)
+	} else if p.products != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: products repo does not support WithTx")
+	}
+	if tv, ok := p.variants.(catalogSeedTxVariants); ok {
+		out.variants = tv.WithTx(tx)
+	} else if p.variants != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: variants repo does not support WithTx")
+	}
+	if tp, ok := p.prices.(catalogSeedTxPrice); ok {
+		out.prices = tp.WithTx(tx)
+	} else if p.prices != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: prices repo does not support WithTx")
+	}
+	if th, ok := p.history.(catalogSeedTxHistory); ok {
+		out.history = th.WithTx(tx)
+	} else if p.history != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: price history repo does not support WithTx")
+	}
+	if ts, ok := p.stock.(catalogSeedTxStock); ok {
+		out.stock = ts.WithTx(tx)
+	} else if p.stock != nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: stock repo does not support WithTx")
+	}
+	out.db = nil // nested Import must not open another tx
+	return &out, nil
+}
+
+// Import applies the seed batch in one transaction when db + WithTx repos are bound.
+func (p *catalogSeedPort) Import(ctx context.Context, batch CatalogSeedBatch) (*CatalogSeedResult, error) {
+	if p == nil {
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: not configured")
+	}
+	run := p
+	var tx *sql.Tx
+	if p.db != nil {
+		var err error
+		tx, err = p.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
+		}
+		defer func() {
+			if tx != nil {
+				_ = tx.Rollback()
+			}
+		}()
+		run, err = p.withTx(tx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result := &CatalogSeedResult{
+		ProductIDs: make(map[string]string, len(batch.Products)),
+		VariantIDs: make(map[string]string, len(batch.Variants)),
+	}
+	for _, prod := range batch.Products {
+		id, _, err := run.EnsureProduct(ctx, prod)
+		if err != nil {
+			return nil, err
+		}
+		result.ProductIDs[strings.TrimSpace(prod.Slug)] = id
+	}
+	for _, v := range batch.Variants {
+		in := v
+		if strings.TrimSpace(in.ProductID) == "" {
+			slug := strings.TrimSpace(in.ProductSlug)
+			pid, ok := result.ProductIDs[slug]
+			if !ok || pid == "" {
+				return nil, fmt.Errorf("pluginsdk: catalog seed port: variant SKU %q: unknown product slug %q", in.SKU, slug)
+			}
+			in.ProductID = pid
+		}
+		id, _, err := run.EnsureVariant(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		result.VariantIDs[strings.TrimSpace(in.SKU)] = id
+	}
+	for _, price := range batch.Prices {
+		in := price
+		if strings.TrimSpace(in.VariantID) == "" {
+			sku := strings.TrimSpace(in.VariantSKU)
+			vid, ok := result.VariantIDs[sku]
+			if !ok || vid == "" {
+				return nil, fmt.Errorf("pluginsdk: catalog seed port: price: unknown variant sku %q", sku)
+			}
+			in.VariantID = vid
+		}
+		if _, err := run.EnsurePrice(ctx, in); err != nil {
+			return nil, err
+		}
+	}
+	for _, st := range batch.Stock {
+		vid := strings.TrimSpace(st.VariantID)
+		if vid == "" {
+			sku := strings.TrimSpace(st.VariantSKU)
+			id, ok := result.VariantIDs[sku]
+			if !ok || id == "" {
+				return nil, fmt.Errorf("pluginsdk: catalog seed port: stock: unknown variant sku %q", sku)
+			}
+			vid = id
+		}
+		if err := run.SetStock(ctx, vid, st.Qty); err != nil {
+			return nil, err
+		}
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: commit: %w", err)
+		}
+		tx = nil
+	}
+	return result, nil
 }
 
 func (p *catalogSeedPort) EnsureProduct(ctx context.Context, in CatalogProductSeed) (string, bool, error) {
@@ -208,10 +341,25 @@ func (p *catalogSeedPort) EnsureVariant(ctx context.Context, in CatalogVariantSe
 		return "", false, fmt.Errorf("pluginsdk: catalog seed port: variants not configured")
 	}
 	productID := strings.TrimSpace(in.ProductID)
-	sku := strings.TrimSpace(in.SKU)
 	if productID == "" {
-		return "", false, fmt.Errorf("pluginsdk: catalog seed port: variant product_id must not be empty")
+		slug := strings.TrimSpace(in.ProductSlug)
+		if slug == "" {
+			return "", false, fmt.Errorf("pluginsdk: catalog seed port: variant product_id or product_slug must not be empty")
+		}
+		if p.products == nil {
+			return "", false, fmt.Errorf("pluginsdk: catalog seed port: products not configured")
+		}
+		ctx = catalog.WithOperatorProductReadScope(ctx)
+		prod, err := p.products.FindBySlug(ctx, slug)
+		if err != nil {
+			return "", false, err
+		}
+		if prod == nil {
+			return "", false, fmt.Errorf("pluginsdk: catalog seed port: product slug %q not found", slug)
+		}
+		productID = prod.ID
 	}
+	sku := strings.TrimSpace(in.SKU)
 	if sku == "" {
 		return "", false, fmt.Errorf("pluginsdk: catalog seed port: variant sku must not be empty")
 	}
@@ -254,58 +402,73 @@ func (p *catalogSeedPort) EnsureVariant(ctx context.Context, in CatalogVariantSe
 	return v.ID, true, nil
 }
 
-func (p *catalogSeedPort) UpsertPrice(ctx context.Context, in CatalogPriceSeed) error {
+func (p *catalogSeedPort) EnsurePrice(ctx context.Context, in CatalogPriceSeed) (bool, error) {
 	if p == nil || p.prices == nil {
-		return fmt.Errorf("pluginsdk: catalog seed port: prices not configured")
+		return false, fmt.Errorf("pluginsdk: catalog seed port: prices not configured")
 	}
 	if p.history == nil {
-		return fmt.Errorf("pluginsdk: catalog seed port: price history not configured")
+		return false, fmt.Errorf("pluginsdk: catalog seed port: price history not configured")
 	}
 	variantID := strings.TrimSpace(in.VariantID)
 	if variantID == "" {
-		return fmt.Errorf("pluginsdk: catalog seed port: price variant_id must not be empty")
+		return false, fmt.Errorf("pluginsdk: catalog seed port: price variant_id must not be empty")
 	}
-	money, err := shared.NewMoney(in.Amount, strings.TrimSpace(in.Currency))
-	if err != nil {
-		return fmt.Errorf("pluginsdk: catalog seed port: invalid money: %w", err)
+	currency := strings.TrimSpace(in.Currency)
+	if currency == "" {
+		return false, fmt.Errorf("pluginsdk: catalog seed port: price currency must not be empty")
 	}
 	storeID := strings.TrimSpace(in.StoreID)
+	existing, err := p.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, storeID)
+	if err != nil {
+		return false, err
+	}
+	if existing != nil {
+		return false, nil
+	}
+	money, err := shared.NewMoney(in.Amount, currency)
+	if err != nil {
+		return false, fmt.Errorf("pluginsdk: catalog seed port: invalid money: %w", err)
+	}
 	price, err := pricing.NewPrice(id.New(), variantID, storeID, money)
 	if err != nil {
-		return err
+		return false, err
 	}
 	snap, err := pricing.NewPriceSnapshot(id.New(), variantID, storeID, money)
 	if err != nil {
-		return err
+		return false, err
 	}
 
+	// When already inside Import's transaction, repos are WithTx-bound and db is nil.
 	if p.db != nil {
 		if txPrices, ok := p.prices.(catalogSeedTxPrice); ok {
 			if txHistory, ok := p.history.(catalogSeedTxHistory); ok {
 				tx, err := p.db.BeginTx(ctx, nil)
 				if err != nil {
-					return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
+					return false, fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
 				}
 				if err := txPrices.WithTx(tx).Upsert(ctx, &price); err != nil {
 					_ = tx.Rollback()
-					return err
+					return false, err
 				}
 				if err := txHistory.WithTx(tx).Record(ctx, &snap); err != nil {
 					_ = tx.Rollback()
-					return err
+					return false, err
 				}
 				if err := tx.Commit(); err != nil {
-					return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
+					return false, fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
 				}
-				return nil
+				return true, nil
 			}
 		}
 	}
 
 	if err := p.prices.Upsert(ctx, &price); err != nil {
-		return err
+		return false, err
 	}
-	return p.history.Record(ctx, &snap)
+	if err := p.history.Record(ctx, &snap); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (p *catalogSeedPort) SetStock(ctx context.Context, variantID string, qty int) error {

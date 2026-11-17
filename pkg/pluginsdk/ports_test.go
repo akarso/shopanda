@@ -316,3 +316,43 @@ func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
 		t.Fatalf("created = %#v", products2.created)
 	}
 }
+
+type seedVariants struct {
+	stubVariants
+	bySKU   map[string]*catalog.Variant
+	created []*catalog.Variant
+}
+
+func (s *seedVariants) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
+	if s.bySKU == nil {
+		return nil, nil
+	}
+	return s.bySKU[sku], nil
+}
+func (s *seedVariants) Create(_ context.Context, v *catalog.Variant) error {
+	s.created = append(s.created, v)
+	if s.bySKU == nil {
+		s.bySKU = map[string]*catalog.Variant{}
+	}
+	s.bySKU[v.SKU] = v
+	return nil
+}
+
+func TestCatalogSeedPort_Import_ResolvesSlugs(t *testing.T) {
+	products := &seedProducts{}
+	variants := &seedVariants{}
+	port := pluginsdk.NewCatalogSeedPort(products, variants, nil, nil, nil, nil)
+	res, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Products: []pluginsdk.CatalogProductSeed{{Name: "Tee", Slug: "tee"}},
+		Variants: []pluginsdk.CatalogVariantSeed{{ProductSlug: "tee", SKU: "TEE-1", Name: "Tee"}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if res.ProductIDs["tee"] == "" || res.VariantIDs["TEE-1"] == "" {
+		t.Fatalf("result = %#v", res)
+	}
+	if len(variants.created) != 1 || variants.created[0].ProductID != res.ProductIDs["tee"] {
+		t.Fatalf("variant = %#v", variants.created)
+	}
+}

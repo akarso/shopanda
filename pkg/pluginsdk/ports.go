@@ -67,39 +67,70 @@ type CatalogPort interface {
 	FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error)
 }
 
-// CatalogProductSeed is the EnsureProduct input for CatalogSeedPort.
-// Existing products (matched by Slug) are left unchanged.
+// CatalogProductSeed is the EnsureProduct / Import input for CatalogSeedPort.
+// Existing products (matched by Slug) are left unchanged (create-only).
 type CatalogProductSeed struct {
 	Name        string
 	Slug        string
 	Description string
 }
 
-// CatalogVariantSeed is the EnsureVariant input for CatalogSeedPort.
-// Existing variants (matched by SKU) must belong to ProductID.
+// CatalogVariantSeed is the EnsureVariant / Import input for CatalogSeedPort.
+// Existing variants (matched by SKU) are left unchanged. ProductID or
+// ProductSlug (resolved against Import's product map) identifies the parent.
 type CatalogVariantSeed struct {
-	ProductID string
-	SKU       string
-	Name      string
+	ProductID   string
+	ProductSlug string
+	SKU         string
+	Name        string
 }
 
-// CatalogPriceSeed is the UpsertPrice input for CatalogSeedPort.
-// Empty StoreID means the global/default price. Amount is minor units.
+// CatalogPriceSeed is the EnsurePrice / Import input. Empty StoreID means the
+// global/default price. Amount is minor units (plugin parses "80,49" itself).
+// Existing prices for the same variant+currency+store are left unchanged.
 type CatalogPriceSeed struct {
-	VariantID string
-	StoreID   string
-	Amount    int64
-	Currency  string
+	VariantID  string
+	VariantSKU string // optional Import helper when VariantID is empty
+	StoreID    string
+	Amount     int64
+	Currency   string
+}
+
+// CatalogStockSeed is the Import stock row. Prefer VariantID; VariantSKU is
+// resolved from Import's variant map when VariantID is empty.
+type CatalogStockSeed struct {
+	VariantID  string
+	VariantSKU string
+	Qty        int
+}
+
+// CatalogSeedBatch is the single-call Import payload for plugin CLI seed.
+type CatalogSeedBatch struct {
+	Products []CatalogProductSeed
+	Variants []CatalogVariantSeed
+	Prices   []CatalogPriceSeed
+	Stock    []CatalogStockSeed
+}
+
+// CatalogSeedResult maps slugs/SKUs to ids created or found by Import.
+type CatalogSeedResult struct {
+	ProductIDs map[string]string // slug → id
+	VariantIDs map[string]string // sku → id
 }
 
 // CatalogSeedPort is the Host-visible catalog write surface for plugin CLI
-// seed/import (CapCatalogSeed). It mirrors CatalogSeeder idempotency:
-// Ensure* skips when the row already exists; UpsertPrice writes price +
-// history; SetStock sets absolute quantity. Distinct from read-only CapCatalog.
+// seed/import (CapCatalogSeed). Create-only / idempotent: existing products
+// (slug), variants (SKU), and prices (variant+currency+store) are not
+// updated. Import runs the batch in one DB transaction when a tx starter is
+// bound. Distinct from read-only CapCatalog.
 type CatalogSeedPort interface {
+	// Import applies Products → Variants → Prices → Stock in one transaction
+	// when possible. Prefer this from plugin CLI seed commands.
+	Import(ctx context.Context, batch CatalogSeedBatch) (*CatalogSeedResult, error)
+
 	EnsureProduct(ctx context.Context, in CatalogProductSeed) (id string, created bool, err error)
 	EnsureVariant(ctx context.Context, in CatalogVariantSeed) (id string, created bool, err error)
-	UpsertPrice(ctx context.Context, in CatalogPriceSeed) error
+	EnsurePrice(ctx context.Context, in CatalogPriceSeed) (created bool, err error)
 	SetStock(ctx context.Context, variantID string, qty int) error
 }
 
