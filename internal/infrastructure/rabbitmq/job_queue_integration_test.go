@@ -54,7 +54,7 @@ func TestJobQueue_EnqueueDequeueComplete(t *testing.T) {
 		t.Fatalf("Dequeue status=%q attempts=%d", got.Status, got.Attempts)
 	}
 
-	if err := q.Complete(ctx, got.ID); err != nil {
+	if err := q.Complete(ctx, got.ID, got.Attempts); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestJobQueue_Fail_Permanent(t *testing.T) {
 	if got == nil {
 		t.Fatal("Dequeue returned nil job")
 	}
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 	if got == nil {
 		t.Fatal("Dequeue returned nil job")
 	}
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 

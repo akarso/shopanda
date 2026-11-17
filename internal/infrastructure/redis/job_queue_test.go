@@ -110,7 +110,7 @@ func TestJobQueue_Complete(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected a dequeued job")
 	}
-	if err := q.Complete(ctx, got.ID); err != nil {
+	if err := q.Complete(ctx, got.ID, got.Attempts); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 	got, _ := q.Dequeue(ctx)
 	now := time.Now()
 
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestJobQueue_Fail_Permanent(t *testing.T) {
 	_ = q.Enqueue(ctx, job)
 
 	got, _ := q.Dequeue(ctx)
-	if err := q.Fail(ctx, got.ID, nil); err != nil {
+	if err := q.Fail(ctx, got.ID, got.Attempts, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
@@ -178,7 +178,7 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	_, q := setupJobQueue(t)
 	ctx := context.Background()
 
-	if err := q.Complete(ctx, id.New()); err == nil {
+	if err := q.Complete(ctx, id.New(), 1); err == nil {
 		t.Fatal("expected error for non-existent job")
 	}
 }

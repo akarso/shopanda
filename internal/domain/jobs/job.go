@@ -47,6 +47,11 @@ type Handler interface {
 	Handle(ctx context.Context, job Job) error
 }
 
+// ErrSkipOutcome tells the worker to skip platform Complete/Fail for this
+// delivery. Handlers (or product fence wrappers) use it when they already
+// wrote the outcome or intentionally leave the claim for reclaim/Requeue.
+var ErrSkipOutcome = errors.New("jobs: skip outcome")
+
 // Queue is the port for job queue backends.
 type Queue interface {
 	// Enqueue adds a job to the queue.
@@ -56,13 +61,16 @@ type Queue interface {
 	// Returns nil, nil when no jobs are available.
 	Dequeue(ctx context.Context) (*Job, error)
 
-	// Complete marks a job as done.
-	Complete(ctx context.Context, id string) error
+	// Complete marks a job as done for the given dequeue attempt.
+	// attempt must match the job.Attempts value returned by Dequeue so a
+	// stale delivery cannot finish a newer claim (postgres CAS; brokers
+	// best-effort).
+	Complete(ctx context.Context, id string, attempt int) error
 
-	// Fail marks a job as failed or re-queues it for retry.
-	// If attempts < maxRetries, the job is re-queued with a delay.
-	// Otherwise, the job is marked as permanently failed.
-	Fail(ctx context.Context, id string, jobErr error) error
+	// Fail marks a job as failed or re-queues it for retry for the given
+	// dequeue attempt. If attempts < maxRetries, the job is re-queued with
+	// a delay. Otherwise, the job is marked as permanently failed.
+	Fail(ctx context.Context, id string, attempt int, jobErr error) error
 }
 
 // NewJob creates a Job with sensible defaults.

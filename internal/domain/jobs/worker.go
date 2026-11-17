@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -163,7 +164,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		// most needs last_error for — a misconfigured or typo'd job type —
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
 		// records something when jobErr is non-nil.
-		w.recordFail(ctx, job.ID, fmt.Errorf("no handler registered for job type %q", job.Type))
+		w.recordFail(ctx, job.ID, job.Attempts, fmt.Errorf("no handler registered for job type %q", job.Type))
 		return true
 	}
 
@@ -180,6 +181,16 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	err = w.safeHandle(ctx, h, *job)
 	duration := time.Since(start)
 	if err != nil {
+		if errors.Is(err, ErrSkipOutcome) {
+			skipFields := map[string]interface{}{
+				"job_id":   job.ID,
+				"job_type": job.Type,
+				"attempt":  job.Attempts,
+			}
+			mergeJobRequestID(skipFields, job.Payload)
+			w.log.Info("worker.job.outcome_skipped", skipFields)
+			return true
+		}
 		failFields := map[string]interface{}{
 			"job_id":      job.ID,
 			"job_type":    job.Type,
@@ -191,11 +202,11 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		w.log.Error("worker.job.failed", err, failFields)
 		w.metrics.JobFailure(job.Type)
 		w.metrics.JobResult(job.Type, "failed", duration)
-		w.recordFail(ctx, job.ID, err)
+		w.recordFail(ctx, job.ID, job.Attempts, err)
 		return true
 	}
 
-	w.recordComplete(ctx, job.ID, job.Type, job.Payload, duration)
+	w.recordComplete(ctx, job.ID, job.Attempts, job.Type, job.Payload, duration)
 	return true
 }
 
@@ -244,18 +255,18 @@ func (w *Worker) safeHandle(ctx context.Context, h Handler, job Job) (err error)
 // signal that's asking the worker to stop, or the job ends up neither
 // completed nor properly failed/requeued, an ambiguous state the queue's
 // own retry/visibility-timeout logic wasn't designed to resolve cleanly.
-func (w *Worker) recordFail(ctx context.Context, jobID string, jobErr error) {
+func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobErr error) {
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
-	if failErr := w.queue.Fail(outcomeCtx, jobID, jobErr); failErr != nil {
-		w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": jobID})
+	if failErr := w.queue.Fail(outcomeCtx, jobID, attempt, jobErr); failErr != nil {
+		w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": jobID, "attempt": attempt})
 	}
 }
 
-func (w *Worker) recordComplete(ctx context.Context, jobID, jobType string, envelope map[string]interface{}, duration time.Duration) {
+func (w *Worker) recordComplete(ctx context.Context, jobID string, attempt int, jobType string, envelope map[string]interface{}, duration time.Duration) {
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
-	if err := w.queue.Complete(outcomeCtx, jobID); err != nil {
+	if err := w.queue.Complete(outcomeCtx, jobID, attempt); err != nil {
 		failFields := map[string]interface{}{
 			"job_id":      jobID,
 			"job_type":    jobType,
