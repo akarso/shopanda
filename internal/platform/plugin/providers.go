@@ -192,6 +192,17 @@ func (a *App) Queue() (jobs.Queue, bool) {
 	return a.queue, true
 }
 
+// BoundQueue returns the composition-root job queue after BindQueue. It does
+// not fall back to RegisterQueue — same fail-closed shape as
+// BoundMediaStorage and Integration.Enqueue — so health/read paths that need
+// the enqueue instance do not silently use a different queue than the worker.
+func (a *App) BoundQueue() (jobs.Queue, bool) {
+	if a == nil || a.boundQueue == nil {
+		return nil, false
+	}
+	return a.boundQueue, true
+}
+
 // PaymentRegistry returns the registered payment providers, if any.
 func (a *App) PaymentRegistry() *payment.ProviderRegistry {
 	return a.paymentRegistry

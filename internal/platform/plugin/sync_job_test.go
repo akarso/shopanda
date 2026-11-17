@@ -377,3 +377,32 @@ func TestApp_BindQueue_IdempotentSameInstance(t *testing.T) {
 		t.Fatalf("re-bind same instance: %v", err)
 	}
 }
+
+func TestApp_BoundQueue_PrefersBound(t *testing.T) {
+	boundOnly := &plugin.App{}
+	q := &memQueue{}
+	if err := boundOnly.BindQueue(q); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := boundOnly.BoundQueue()
+	if !ok || got != q {
+		t.Fatalf("bound-only BoundQueue() = (%v, %v)", got, ok)
+	}
+	if _, ok := boundOnly.Queue(); ok {
+		t.Fatal("Queue() should be empty when only BindQueue ran")
+	}
+
+	registered := &plugin.App{}
+	r := &memQueue{}
+	registered.RegisterQueue(r)
+	if _, ok = registered.BoundQueue(); ok {
+		t.Fatal("BoundQueue must be empty before BindQueue")
+	}
+	if err := registered.BindQueue(r); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = registered.BoundQueue()
+	if !ok || got != r {
+		t.Fatalf("after bind BoundQueue() = (%v, %v)", got, ok)
+	}
+}
