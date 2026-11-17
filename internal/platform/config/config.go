@@ -582,6 +582,10 @@ type PluginsConfig struct {
 	B2B             B2BPluginConfig             `yaml:"b2b"`
 	ExtRef          ExtRefPluginConfig          `yaml:"extref"`
 	MetalDogs       MetalDogsPluginConfig       `yaml:"metaldogs"`
+	// Extra holds unknown plugins.<slug> maps for product plugins (see
+	// UnmarshalYAML). Flattened as plugins.<slug>.<key>; env overlay
+	// SHOPANDA_PLUGINS_<SLUG>_<KEY>. Typed fields above win when both exist.
+	Extra map[string]map[string]string `yaml:"-"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
@@ -677,6 +681,10 @@ type B2BPluginConfig struct {
 // Default enabled=false (dark); set plugins.metaldogs.enabled or
 // SHOPANDA_PLUGINS_METALDOGS_ENABLED to expose /api/customizer/* (not a
 // process probe — use /healthz and /readyz for orchestrators).
+//
+// migrate-next: product forks should prefer Extra / Host.Config* for new
+// product slugs instead of adding typed fields here; MetalDogs remains typed
+// until a dedicated migration removes this field.
 type MetalDogsPluginConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
@@ -1331,6 +1339,7 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_METALDOGS_ENABLED"); v != "" {
 		cfg.Plugins.MetalDogs.Enabled = parseEnvBool(v)
 	}
+	applyPluginsExtraEnv(cfg)
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = parseEnvBool(v)
 	}
@@ -1601,6 +1610,7 @@ func flattenWith(cfg *Config, redact func(string) string) map[string]string {
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["plugins.b2b.license_key"] = redact(cfg.Plugins.B2B.LicenseKey)
 	m["plugins.metaldogs.enabled"] = strconv.FormatBool(cfg.Plugins.MetalDogs.Enabled)
+	flattenPluginsExtra(m, cfg, redact)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
