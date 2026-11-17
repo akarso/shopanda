@@ -313,3 +313,9 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 	}
 	return nil
 }
+
+// Requeue is unsupported on this broker-backed queue (no queryable processing row).
+func (q *JobQueue) Requeue(context.Context, string) error {
+	return jobs.ErrRequeueUnsupported
+}
+

@@ -71,7 +71,17 @@ type Queue interface {
 	// dequeue attempt. If attempts < maxRetries, the job is re-queued with
 	// a delay. Otherwise, the job is marked as permanently failed.
 	Fail(ctx context.Context, id string, attempt int, jobErr error) error
+
+	// Requeue moves a processing job back to pending without resetting
+	// attempts (unlike Admin.Retry, which is failed→pending with
+	// attempts=0). Used to reclaim a stale claim. Brokers may return
+	// ErrRequeueUnsupported.
+	Requeue(ctx context.Context, id string) error
 }
+
+// ErrRequeueUnsupported is returned by broker-backed queues that have no
+// queryable processing row to reclaim.
+var ErrRequeueUnsupported = errors.New("jobs: requeue unsupported for this queue driver")
 
 // NewJob creates a Job with sensible defaults.
 func NewJob(id, jobType string, payload map[string]interface{}) (Job, error) {

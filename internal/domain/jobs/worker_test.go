@@ -61,6 +61,8 @@ func (m *mockQueue) Complete(ctx context.Context, id string, attempt int) error 
 	return nil
 }
 
+func (m *mockQueue) Requeue(context.Context, string) error { return nil }
+
 func (m *mockQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
