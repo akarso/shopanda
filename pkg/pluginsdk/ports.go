@@ -67,6 +67,42 @@ type CatalogPort interface {
 	FindProduct(ctx context.Context, id string) (*extapi.CatalogProduct, error)
 }
 
+// CatalogProductSeed is the EnsureProduct input for CatalogSeedPort.
+// Existing products (matched by Slug) are left unchanged.
+type CatalogProductSeed struct {
+	Name        string
+	Slug        string
+	Description string
+}
+
+// CatalogVariantSeed is the EnsureVariant input for CatalogSeedPort.
+// Existing variants (matched by SKU) must belong to ProductID.
+type CatalogVariantSeed struct {
+	ProductID string
+	SKU       string
+	Name      string
+}
+
+// CatalogPriceSeed is the UpsertPrice input for CatalogSeedPort.
+// Empty StoreID means the global/default price. Amount is minor units.
+type CatalogPriceSeed struct {
+	VariantID string
+	StoreID   string
+	Amount    int64
+	Currency  string
+}
+
+// CatalogSeedPort is the Host-visible catalog write surface for plugin CLI
+// seed/import (CapCatalogSeed). It mirrors CatalogSeeder idempotency:
+// Ensure* skips when the row already exists; UpsertPrice writes price +
+// history; SetStock sets absolute quantity. Distinct from read-only CapCatalog.
+type CatalogSeedPort interface {
+	EnsureProduct(ctx context.Context, in CatalogProductSeed) (id string, created bool, err error)
+	EnsureVariant(ctx context.Context, in CatalogVariantSeed) (id string, created bool, err error)
+	UpsertPrice(ctx context.Context, in CatalogPriceSeed) error
+	SetStock(ctx context.Context, variantID string, qty int) error
+}
+
 // OrderPort provides minimal order reads.
 type OrderPort interface {
 	FindByID(ctx context.Context, id string) (*extapi.OrderView, error)

@@ -8,6 +8,7 @@ type Capability = plugin.Capability
 const (
 	CapCart                = plugin.CapCart
 	CapCatalog             = plugin.CapCatalog
+	CapCatalogSeed         = plugin.CapCatalogSeed
 	CapOrders              = plugin.CapOrders
 	CapCustomers           = plugin.CapCustomers
 	CapDB                  = plugin.CapDB

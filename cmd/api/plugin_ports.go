@@ -5,8 +5,9 @@ import (
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
-// bindProductPorts binds catalog and order read ports (and CapDB) before plugin Init.
-// Cart is late-bound after cart.Service exists in serve via BindCartPort.
+// bindProductPorts binds catalog/order/customer read ports, catalog seed write
+// port, and CapDB before plugin Init. Cart is late-bound after cart.Service
+// exists in serve via BindCartPort.
 func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	if app == nil {
 		return nil
@@ -16,6 +17,14 @@ func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	}
 	if boot != nil && (boot.Products != nil || boot.Variants != nil) {
 		if err := app.BindCatalogPort(pluginsdk.NewCatalogPort(boot.Products, boot.Variants)); err != nil {
+			return err
+		}
+	}
+	if boot != nil && boot.Products != nil && boot.Variants != nil &&
+		boot.Prices != nil && boot.PriceHistory != nil && boot.Stock != nil {
+		if err := app.BindCatalogSeedPort(pluginsdk.NewCatalogSeedPort(
+			boot.Products, boot.Variants, boot.Prices, boot.PriceHistory, boot.Stock, boot.DB,
+		)); err != nil {
 			return err
 		}
 	}
