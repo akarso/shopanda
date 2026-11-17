@@ -139,6 +139,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1556 | cart.validate `pending_line` on AddItem | done |
 | PR-1557 | CartPort.DiscardEmptyGuestCart | done |
 | PR-1558 | CatalogVariant.ProductVisible | done |
+| PR-1562 | Product-owned root files docs + Makefile.product | done |
 | PR-1565a | Attempt-aware Complete/Fail + ErrSkipOutcome | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
@@ -191,7 +192,7 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Product-owned plugin registration | Products add a line to `cmd/api/register_plugins.go`, which also changes upstream. Offer a product-owned file (e.g. `cmd/api/register_products.go`, created empty by `product-init`, called from `register_plugins.go`) so the shared file never changes | proposed |
 | Public route cache policy | A plugin's public routes cannot say "never cache" (Metal Dogs edited `wire_routes.go` and a shared prefix list for `/api/customizer`). Let `RegisterPublicRoute` take an option (e.g. `NoCache`) | proposed |
 | Platform fixes found by a product | `App.BoundQueue()` (prefer `BindQueue` over `RegisterQueue` on health/read paths) and sync handler re-injecting payload `request_id` into ctx. Both carried by Metal Dogs as deviations; send upstream | proposed |
-| Product-owned root files conflict on every bump | `README`, `AGENTS`, `RUNBOOK`, `PLUGINS`, `.gitignore`, `Makefile`, CI workflows differ in every product fork. Document `.gitattributes` `merge=ours` for product-owned files and a `Makefile` `-include Makefile.product` hook; keep product targets out of the shared Makefile | proposed (docs) |
+| Product-owned root files conflict on every bump | `README`, `AGENTS`, `RUNBOOK`, `PLUGINS`, `.gitignore`, `Makefile`, CI workflows differ in every product fork. Document `.gitattributes` `merge=ours` for product-owned files and a `Makefile` `-include Makefile.product` hook; keep product targets out of the shared Makefile | **done (PR-1562)** — PRODUCT_SITES + `-include Makefile.product` |
 
 ---
 

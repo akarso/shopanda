@@ -850,7 +850,7 @@ Vendor YAML is an adapter. The contract lives under [`scripts/ci/`](../../script
 | `scripts/ci/govuln.sh` | Pinned `govulncheck` (fail-closed + baseline; path overridable) |
 | `scripts/ci/docs-policy.sh` | Product-doc link policy + promote fixture (platform) |
 
-No git hooks are installed by default. Product sites may omit all vendor CI — see [PRODUCT_SITES.md](PRODUCT_SITES.md) and [`ci-samples/`](../../ci-samples/README.md).
+No git hooks are installed by default. Product sites may omit all vendor CI — see [PRODUCT_SITES.md](PRODUCT_SITES.md) and [`ci-samples/`](../../ci-samples/README.md). Product forks: use `.gitattributes` `merge=ours` for product-owned root files and put custom Make targets in `Makefile.product` (the root Makefile `-include`s it) — see [PRODUCT_SITES.md — Product-owned root files](PRODUCT_SITES.md#product-owned-root-files-merge-conflicts).
 
 Before opening a PR against **this** repository, run:
 
