@@ -343,13 +343,18 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	ctx := context.Background()
 	detail, err := rt.svc.Get(ctx, id)
 	if err != nil {
+		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, err)
 		return fmt.Errorf("jobs:requeue: %w", err)
 	}
 	if detail == nil {
-		return fmt.Errorf("jobs:requeue: no job with id %q", id)
+		notFound := fmt.Errorf("jobs:requeue: no job with id %q", id)
+		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, notFound)
+		return notFound
 	}
 	if detail.Status != domainjobs.StatusProcessing {
-		return fmt.Errorf("jobs:requeue: job is %s, not processing — only a stale processing claim can be requeued (use jobs:retry for failed)", detail.Status)
+		wrongStatus := fmt.Errorf("jobs:requeue: job is %s, not processing — only a stale processing claim can be requeued (use jobs:retry for failed)", detail.Status)
+		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, wrongStatus)
+		return wrongStatus
 	}
 	requeueErr := rt.queue.Requeue(ctx, id, detail.Attempts)
 	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, requeueErr)

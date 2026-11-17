@@ -187,20 +187,28 @@ func TestJobQueue_Requeue_RequiresAgeAndAttempt(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected dequeued job")
 	}
-	// Too fresh / wrong attempt → conflict; attempts unchanged.
+	// Too fresh → conflict even with matching attempt.
 	if err := q.Requeue(ctx, got.ID, got.Attempts); err == nil || !errors.Is(err, jobs.ErrRequeueConflict) {
 		t.Fatalf("Requeue fresh claim: %v", err)
-	}
-	if err := q.Requeue(ctx, got.ID, got.Attempts-1); err == nil || !errors.Is(err, jobs.ErrRequeueConflict) {
-		t.Fatalf("Requeue wrong attempt: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE jobs SET updated_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, got.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Aged but wrong attempt must leave the live row processing.
+	if err := q.Requeue(ctx, got.ID, got.Attempts-1); err == nil || !errors.Is(err, jobs.ErrRequeueConflict) {
+		t.Fatalf("Requeue wrong attempt on aged row: %v", err)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil {
+		t.Fatalf("Get after wrong attempt: %v %#v", err, detail)
+	}
+	if detail.Status != jobs.StatusProcessing || detail.Attempts != got.Attempts {
+		t.Fatalf("after wrong attempt = %+v, want still processing", detail)
+	}
 	if err := q.Requeue(ctx, got.ID, got.Attempts); err != nil {
 		t.Fatalf("Requeue aged claim: %v", err)
 	}
-	detail, err := q.Get(ctx, got.ID)
+	detail, err = q.Get(ctx, got.ID)
 	if err != nil || detail == nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -304,6 +312,55 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	err = q.Complete(ctx, id.New(), 1)
 	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
 		t.Fatalf("Complete missing job: err=%v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+func TestJobQueue_Fail_NotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	err = q.Fail(ctx, id.New(), 1, errors.New("boom"))
+	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail missing job: err=%v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+func TestJobQueue_Fail_WrongAttempt_LeavesProcessing(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	job, _ := jobs.NewJob(id.New(), "fail-cas", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts-1, errors.New("stale")); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail wrong attempt: %v", err)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil {
+		t.Fatalf("Get: %v %#v", err, detail)
+	}
+	if detail.Status != jobs.StatusProcessing {
+		t.Fatalf("status = %s, want processing", detail.Status)
 	}
 }
 

@@ -98,3 +98,64 @@ func TestApp_ApplyQueueBoundHooks_NilReturnsError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestApp_ApplyQueueBoundHooks_PanicReturnsError(t *testing.T) {
+	app := &plugin.App{}
+	app.OnQueueBound(func(jobs.Queue) jobs.Queue { panic("bad hook") })
+	_, err := app.ApplyQueueBoundHooks(&hookQueue{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+type introspectableHookQueue struct {
+	hookQueue
+}
+
+func (introspectableHookQueue) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
+	return nil, nil
+}
+func (introspectableHookQueue) Get(context.Context, string) (*jobs.Detail, error) { return nil, nil }
+func (introspectableHookQueue) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+	return map[jobs.Status]int{}, nil
+}
+func (introspectableHookQueue) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
+	return map[jobs.Status]int{}, nil
+}
+func (introspectableHookQueue) Retry(context.Context, string) error  { return nil }
+func (introspectableHookQueue) Cancel(context.Context, string) error { return nil }
+
+func TestApp_ApplyQueueBoundHooks_RejectsDroppedReader(t *testing.T) {
+	app := &plugin.App{}
+	app.OnQueueBound(func(q jobs.Queue) jobs.Queue {
+		type embedOnly struct{ jobs.Queue }
+		return &embedOnly{Queue: q}
+	})
+	_, err := app.ApplyQueueBoundHooks(&introspectableHookQueue{})
+	if err == nil {
+		t.Fatal("expected error when hook drops Reader")
+	}
+}
+
+func TestApp_WrapRequeueNotify_KeepsReaderAdmin(t *testing.T) {
+	app := &plugin.App{}
+	inner := &introspectableHookQueue{}
+	q := app.WrapRequeueNotify(inner)
+	if _, ok := q.(jobs.Reader); !ok {
+		t.Fatalf("%T must implement Reader", q)
+	}
+	if _, ok := q.(jobs.Admin); !ok {
+		t.Fatalf("%T must implement Admin", q)
+	}
+	if _, err := q.(jobs.Reader).CountsByStatus(context.Background()); err != nil {
+		t.Fatalf("CountsByStatus: %v", err)
+	}
+}
+
+func TestApp_WrapRequeueNotify_QueueOnlyStaysQueueOnly(t *testing.T) {
+	app := &plugin.App{}
+	q := app.WrapRequeueNotify(&hookQueue{})
+	if _, ok := q.(jobs.Reader); ok {
+		t.Fatal("Queue-only wrap must not implement Reader")
+	}
+}

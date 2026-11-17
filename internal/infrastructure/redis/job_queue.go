@@ -33,6 +33,66 @@ end
 return #ids
 `
 
+// completeJobLua atomically checks attempt + processing membership, then
+// writes the done snapshot. Returns 1 ok, 0 not applied, -1 missing key.
+// KEYS: job, processing. ARGV: attempt, id, updated_at RFC3339, ttl_ms (0=persist).
+const completeJobLua = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return -1 end
+local job = cjson.decode(raw)
+if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
+  return 0
+end
+local removed = redis.call('LREM', KEYS[2], 1, ARGV[2])
+if removed == 0 then return 0 end
+job['status'] = 'done'
+job['updated_at'] = ARGV[3]
+local encoded = cjson.encode(job)
+local ttl = tonumber(ARGV[4])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], encoded, 'PX', ttl)
+else
+  redis.call('SET', KEYS[1], encoded)
+end
+return 1
+`
+
+// failJobLua atomically checks attempt + processing membership, then writes
+// failed or pending+delayed. Returns 1 ok, 0 not applied, -1 missing key.
+// KEYS: job, processing, delayed. ARGV: attempt, id, updated_at, last_error,
+// terminal (1=failed/0=retry), run_at RFC3339, run_at_ms, ttl_ms.
+const failJobLua = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return -1 end
+local job = cjson.decode(raw)
+if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
+  return 0
+end
+local removed = redis.call('LREM', KEYS[2], 1, ARGV[2])
+if removed == 0 then return 0 end
+job['updated_at'] = ARGV[3]
+if ARGV[4] ~= '' then
+  job['last_error'] = ARGV[4]
+end
+local ttl = tonumber(ARGV[8])
+if tonumber(ARGV[5]) == 1 then
+  job['status'] = 'failed'
+  local encoded = cjson.encode(job)
+  if ttl > 0 then
+    redis.call('SET', KEYS[1], encoded, 'PX', ttl)
+  else
+    redis.call('SET', KEYS[1], encoded)
+  end
+  return 1
+end
+job['status'] = 'pending'
+job['run_at'] = ARGV[6]
+local encoded = cjson.encode(job)
+redis.call('SET', KEYS[1], encoded)
+redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
+return 1
+`
+
 // JobQueue implements jobs.Queue using Redis lists and a delayed sorted set.
 type JobQueue struct {
 	client *goredis.Client
@@ -244,23 +304,18 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 
 // Complete marks a job as done for the matching attempt.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
-	stored, err := q.loadJob(ctx, id)
-	if err != nil {
-		return err
-	}
-	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
-		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
-	}
-	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
+	ttlMs := int64(terminalJobRetentionTTL / time.Millisecond)
+	n, err := q.client.Eval(ctx, completeJobLua,
+		[]string{q.jobKey(id), q.processingKey()},
+		attempt, id, time.Now().UTC().Format(time.RFC3339Nano), ttlMs,
+	).Int()
 	if err != nil {
 		return fmt.Errorf("job_queue: complete: %w", err)
 	}
-	if removed == 0 {
+	if n != 1 {
 		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
-	stored.Status = jobs.StatusDone
-	stored.UpdatedAt = time.Now().UTC()
-	return q.saveJob(ctx, stored)
+	return nil
 }
 
 func queueRetryDelay(attempt int) time.Duration {
@@ -278,40 +333,38 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 	if err != nil {
 		return err
 	}
+	// Pre-check attempt/status without mutating — Lua re-checks under one script.
 	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
-		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
-	}
-	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
-	if err != nil {
-		return fmt.Errorf("job_queue: fail: %w", err)
-	}
-	if removed == 0 {
 		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 
 	now := time.Now().UTC()
-	stored.UpdatedAt = now
+	lastErr := ""
 	if jobErr != nil {
-		stored.LastError = jobErr.Error()
+		lastErr = jobErr.Error()
 	}
-
+	terminal := 0
+	runAtMs := int64(0)
+	ttlMs := int64(0)
+	runAtRFC := ""
 	if stored.Attempts >= stored.MaxRetries {
-		stored.Status = jobs.StatusFailed
-		return q.saveJob(ctx, stored)
+		terminal = 1
+		ttlMs = int64(terminalJobRetentionTTL / time.Millisecond)
+	} else {
+		runAt := now.Add(queueRetryDelay(attempt - 1))
+		runAtMs = runAt.UnixMilli()
+		runAtRFC = runAt.Format(time.RFC3339Nano)
 	}
 
-	delay := queueRetryDelay(attempt - 1)
-	stored.Status = jobs.StatusPending
-	stored.RunAt = now.Add(delay)
-	if err := q.saveJob(ctx, stored); err != nil {
-		return err
+	n, err := q.client.Eval(ctx, failJobLua,
+		[]string{q.jobKey(id), q.processingKey(), q.delayedKey()},
+		attempt, id, now.Format(time.RFC3339Nano), lastErr, terminal, runAtRFC, runAtMs, ttlMs,
+	).Int()
+	if err != nil {
+		return fmt.Errorf("job_queue: fail: %w", err)
 	}
-
-	if err := q.client.ZAdd(ctx, q.delayedKey(), goredis.Z{
-		Score:  float64(stored.RunAt.UnixMilli()),
-		Member: stored.ID,
-	}).Err(); err != nil {
-		return fmt.Errorf("job_queue: fail retry: %w", err)
+	if n != 1 {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	return nil
 }

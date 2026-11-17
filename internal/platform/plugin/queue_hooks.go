@@ -41,7 +41,8 @@ func (a *App) OnRequeued(hook RequeuedHook) {
 }
 
 // ApplyQueueBoundHooks runs OnQueueBound wrappers in order. Returns an error
-// if a hook returns nil (does not panic — bind stays on the error path).
+// if a hook returns nil, panics, or drops jobs.Reader / jobs.Admin that the
+// previous value implemented (bind stays on the error path — no panic).
 func (a *App) ApplyQueueBoundHooks(q jobs.Queue) (jobs.Queue, error) {
 	if a == nil || q == nil {
 		return q, nil
@@ -50,39 +51,144 @@ func (a *App) ApplyQueueBoundHooks(q jobs.Queue) (jobs.Queue, error) {
 		if hook == nil {
 			continue
 		}
-		next := hook(q)
+		hadReader := false
+		hadAdmin := false
+		if _, ok := q.(jobs.Reader); ok {
+			hadReader = true
+		}
+		if _, ok := q.(jobs.Admin); ok {
+			hadAdmin = true
+		}
+		var next jobs.Queue
+		var panicErr error
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					panicErr = fmt.Errorf("plugin: OnQueueBound hook %d panicked: %v", i, rec)
+				}
+			}()
+			next = hook(q)
+		}()
+		if panicErr != nil {
+			return nil, panicErr
+		}
 		if next == nil {
 			return nil, fmt.Errorf("plugin: OnQueueBound hook %d returned nil queue", i)
+		}
+		if hadReader {
+			if _, ok := next.(jobs.Reader); !ok {
+				return nil, fmt.Errorf("plugin: OnQueueBound hook %d dropped jobs.Reader — wrappers must forward List/Get/CountsByStatus/CountsByType", i)
+			}
+		}
+		if hadAdmin {
+			if _, ok := next.(jobs.Admin); !ok {
+				return nil, fmt.Errorf("plugin: OnQueueBound hook %d dropped jobs.Admin — wrappers must forward Retry/Cancel", i)
+			}
 		}
 		q = next
 	}
 	return q, nil
 }
 
+// queueUnwrapper lets bind wrappers expose the next inner queue so
+// Reader/Admin resolution can walk past notify/fence layers.
+type queueUnwrapper interface {
+	UnwrapQueue() jobs.Queue
+}
+
+func skipNotifyWrapper(q jobs.Queue) (jobs.Queue, bool) {
+	switch w := q.(type) {
+	case *requeueNotifyQueue:
+		return w.inner, true
+	case *requeueNotifyIntrospectable:
+		return w.inner, true
+	default:
+		return q, false
+	}
+}
+
+func resolveReader(q jobs.Queue) jobs.Reader {
+	seen := map[jobs.Queue]struct{}{}
+	for q != nil {
+		if _, ok := seen[q]; ok {
+			return nil
+		}
+		seen[q] = struct{}{}
+		if next, ok := skipNotifyWrapper(q); ok {
+			q = next
+			continue
+		}
+		if r, ok := q.(jobs.Reader); ok {
+			return r
+		}
+		u, ok := q.(queueUnwrapper)
+		if !ok {
+			return nil
+		}
+		q = u.UnwrapQueue()
+	}
+	return nil
+}
+
+func resolveAdmin(q jobs.Queue) jobs.Admin {
+	seen := map[jobs.Queue]struct{}{}
+	for q != nil {
+		if _, ok := seen[q]; ok {
+			return nil
+		}
+		seen[q] = struct{}{}
+		if next, ok := skipNotifyWrapper(q); ok {
+			q = next
+			continue
+		}
+		if ad, ok := q.(jobs.Admin); ok {
+			return ad
+		}
+		u, ok := q.(queueUnwrapper)
+		if !ok {
+			return nil
+		}
+		q = u.UnwrapQueue()
+	}
+	return nil
+}
+
 // WrapRequeueNotify returns q wrapped so successful Requeue calls fire
-// OnRequeued hooks. Forwards Reader/Admin when the inner queue implements
-// them so CLI introspection and mutate paths share one bound value.
+// OnRequeued hooks. When the wrap chain exposes Reader and Admin, the
+// returned value implements those ports too (postgres path). Broker queues
+// without introspection stay Queue-only so serve still fails the Reader
+// assert clearly instead of binding a nil-delegate Reader.
 func (a *App) WrapRequeueNotify(q jobs.Queue) jobs.Queue {
 	if a == nil || q == nil {
 		return q
 	}
 	hooks := append([]RequeuedHook(nil), a.requeuedHooks...)
-	w := &requeueNotifyQueue{inner: q, hooks: hooks, log: a.Logger}
-	if r, ok := q.(jobs.Reader); ok {
-		w.reader = r
+	base := requeueNotifyQueue{inner: q, hooks: hooks, log: a.Logger}
+	reader := resolveReader(q)
+	admin := resolveAdmin(q)
+	if reader != nil && admin != nil {
+		return &requeueNotifyIntrospectable{
+			requeueNotifyQueue: base,
+			reader:             reader,
+			admin:              admin,
+		}
 	}
-	if ad, ok := q.(jobs.Admin); ok {
-		w.admin = ad
-	}
-	return w
+	return &base
 }
 
+// requeueNotifyQueue is Queue-only (OnRequeued fan-out). Used when the
+// inner chain has no Reader/Admin (broker backends).
 type requeueNotifyQueue struct {
-	inner  jobs.Queue
-	hooks  []RequeuedHook
-	reader jobs.Reader
-	admin  jobs.Admin
-	log    loggerLike
+	inner jobs.Queue
+	hooks []RequeuedHook
+	log   loggerLike
+}
+
+func (q *requeueNotifyQueue) UnwrapQueue() jobs.Queue {
+	if q == nil {
+		return nil
+	}
+	return q.inner
 }
 
 type loggerLike interface {
@@ -131,35 +237,42 @@ func (q *requeueNotifyQueue) Requeue(ctx context.Context, id string, attempt int
 	return nil
 }
 
-func (q *requeueNotifyQueue) List(ctx context.Context, filter jobs.ListFilter) ([]jobs.Summary, error) {
-	if q.reader == nil {
-		return nil, fmt.Errorf("plugin: bound queue does not implement jobs.Reader")
+// requeueNotifyIntrospectable is the postgres bind shape: Queue + Reader +
+// Admin forwarded from the wrap chain (including past OnQueueBound fences
+// that themselves forward those ports).
+type requeueNotifyIntrospectable struct {
+	requeueNotifyQueue
+	reader jobs.Reader
+	admin  jobs.Admin
+}
+
+func (q *requeueNotifyIntrospectable) UnwrapQueue() jobs.Queue {
+	if q == nil {
+		return nil
 	}
+	return q.inner
+}
+
+func (q *requeueNotifyIntrospectable) List(ctx context.Context, filter jobs.ListFilter) ([]jobs.Summary, error) {
 	return q.reader.List(ctx, filter)
 }
-func (q *requeueNotifyQueue) Get(ctx context.Context, id string) (*jobs.Detail, error) {
-	if q.reader == nil {
-		return nil, fmt.Errorf("plugin: bound queue does not implement jobs.Reader")
-	}
+func (q *requeueNotifyIntrospectable) Get(ctx context.Context, id string) (*jobs.Detail, error) {
 	return q.reader.Get(ctx, id)
 }
-func (q *requeueNotifyQueue) CountsByType(ctx context.Context, jobType string) (map[jobs.Status]int, error) {
-	if q.reader == nil {
-		return nil, fmt.Errorf("plugin: bound queue does not implement jobs.Reader")
-	}
+func (q *requeueNotifyIntrospectable) CountsByType(ctx context.Context, jobType string) (map[jobs.Status]int, error) {
 	return q.reader.CountsByType(ctx, jobType)
 }
-func (q *requeueNotifyQueue) Retry(ctx context.Context, id string) error {
-	if q.admin == nil {
-		return fmt.Errorf("plugin: bound queue does not implement jobs.Admin")
-	}
+func (q *requeueNotifyIntrospectable) CountsByStatus(ctx context.Context) (map[jobs.Status]int, error) {
+	return q.reader.CountsByStatus(ctx)
+}
+func (q *requeueNotifyIntrospectable) Retry(ctx context.Context, id string) error {
 	return q.admin.Retry(ctx, id)
 }
-func (q *requeueNotifyQueue) Cancel(ctx context.Context, id string) error {
-	if q.admin == nil {
-		return fmt.Errorf("plugin: bound queue does not implement jobs.Admin")
-	}
+func (q *requeueNotifyIntrospectable) Cancel(ctx context.Context, id string) error {
 	return q.admin.Cancel(ctx, id)
 }
 
 var _ jobs.Queue = (*requeueNotifyQueue)(nil)
+var _ jobs.Queue = (*requeueNotifyIntrospectable)(nil)
+var _ jobs.Reader = (*requeueNotifyIntrospectable)(nil)
+var _ jobs.Admin = (*requeueNotifyIntrospectable)(nil)

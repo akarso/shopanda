@@ -29,7 +29,7 @@ type Logger interface {
 type MetricsRecorder interface {
 	JobFailure(jobType string)
 	// JobResult records handler duration for a finished attempt.
-	// outcome must be "success", "failed", or "skipped" (bounded).
+	// outcome must be "success", "failed", "skipped", or "not_applied" (bounded).
 	JobResult(jobType, outcome string, duration time.Duration)
 }
 
@@ -264,7 +264,8 @@ func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobE
 	if failErr := w.queue.Fail(outcomeCtx, jobID, attempt, jobErr); failErr != nil {
 		fields := map[string]interface{}{"job_id": jobID, "attempt": attempt}
 		if errors.Is(failErr, ErrOutcomeNotApplied) {
-			w.log.Error("worker.fail.not_applied", failErr, fields)
+			// Stale claim after Requeue/newer dequeue — not a handler failure.
+			w.log.Info("worker.fail.not_applied", fields)
 			return
 		}
 		w.log.Error("worker.fail.error", failErr, fields)
@@ -285,6 +286,12 @@ func (w *Worker) recordComplete(ctx context.Context, jobID string, attempt int, 
 		// Handler ran but the queue did not accept the outcome (stale
 		// attempt, missing row, already moved). Never emit success —
 		// the job may still be processing or redelivered.
+		if errors.Is(err, ErrOutcomeNotApplied) {
+			// Reclaim/CAS miss — not a job failure alert.
+			w.log.Info("worker.job.complete_not_applied", failFields)
+			w.metrics.JobResult(jobType, "not_applied", duration)
+			return
+		}
 		w.log.Error("worker.job.complete_failed", err, failFields)
 		w.metrics.JobFailure(jobType)
 		w.metrics.JobResult(jobType, "failed", duration)
