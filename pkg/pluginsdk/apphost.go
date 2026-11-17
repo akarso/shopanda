@@ -361,7 +361,8 @@ func (h *appHost) OnQueueBound(wrap func(queue any) any) {
 		out := wrap(q)
 		next, ok := out.(jobs.Queue)
 		if !ok || next == nil {
-			panic("pluginsdk: OnQueueBound wrap must return a jobs.Queue")
+			// ApplyQueueBoundHooks treats nil as an error at bind time.
+			return nil
 		}
 		return next
 	})

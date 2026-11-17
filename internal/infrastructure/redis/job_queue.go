@@ -242,20 +242,21 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	return &job, nil
 }
 
-// Complete marks a job as done.
+// Complete marks a job as done for the matching attempt.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
+	stored, err := q.loadJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+	}
 	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
 	if err != nil {
 		return fmt.Errorf("job_queue: complete: %w", err)
 	}
 	if removed == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
-	}
-
-	stored, err := q.loadJob(ctx, id)
-	if err != nil {
-		return err
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	stored.Status = jobs.StatusDone
 	stored.UpdatedAt = time.Now().UTC()
@@ -273,18 +274,19 @@ func queueRetryDelay(attempt int) time.Duration {
 
 // Fail re-queues a job for retry or marks it as permanently failed.
 func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
+	stored, err := q.loadJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+	}
 	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
 	if err != nil {
 		return fmt.Errorf("job_queue: fail: %w", err)
 	}
 	if removed == 0 {
-		return fmt.Errorf("job_queue: job %s not found or not processing", id)
-	}
-
-	stored, err := q.loadJob(ctx, id)
-	if err != nil {
-		return err
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 
 	now := time.Now().UTC()
@@ -298,7 +300,7 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 		return q.saveJob(ctx, stored)
 	}
 
-	delay := queueRetryDelay(stored.Attempts - 1)
+	delay := queueRetryDelay(attempt - 1)
 	stored.Status = jobs.StatusPending
 	stored.RunAt = now.Add(delay)
 	if err := q.saveJob(ctx, stored); err != nil {
@@ -315,7 +317,7 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 }
 
 // Requeue is unsupported on this broker-backed queue (no queryable processing row).
-func (q *JobQueue) Requeue(context.Context, string) error {
+func (q *JobQueue) Requeue(context.Context, string, int) error {
 	return jobs.ErrRequeueUnsupported
 }
 
