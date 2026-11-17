@@ -158,13 +158,12 @@ func (w *Worker) processNext(ctx context.Context) bool {
 			"job_id":   job.ID,
 			"job_type": job.Type,
 		})
-		w.metrics.JobFailure(unknownJobType)
-		w.metrics.JobResult(unknownJobType, "failed", 0)
 		// A real error, not nil: this is exactly the failure an operator
 		// most needs last_error for — a misconfigured or typo'd job type —
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
-		// records something when jobErr is non-nil.
-		w.recordFail(ctx, job.ID, job.Attempts, fmt.Errorf("no handler registered for job type %q", job.Type))
+		// records something when jobErr is non-nil. Metrics land only if
+		// Fail applies (CAS miss → not_applied, not JobFailure).
+		w.recordFail(ctx, job.ID, job.Attempts, unknownJobType, fmt.Errorf("no handler registered for job type %q", job.Type), 0)
 		return true
 	}
 
@@ -203,9 +202,9 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		}
 		mergeJobRequestID(failFields, job.Payload)
 		w.log.Error("worker.job.failed", err, failFields)
-		w.metrics.JobFailure(job.Type)
-		w.metrics.JobResult(job.Type, "failed", duration)
-		w.recordFail(ctx, job.ID, job.Attempts, err)
+		// JobFailure / outcome failed only after Fail applies — a stale
+		// claim (ErrOutcomeNotApplied) must not look like a job-failure alert.
+		w.recordFail(ctx, job.ID, job.Attempts, job.Type, err, duration)
 		return true
 	}
 
@@ -258,18 +257,26 @@ func (w *Worker) safeHandle(ctx context.Context, h Handler, job Job) (err error)
 // signal that's asking the worker to stop, or the job ends up neither
 // completed nor properly failed/requeued, an ambiguous state the queue's
 // own retry/visibility-timeout logic wasn't designed to resolve cleanly.
-func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobErr error) {
+func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobType string, jobErr error, duration time.Duration) {
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
 	if failErr := w.queue.Fail(outcomeCtx, jobID, attempt, jobErr); failErr != nil {
-		fields := map[string]interface{}{"job_id": jobID, "attempt": attempt}
+		fields := map[string]interface{}{"job_id": jobID, "attempt": attempt, "job_type": jobType}
 		if errors.Is(failErr, ErrOutcomeNotApplied) {
 			// Stale claim after Requeue/newer dequeue — not a handler failure.
 			w.log.Info("worker.fail.not_applied", fields)
+			w.metrics.JobResult(jobType, "not_applied", duration)
 			return
 		}
 		w.log.Error("worker.fail.error", failErr, fields)
+		// Handler failed and the outcome write also failed — still count
+		// the handler failure so operators see the attempt.
+		w.metrics.JobFailure(jobType)
+		w.metrics.JobResult(jobType, "failed", duration)
+		return
 	}
+	w.metrics.JobFailure(jobType)
+	w.metrics.JobResult(jobType, "failed", duration)
 }
 
 func (w *Worker) recordComplete(ctx context.Context, jobID string, attempt int, jobType string, envelope map[string]interface{}, duration time.Duration) {
