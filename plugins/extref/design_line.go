@@ -12,7 +12,7 @@ import (
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
-const designLineGuestCartDiscardTimeout = 2 * time.Second
+const designLineGuestCartDiscardTimeout = 5 * time.Second
 
 // DesignLineRequest is the JSON body for POST /extref/design-line.
 type DesignLineRequest struct {

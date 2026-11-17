@@ -26,23 +26,51 @@ type CatalogVariant struct {
 	// ProductSlug is the parent product slug when ProductVisible is true.
 	// Empty with ProductVisible false means unavailable under status scope.
 	// Empty with ProductVisible true means the loaded parent has a blank slug
-	// column — still fail closed for "belongs to slug X" (use BelongsToProductSlug).
+	// column — ClassifyProductSlug treats that as Unknown (fail closed).
 	ProductSlug string
 	SKU         string
 	Name        string
 }
 
-// BelongsToProductSlug reports whether v is the expected product under the
-// current catalog read. False when the parent is outside status scope, the
-// loaded slug is blank, or the slug does not match. Never treat an empty
-// ProductSlug alone as "not my product" (that fails open in cart.validate).
-func BelongsToProductSlug(v *CatalogVariant, want string) bool {
+// ProductSlugClass distinguishes outcomes for "variant belongs to product slug X".
+type ProductSlugClass int
+
+const (
+	// ProductSlugUnknown: parent outside status scope, blank loaded slug, or nil.
+	// Fail closed in cart.validate — do not skip as "not my product".
+	ProductSlugUnknown ProductSlugClass = iota
+	// ProductSlugOther: parent loaded with a different non-blank slug — skip the line.
+	ProductSlugOther
+	// ProductSlugMatch: loaded slug equals want — run product-specific checks.
+	ProductSlugMatch
+)
+
+// ClassifyProductSlug reports how v relates to want under the current catalog read.
+//
+//	switch extapi.ClassifyProductSlug(v, "my-slug") {
+//	case extapi.ProductSlugMatch:
+//	  // validate this line
+//	case extapi.ProductSlugOther:
+//	  return nil // other product on a mixed cart
+//	default:
+//	  // fail closed (unknown / blank / not visible)
+//	}
+func ClassifyProductSlug(v *CatalogVariant, want string) ProductSlugClass {
 	if v == nil || !v.ProductVisible {
-		return false
+		return ProductSlugUnknown
 	}
 	slug := strings.TrimSpace(v.ProductSlug)
 	if slug == "" {
-		return false
+		return ProductSlugUnknown
 	}
-	return slug == strings.TrimSpace(want)
+	if slug == strings.TrimSpace(want) {
+		return ProductSlugMatch
+	}
+	return ProductSlugOther
+}
+
+// BelongsToProductSlug is true only for ProductSlugMatch. Prefer ClassifyProductSlug
+// so Unknown (fail closed) is not confused with Other (skip).
+func BelongsToProductSlug(v *CatalogVariant, want string) bool {
+	return ClassifyProductSlug(v, want) == ProductSlugMatch
 }

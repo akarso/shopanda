@@ -32,8 +32,9 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 	hookReg := hooks.NewRegistry(nil)
 
 	var ownerSaw interface{}
-	var ownerExtCount int
-	var otherExtCount int
+	var otherAddItemExtCount int
+	var otherAddItemSawPluginOnly bool
+	var otherStoredExtCount int
 	var otherPublicSaw interface{}
 	var pendingOwnerSaw interface{}
 	var pendingOtherPublic interface{}
@@ -54,7 +55,6 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 		if !ok || view == nil || len(view.Items) != 1 {
 			return nil
 		}
-		ownerExtCount = len(view.Items[0].Extensions)
 		for _, e := range view.Items[0].Extensions {
 			if e.Code == "acme.design_id" {
 				ownerSaw = e.Value
@@ -63,6 +63,7 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 		return nil
 	})
 	_ = hookReg.Register(hooks.HookCartValidate, 200, "other", func(hctx *hooks.Context) error {
+		_, hasPending := hctx.Get("pending_line")
 		if raw, ok := hctx.Get("pending_line"); ok && raw != nil {
 			pending, ok := raw.(*extapi.PendingCartLine)
 			if ok && pending != nil {
@@ -81,7 +82,19 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 		if !ok || view == nil || len(view.Items) != 1 {
 			return nil
 		}
-		otherExtCount = len(view.Items[0].Extensions)
+		if hasPending {
+			otherAddItemExtCount = len(view.Items[0].Extensions)
+			for _, e := range view.Items[0].Extensions {
+				if e.Code == "acme.design_id" {
+					otherAddItemSawPluginOnly = true
+				}
+				if e.Code == "acme.note" {
+					otherPublicSaw = e.Value
+				}
+			}
+			return nil
+		}
+		otherStoredExtCount = len(view.Items[0].Extensions)
 		for _, e := range view.Items[0].Extensions {
 			if e.Code == "acme.note" {
 				otherPublicSaw = e.Value
@@ -117,8 +130,11 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 	if pendingOtherPluginOnly != 0 {
 		t.Fatalf("other pending plugin-only = %d, want omitted", pendingOtherPluginOnly)
 	}
-	if otherPublicSaw != "hello" {
-		t.Fatalf("other cart public note = %v, want hello (overlay)", otherPublicSaw)
+	if otherAddItemExtCount != 1 || otherPublicSaw != "hello" {
+		t.Fatalf("other AddItem cart: count=%d note=%v (want public note only)", otherAddItemExtCount, otherPublicSaw)
+	}
+	if otherAddItemSawPluginOnly {
+		t.Fatal("other must not see plugin-only design on AddItem overlay pass")
 	}
 
 	got, err := carts.FindByID(ctx, c.ID)
@@ -136,10 +152,9 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 	if ownerSaw != "design-9" {
 		t.Fatalf("owner stored value=%v, want design-9", ownerSaw)
 	}
-	if otherExtCount != 1 || otherPublicSaw != "hello" {
-		t.Fatalf("other stored public count=%d note=%v", otherExtCount, otherPublicSaw)
+	if otherStoredExtCount != 1 || otherPublicSaw != "hello" {
+		t.Fatalf("other stored public count=%d note=%v", otherStoredExtCount, otherPublicSaw)
 	}
-	_ = ownerExtCount
 }
 
 func TestService_CartValidate_QuantityOnlyAddHasNoPendingLine(t *testing.T) {

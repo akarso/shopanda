@@ -361,6 +361,103 @@ func TestCartRepo_Delete_EmptyID(t *testing.T) {
 	}
 }
 
+func TestCartRepo_DeleteEmptyGuestIfUnchanged(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM cart_items")
+		db.Exec("DELETE FROM carts")
+	})
+
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	empty := mustNewCart(t, "EUR")
+	if err := repo.Save(ctx, &empty); err != nil {
+		t.Fatalf("Save empty guest: %v", err)
+	}
+	got, err := repo.FindByID(ctx, empty.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID empty: %v %+v", err, got)
+	}
+	ok, err := repo.DeleteEmptyGuestIfUnchanged(ctx, empty.ID, got.Version)
+	if err != nil {
+		t.Fatalf("DeleteEmptyGuestIfUnchanged empty: %v", err)
+	}
+	if !ok {
+		t.Fatal("empty guest cart must be deleted")
+	}
+	if again, _ := repo.FindByID(ctx, empty.ID); again != nil {
+		t.Fatal("empty guest row must be gone")
+	}
+
+	withLine := mustNewCart(t, "EUR")
+	if err := withLine.AddItem(id.New(), 1, shared.MustNewMoney(100, "EUR")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, &withLine); err != nil {
+		t.Fatalf("Save with line: %v", err)
+	}
+	lineGot, err := repo.FindByID(ctx, withLine.ID)
+	if err != nil || lineGot == nil {
+		t.Fatalf("FindByID line: %v %+v", err, lineGot)
+	}
+	ok, err = repo.DeleteEmptyGuestIfUnchanged(ctx, withLine.ID, lineGot.Version)
+	if err != nil {
+		t.Fatalf("DeleteEmptyGuestIfUnchanged with line: %v", err)
+	}
+	if ok {
+		t.Fatal("cart with items must not be deleted")
+	}
+	if again, _ := repo.FindByID(ctx, withLine.ID); again == nil {
+		t.Fatal("cart with items must remain")
+	}
+
+	customer := mustNewCart(t, "EUR")
+	if err := customer.SetCustomerID(id.New()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(ctx, &customer); err != nil {
+		t.Fatalf("Save customer: %v", err)
+	}
+	custGot, err := repo.FindByID(ctx, customer.ID)
+	if err != nil || custGot == nil {
+		t.Fatalf("FindByID customer: %v %+v", err, custGot)
+	}
+	ok, err = repo.DeleteEmptyGuestIfUnchanged(ctx, customer.ID, custGot.Version)
+	if err != nil {
+		t.Fatalf("DeleteEmptyGuestIfUnchanged customer: %v", err)
+	}
+	if ok {
+		t.Fatal("customer cart must not be deleted")
+	}
+	if again, _ := repo.FindByID(ctx, customer.ID); again == nil {
+		t.Fatal("customer cart must remain")
+	}
+
+	stale := mustNewCart(t, "EUR")
+	if err := repo.Save(ctx, &stale); err != nil {
+		t.Fatalf("Save stale: %v", err)
+	}
+	staleGot, err := repo.FindByID(ctx, stale.ID)
+	if err != nil || staleGot == nil {
+		t.Fatalf("FindByID stale: %v %+v", err, staleGot)
+	}
+	ok, err = repo.DeleteEmptyGuestIfUnchanged(ctx, stale.ID, staleGot.Version+1)
+	if err != nil {
+		t.Fatalf("DeleteEmptyGuestIfUnchanged stale version: %v", err)
+	}
+	if ok {
+		t.Fatal("stale version must not delete")
+	}
+	if again, _ := repo.FindByID(ctx, stale.ID); again == nil {
+		t.Fatal("stale-version cart must remain")
+	}
+}
+
 func TestCartRepo_Save_WithStatus(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

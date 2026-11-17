@@ -120,7 +120,7 @@ Available today through `plugin.App`:
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll`. For the storefront session cart use `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`) — keep `cart_id` out of response JSON (see `plugins/extref` design-line). Auth: opaque (non-JWT) owner bearer → session or guest; failed/JWT-shaped customer token → 401; staff Bearer defers to session; `pluginsdk.CustomerID(r)` is any non-guest actor |
-| **Catalog reads** | `Host.Catalog()` | `FindVariant` / `FindVariants` / `FindProduct`; `ProductVisible` (parent row under status scope) + `ProductSlug`; use `extapi.BelongsToProductSlug` in `cart.validate` |
+| **Catalog reads** | `Host.Catalog()` | `FindVariant` / `FindVariants` / `FindProduct`; `ProductVisible` + `ProductSlug`; use `extapi.ClassifyProductSlug` in `cart.validate` (Match / Other / Unknown) |
 | **CartPort** (Needs `CapCart`) | `Host.Cart()` | `AddItem`, `Get`, `EnsureActive`, `EnsureStorefrontCart`, `DiscardEmptyGuestCart`, `DeleteLineExtension`, `UpsertLineExtension`; trusted plugin-only writes via `WithPluginWrite` on the call ctx (Host pins the plugin name) |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |

@@ -264,7 +264,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Failed first guest add left empty cart | `CartPort.DiscardEmptyGuestCart(ctx, w, r, cart.ID)` with Ensure id (clears cookie only if deleted) |
 | Validate design/extensions during AddItem | Effective `CartView` line overlays pending codes; `pending_line` only when AddItem has extensions |
 | Signed-in customer + owner-token on plugin route | Keep `AuthMiddleware` for opaque (non-JWT) owner tokens; JWT-shaped owners still 401 until confirmed; `pluginsdk.CustomerID(r)` |
-| Variant → product slug in hooks | `extapi.BelongsToProductSlug` / `CatalogPort.FindVariants` (fail closed when not visible or blank slug) |
+| Variant → product slug in hooks | `extapi.ClassifyProductSlug` / `FindVariants` — Match validate; Other skip; Unknown fail closed |
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
 
 ---

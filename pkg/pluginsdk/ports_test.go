@@ -220,8 +220,8 @@ func TestCatalogPort_FindVariants_MissingParentEmptySlug(t *testing.T) {
 	if got["v1"] == nil || got["v1"].ProductVisible || got["v1"].ProductSlug != "" {
 		t.Fatalf("missing parent must yield ProductVisible=false, got %+v", got["v1"])
 	}
-	if extapi.BelongsToProductSlug(got["v1"], "shirt") {
-		t.Fatal("missing parent must not belong to slug")
+	if extapi.ClassifyProductSlug(got["v1"], "shirt") != extapi.ProductSlugUnknown {
+		t.Fatal("missing parent must be ProductSlugUnknown")
 	}
 }
 
@@ -239,8 +239,8 @@ func TestCatalogPort_FindVariants_BlankSlugStillVisible(t *testing.T) {
 	if v == nil || !v.ProductVisible || v.ProductSlug != "" {
 		t.Fatalf("blank slug column: want ProductVisible=true empty slug, got %+v", v)
 	}
-	if extapi.BelongsToProductSlug(v, "shirt") {
-		t.Fatal("blank slug must fail closed for BelongsToProductSlug")
+	if extapi.ClassifyProductSlug(v, "shirt") != extapi.ProductSlugUnknown {
+		t.Fatal("blank slug must be ProductSlugUnknown (fail closed)")
 	}
 }
 

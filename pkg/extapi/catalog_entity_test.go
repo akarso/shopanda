@@ -6,25 +6,29 @@ import (
 	"github.com/akarso/shopanda/pkg/extapi"
 )
 
-func TestBelongsToProductSlug(t *testing.T) {
+func TestClassifyProductSlug(t *testing.T) {
 	cases := []struct {
 		name string
 		v    *extapi.CatalogVariant
 		want string
-		ok   bool
+		cls  extapi.ProductSlugClass
 	}{
-		{name: "nil", want: "shirt", ok: false},
-		{name: "not visible empty slug", v: &extapi.CatalogVariant{}, want: "shirt", ok: false},
-		{name: "visible blank slug fail closed", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: ""}, want: "shirt", ok: false},
-		{name: "visible blank want also fail closed", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "  "}, want: "shirt", ok: false},
-		{name: "match", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "shirt"}, want: "shirt", ok: true},
-		{name: "mismatch", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "other"}, want: "shirt", ok: false},
-		{name: "not visible with slug", v: &extapi.CatalogVariant{ProductVisible: false, ProductSlug: "shirt"}, want: "shirt", ok: false},
+		{name: "nil", want: "shirt", cls: extapi.ProductSlugUnknown},
+		{name: "not visible", v: &extapi.CatalogVariant{}, want: "shirt", cls: extapi.ProductSlugUnknown},
+		{name: "visible blank slug", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: ""}, want: "shirt", cls: extapi.ProductSlugUnknown},
+		{name: "visible whitespace slug", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "  "}, want: "shirt", cls: extapi.ProductSlugUnknown},
+		{name: "match", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "shirt"}, want: "shirt", cls: extapi.ProductSlugMatch},
+		{name: "other product", v: &extapi.CatalogVariant{ProductVisible: true, ProductSlug: "other"}, want: "shirt", cls: extapi.ProductSlugOther},
+		{name: "not visible with slug still unknown", v: &extapi.CatalogVariant{ProductVisible: false, ProductSlug: "shirt"}, want: "shirt", cls: extapi.ProductSlugUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := extapi.BelongsToProductSlug(tc.v, tc.want); got != tc.ok {
-				t.Fatalf("BelongsToProductSlug = %v, want %v", got, tc.ok)
+			got := extapi.ClassifyProductSlug(tc.v, tc.want)
+			if got != tc.cls {
+				t.Fatalf("ClassifyProductSlug = %v, want %v", got, tc.cls)
+			}
+			if match := extapi.BelongsToProductSlug(tc.v, tc.want); match != (tc.cls == extapi.ProductSlugMatch) {
+				t.Fatalf("BelongsToProductSlug = %v, want match-only", match)
 			}
 		})
 	}

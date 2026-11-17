@@ -314,13 +314,12 @@ func (p *cartPort) DiscardEmptyGuestCart(ctx context.Context, w http.ResponseWri
 		return nil
 	}
 	discarded, err := p.svc.DiscardEmptyGuestCart(ctx, cartID)
-	if err != nil {
-		return err
-	}
+	// Clear the cookie as soon as the row is gone — even if orphan purge failed —
+	// so Ensure's Set-Cookie is not left pointing at a deleted cart.
 	if discarded && w != nil {
 		storefrontsession.ClearCartCookieSecure(w, storefrontsession.CookieSecure(ctx, r))
 	}
-	return nil
+	return err
 }
 
 func (p *cartPort) DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error {

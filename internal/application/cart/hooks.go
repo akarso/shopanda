@@ -310,11 +310,21 @@ func cloneExtensionValue(v interface{}) interface{} {
 			out[k] = cloneExtensionValue(val)
 		}
 		return out
+	case map[string]string:
+		out := make(map[string]string, len(t))
+		for k, val := range t {
+			out[k] = val
+		}
+		return out
 	case []interface{}:
 		out := make([]interface{}, len(t))
 		for i, val := range t {
 			out[i] = cloneExtensionValue(val)
 		}
+		return out
+	case []string:
+		out := make([]string, len(t))
+		copy(out, t)
 		return out
 	default:
 		return v

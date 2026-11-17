@@ -201,10 +201,11 @@ func (r *CartRepo) DeleteEmptyGuestIfUnchanged(ctx context.Context, cartID strin
 	if cartID == "" {
 		return false, fmt.Errorf("cart_repo: delete empty guest: empty id")
 	}
+	// Guest carts store customer_id as NULL (UUID column — never compare to '').
 	const q = `
 		DELETE FROM carts
 		WHERE id = $1
-		  AND (customer_id IS NULL OR customer_id = '')
+		  AND customer_id IS NULL
 		  AND version = $2
 		  AND NOT EXISTS (SELECT 1 FROM cart_items WHERE cart_id = $1)`
 	res, err := r.db.ExecContext(ctx, q, cartID, expectedVersion)
