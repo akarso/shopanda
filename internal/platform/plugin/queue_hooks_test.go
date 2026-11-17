@@ -159,3 +159,25 @@ func TestApp_WrapRequeueNotify_QueueOnlyStaysQueueOnly(t *testing.T) {
 		t.Fatal("Queue-only wrap must not implement Reader")
 	}
 }
+
+func TestApp_WrapRequeueNotify_ValueWrapperWithFuncDoesNotPanic(t *testing.T) {
+	app := &plugin.App{}
+	inner := &introspectableHookQueue{}
+	type fence struct {
+		*introspectableHookQueue
+		fn func()
+	}
+	wrapped := fence{
+		introspectableHookQueue: inner,
+		fn:                      func() {},
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("WrapRequeueNotify panicked on unhashable queue value: %v", rec)
+		}
+	}()
+	got := app.WrapRequeueNotify(wrapped)
+	if _, ok := got.(jobs.Reader); !ok {
+		t.Fatalf("%T must keep Reader through value fence", got)
+	}
+}

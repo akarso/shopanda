@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,29 @@ func TestNewJobsRuntime_NonPostgresDriverFailsFast(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "queue.driver=postgres") {
 		t.Fatalf("err = %v, want it to name the postgres-only requirement", err)
+	}
+}
+
+// TestNewJobsRuntime_WarehousedemoReachesBind pins CapIntegrationStock
+// wiring before InitAll — without wireIntegrationStockSyncerFromDB,
+// warehousedemo Init fails and jobs:retry|cancel|requeue abort.
+func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+	t.Setenv("DATABASE_URL", dsn)
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "postgres"
+	cfg.Plugins.WarehouseDemo.Enabled = true
+	cfg.Plugins.WarehouseDemo.WarehouseBaseURL = "http://127.0.0.1:9/warehouse"
+	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(io.Discard, "error"))
+	if err != nil {
+		t.Fatalf("newJobsRuntime with warehousedemo: %v", err)
+	}
+	defer rt.conn.Close()
+	if rt.queue == nil || rt.svc == nil {
+		t.Fatal("expected bound queue and jobs service")
 	}
 }
 

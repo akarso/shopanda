@@ -164,3 +164,39 @@ func TestResolveAndBindJobQueue_OnQueueBoundDroppingReaderFailsBind(t *testing.T
 		t.Fatal("expected bind error when OnQueueBound drops Reader")
 	}
 }
+
+// valueFenceWithFunc is returned by value from OnQueueBound and carries a func
+// field (not comparable). Bind/unwrap must not hash it as a map key.
+type valueFenceWithFunc struct {
+	*bindTestIntrospectableQueue
+	fn func()
+}
+
+func (f valueFenceWithFunc) UnwrapQueue() jobs.Queue {
+	return f.bindTestIntrospectableQueue
+}
+
+func TestResolveAndBindJobQueue_ValueFenceWithFuncDoesNotPanic(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	app := &plugin.App{Logger: log, Config: &config.Config{}}
+	registered := &bindTestIntrospectableQueue{bindTestQueue: bindTestQueue{name: "pg"}}
+	app.RegisterQueue(registered)
+	app.OnQueueBound(func(q jobs.Queue) jobs.Queue {
+		inner := q.(*bindTestIntrospectableQueue)
+		return valueFenceWithFunc{bindTestIntrospectableQueue: inner, fn: func() {}}
+	})
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("resolveAndBindJobQueue panicked: %v", rec)
+		}
+	}()
+	got, err := resolveAndBindJobQueue(app, nil, &config.Config{
+		Queue: config.QueueConfig{Driver: "postgres"},
+	})
+	if err != nil {
+		t.Fatalf("resolveAndBindJobQueue: %v", err)
+	}
+	if _, ok := got.(jobs.Reader); !ok {
+		t.Fatalf("%T lost Reader", got)
+	}
+}
