@@ -80,7 +80,8 @@ func (f *fakeInternalQueue) Enqueue(context.Context, domainjobs.Job) error {
 }
 func (f *fakeInternalQueue) Dequeue(context.Context) (*domainjobs.Job, error) { return nil, nil }
 func (f *fakeInternalQueue) Complete(context.Context, string, int) error           { return nil }
-func (f *fakeInternalQueue) Fail(context.Context, string, int, error) error        { return nil }
+func (f *fakeInternalQueue) Fail(context.Context, string, int, error) error { return nil }
+func (f *fakeInternalQueue) Requeue(context.Context, string, int) error { return nil }
 
 func (f *fakeInternalQueue) Count() int {
 	f.mu.Lock()

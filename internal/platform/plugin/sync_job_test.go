@@ -32,7 +32,8 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 }
 func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
 func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error  { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Requeue(context.Context, string, int) error { return nil }
 
 func (q *memQueue) snapshot() []jobs.Job {
 	q.mu.Lock()
@@ -355,6 +356,16 @@ func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {
 	}
 	if err := app.BindQueue(pluginQ); err != nil {
 		t.Fatalf("idempotent re-bind: %v", err)
+	}
+}
+
+func TestApp_BindQueue_AcceptsNotifyWrapper(t *testing.T) {
+	app := &plugin.App{}
+	pluginQ := &memQueue{}
+	app.RegisterQueue(pluginQ)
+	wrapped := app.WrapRequeueNotify(pluginQ)
+	if err := app.BindQueue(wrapped); err != nil {
+		t.Fatalf("BindQueue notify wrap of registered queue: %v", err)
 	}
 }
 
