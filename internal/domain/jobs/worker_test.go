@@ -472,6 +472,11 @@ func TestWorker_FailNotApplied_DoesNotRecordJobFailure(t *testing.T) {
 	if len(m.results) != 1 || m.results[0].outcome != "not_applied" {
 		t.Fatalf("results = %+v, want not_applied", m.results)
 	}
+	for _, e := range log.entries {
+		if e.msg == "worker.job.failed" {
+			t.Fatal("worker.job.failed must not log on Fail CAS miss")
+		}
+	}
 }
 
 func TestWorker_FailsUnknownType_RecordsMetric(t *testing.T) {

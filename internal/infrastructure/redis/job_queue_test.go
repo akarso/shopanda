@@ -11,6 +11,7 @@ import (
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func listContains(t *testing.T, mr *miniredis.Miniredis, key, id string) bool {
@@ -265,6 +266,59 @@ func TestJobQueue_Fail_WrongAttempt_LeavesProcessing(t *testing.T) {
 	}
 	if !listContains(t, mr, "test-queue:processing", got.ID) {
 		t.Fatal("id must remain on processing list after wrong-attempt Fail")
+	}
+}
+
+func removeFromProcessing(t *testing.T, mr *miniredis.Miniredis, id string) {
+	t.Helper()
+	c := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.LRem(context.Background(), "test-queue:processing", 1, id).Err(); err != nil {
+		t.Fatalf("LRem processing: %v", err)
+	}
+}
+
+func TestJobQueue_Fail_NotOnProcessingList_NoWrite(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "orphan", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	// Simulate list/hash divergence: id left processing without Complete/Fail.
+	removeFromProcessing(t, mr, got.ID)
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail without processing claim: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want unchanged processing", doc["status"])
+	}
+	if delayedContains(t, mr, got.ID) {
+		t.Fatal("must not ZADD a second schedule when not on processing list")
+	}
+}
+
+func TestJobQueue_Complete_NotOnProcessingList_NoWrite(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "orphan", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	removeFromProcessing(t, mr, got.ID)
+	if err := q.Complete(ctx, got.ID, got.Attempts); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete without processing claim: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want unchanged processing", doc["status"])
 	}
 }
 
