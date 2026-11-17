@@ -27,7 +27,15 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 	var ownerSaw interface{}
 	var ownerExtCount int
 	var otherExtCount int
+	var pendingOwnerSaw interface{}
+	var pendingOtherCount int
 	_ = hookReg.Register(hooks.HookCartValidate, 100, "acme", func(hctx *hooks.Context) error {
+		if raw, ok := hctx.Get("pending_line"); ok && raw != nil {
+			pending := raw.(*extapi.PendingCartLine)
+			if len(pending.Extensions) > 0 {
+				pendingOwnerSaw = pending.Extensions[0].Value
+			}
+		}
 		raw, _ := hctx.Get("cart")
 		view := raw.(*extapi.CartView)
 		if len(view.Items) != 1 {
@@ -35,13 +43,16 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 		}
 		ownerExtCount = len(view.Items[0].Extensions)
 		if ownerExtCount == 0 {
-			// AddItem runs validate before UpsertBatch — ignore that pass.
 			return nil
 		}
 		ownerSaw = view.Items[0].Extensions[0].Value
 		return nil
 	})
 	_ = hookReg.Register(hooks.HookCartValidate, 200, "other", func(hctx *hooks.Context) error {
+		if raw, ok := hctx.Get("pending_line"); ok && raw != nil {
+			pending := raw.(*extapi.PendingCartLine)
+			pendingOtherCount = len(pending.Extensions)
+		}
 		raw, _ := hctx.Get("cart")
 		view := raw.(*extapi.CartView)
 		if len(view.Items) != 1 {
@@ -65,6 +76,12 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 		Extensions: []domainext.ValueInput{{FieldCode: "acme.design_id", Value: "design-9"}},
 	}); err != nil {
 		t.Fatalf("AddItem: %v", err)
+	}
+	if pendingOwnerSaw != "design-9" {
+		t.Fatalf("owner pending_line = %v, want design-9", pendingOwnerSaw)
+	}
+	if pendingOtherCount != 0 {
+		t.Fatalf("other pending_line extensions = %d, want omitted", pendingOtherCount)
 	}
 
 	got, err := carts.FindByID(ctx, c.ID)

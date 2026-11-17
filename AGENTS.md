@@ -261,8 +261,10 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Public SDK plugin (`pkg/pluginsdk` only) | Register `pluginsdk.Adapt(yours)`; copy [`plugins/extref`](plugins/extref/README.md) |
 | Plugin-only cart field + trusted add | `RegisterField` with `PluginOnlyWrite`, then `WithPluginWrite` + `CartPort.AddItem` (pitfalls in EXTENSION_POINTS) |
 | Session cart from a public route | `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`); keep `cart_id` out of JSON — see `plugins/extref` design-line |
+| Failed first guest add left empty cart | `CartPort.DiscardEmptyGuestCart` (clears cookie) or leave harmless empty cart |
+| Validate design/extensions during AddItem | `pending_line` on `cart.validate` (same plugin-only redaction as `CartView`) |
 | Signed-in customer + owner-token on plugin route | Keep `AuthMiddleware` for opaque (non-JWT) owner tokens; JWT-shaped owners still 401 until confirmed; `pluginsdk.CustomerID(r)` |
-| Variant → product slug in hooks | `CatalogVariant.ProductSlug` / `CatalogPort.FindVariants` |
+| Variant → product slug in hooks | `CatalogVariant.ProductVisible` + `ProductSlug` / `CatalogPort.FindVariants` (fail closed when not visible) |
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
 
 ---

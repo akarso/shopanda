@@ -20,19 +20,12 @@ func addItemBeforeHandler(hctx *extapi.HookContext) error {
 	return nil
 }
 
-// cartValidateDesignHandler blocks cart mutations when a stored line carries
-// an empty design_id (visible only to this registrant on cart.validate).
+// cartValidateDesignHandler blocks cart mutations when a stored or pending
+// line carries an empty design_id (visible only to this registrant).
+// During AddItem, values live on "pending_line" until the extension upsert.
 func cartValidateDesignHandler(hctx *extapi.HookContext) error {
-	raw, ok := hctx.Get("cart")
-	if !ok || raw == nil {
-		return nil
-	}
-	view, ok := raw.(*extapi.CartView)
-	if !ok || view == nil {
-		return nil
-	}
-	for _, line := range view.Items {
-		for _, e := range line.Extensions {
+	check := func(variantID string, exts []extapi.CartLineExtension) {
+		for _, e := range exts {
 			if e.Code != FieldCodeDesignID {
 				continue
 			}
@@ -41,9 +34,21 @@ func cartValidateDesignHandler(hctx *extapi.HookContext) error {
 				hctx.AppendValidationError(extapi.CartValidationIssue{
 					Code:      "extref.design_id_required",
 					Message:   "design_id is required on this line",
-					VariantID: line.VariantID,
+					VariantID: variantID,
 				})
 			}
+		}
+	}
+	if raw, ok := hctx.Get("cart"); ok && raw != nil {
+		if view, ok := raw.(*extapi.CartView); ok && view != nil {
+			for _, line := range view.Items {
+				check(line.VariantID, line.Extensions)
+			}
+		}
+	}
+	if raw, ok := hctx.Get("pending_line"); ok && raw != nil {
+		if pending, ok := raw.(*extapi.PendingCartLine); ok && pending != nil {
+			check(pending.VariantID, pending.Extensions)
 		}
 	}
 	return nil

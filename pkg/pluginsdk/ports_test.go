@@ -128,11 +128,11 @@ func TestCatalogPort_Find(t *testing.T) {
 	if err != nil || v == nil || v.SKU != "SKU-1" {
 		t.Fatalf("FindVariant = %+v, err=%v", v, err)
 	}
-	if v.ProductSlug != "shirt" {
-		t.Fatalf("ProductSlug = %q, want shirt", v.ProductSlug)
+	if !v.ProductVisible || v.ProductSlug != "shirt" {
+		t.Fatalf("ProductVisible/Slug = %v/%q, want true/shirt", v.ProductVisible, v.ProductSlug)
 	}
 	batch, err := port.FindVariants(context.Background(), []string{"v1", "missing"})
-	if err != nil || batch["v1"] == nil || batch["v1"].ProductSlug != "shirt" {
+	if err != nil || batch["v1"] == nil || !batch["v1"].ProductVisible || batch["v1"].ProductSlug != "shirt" {
 		t.Fatalf("FindVariants = %+v, err=%v", batch, err)
 	}
 	if _, ok := batch["missing"]; ok {
@@ -172,8 +172,8 @@ func TestCatalogPort_FindVariants_NilProductsRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["v1"] == nil || got["v1"].ProductSlug != "" {
-		t.Fatalf("want empty ProductSlug with nil products, got %+v", got["v1"])
+	if got["v1"] == nil || got["v1"].ProductVisible || got["v1"].ProductSlug != "" {
+		t.Fatalf("want ProductVisible=false with nil products, got %+v", got["v1"])
 	}
 }
 
@@ -217,8 +217,8 @@ func TestCatalogPort_FindVariants_MissingParentEmptySlug(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["v1"] == nil || got["v1"].ProductSlug != "" {
-		t.Fatalf("missing parent must yield empty slug, got %+v", got["v1"])
+	if got["v1"] == nil || got["v1"].ProductVisible || got["v1"].ProductSlug != "" {
+		t.Fatalf("missing parent must yield ProductVisible=false, got %+v", got["v1"])
 	}
 }
 

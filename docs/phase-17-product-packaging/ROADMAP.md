@@ -136,6 +136,9 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1553 | CartPort session cart + validate extension visibility | done |
 | PR-1554 | Optional customer identity on plugin public routes | done |
 | PR-1555 | CatalogPort ProductSlug + FindVariants | done |
+| PR-1556 | cart.validate `pending_line` on AddItem | done |
+| PR-1557 | CartPort.DiscardEmptyGuestCart | done |
+| PR-1558 | CatalogVariant.ProductVisible | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -178,9 +181,9 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Public route and the guest session cart | Document (or provide a port for) how a plugin `RegisterPublicRoute` handler reaches the storefront session cart without exposing a raw cart id | **done (PR-1553)** — `pkg/storefrontsession` + `CartPort.EnsureStorefrontCart` (keep `cart_id` out of JSON) |
 | Signed-in customer on plugin public routes | `CartPort.EnsureStorefrontCart` handles a signed-in customer, but routes under a prefix that skips customer JWT parsing (Metal Dogs `/api/customizer/*`, owner-token auth) never receive the identity, so the line lands in the guest cart and is not on `/cart` for a logged-in customer. Host should offer an opt-in way to pass the optional customer identity to plugin routes, without making JWT mandatory | **done (PR-1554)** — opaque → session/guest; staff Bearer defers only off admin/auth; failed JWT → 401 |
 | `CatalogPort` is too narrow for hooks | `FindVariant` has `ProductID`, `FindProduct` has `Slug`: "variant belongs to product X" costs 2 queries per cart line on every `cart.validate`. Add `ProductSlug` to the variant read model or a batch lookup | **done (PR-1555)** — `ProductSlug` + `FindVariants` / `Lookup*` (Validation fallback; >100 ids errors) |
-| `cart.validate` inside `AddItem` cannot see the pending line extensions | `AddItem` runs `enforceCartValidation` before the extension upsert, and `CartView` lists stored rows only. `UpsertLineExtension` needs an existing line, so a plugin cannot pre-write either. A plugin that must validate a value being added (Metal Dogs `design_id`) has to smuggle it from `cart.add_item.before` to `cart.validate` (today a goroutine-id keyed map, fragile). Expose the pending values to `cart.validate` for the line being added (e.g. `pending_line`: variant id + extension values, same per-registrant plugin-only redaction as `CartView`) | proposed |
-| `CartPort` cannot discard an empty guest cart | A failed first add after `EnsureStorefrontCart` leaves an empty guest cart and its cookie. Add `DiscardEmptyGuestCart` or document that empty guest carts are harmless and expire | proposed (low) |
-| `CatalogPort` read scope and empty `ProductSlug` | `ProductSlug` is empty when the parent product is outside the current read scope (e.g. unpublished). A plugin that treats empty as "not my product" fails open in `cart.validate`. Document the scope for background contexts, or offer an explicit "product not visible" signal | proposed |
+| `cart.validate` inside `AddItem` cannot see the pending line extensions | `AddItem` runs `enforceCartValidation` before the extension upsert, and `CartView` lists stored rows only. `UpsertLineExtension` needs an existing line, so a plugin cannot pre-write either. A plugin that must validate a value being added (Metal Dogs `design_id`) has to smuggle it from `cart.add_item.before` to `cart.validate` (today a goroutine-id keyed map, fragile). Expose the pending values to `cart.validate` for the line being added (e.g. `pending_line`: variant id + extension values, same per-registrant plugin-only redaction as `CartView`) | **done (PR-1556)** — `pending_line` + owner redaction; `extref` reads it |
+| `CartPort` cannot discard an empty guest cart | A failed first add after `EnsureStorefrontCart` leaves an empty guest cart and its cookie. Add `DiscardEmptyGuestCart` or document that empty guest carts are harmless and expire | **done (PR-1557)** — `CartPort.DiscardEmptyGuestCart` (service already existed); `extref` design-line calls on failed add |
+| `CatalogPort` read scope and empty `ProductSlug` | `ProductSlug` is empty when the parent product is outside the current read scope (e.g. unpublished). A plugin that treats empty as "not my product" fails open in `cart.validate`. Document the scope for background contexts, or offer an explicit "product not visible" signal | **done (PR-1558)** — `ProductVisible` + docs (`WithOperatorProductReadScope`) |
 
 ---
 
@@ -198,5 +201,8 @@ Goal: a plugin author follows a convention and does not need to read the whole c
 | 6 | CartPort session cart + validate extension visibility | **1553** |
 | 7 | Optional customer identity on plugin public routes | **1554** |
 | 8 | CatalogPort ProductSlug + FindVariants | **1555** |
+| 9 | cart.validate `pending_line` on AddItem | **1556** |
+| 10 | CartPort.DiscardEmptyGuestCart | **1557** |
+| 11 | CatalogVariant.ProductVisible | **1558** |
 
-Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547), session cart / owner scoping (1553), owner-token + session identity (1554), catalog slug batch (1555).
+Pitfalls: hook visibility (1548), trusted-write docs (1542/1550), merge/claim docs (1550), atomic Save (1549), CLI/worker ports (1547), session cart / owner scoping (1553), owner-token + session identity (1554), catalog slug batch (1555), pending_line (1556), empty guest discard (1557), ProductVisible (1558).

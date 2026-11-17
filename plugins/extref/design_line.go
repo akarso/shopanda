@@ -114,6 +114,8 @@ func (h *designLineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Extensions: []pluginsdk.CartExtensionValue{{Code: FieldCodeDesignID, Value: req.DesignID}},
 		UpdatedBy:  "plugin:" + PluginName,
 	}); err != nil {
+		// Failed first add can leave an empty guest cart + cookie; discard if unused.
+		_ = port.DiscardEmptyGuestCart(r.Context(), w, r)
 		writeDesignLineErr(w, err)
 		return
 	}

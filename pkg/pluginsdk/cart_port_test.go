@@ -247,6 +247,36 @@ func TestEnsureStorefrontCart_ReplacesNonActiveGuest(t *testing.T) {
 	}
 }
 
+func TestDiscardEmptyGuestCart_ClearsCookie(t *testing.T) {
+	app, svc, _, _, _ := bootCartPortFixture(t)
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := pluginsdk.AsHostFor(app, "acme")
+	h.Require(pluginsdk.CapCart)
+	port, _ := h.Cart()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.AddCookie(&http.Cookie{Name: storefrontsession.CartCookieName, Value: c.ID})
+	if err := port.DiscardEmptyGuestCart(req.Context(), rec, req); err != nil {
+		t.Fatalf("DiscardEmptyGuestCart: %v", err)
+	}
+	got, _ := svc.GetCart(context.Background(), c.ID, "")
+	if got != nil {
+		t.Fatal("empty guest cart should be deleted")
+	}
+	cleared := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == storefrontsession.CartCookieName && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected cleared storefront cart cookie")
+	}
+}
+
 func TestEnsureStorefrontCart_PropagatesGetCartErrors(t *testing.T) {
 	app, _, carts, _, _ := bootCartPortFixture(t)
 	carts.getErr = errors.New("db timeout")

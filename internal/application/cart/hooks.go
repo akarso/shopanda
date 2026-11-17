@@ -207,6 +207,52 @@ func redactCartViewForRegistrant(view *extapi.CartView, registrant string, plugi
 	return filterCartViewExtensions(view, registrant, pluginOnly)
 }
 
+// redactPendingLine copies pending and omits plugin-only extensions the
+// registrant does not own (same rule as CartView line extensions).
+func redactPendingLine(pending *extapi.PendingCartLine, registrant string, pluginOnly pluginOnlyFieldChecker) *extapi.PendingCartLine {
+	if pending == nil {
+		return nil
+	}
+	out := &extapi.PendingCartLine{
+		VariantID: pending.VariantID,
+		Quantity:  pending.Quantity,
+	}
+	if len(pending.Extensions) == 0 {
+		return out
+	}
+	kept := make([]extapi.CartLineExtension, 0, len(pending.Extensions))
+	for _, e := range pending.Extensions {
+		if pluginOnly != nil && pluginOnly.IsPluginOnlyWrite(e.Code) {
+			owner := pluginOnly.FieldOwner(e.Code)
+			if registrant == "" || owner == "" || owner != registrant {
+				continue
+			}
+		}
+		kept = append(kept, e)
+	}
+	out.Extensions = kept
+	return out
+}
+
+func pendingLineFromAdd(variantID string, resultingQty int, inputs []domainext.ValueInput) *extapi.PendingCartLine {
+	pending := &extapi.PendingCartLine{
+		VariantID: variantID,
+		Quantity:  resultingQty,
+	}
+	if len(inputs) == 0 {
+		return pending
+	}
+	exts := make([]extapi.CartLineExtension, 0, len(inputs))
+	for _, in := range inputs {
+		exts = append(exts, extapi.CartLineExtension{
+			Code:  in.FieldCode,
+			Value: in.Value,
+		})
+	}
+	pending.Extensions = exts
+	return pending
+}
+
 func filterCartViewExtensions(view *extapi.CartView, pluginName string, pluginOnly pluginOnlyFieldChecker) *extapi.CartView {
 	if view == nil {
 		return nil

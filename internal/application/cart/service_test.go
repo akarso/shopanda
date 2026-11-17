@@ -323,8 +323,12 @@ func TestService_DiscardEmptyGuestCart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DiscardEmptyGuestCart(ctx, empty.ID); err != nil {
+	discarded, err := svc.DiscardEmptyGuestCart(ctx, empty.ID)
+	if err != nil {
 		t.Fatalf("discard empty: %v", err)
+	}
+	if !discarded {
+		t.Fatal("empty guest cart should report discarded")
 	}
 	if got, _ := carts.FindByID(ctx, empty.ID); got != nil {
 		t.Fatal("empty guest cart should be deleted")
@@ -334,8 +338,12 @@ func TestService_DiscardEmptyGuestCart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DiscardEmptyGuestCart(ctx, customer.ID); err != nil {
+	discarded, err = svc.DiscardEmptyGuestCart(ctx, customer.ID)
+	if err != nil {
 		t.Fatalf("discard customer: %v", err)
+	}
+	if discarded {
+		t.Fatal("customer cart must not report discarded")
 	}
 	if got, _ := carts.FindByID(ctx, customer.ID); got == nil {
 		t.Fatal("customer cart must not be discarded")
@@ -348,8 +356,12 @@ func TestService_DiscardEmptyGuestCart(t *testing.T) {
 	if _, err := svc.AddItem(ctx, filled.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DiscardEmptyGuestCart(ctx, filled.ID); err != nil {
+	discarded, err = svc.DiscardEmptyGuestCart(ctx, filled.ID)
+	if err != nil {
 		t.Fatalf("discard filled: %v", err)
+	}
+	if discarded {
+		t.Fatal("guest cart with items must not report discarded")
 	}
 	if got, _ := carts.FindByID(ctx, filled.ID); got == nil {
 		t.Fatal("guest cart with items must not be discarded")
