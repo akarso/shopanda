@@ -111,6 +111,35 @@ Contract summary: [`PLUGIN_RUNTIME_CONTRACT.md`](PLUGIN_RUNTIME_CONTRACT.md).
 
 Do not assume a blank `docs/` tree is safe if you still run sample govuln/docs-policy jobs.
 
+## Product-owned root files (merge conflicts)
+
+Root files that every product customizes (`README.md`, `AGENTS.md`, `RUNBOOK.md`,
+`PLUGINS.md`, `.gitignore`, product CI workflows, and often `Makefile` overlays)
+conflict on every upstream bump. Prefer Git `merge=ours` for those paths so
+`git merge upstream/…` keeps the product copy without a manual resolve each time.
+
+Example `.gitattributes` in the **product** repo (not required upstream):
+
+```gitattributes
+README.md merge=ours
+AGENTS.md merge=ours
+RUNBOOK.md merge=ours
+PLUGINS.md merge=ours
+.gitignore merge=ours
+Makefile.product merge=ours
+cmd/api/register_products.go merge=ours
+.github/workflows/** merge=ours
+```
+
+Tune the list to match your deviations doc. Engine/core paths should **not** use
+`merge=ours` — take upstream there.
+
+### Makefile.product
+
+The shared root `Makefile` ends with `-include Makefile.product` (missing file
+is a no-op). Put product-only targets in `Makefile.product` and keep them out of
+the shared Makefile so bumps do not fight your custom recipes.
+
 ## Public SDK (later)
 
 A public extension module so products can stop forking for `internal/` access is
