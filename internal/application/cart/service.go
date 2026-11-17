@@ -206,30 +206,37 @@ func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (
 	return &c, nil
 }
 
-// DiscardEmptyGuestCart deletes a guest cart that still has no lines and
-// purges leftover cart_item extension rows for that cart ID. Customer carts
-// and carts with items are left untouched.
-func (s *Service) DiscardEmptyGuestCart(ctx context.Context, cartID string) error {
+// DiscardEmptyGuestCart deletes a guest cart that still has no lines when the
+// conditional delete wins (guest, empty, same version). Customer carts, carts
+// with items, and lost races return discarded=false. Orphan cart_item extension
+// rows are purged only after a successful delete. Callers pass the cart id
+// EnsureStorefrontCart / CreateCart just returned — not an id read only from
+// the request cookie.
+func (s *Service) DiscardEmptyGuestCart(ctx context.Context, cartID string) (discarded bool, err error) {
 	cartID = strings.TrimSpace(cartID)
 	if cartID == "" {
-		return nil
+		return false, nil
 	}
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
-		return fmt.Errorf("cart service: discard empty guest: find: %w", err)
+		return false, fmt.Errorf("cart service: discard empty guest: find: %w", err)
 	}
 	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 {
-		return nil
+		return false, nil
+	}
+	ok, err := s.carts.DeleteEmptyGuestIfUnchanged(ctx, cartID, c.Version)
+	if err != nil {
+		return false, fmt.Errorf("cart service: discard empty guest: delete: %w", err)
+	}
+	if !ok {
+		return false, nil
 	}
 	if s.extensions != nil {
 		if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cartID, nil); err != nil {
-			return fmt.Errorf("cart service: discard empty guest: purge extensions: %w", err)
+			return true, fmt.Errorf("cart service: discard empty guest: purge extensions: %w", err)
 		}
 	}
-	if err := s.carts.Delete(ctx, cartID); err != nil {
-		return fmt.Errorf("cart service: discard empty guest: delete: %w", err)
-	}
-	return nil
+	return true, nil
 }
 
 // GetCart returns a cart by ID when it belongs to customerID.
@@ -997,7 +1004,15 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
-	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+	pendingQty := quantity
+	for _, it := range c.Items {
+		if it.VariantID == variantID {
+			pendingQty = it.Quantity
+			break
+		}
+	}
+	pending := pendingLineFromAdd(variantID, pendingQty, opts.Extensions)
+	if err := s.enforceCartValidation(ctx, cartID, c, pending); err != nil {
 		return nil, err
 	}
 
@@ -1142,7 +1157,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		return nil, err
 	}
 
-	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+	if err := s.enforceCartValidation(ctx, cartID, c, nil); err != nil {
 		return nil, err
 	}
 
@@ -1191,7 +1206,7 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		return nil, err
 	}
 
-	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+	if err := s.enforceCartValidation(ctx, cartID, c, nil); err != nil {
 		return nil, err
 	}
 
@@ -1713,7 +1728,7 @@ func (s *Service) ApplyCoupon(ctx context.Context, cartID, customerID, code stri
 		return nil, err
 	}
 
-	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+	if err := s.enforceCartValidation(ctx, cartID, c, nil); err != nil {
 		return nil, err
 	}
 
@@ -1755,7 +1770,7 @@ func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (
 		return nil, err
 	}
 
-	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+	if err := s.enforceCartValidation(ctx, cartID, c, nil); err != nil {
 		return nil, err
 	}
 

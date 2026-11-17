@@ -325,7 +325,7 @@ func TestService_DiscardEmptyGuestCart_PurgesOrphanExtensions(t *testing.T) {
 		t.Fatal("expected orphan extension row")
 	}
 
-	if err := svc.DiscardEmptyGuestCart(ctx, c.ID); err != nil {
+	if _, err := svc.DiscardEmptyGuestCart(ctx, c.ID); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
 	if got, _ := carts.FindByID(ctx, c.ID); got != nil {

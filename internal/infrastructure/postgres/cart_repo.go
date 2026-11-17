@@ -195,6 +195,30 @@ func (r *CartRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteEmptyGuestIfUnchanged deletes a guest cart only when it still has no
+// items and the optimistic-lock version matches (single conditional write).
+func (r *CartRepo) DeleteEmptyGuestIfUnchanged(ctx context.Context, cartID string, expectedVersion int) (bool, error) {
+	if cartID == "" {
+		return false, fmt.Errorf("cart_repo: delete empty guest: empty id")
+	}
+	// Guest carts store customer_id as NULL (UUID column — never compare to '').
+	const q = `
+		DELETE FROM carts
+		WHERE id = $1
+		  AND customer_id IS NULL
+		  AND version = $2
+		  AND NOT EXISTS (SELECT 1 FROM cart_items WHERE cart_id = $1)`
+	res, err := r.db.ExecContext(ctx, q, cartID, expectedVersion)
+	if err != nil {
+		return false, fmt.Errorf("cart_repo: delete empty guest: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cart_repo: delete empty guest: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 // FindRecoveryCandidates returns active customer carts with items that are stale and unemailed.
 func (r *CartRepo) FindRecoveryCandidates(ctx context.Context, staleBefore time.Time, limit int) ([]*cart.Cart, error) {
 	if limit <= 0 {

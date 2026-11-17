@@ -41,6 +41,14 @@ type CartPort interface {
 	// Other GetCart errors propagate without rewriting the cookie.
 	// Blank currency uses store.FromContext then "EUR" (same as storefront).
 	EnsureStorefrontCart(ctx context.Context, w http.ResponseWriter, r *http.Request, currency string) (*extapi.CartView, error)
+	// DiscardEmptyGuestCart deletes cartID when it is still an empty guest cart
+	// (conditional delete) and clears the storefront cookie only when that row
+	// was removed. Pass the id returned by EnsureStorefrontCart / CreateCart —
+	// not CartIDFromRequest alone (Ensure writes Set-Cookie on the response;
+	// the request cookie is unchanged). No-op when the cart is signed-in,
+	// missing, has lines, or another request won the race. Prefer calling
+	// only when the Ensure snapshot was empty (failed first add).
+	DiscardEmptyGuestCart(ctx context.Context, w http.ResponseWriter, r *http.Request, cartID string) error
 	// DeleteLineExtension removes one stored value on a line. Plugin-only
 	// fields require WithPluginWrite on ctx; scoped Hosts may only delete
 	// fields they own.
