@@ -359,6 +359,16 @@ func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {
 	}
 }
 
+func TestApp_BindQueue_AcceptsNotifyWrapper(t *testing.T) {
+	app := &plugin.App{}
+	pluginQ := &memQueue{}
+	app.RegisterQueue(pluginQ)
+	wrapped := app.WrapRequeueNotify(pluginQ)
+	if err := app.BindQueue(wrapped); err != nil {
+		t.Fatalf("BindQueue notify wrap of registered queue: %v", err)
+	}
+}
+
 func TestApp_BindQueue_NilGuards(t *testing.T) {
 	if err := (*plugin.App)(nil).BindQueue(&memQueue{}); err == nil {
 		t.Fatal("expected nil app error")

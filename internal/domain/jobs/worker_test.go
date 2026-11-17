@@ -345,11 +345,21 @@ func TestWorker_CompleteNotApplied_DoesNotRecordSuccess(t *testing.T) {
 	}
 	metrics.mu.Lock()
 	defer metrics.mu.Unlock()
-	if len(metrics.results) != 1 || metrics.results[0].outcome != "failed" {
-		t.Fatalf("metrics = %+v, want failed (not success)", metrics.results)
+	if len(metrics.results) != 1 || metrics.results[0].outcome != "not_applied" {
+		t.Fatalf("metrics = %+v, want not_applied (not success/failed)", metrics.results)
 	}
-	if len(metrics.failures) != 1 {
-		t.Fatalf("failures = %v", metrics.failures)
+	if len(metrics.failures) != 0 {
+		t.Fatalf("failures = %v, want none for CAS miss", metrics.failures)
+	}
+	found := false
+	for _, e := range log.entries {
+		if e.msg == "worker.job.complete_not_applied" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected worker.job.complete_not_applied log")
 	}
 }
 
