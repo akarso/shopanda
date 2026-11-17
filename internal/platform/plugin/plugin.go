@@ -72,6 +72,8 @@ type App struct {
 	cache            cache.Cache
 	queue            jobs.Queue // plugin-registered backend (RegisterQueue)
 	boundQueue       jobs.Queue // composition-root bind for Integration.Enqueue
+	queueBoundHooks  []QueueBoundHook
+	requeuedHooks    []RequeuedHook
 	paymentRegistry  *payment.ProviderRegistry
 	shippingRegistry *shipping.ProviderRegistry
 	mediaStorage     media.Storage // plugin-registered backend (RegisterMediaStorage)
