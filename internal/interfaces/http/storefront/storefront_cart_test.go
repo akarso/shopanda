@@ -91,6 +91,21 @@ func (r *storefrontCartRepoStub) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *storefrontCartRepoStub) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+
 func (r *storefrontCartRepoStub) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
 	return nil, nil
 }
@@ -1078,6 +1093,20 @@ func (r *failDeleteCartRepo) Delete(_ context.Context, _ string) error {
 		return r.err
 	}
 	return fmt.Errorf("delete failed")
+}
+
+func (r *failDeleteCartRepo) DeleteEmptyGuestIfUnchanged(ctx context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(ctx, cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(ctx, cartID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func TestStorefrontHandler_JSONCartAdd_DiscardDeleteFailureLogs(t *testing.T) {

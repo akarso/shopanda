@@ -21,6 +21,10 @@ type CartRepository interface {
 	// Delete removes a cart and its items by ID.
 	Delete(ctx context.Context, id string) error
 
+	// DeleteEmptyGuestIfUnchanged removes cartID only when it is still guest-owned,
+	// has no items, and version matches. Returns true when a row was deleted.
+	DeleteEmptyGuestIfUnchanged(ctx context.Context, cartID string, expectedVersion int) (bool, error)
+
 	// FindRecoveryCandidates returns active customer carts with items stale since staleBefore
 	// that have not yet received a recovery email. Only carts whose customer is active with
 	// a non-empty email are returned.

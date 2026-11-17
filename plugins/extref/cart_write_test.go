@@ -188,6 +188,21 @@ func (r *memCartRepo) Delete(_ context.Context, id string) error {
 	delete(r.carts, id)
 	return nil
 }
+
+func (r *memCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *memCartRepo) FindRecoveryCandidates(context.Context, time.Time, int) ([]*domainCart.Cart, error) {
 	return nil, nil
 }

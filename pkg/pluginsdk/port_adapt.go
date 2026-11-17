@@ -81,11 +81,12 @@ func (p *catalogPort) FindVariants(ctx context.Context, ids []string) (map[strin
 			Name:      v.Name,
 		}
 		if prod := products[v.ProductID]; prod != nil {
+			cv.ProductVisible = true
 			cv.ProductSlug = prod.Slug
 		}
-		// Empty ProductSlug with nil error: parent missing, non-active under
-		// storefront read scope, empty slug column, or products repo nil.
-		// Hooks must treat empty as fail-closed for "belongs to slug X", not skip.
+		// !ProductVisible: parent missing, non-active / visibility-gated under
+		// storefront read scope, or products repo nil. Hooks must not treat
+		// empty ProductSlug alone as "not my product" (fail-open).
 		out[reqID] = cv
 	}
 	return out, nil
@@ -175,6 +176,7 @@ type cartService interface {
 	GetCart(ctx context.Context, cartID, customerID string) (*domaincart.Cart, error)
 	CreateCart(ctx context.Context, customerID, currency string) (*domaincart.Cart, error)
 	EnsureActiveCart(ctx context.Context, customerID, currency string) (*domaincart.Cart, error)
+	DiscardEmptyGuestCart(ctx context.Context, cartID string) (discarded bool, err error)
 	CartView(ctx context.Context, c *domaincart.Cart) (*extapi.CartView, error)
 	FilterCartViewForPlugin(view *extapi.CartView, pluginName string) *extapi.CartView
 	DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error
@@ -301,6 +303,23 @@ func (p *cartPort) EnsureStorefrontCart(ctx context.Context, w http.ResponseWrit
 	}
 	storefrontsession.SetCartCookieSecure(w, c.ID, storefrontsession.CookieSecure(ctx, r))
 	return p.viewFor(ctx, c)
+}
+
+func (p *cartPort) DiscardEmptyGuestCart(ctx context.Context, w http.ResponseWriter, r *http.Request, cartID string) error {
+	if p == nil || p.svc == nil {
+		return fmt.Errorf("pluginsdk: cart port: not configured")
+	}
+	cartID = strings.TrimSpace(cartID)
+	if cartID == "" {
+		return nil
+	}
+	discarded, err := p.svc.DiscardEmptyGuestCart(ctx, cartID)
+	// Clear the cookie as soon as the row is gone — even if orphan purge failed —
+	// so Ensure's Set-Cookie is not left pointing at a deleted cart.
+	if discarded && w != nil {
+		storefrontsession.ClearCartCookieSecure(w, storefrontsession.CookieSecure(ctx, r))
+	}
+	return err
 }
 
 func (p *cartPort) DeleteLineExtension(ctx context.Context, cartID, customerID, variantID, fieldCode string) error {

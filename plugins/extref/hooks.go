@@ -20,8 +20,9 @@ func addItemBeforeHandler(hctx *extapi.HookContext) error {
 	return nil
 }
 
-// cartValidateDesignHandler blocks cart mutations when a stored line carries
-// an empty design_id (visible only to this registrant on cart.validate).
+// cartValidateDesignHandler blocks cart mutations when the effective line
+// (stored extensions with pending AddItem codes overlaid) carries an empty
+// design_id. Visible only to this registrant after plugin-only redaction.
 func cartValidateDesignHandler(hctx *extapi.HookContext) error {
 	raw, ok := hctx.Get("cart")
 	if !ok || raw == nil {
@@ -36,8 +37,8 @@ func cartValidateDesignHandler(hctx *extapi.HookContext) error {
 			if e.Code != FieldCodeDesignID {
 				continue
 			}
-			s, _ := e.Value.(string)
-			if strings.TrimSpace(s) == "" {
+			s, isStr := e.Value.(string)
+			if !isStr || strings.TrimSpace(s) == "" {
 				hctx.AppendValidationError(extapi.CartValidationIssue{
 					Code:      "extref.design_id_required",
 					Message:   "design_id is required on this line",

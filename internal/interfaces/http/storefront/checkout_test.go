@@ -67,6 +67,20 @@ func (r *stubCheckoutCartRepo) Delete(_ context.Context, cid string) error {
 	return nil
 }
 
+func (r *stubCheckoutCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
+	c, err := r.FindByID(context.Background(), cartID)
+	if err != nil {
+		return false, err
+	}
+	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+		return false, nil
+	}
+	if err := r.Delete(context.Background(), cartID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *stubCheckoutCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*cart.Cart, error) {
 	return nil, nil
 }

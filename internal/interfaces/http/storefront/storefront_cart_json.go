@@ -228,7 +228,7 @@ func (h *StorefrontHandler) discardUnusedGuestCart(r *http.Request, created bool
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), storefrontGuestCartDiscardTimeout)
 	defer cancel()
-	if err := h.carts.DiscardEmptyGuestCart(ctx, currentCart.ID); err != nil {
+	if _, err := h.carts.DiscardEmptyGuestCart(ctx, currentCart.ID); err != nil {
 		h.logStorefrontCartError("storefront.cart.json.add.discard_failed", err, r, map[string]interface{}{
 			"cart_id": currentCart.ID,
 		})
