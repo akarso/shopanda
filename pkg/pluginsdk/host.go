@@ -35,7 +35,7 @@ type Host interface {
 	// RegisterMailSender replaces the core mail delivery port.
 	RegisterMailSender(sender extapi.MailSender)
 
-	RegisterPublicRoute(pattern string, handler http.Handler) error
+	RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error
 	RegisterAdminRoute(pattern string, permission string, handler http.Handler) error
 	RegisterPermission(permission string, roles ...string) error
 
@@ -67,6 +67,9 @@ type Host interface {
 
 	Cart() (CartPort, bool)
 	Catalog() (CatalogPort, bool)
+	// CatalogSeed returns the catalog seed/write port when CapCatalogSeed is
+	// declared and bound. Distinct from read-only Catalog().
+	CatalogSeed() (CatalogSeedPort, bool)
 	Orders() (OrderPort, bool)
 	Customers() (CustomerPort, bool)
 

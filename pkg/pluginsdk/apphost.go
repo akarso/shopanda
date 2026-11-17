@@ -23,9 +23,9 @@ import (
 // direct-call unit tests that construct a Host without going through Adapt.
 // Because no plugin name is attached, ConfigValue sees the full config (same
 // as before PR-1546 review) and the service-port getters
-// (Catalog/Orders/Customers/BootstrapDB) are not gated by a declared Need —
-// prefer AsHostFor for anything that should be scoped to one plugin's config
-// namespace and declared capabilities.
+// (Catalog/CatalogSeed/Orders/Customers/BootstrapDB) are not gated by a
+// declared Need — prefer AsHostFor for anything that should be scoped to one
+// plugin's config namespace and declared capabilities.
 func AsHost(app *plugin.App) Host {
 	if app == nil {
 		panic("pluginsdk: AsHost: app must not be nil")
@@ -35,10 +35,11 @@ func AsHost(app *plugin.App) Host {
 
 // AsHostFor wraps *plugin.App as a Host scoped to pluginName: ConfigValue
 // only sees that plugin's own `plugins.<slug>.*` config namespace (see
-// configSlug), and Catalog/Orders/Customers/Cart/BootstrapDB getters return
-// ok=false unless pluginName declared the matching capability. Used by
-// Adapt so every real plugin Init goes through a scoped Host. AsHost stays
-// available for tests that construct a Host directly (unscoped).
+// configSlug), and Catalog/CatalogSeed/Orders/Customers/Cart/BootstrapDB
+// getters return ok=false unless pluginName declared the matching
+// capability. Used by Adapt so every real plugin Init goes through a scoped
+// Host. AsHost stays available for tests that construct a Host directly
+// (unscoped).
 func AsHostFor(app *plugin.App, pluginName string) Host {
 	if app == nil {
 		panic("pluginsdk: AsHostFor: app must not be nil")
@@ -153,8 +154,8 @@ func (h *appHost) Slots(registrant string) SlotsAPI {
 	return h.app.Slots(registrant)
 }
 
-func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler) error {
-	return h.app.RegisterPublicRoute(pattern, handler)
+func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error {
+	return h.app.RegisterPublicRoute(pattern, handler, toCorePublicRouteOpts(opts)...)
 }
 
 func (h *appHost) RegisterAdminRoute(pattern string, permission string, handler http.Handler) error {
@@ -256,6 +257,18 @@ func (h *appHost) Catalog() (CatalogPort, bool) {
 		return nil, false
 	}
 	cp, ok := p.(CatalogPort)
+	return cp, ok
+}
+
+func (h *appHost) CatalogSeed() (CatalogSeedPort, bool) {
+	if !h.declaredOrUnscoped(plugin.CapCatalogSeed) {
+		return nil, false
+	}
+	p, ok := h.app.CatalogSeedPort()
+	if !ok {
+		return nil, false
+	}
+	cp, ok := p.(CatalogSeedPort)
 	return cp, ok
 }
 

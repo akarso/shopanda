@@ -13,6 +13,7 @@ type Capability string
 const (
 	CapCart                Capability = "cart"
 	CapCatalog             Capability = "catalog"
+	CapCatalogSeed         Capability = "catalog.seed"
 	CapOrders              Capability = "orders"
 	CapCustomers           Capability = "customers"
 	CapDB                  Capability = "db"
@@ -29,10 +30,11 @@ type NeedsDeclarer interface {
 type servicePorts struct {
 	mu sync.RWMutex
 
-	catalog   any
-	orders    any
-	cart      any
-	customers any
+	catalog     any
+	catalogSeed any
+	orders      any
+	cart        any
+	customers   any
 
 	required    map[Capability]struct{}
 	satisfied   map[Capability]struct{}
@@ -145,6 +147,27 @@ func (a *App) BindCatalogPort(port any) error {
 	return nil
 }
 
+// BindCatalogSeedPort wires the Host-visible catalog seed/write port
+// (pkg/pluginsdk.CatalogSeedPort). Satisfies CapCatalogSeed only — does not
+// widen CapCatalog.
+func (a *App) BindCatalogSeedPort(port any) error {
+	if a == nil {
+		return fmt.Errorf("plugin: BindCatalogSeedPort: app is nil")
+	}
+	if port == nil {
+		return fmt.Errorf("plugin: BindCatalogSeedPort: port must not be nil")
+	}
+	st := a.portsState()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.catalogSeed != nil {
+		return fmt.Errorf("plugin: BindCatalogSeedPort: already bound")
+	}
+	st.catalogSeed = port
+	st.satisfied[CapCatalogSeed] = struct{}{}
+	return nil
+}
+
 // BindOrdersPort wires the Host-visible order read port.
 func (a *App) BindOrdersPort(port any) error {
 	if a == nil {
@@ -228,6 +251,20 @@ func (a *App) CatalogPort() (any, bool) {
 		return nil, false
 	}
 	return st.catalog, true
+}
+
+// CatalogSeedPort returns the bound catalog seed port, if any.
+func (a *App) CatalogSeedPort() (any, bool) {
+	if a == nil {
+		return nil, false
+	}
+	st := a.portsState()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.catalogSeed == nil {
+		return nil, false
+	}
+	return st.catalogSeed, true
 }
 
 // OrdersPort returns the bound order port, if any.

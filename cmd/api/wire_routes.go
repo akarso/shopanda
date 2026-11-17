@@ -23,6 +23,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/plugin"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
@@ -49,7 +50,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.CSRFMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.StoreMiddleware(rt.repos.storeRepo, log))
 	router.Use(shophttp.LanguageMiddleware())
-	router.Use(shophttp.CacheControlMiddleware([]string{
+	noCachePrefixes := []string{
 		"/setup",
 		"/fragments",
 		"/storefront",
@@ -61,7 +62,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		"/api/v1/auth",
 		"/api/v1/shipping",
 		"/api/v1/admin",
-	}))
+	}
+	noCachePrefixes = append(noCachePrefixes, plugin.NoCachePathPrefixes(rt.pluginApp.PublicRoutes())...)
+	router.Use(shophttp.CacheControlMiddleware(noCachePrefixes))
 
 	// Routes. /healthz and /readyz are mounted outside this stack (see MountProbes below)
 	// so StoreMiddleware / auth / rate-limit cannot hang probes on a dead DB.

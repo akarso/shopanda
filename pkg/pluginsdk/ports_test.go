@@ -263,3 +263,96 @@ func TestOrdersPort_FindByID(t *testing.T) {
 	}
 	_ = extapi.OrderView{} // compile-time anchor for extapi shape
 }
+
+func TestCatalogSeedPort_EnsureProductValidation(t *testing.T) {
+	port := pluginsdk.NewCatalogSeedPort(stubProducts{}, stubVariants{}, nil, nil, nil, nil)
+	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{Name: "X"}); err == nil {
+		t.Fatal("expected empty slug error")
+	}
+}
+
+type seedProducts struct {
+	stubProducts
+	bySlug map[string]*catalog.Product
+	created []*catalog.Product
+}
+
+func (s *seedProducts) FindBySlug(_ context.Context, slug string) (*catalog.Product, error) {
+	if s.bySlug == nil {
+		return nil, nil
+	}
+	return s.bySlug[slug], nil
+}
+func (s *seedProducts) Create(_ context.Context, p *catalog.Product) error {
+	s.created = append(s.created, p)
+	if s.bySlug == nil {
+		s.bySlug = map[string]*catalog.Product{}
+	}
+	s.bySlug[p.Slug] = p
+	return nil
+}
+
+func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
+	products := &seedProducts{bySlug: map[string]*catalog.Product{
+		"tee": {ID: "p-existing", Slug: "tee", Name: "Tee"},
+	}}
+	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee",
+	})
+	if err != nil || created || id != "p-existing" {
+		t.Fatalf("existing: id=%q created=%v err=%v", id, created, err)
+	}
+
+	products2 := &seedProducts{}
+	port2 := pluginsdk.NewCatalogSeedPort(products2, stubVariants{}, nil, nil, nil, nil)
+	id2, created2, err := port2.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Hoodie", Slug: "hoodie", Description: "warm",
+	})
+	if err != nil || !created2 || id2 == "" {
+		t.Fatalf("create: id=%q created=%v err=%v", id2, created2, err)
+	}
+	if len(products2.created) != 1 || products2.created[0].Slug != "hoodie" {
+		t.Fatalf("created = %#v", products2.created)
+	}
+}
+
+type seedVariants struct {
+	stubVariants
+	bySKU   map[string]*catalog.Variant
+	created []*catalog.Variant
+}
+
+func (s *seedVariants) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
+	if s.bySKU == nil {
+		return nil, nil
+	}
+	return s.bySKU[sku], nil
+}
+func (s *seedVariants) Create(_ context.Context, v *catalog.Variant) error {
+	s.created = append(s.created, v)
+	if s.bySKU == nil {
+		s.bySKU = map[string]*catalog.Variant{}
+	}
+	s.bySKU[v.SKU] = v
+	return nil
+}
+
+func TestCatalogSeedPort_Import_ResolvesSlugs(t *testing.T) {
+	products := &seedProducts{}
+	variants := &seedVariants{}
+	port := pluginsdk.NewCatalogSeedPort(products, variants, nil, nil, nil, nil)
+	res, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Products: []pluginsdk.CatalogProductSeed{{Name: "Tee", Slug: "tee"}},
+		Variants: []pluginsdk.CatalogVariantSeed{{ProductSlug: "tee", SKU: "TEE-1", Name: "Tee"}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if res.ProductIDs["tee"] == "" || res.VariantIDs["TEE-1"] == "" {
+		t.Fatalf("result = %#v", res)
+	}
+	if len(variants.created) != 1 || variants.created[0].ProductID != res.ProductIDs["tee"] {
+		t.Fatalf("variant = %#v", variants.created)
+	}
+}

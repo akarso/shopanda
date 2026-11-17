@@ -8,11 +8,13 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/tax"
@@ -23,12 +25,15 @@ import (
 // Domain repositories are injected by the composition root so plugins do not
 // import internal/infrastructure adapters.
 type Bootstrap struct {
-	DB        *sql.DB
-	Customers customer.CustomerRepository
-	Variants  catalog.VariantRepository
-	Products  catalog.ProductRepository
-	Orders    order.OrderRepository
-	Carts     cart.CartRepository
+	DB           *sql.DB
+	Customers    customer.CustomerRepository
+	Variants     catalog.VariantRepository
+	Products     catalog.ProductRepository
+	Prices       pricing.PriceRepository
+	PriceHistory pricing.PriceHistoryRepository
+	Stock        inventory.StockRepository
+	Orders       order.OrderRepository
+	Carts        cart.CartRepository
 }
 
 // RegisterSearchProvider registers the active search backend implementation.
@@ -216,6 +221,17 @@ func (a *App) Queue() (jobs.Queue, bool) {
 		return nil, false
 	}
 	return a.queue, true
+}
+
+// BoundQueue returns the composition-root job queue after BindQueue. It does
+// not fall back to RegisterQueue — same fail-closed shape as
+// BoundMediaStorage and Integration.Enqueue — so health/read paths that need
+// the enqueue instance do not silently use a different queue than the worker.
+func (a *App) BoundQueue() (jobs.Queue, bool) {
+	if a == nil || a.boundQueue == nil {
+		return nil, false
+	}
+	return a.boundQueue, true
 }
 
 // PaymentRegistry returns the registered payment providers, if any.

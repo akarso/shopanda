@@ -36,12 +36,27 @@ func newPluginBootstrap(conn *sql.DB) (*plugin.Bootstrap, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plugin bootstrap: carts: %w", err)
 	}
+	prices, err := postgres.NewPriceRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("plugin bootstrap: prices: %w", err)
+	}
+	priceHistory, err := postgres.NewPriceHistoryRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("plugin bootstrap: price history: %w", err)
+	}
+	stock, err := postgres.NewStockRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("plugin bootstrap: stock: %w", err)
+	}
 	return &plugin.Bootstrap{
-		DB:        conn,
-		Customers: customers,
-		Variants:  variants,
-		Products:  products,
-		Orders:    orders,
-		Carts:     carts,
+		DB:           conn,
+		Customers:    customers,
+		Variants:     variants,
+		Products:     products,
+		Prices:       prices,
+		PriceHistory: priceHistory,
+		Stock:        stock,
+		Orders:       orders,
+		Carts:        carts,
 	}, nil
 }

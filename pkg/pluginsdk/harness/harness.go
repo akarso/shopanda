@@ -45,7 +45,7 @@ func AdaptInit(p pluginsdk.Plugin, opts Options) (Result, error) {
 			} else {
 				app.MarkCapabilitySatisfied(cap)
 			}
-		case pluginsdk.CapCatalog, pluginsdk.CapOrders, pluginsdk.CapDB:
+		case pluginsdk.CapCatalog, pluginsdk.CapCatalogSeed, pluginsdk.CapOrders, pluginsdk.CapDB:
 			app.MarkCapabilitySatisfied(cap)
 		default:
 			app.MarkCapabilitySatisfied(cap)
