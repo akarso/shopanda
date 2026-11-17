@@ -107,13 +107,13 @@ func skipNotifyWrapper(q jobs.Queue) (jobs.Queue, bool) {
 	}
 }
 
+// maxQueueUnwrapDepth bounds wrap-chain walks. Do not use map[jobs.Queue]:
+// a value wrapper that holds a func/slice/map is not comparable and panics
+// on map insert (serve/worker/jobs:* bind crash).
+const maxQueueUnwrapDepth = 32
+
 func resolveReader(q jobs.Queue) jobs.Reader {
-	seen := map[jobs.Queue]struct{}{}
-	for q != nil {
-		if _, ok := seen[q]; ok {
-			return nil
-		}
-		seen[q] = struct{}{}
+	for depth := 0; q != nil && depth < maxQueueUnwrapDepth; depth++ {
 		if next, ok := skipNotifyWrapper(q); ok {
 			q = next
 			continue
@@ -125,18 +125,17 @@ func resolveReader(q jobs.Queue) jobs.Reader {
 		if !ok {
 			return nil
 		}
-		q = u.UnwrapQueue()
+		next := u.UnwrapQueue()
+		if next == nil || next == q {
+			return nil
+		}
+		q = next
 	}
 	return nil
 }
 
 func resolveAdmin(q jobs.Queue) jobs.Admin {
-	seen := map[jobs.Queue]struct{}{}
-	for q != nil {
-		if _, ok := seen[q]; ok {
-			return nil
-		}
-		seen[q] = struct{}{}
+	for depth := 0; q != nil && depth < maxQueueUnwrapDepth; depth++ {
 		if next, ok := skipNotifyWrapper(q); ok {
 			q = next
 			continue
@@ -148,7 +147,11 @@ func resolveAdmin(q jobs.Queue) jobs.Admin {
 		if !ok {
 			return nil
 		}
-		q = u.UnwrapQueue()
+		next := u.UnwrapQueue()
+		if next == nil || next == q {
+			return nil
+		}
+		q = next
 	}
 	return nil
 }

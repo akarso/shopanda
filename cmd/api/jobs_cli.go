@@ -103,6 +103,12 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		PluginMigrateMode: plugin.PluginMigrateVerify,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	// Same pre-InitAll wiring as serve / worker / schedule:run — plugins that
+	// Require(CapIntegrationStock) (e.g. warehousedemo) fail Init on a nil syncer.
+	if _, err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if err := bindProductPorts(pluginApp, boot); err != nil {
 		conn.Close()
 		return nil, err

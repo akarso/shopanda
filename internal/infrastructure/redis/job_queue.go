@@ -51,9 +51,10 @@ local function on_processing(list_key, id)
 end
 `
 
-// completeJobLua atomically checks attempt + processing membership, encodes,
-// then SET and LREM. Returns 1 ok, 0 not applied, -1 missing key.
-// KEYS: job, processing. ARGV: attempt, id, updated_at RFC3339, ttl_ms (0=persist).
+// completeJobLua CAS-checks attempt/status (decode only), then SETs a
+// Go-marshaled blob. Never cjson.encode — Redis cjson turns empty JSON
+// arrays into objects, which poisons payloads like product_ids:[].
+// KEYS: job, processing. ARGV: attempt, id, encoded_json, ttl_ms (0=persist).
 const completeJobLua = processingMemberCheck + `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return -1 end
@@ -61,27 +62,22 @@ local job = cjson.decode(raw)
 if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
   return 0
 end
-job['status'] = 'done'
-job['updated_at'] = ARGV[3]
-local encoded = cjson.encode(job)
 if not on_processing(KEYS[2], ARGV[2]) then
   return 0
 end
 local ttl = tonumber(ARGV[4])
 if ttl > 0 then
-  redis.call('SET', KEYS[1], encoded, 'PX', ttl)
+  redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
 else
-  redis.call('SET', KEYS[1], encoded)
+  redis.call('SET', KEYS[1], ARGV[3])
 end
 redis.call('LREM', KEYS[2], 1, ARGV[2])
 return 1
 `
 
-// failJobLua checks attempt + processing claim, encodes, then SET (+ ZADD)
-// before LREM. Zero membership → not-applied with no write. Returns 1 ok,
-// 0 not applied, -1 missing.
-// KEYS: job, processing, delayed. ARGV: attempt, id, updated_at, last_error,
-// terminal (1=failed/0=retry), run_at RFC3339, run_at_ms, ttl_ms.
+// failJobLua CAS-checks then SETs a Go-marshaled blob (+ ZADD on retry).
+// Never cjson.encode (empty-array corruption). KEYS: job, processing,
+// delayed. ARGV: attempt, id, encoded_json, terminal (1/0), run_at_ms, ttl_ms.
 const failJobLua = processingMemberCheck + `
 local raw = redis.call('GET', KEYS[1])
 if not raw then return -1 end
@@ -89,32 +85,19 @@ local job = cjson.decode(raw)
 if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
   return 0
 end
-job['updated_at'] = ARGV[3]
-if ARGV[4] ~= '' then
-  job['last_error'] = ARGV[4]
-end
-local ttl = tonumber(ARGV[8])
-local encoded
-if tonumber(ARGV[5]) == 1 then
-  job['status'] = 'failed'
-  encoded = cjson.encode(job)
-else
-  job['status'] = 'pending'
-  job['run_at'] = ARGV[6]
-  encoded = cjson.encode(job)
-end
 if not on_processing(KEYS[2], ARGV[2]) then
   return 0
 end
-if tonumber(ARGV[5]) == 1 then
+local ttl = tonumber(ARGV[6])
+if tonumber(ARGV[4]) == 1 then
   if ttl > 0 then
-    redis.call('SET', KEYS[1], encoded, 'PX', ttl)
+    redis.call('SET', KEYS[1], ARGV[3], 'PX', ttl)
   else
-    redis.call('SET', KEYS[1], encoded)
+    redis.call('SET', KEYS[1], ARGV[3])
   end
 else
-  redis.call('SET', KEYS[1], encoded)
-  redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
+  redis.call('SET', KEYS[1], ARGV[3])
+  redis.call('ZADD', KEYS[3], tonumber(ARGV[5]), ARGV[2])
 end
 redis.call('LREM', KEYS[2], 1, ARGV[2])
 return 1
@@ -331,10 +314,26 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 
 // Complete marks a job as done for the matching attempt.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
+	stored, err := q.loadJob(ctx, id)
+	if err != nil {
+		if errors.Is(err, errJobNotFound) {
+			return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+		}
+		return err
+	}
+	if stored.Status != jobs.StatusProcessing || stored.Attempts != attempt {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+	}
+	stored.Status = jobs.StatusDone
+	stored.UpdatedAt = time.Now().UTC()
+	blob, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("job_queue: complete marshal %q: %w", id, err)
+	}
 	ttlMs := int64(terminalJobRetentionTTL / time.Millisecond)
 	n, err := q.client.Eval(ctx, completeJobLua,
 		[]string{q.jobKey(id), q.processingKey()},
-		attempt, id, time.Now().UTC().Format(time.RFC3339Nano), ttlMs,
+		attempt, id, blob, ttlMs,
 	).Int()
 	if err != nil {
 		return fmt.Errorf("job_queue: complete: %w", err)
@@ -369,26 +368,32 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 	}
 
 	now := time.Now().UTC()
-	lastErr := ""
+	stored.UpdatedAt = now
 	if jobErr != nil {
-		lastErr = jobErr.Error()
+		stored.LastError = jobErr.Error()
 	}
 	terminal := 0
 	runAtMs := int64(0)
 	ttlMs := int64(0)
-	runAtRFC := ""
 	if stored.Attempts >= stored.MaxRetries {
 		terminal = 1
+		stored.Status = jobs.StatusFailed
 		ttlMs = int64(terminalJobRetentionTTL / time.Millisecond)
 	} else {
 		runAt := now.Add(queueRetryDelay(attempt - 1))
+		stored.Status = jobs.StatusPending
+		stored.RunAt = runAt
 		runAtMs = runAt.UnixMilli()
-		runAtRFC = runAt.Format(time.RFC3339Nano)
+	}
+	// encoding/json preserves empty arrays ([]); Redis cjson.encode does not.
+	blob, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("job_queue: fail marshal %q: %w", id, err)
 	}
 
 	n, err := q.client.Eval(ctx, failJobLua,
 		[]string{q.jobKey(id), q.processingKey(), q.delayedKey()},
-		attempt, id, now.Format(time.RFC3339Nano), lastErr, terminal, runAtRFC, runAtMs, ttlMs,
+		attempt, id, blob, terminal, runAtMs, ttlMs,
 	).Int()
 	if err != nil {
 		return fmt.Errorf("job_queue: fail: %w", err)

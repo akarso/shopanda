@@ -91,29 +91,25 @@ func (a *App) BindQueue(queue jobs.Queue) error {
 }
 
 // queueChainContains reports whether want is outer or reachable via
-// UnwrapQueue (notify / fence wrappers).
+// UnwrapQueue (notify / fence wrappers). Depth-bounded — do not key a map
+// with jobs.Queue (unhashable value wrappers panic).
 func queueChainContains(outer, want jobs.Queue) bool {
 	if outer == nil || want == nil {
 		return false
 	}
-	seen := map[jobs.Queue]struct{}{}
-	for q := outer; q != nil; {
-		if q == want {
+	for depth := 0; outer != nil && depth < maxQueueUnwrapDepth; depth++ {
+		if outer == want {
 			return true
 		}
-		if _, ok := seen[q]; ok {
-			return false
-		}
-		seen[q] = struct{}{}
-		u, ok := q.(queueUnwrapper)
+		u, ok := outer.(queueUnwrapper)
 		if !ok {
 			return false
 		}
 		next := u.UnwrapQueue()
-		if next == nil || next == q {
+		if next == nil || next == outer {
 			return false
 		}
-		q = next
+		outer = next
 	}
 	return false
 }

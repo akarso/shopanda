@@ -226,6 +226,58 @@ func TestJobQueue_Fail_NotFound(t *testing.T) {
 	}
 }
 
+// TestJobQueue_Fail_PreservesEmptyPayloadArray pins the Redis cjson trap:
+// decode+encode turns JSON [] into {}. Fail must SET a Go-marshaled blob so
+// search.reindex product_ids:[] survives retry (scopedProductIDs requires an array).
+func TestJobQueue_Fail_PreservesEmptyPayloadArray(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	payload := map[string]interface{}{"scope": "products", "product_ids": []string{}}
+	job, _ := jobs.NewJob(id.New(), "search.reindex", payload)
+	if err := q.Enqueue(ctx, job); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	got, err := q.Dequeue(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Dequeue: %v %#v", err, got)
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("search down")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	storedPayload, _ := doc["payload"].(map[string]interface{})
+	rawIDs, ok := storedPayload["product_ids"]
+	if !ok {
+		t.Fatalf("payload missing product_ids: %#v", doc["payload"])
+	}
+	switch rawIDs.(type) {
+	case []interface{}:
+		// ok — empty array survived Go marshal (Redis cjson.encode would write {})
+	default:
+		t.Fatalf("product_ids = %T (%v), want []interface{} (empty array, not object)", rawIDs, rawIDs)
+	}
+	// Round-trip through loadJob the way a later Dequeue would.
+	c := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	raw, getErr := c.Get(ctx, "test-queue:job:"+got.ID).Bytes()
+	if getErr != nil {
+		t.Fatalf("GET job: %v", getErr)
+	}
+	var again jobs.Job
+	// storedJob shape matches Job fields used by toJob; unmarshal payload only.
+	var stored struct {
+		Payload map[string]interface{} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	again.Payload = stored.Payload
+	if _, ok := again.Payload["product_ids"].([]interface{}); !ok {
+		t.Fatalf("product_ids = %T, want []interface{}", again.Payload["product_ids"])
+	}
+}
+
 func TestJobQueue_Complete_WrongAttempt_LeavesProcessing(t *testing.T) {
 	mr, q := setupJobQueue(t)
 	ctx := context.Background()
