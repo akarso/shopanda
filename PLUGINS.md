@@ -40,7 +40,8 @@ type Plugin interface {
 Registration is **compile-time**:
 
 - Core plugins: `plugins/core/register.go` (called from `cmd/api/register_plugins.go`)
-- External plugins: add `registry.Register(pluginsdk.Adapt(yours.New()))` in `cmd/api/register_plugins.go`
+- In-tree demos / reference (`extref`, `*demo`): `cmd/api/register_plugins.go`
+- Product (fork) plugins: `cmd/api/register_products.go` only — do not edit `register_plugins.go`
 
 There is no runtime plugin discovery, `.so` loading, or marketplace in the current release.
 
@@ -239,21 +240,19 @@ Reference scaffold output (unregistered): [`plugins/sitekit/`](plugins/sitekit/)
 2. Register extensions and ports in `Init` via the `pluginsdk.Host` / `pluginsdk.SDK` facade
    (pricing/checkout/composition steps, hooks, admin routes, permissions, config fields, cart/
    catalog/order/customer ports, CLI commands — see [DEVELOPER.md](docs/guides/DEVELOPER.md)).
-3. Add `registry.Register(pluginsdk.Adapt(yours.New()))` in `cmd/api/register_plugins.go`
-   (optionally behind a config flag). `pluginsdk.Adapt` bridges the public `Host`-based plugin into
-   the core registry, and also wires `Migration()` automatically if the plugin implements
-   `pluginsdk.Migrator`.
+3. Add `registry.Register(pluginsdk.Adapt(yours.New()))`:
+   - **Product forks:** `cmd/api/register_products.go` inside `registerProductPlugins`
+   - **Upstream demos / reference:** `cmd/api/register_plugins.go` (optionally behind a config flag)
+   `pluginsdk.Adapt` bridges the public `Host`-based plugin into the core registry, and also wires
+   `Migration()` automatically if the plugin implements `pluginsdk.Migrator`.
 4. Rebuild and restart.
 
-Example registration:
+Example product registration:
 
 ```go
-// cmd/api/register_plugins.go
-func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
-    core.Register(registry, cfg)
-    if cfg.Plugins.Example.Enabled {
-        registry.Register(pluginsdk.Adapt(example.New()))
-    }
+// cmd/api/register_products.go
+func registerProductPlugins(registry *plugin.Registry, cfg *config.Config) {
+    registry.Register(pluginsdk.Adapt(myproduct.New()))
 }
 ```
 
@@ -265,7 +264,7 @@ module) follows this pattern; `plugins/plugin_imports_test.go`'s `TestImportBoun
 
 ## Core-owned capabilities (no main.go plugin wiring)
 
-These live in core and do not require `register_plugins.go` / route-table changes for authors:
+These live in core and do not require registration / route-table changes for authors:
 
 | Capability | Notes |
 | --- | --- |
@@ -279,10 +278,11 @@ Honest list of gaps for external authors:
 
 | Task | Where to wire |
 | --- | --- |
-| Register external plugin | `cmd/api/register_plugins.go` |
+| Register product (fork) plugin | `cmd/api/register_products.go` |
+| Register upstream demo / reference plugin | `cmd/api/register_plugins.go` |
 | New payment webhook HTTP route | `cmd/api/main.go` route table |
 | New CLI subcommand (core) | `cmd/api/main.go` subcommand switch + `printHelp()` |
-| New CLI subcommand (plugin) | `app.RegisterCommand` in plugin `Init` + compile-time registration in `register_plugins.go` |
+| New CLI subcommand (plugin) | `app.RegisterCommand` in plugin `Init` + compile-time registration |
 | New infrastructure backend | contribute under `plugins/core/` + driver switch |
 
 ---
@@ -291,7 +291,7 @@ Honest list of gaps for external authors:
 
 Not implemented; do not assume these exist:
 
-- Go plugin `.so` dynamic loading — **deferred**. The Go plugin ABI is fragile across compiler versions, and Shopanda plugins need domain ports at process start. Use compile-time `register_plugins.go`. Full research (PR-544) lives on the `dev` branch under `docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md`.
+- Go plugin `.so` dynamic loading — **deferred**. The Go plugin ABI is fragile across compiler versions, and Shopanda plugins need domain ports at process start. Use compile-time registration (`register_products.go` for products, `register_plugins.go` for upstream demos). Full research (PR-544) lives on the `dev` branch under `docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md`.
 - Plugin marketplace or version resolver
 - Hot reload
 

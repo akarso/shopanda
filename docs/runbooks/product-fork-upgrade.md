@@ -27,7 +27,9 @@ Do **not** merge from a local Shopanda working tree.
    - **`docs/`** — keep product narrative; retain or regenerate
      `docs/GOVULN_BASELINE.md` if you run govuln; do not blindly delete
      `scripts/ci/`.
-   - **`cmd/api/register_plugins.go`** — re-apply your plugin registration line.
+   - **`cmd/api/register_products.go`** — re-apply your plugin registration line
+     (prefer this product-owned file; do not add product plugins to
+     `register_plugins.go`).
    - **`.github/workflows`** — products using samples: re-copy from
      `ci-samples/` if upstream samples changed; do not take upstream live
      workflows unless you intend to.
@@ -51,7 +53,7 @@ Keep a short table in product docs (example):
 | Path | Why it differs | Since |
 | --- | --- | --- |
 | `README.md` | Product banner | init |
-| `cmd/api/register_plugins.go` | Register `plugins/<slug>` | init |
+| `cmd/api/register_products.go` | Register `plugins/<slug>` | init |
 | `.gitignore` | Product ignores | init |
 
 See also [`guides/PRODUCT_SITES.md`](../guides/PRODUCT_SITES.md).
