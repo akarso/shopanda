@@ -69,7 +69,7 @@ Shopanda has three extension tiers. All use the same `plugin.Plugin` interface; 
 | --- | --- | --- | --- |
 | **Core** | Always-on commerce engine and default Postgres adapters | `internal/domain`, `internal/application`, `internal/infrastructure/postgres` | No config switch — runs on every deployment |
 | **Core plugin** | Optional backends shipped in this repository | `plugins/core/*` | Driver switches in config (`search.engine`, `cache.driver`, `queue.driver`, `storage.driver`, `payment.stripe.enabled`) |
-| **External plugin** | Author-owned behavior extensions | Your module or `plugins/example/` | Compile-time registration in `cmd/api/register_plugins.go` + optional config flag |
+| **External plugin** | Author-owned behavior extensions | Your module or `plugins/example/` | Compile-time registration: products → `cmd/api/register_products.go`; upstream demos → `register_plugins.go` |
 
 ```text
 Core (always on)
@@ -83,7 +83,7 @@ Core (always on)
 
 **What still requires compile-time wiring:**
 
-- Registering any plugin (core plugins are registered from `plugins/core/register.go`; external plugins from `cmd/api/register_plugins.go`)
+- Registering any plugin (core from `plugins/core/register.go`; upstream demos from `register_plugins.go`; product plugins from `register_products.go`)
 - Adding payment/shipping providers that are not yet packaged as core plugins
 - Adding HTTP webhook routes for new payment providers
 - Adding CLI subcommands — core commands in `cmd/api/main.go`; plugin commands via `RegisterCommand` in `Init`
@@ -296,7 +296,7 @@ func (productStep) Apply(ctx context.Context, pctx extapi.ProductCompositionCont
 
 ### Register the plugin at startup
 
-External plugins are registered in `cmd/api/register_plugins.go` (not discovered at runtime).
+Product plugins are registered in `cmd/api/register_products.go`; upstream demos / reference plugins stay in `register_plugins.go` (not discovered at runtime).
 `pluginsdk.Adapt` bridges the public `Host`-based plugin into the core registry (and wires
 `Migration()` automatically when the plugin implements `pluginsdk.Migrator`):
 
@@ -378,7 +378,7 @@ Payment providers ship as **core plugins** under `plugins/core/` (manual pay alw
 Adding a **new** payment provider that is not yet a core plugin still requires:
 
 1. implementing the adapter (see skeleton below)
-2. registering it — either as a new core plugin in `plugins/core/` or temporarily in `register_plugins.go`
+2. registering it — either as a new core plugin in `plugins/core/`, a product plugin in `register_products.go`, or an upstream demo in `register_plugins.go`
 3. optionally exposing refund support via `payment.Refunder`
 4. adding any provider-specific webhook handler in `cmd/api/wire_services.go` and route in `cmd/api/wire_routes.go`
 
@@ -850,7 +850,7 @@ Vendor YAML is an adapter. The contract lives under [`scripts/ci/`](../../script
 | `scripts/ci/govuln.sh` | Pinned `govulncheck` (fail-closed + baseline; path overridable) |
 | `scripts/ci/docs-policy.sh` | Product-doc link policy + promote fixture (platform) |
 
-No git hooks are installed by default. Product sites may omit all vendor CI — see [PRODUCT_SITES.md](PRODUCT_SITES.md) and [`ci-samples/`](../../ci-samples/README.md).
+No git hooks are installed by default. Product sites may omit all vendor CI — see [PRODUCT_SITES.md](PRODUCT_SITES.md) and [`ci-samples/`](../../ci-samples/README.md). Product forks: use `.gitattributes` `merge=ours` for product-owned root files and put custom Make targets in `Makefile.product` (the root Makefile `-include`s it) — see [PRODUCT_SITES.md — Product-owned root files](PRODUCT_SITES.md#product-owned-root-files-merge-conflicts).
 
 Before opening a PR against **this** repository, run:
 
@@ -947,7 +947,7 @@ When adding an extension, prefer this order:
 4. add tests at the adapter boundary
 5. only then consider whether the pattern should be generalized into a reusable plugin hook
 
-Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
+Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Plugins register at compile time (`register_products.go` for products, `register_plugins.go` for upstream demos); there is no dynamic plugin discovery.
 
 ### Product visibility axes (PR-1055)
 

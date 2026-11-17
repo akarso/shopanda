@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -153,8 +154,8 @@ func (h *appHost) Slots(registrant string) SlotsAPI {
 	return h.app.Slots(registrant)
 }
 
-func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler) error {
-	return h.app.RegisterPublicRoute(pattern, handler)
+func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error {
+	return h.app.RegisterPublicRoute(pattern, handler, toCorePublicRouteOpts(opts)...)
 }
 
 func (h *appHost) RegisterAdminRoute(pattern string, permission string, handler http.Handler) error {
@@ -363,6 +364,28 @@ func (h *appHost) BootstrapDB() (*sql.DB, bool) {
 		return nil, false
 	}
 	return h.app.Bootstrap.DB, true
+}
+
+func (h *appHost) OnQueueBound(wrap func(queue any) any) {
+	if h == nil || h.app == nil || wrap == nil {
+		return
+	}
+	h.app.OnQueueBound(func(q jobs.Queue) jobs.Queue {
+		out := wrap(q)
+		next, ok := out.(jobs.Queue)
+		if !ok || next == nil {
+			// ApplyQueueBoundHooks treats nil as an error at bind time.
+			return nil
+		}
+		return next
+	})
+}
+
+func (h *appHost) OnRequeued(fn func(ctx context.Context, jobID string)) {
+	if h == nil || h.app == nil || fn == nil {
+		return
+	}
+	h.app.OnRequeued(fn)
 }
 
 // coreApp returns the underlying *plugin.App for SDK helpers not yet on Host

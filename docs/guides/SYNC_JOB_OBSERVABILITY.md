@@ -24,7 +24,10 @@ request context, Shopanda:
    `complete_failed` with `request_id` (and `duration_ms` where applicable).
 
 Handlers receive the same value on `SyncJobContext.Payload["request_id"]` and
-`SyncJobContext.Attempts` (queue attempt counter at dequeue).
+`SyncJobContext.Attempts` (queue attempt counter at dequeue). The sync worker
+handler also reinjects that payload `request_id` onto the handler context via
+`requestctx.WithRequestID` when the worker ctx does not already carry one, so
+`requestctx.RequestID(ctx)` inside a sync handler matches the enqueue path.
 
 ```go
 // HTTP handler — pass the request context; do not invent a second ID.

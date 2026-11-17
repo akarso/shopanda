@@ -29,7 +29,7 @@ on every Shopanda upgrade.
 
 | Fact | Detail |
 | --- | --- |
-| Public | `app.RegisterPublicRoute(pattern, handler)` |
+| Public | `app.RegisterPublicRoute(pattern, handler)` — optional `pluginsdk.NoCache()` for cache denylist |
 | Admin | `RegisterAdminRoute` (see PLUGINS.md) |
 
 ## Import boundary
