@@ -139,6 +139,7 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1556 | cart.validate `pending_line` on AddItem | done |
 | PR-1557 | CartPort.DiscardEmptyGuestCart | done |
 | PR-1558 | CatalogVariant.ProductVisible | done |
+| PR-1561 | RegisterPublicRoute NoCache | done |
 | PR-1565a | Attempt-aware Complete/Fail + ErrSkipOutcome | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
@@ -189,7 +190,7 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | Job delivery fence (generic) | Product deviation C4: `jobs.Queue.Complete/Fail` take the dequeued attempt, `ErrSkipOutcome` skips the platform outcome write, `Requeue`/`Retry` reclaim stale processing, and the plugin installs a claim fence on the bound queue (`cmd/api/job_queue_bind.go`, `jobs_cli.go`, `internal/domain/jobs/*`). Make attempt-aware delivery, `ErrSkipOutcome` and a plugin hook on queue bind / requeue (e.g. `OnQueueBound`, `OnRequeued`) part of the platform so products need no edits in `internal/domain/jobs` or `cmd/api` | **1565a done** (attempt + ErrSkipOutcome); **1565b proposed** (OnQueueBound / OnRequeued / Requeue) |
 | Typed per-plugin config in core | `PluginsConfig` in `internal/platform/config/config.go` has one typed field per plugin (every demo, `extref`, and each product). Every product edits a core file. Provide a generic `plugins.<slug>` section (map) with env binding `SHOPANDA_PLUGINS_<SLUG>_*` and typed reads through `Host.Config*`, or a registration API that declares a plugin's config struct | proposed |
 | Product-owned plugin registration | Products add a line to `cmd/api/register_plugins.go`, which also changes upstream. Offer a product-owned file (e.g. `cmd/api/register_products.go`, created empty by `product-init`, called from `register_plugins.go`) so the shared file never changes | proposed |
-| Public route cache policy | A plugin's public routes cannot say "never cache" (Metal Dogs edited `wire_routes.go` and a shared prefix list for `/api/customizer`). Let `RegisterPublicRoute` take an option (e.g. `NoCache`) | proposed |
+| Public route cache policy | A plugin's public routes cannot say "never cache" (Metal Dogs edited `wire_routes.go` and a shared prefix list for `/api/customizer`). Let `RegisterPublicRoute` take an option (e.g. `NoCache`) | **done (PR-1561)** — `pluginsdk.NoCache()` + denylist merge |
 | Platform fixes found by a product | `App.BoundQueue()` (prefer `BindQueue` over `RegisterQueue` on health/read paths) and sync handler re-injecting payload `request_id` into ctx. Both carried by Metal Dogs as deviations; send upstream | proposed |
 | Product-owned root files conflict on every bump | `README`, `AGENTS`, `RUNBOOK`, `PLUGINS`, `.gitignore`, `Makefile`, CI workflows differ in every product fork. Document `.gitattributes` `merge=ours` for product-owned files and a `Makefile` `-include Makefile.product` hook; keep product targets out of the shared Makefile | proposed (docs) |
 

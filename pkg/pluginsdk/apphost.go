@@ -152,8 +152,8 @@ func (h *appHost) Slots(registrant string) SlotsAPI {
 	return h.app.Slots(registrant)
 }
 
-func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler) error {
-	return h.app.RegisterPublicRoute(pattern, handler)
+func (h *appHost) RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error {
+	return h.app.RegisterPublicRoute(pattern, handler, toCorePublicRouteOpts(opts)...)
 }
 
 func (h *appHost) RegisterAdminRoute(pattern string, permission string, handler http.Handler) error {
