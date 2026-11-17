@@ -33,7 +33,8 @@ func delayedContains(t *testing.T, mr *miniredis.Miniredis, id string) bool {
 	t.Helper()
 	members, err := mr.ZMembers("test-queue:delayed")
 	if err != nil {
-		t.Fatalf("ZMembers delayed: %v", err)
+		// Missing delayed key means nothing is scheduled.
+		return false
 	}
 	for _, m := range members {
 		if m == id {
