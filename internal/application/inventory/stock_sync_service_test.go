@@ -114,7 +114,7 @@ func (q *stockSyncFakeQueue) Enqueue(_ context.Context, job domainjobs.Job) erro
 func (q *stockSyncFakeQueue) Dequeue(context.Context) (*domainjobs.Job, error) { return nil, nil }
 func (q *stockSyncFakeQueue) Complete(context.Context, string, int) error           { return nil }
 func (q *stockSyncFakeQueue) Fail(context.Context, string, int, error) error { return nil }
-func (q *stockSyncFakeQueue) Requeue(context.Context, string) error { return nil }
+func (q *stockSyncFakeQueue) Requeue(context.Context, string, int) error { return nil }
 
 func newTestReindexService(t *testing.T, queue *stockSyncFakeQueue) *searchApp.ReindexService {
 	t.Helper()

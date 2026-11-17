@@ -39,7 +39,7 @@ func (q *syncMemQueue) Dequeue(context.Context) (*jobs.Job, error) {
 
 func (q *syncMemQueue) Complete(context.Context, string, int) error    { return nil }
 func (q *syncMemQueue) Fail(context.Context, string, int, error) error { return nil }
-func (q *syncMemQueue) Requeue(context.Context, string) error { return nil }
+func (q *syncMemQueue) Requeue(context.Context, string, int) error { return nil }
 
 func TestManualEnqueue_ThroughWorkerHandler(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")

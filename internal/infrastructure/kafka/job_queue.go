@@ -263,10 +263,12 @@ func (q *JobQueue) removeInflight(id string) {
 
 // Complete marks a job as done.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
 	entry, err := q.inflightEntry(id)
 	if err != nil {
 		return err
+	}
+	if entry.job.Attempts != attempt {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	if err := q.mainReader.CommitMessages(ctx, entry.msg); err != nil {
 		return fmt.Errorf("job_queue: complete commit: %w", err)
@@ -277,10 +279,12 @@ func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
 
 // Fail re-queues a job for retry or marks it as permanently failed.
 func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
-	_ = attempt // best-effort in v1; brokers lack attempt CAS
 	entry, err := q.inflightEntry(id)
 	if err != nil {
 		return err
+	}
+	if entry.job.Attempts != attempt {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 
 	msg := entry.job
@@ -312,7 +316,7 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 }
 
 // Requeue is unsupported on this broker-backed queue (no queryable processing row).
-func (q *JobQueue) Requeue(context.Context, string) error {
+func (q *JobQueue) Requeue(context.Context, string, int) error {
 	return jobs.ErrRequeueUnsupported
 }
 

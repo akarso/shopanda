@@ -117,7 +117,7 @@ func (r *PrometheusRecorder) JobFailure(jobType string) {
 
 func (r *PrometheusRecorder) JobResult(jobType, outcome string, duration time.Duration) {
 	switch outcome {
-	case OutcomeSuccess, OutcomeFailed:
+	case OutcomeSuccess, OutcomeFailed, OutcomeSkipped:
 		// keep
 	default:
 		outcome = OutcomeFailed

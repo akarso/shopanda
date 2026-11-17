@@ -45,20 +45,41 @@ func validJobStatusesList() string {
 	return "pending, processing, done, failed, cancelled"
 }
 
-// jobsCLIRuntime is the bound queue (possibly OnQueueBound-wrapped) plus the
-// Admin/Reader service used by list/show/retry/cancel.
+// jobsCLIRuntime is the bound queue (OnQueueBound-wrapped) used by
+// retry/cancel/requeue so mutate paths share one fenced instance.
 type jobsCLIRuntime struct {
 	svc   *jobsApp.Service
 	conn  *sql.DB
 	queue domainjobs.Queue
 }
 
-// newJobsRuntime boots plugins, resolveAndBindJobQueue (so OnQueueBound fences
-// apply), and builds jobsApp.Service from Admin/Reader — preferring the bound
-// queue when it implements those ports, else a direct postgres JobQueue for
-// introspection (wrappers that only override Complete/Fail still work).
-//
-// Postgres-queue-only for Admin/Reader (same as before).
+// newJobsIntrospection opens postgres Reader/Admin only — no plugin init.
+// Used by list/show so read paths stay cheap.
+func newJobsIntrospection(cfg *config.Config) (svc *jobsApp.Service, conn *sql.DB, err error) {
+	if cfg.Queue.Driver != "postgres" {
+		return nil, nil, fmt.Errorf("jobs:* commands require queue.driver=postgres — job introspection has no equivalent for %q (Postgres-queue-only; see internal/domain/jobs/reader.go)", cfg.Queue.Driver)
+	}
+	dsn := config.DatabaseDSN(cfg)
+	conn, err = db.Open(dsn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("database: %w", err)
+	}
+	jobQueue, err := postgres.NewJobQueue(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("job queue: %w", err)
+	}
+	svc, err = jobsApp.NewService(jobQueue, jobQueue)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("jobs service: %w", err)
+	}
+	return svc, conn, nil
+}
+
+// newJobsRuntime boots plugins and resolveAndBindJobQueue so OnQueueBound
+// fences apply. retry/cancel/requeue must use this bound value — never a
+// second raw JobQueue when a plugin RegisterQueue'd a different backend.
 func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, error) {
 	if cfg.Queue.Driver != "postgres" {
 		return nil, fmt.Errorf("jobs:* commands require queue.driver=postgres — job introspection/retry/cancel/requeue has no equivalent for %q (Postgres-queue-only; see internal/domain/jobs/reader.go)", cfg.Queue.Driver)
@@ -108,24 +129,22 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		return nil, err
 	}
 
-	var reader domainjobs.Reader
-	var admin domainjobs.Admin
-	if r, ok := bound.(domainjobs.Reader); ok {
-		reader = r
-	}
-	if a, ok := bound.(domainjobs.Admin); ok {
-		admin = a
-	}
-	if reader == nil || admin == nil {
+	reader, okR := bound.(domainjobs.Reader)
+	admin, okA := bound.(domainjobs.Admin)
+	if !okR || !okA {
+		if _, pluginQ := pluginApp.Queue(); pluginQ {
+			conn.Close()
+			return nil, fmt.Errorf("jobs:*: bound queue (%T) does not implement jobs.Reader/Admin — OnQueueBound wrappers must forward those ports (refusing a second JobQueue that would bypass the fence)", bound)
+		}
 		pg, err := postgres.NewJobQueue(conn)
 		if err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("job queue: %w", err)
 		}
-		if reader == nil {
+		if !okR {
 			reader = pg
 		}
-		if admin == nil {
+		if !okA {
 			admin = pg
 		}
 	}
@@ -135,15 +154,6 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		return nil, fmt.Errorf("jobs service: %w", err)
 	}
 	return &jobsCLIRuntime{svc: svc, conn: conn, queue: bound}, nil
-}
-
-// newJobsService keeps older call sites working (list/retry/cancel).
-func newJobsService(cfg *config.Config, log logger.Logger) (svc *jobsApp.Service, conn *sql.DB, err error) {
-	rt, err := newJobsRuntime(cfg, log)
-	if err != nil {
-		return nil, nil, err
-	}
-	return rt.svc, rt.conn, nil
 }
 
 // runJobsList handles `app jobs:list [--type=X] [--status=Y] [--limit=N] [--offset=N] [--json]`.
@@ -182,11 +192,12 @@ func runJobsList(w io.Writer, cfg *config.Config, log logger.Logger, args []stri
 		filter.Limit = jobsListMaxLimit
 	}
 
-	svc, conn, err := newJobsService(cfg, log)
+	svc, conn, err := newJobsIntrospection(cfg)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	_ = log
 
 	jobList, err := svc.List(context.Background(), filter)
 	if err != nil {
@@ -251,11 +262,12 @@ func runJobsShow(w io.Writer, cfg *config.Config, log logger.Logger, args []stri
 		return err
 	}
 
-	svc, conn, err := newJobsService(cfg, log)
+	svc, conn, err := newJobsIntrospection(cfg)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	_ = log
 
 	job, err := svc.Get(context.Background(), id)
 	if err != nil {
@@ -301,15 +313,15 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 		return err
 	}
 
-	svc, conn, err := newJobsService(cfg, log)
+	rt, err := newJobsRuntime(cfg, log)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer rt.conn.Close()
 
 	ctx := context.Background()
-	retryErr := svc.Retry(ctx, id)
-	auditCLIAction(ctx, conn, log, adminApp.AuditJobRetry, "job", id, retryErr)
+	retryErr := rt.svc.Retry(ctx, id)
+	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRetry, "job", id, retryErr)
 	if retryErr != nil {
 		return fmt.Errorf("jobs:retry: %w", retryErr)
 	}
@@ -329,12 +341,22 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	}
 	defer rt.conn.Close()
 	ctx := context.Background()
-	requeueErr := rt.queue.Requeue(ctx, id)
+	detail, err := rt.svc.Get(ctx, id)
+	if err != nil {
+		return fmt.Errorf("jobs:requeue: %w", err)
+	}
+	if detail == nil {
+		return fmt.Errorf("jobs:requeue: no job with id %q", id)
+	}
+	if detail.Status != domainjobs.StatusProcessing {
+		return fmt.Errorf("jobs:requeue: job is %s, not processing — only a stale processing claim can be requeued (use jobs:retry for failed)", detail.Status)
+	}
+	requeueErr := rt.queue.Requeue(ctx, id, detail.Attempts)
 	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, requeueErr)
 	if requeueErr != nil {
 		return fmt.Errorf("jobs:requeue: %w", requeueErr)
 	}
-	return writeSuccessLinef(w, "Job %s requeued (processing → pending).\n", id)
+	return writeSuccessLinef(w, "Job %s requeued (processing → pending, attempts=%d kept; requires claim age ≥ %s).\n", id, detail.Attempts, domainjobs.DefaultRequeueMinAge)
 }
 
 // runJobsCancel handles `app jobs:cancel <id>`.
@@ -344,15 +366,15 @@ func runJobsCancel(w io.Writer, cfg *config.Config, log logger.Logger, args []st
 		return err
 	}
 
-	svc, conn, err := newJobsService(cfg, log)
+	rt, err := newJobsRuntime(cfg, log)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer rt.conn.Close()
 
 	ctx := context.Background()
-	cancelErr := svc.Cancel(ctx, id)
-	auditCLIAction(ctx, conn, log, adminApp.AuditJobCancel, "job", id, cancelErr)
+	cancelErr := rt.svc.Cancel(ctx, id)
+	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobCancel, "job", id, cancelErr)
 	if cancelErr != nil {
 		return fmt.Errorf("jobs:cancel: %w", cancelErr)
 	}

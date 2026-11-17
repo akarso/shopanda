@@ -48,7 +48,7 @@ func (recordingQueue) Dequeue(context.Context) (*jobs.Job, error) {
 func (recordingQueue) Complete(context.Context, string, int) error { return nil }
 
 func (recordingQueue) Fail(context.Context, string, int, error) error { return nil }
-func (recordingQueue) Requeue(context.Context, string) error { return nil }
+func (recordingQueue) Requeue(context.Context, string, int) error { return nil }
 
 func TestRegisterCacheCleanup(t *testing.T) {
 	sched := &stubScheduler{}

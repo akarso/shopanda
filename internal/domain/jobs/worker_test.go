@@ -61,7 +61,7 @@ func (m *mockQueue) Complete(ctx context.Context, id string, attempt int) error 
 	return nil
 }
 
-func (m *mockQueue) Requeue(context.Context, string) error { return nil }
+func (m *mockQueue) Requeue(context.Context, string, int) error { return nil }
 
 func (m *mockQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	m.mu.Lock()
@@ -301,13 +301,14 @@ func TestWorker_FailsUnknownType(t *testing.T) {
 func TestWorker_ErrSkipOutcome_SkipsCompleteAndFail(t *testing.T) {
 	q := &mockQueue{}
 	log := &mockLogger{}
+	metrics := &mockMetrics{}
 	handler := &mockHandler{
 		jobType: "skip_job",
 		handleFn: func(context.Context, jobs.Job) error {
 			return jobs.ErrSkipOutcome
 		},
 	}
-	w := jobs.NewWorker(q, log, time.Second)
+	w := jobs.NewWorker(q, log, time.Second).WithMetrics(metrics)
 	w.Register(handler)
 	job, _ := jobs.NewJob("j-skip", "skip_job", nil)
 	_ = q.Enqueue(context.Background(), job)
@@ -318,6 +319,37 @@ func TestWorker_ErrSkipOutcome_SkipsCompleteAndFail(t *testing.T) {
 	defer q.mu.Unlock()
 	if len(q.completed) != 0 || len(q.failed) != 0 {
 		t.Fatalf("completed=%v failed=%v, want neither", q.completed, q.failed)
+	}
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	if len(metrics.results) != 1 || metrics.results[0].outcome != "skipped" {
+		t.Fatalf("metrics = %+v, want skipped", metrics.results)
+	}
+}
+
+func TestWorker_CompleteNotApplied_DoesNotRecordSuccess(t *testing.T) {
+	q := &mockQueue{}
+	q.completeFn = func(string) error { return jobs.ErrOutcomeNotApplied }
+	log := &mockLogger{}
+	metrics := &mockMetrics{}
+	handler := &mockHandler{
+		jobType:  "done_job",
+		handleFn: func(context.Context, jobs.Job) error { return nil },
+	}
+	w := jobs.NewWorker(q, log, time.Second).WithMetrics(metrics)
+	w.Register(handler)
+	job, _ := jobs.NewJob("j-stale", "done_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	if len(metrics.results) != 1 || metrics.results[0].outcome != "failed" {
+		t.Fatalf("metrics = %+v, want failed (not success)", metrics.results)
+	}
+	if len(metrics.failures) != 1 {
+		t.Fatalf("failures = %v", metrics.failures)
 	}
 }
 

@@ -50,7 +50,29 @@ type Handler interface {
 // ErrSkipOutcome tells the worker to skip platform Complete/Fail for this
 // delivery. Handlers (or product fence wrappers) use it when they already
 // wrote the outcome or intentionally leave the claim for reclaim/Requeue.
+// Return this sentinel alone (or wrapping only context) — do not wrap a
+// real handler failure with ErrSkipOutcome or Fail/last_error will not run.
+// Skipping without a fence Complete/Fail/Requeue leaves status=processing.
 var ErrSkipOutcome = errors.New("jobs: skip outcome")
+
+// ErrOutcomeNotApplied means Complete/Fail matched zero rows (missing id,
+// wrong attempt, or row no longer processing). The worker must not treat
+// this as a committed success — the handler may already have run and the
+// job may still be processing or claimed by a newer attempt.
+var ErrOutcomeNotApplied = errors.New("jobs: outcome not applied")
+
+// ErrRequeueUnsupported is returned by broker-backed queues that have no
+// queryable processing row to reclaim.
+var ErrRequeueUnsupported = errors.New("jobs: requeue unsupported for this queue driver")
+
+// ErrRequeueConflict means Requeue matched zero rows (wrong attempt, not
+// processing, or not yet past DefaultRequeueMinAge).
+var ErrRequeueConflict = errors.New("jobs: requeue conflict")
+
+// DefaultRequeueMinAge is how long a processing row must sit before
+// Requeue may reclaim it. Protects a live handler whose Complete has not
+// landed yet from being set back to pending by jobs:requeue / a sweeper.
+const DefaultRequeueMinAge = time.Minute
 
 // Queue is the port for job queue backends.
 type Queue interface {
@@ -62,26 +84,24 @@ type Queue interface {
 	Dequeue(ctx context.Context) (*Job, error)
 
 	// Complete marks a job as done for the given dequeue attempt.
-	// attempt must match the job.Attempts value returned by Dequeue so a
-	// stale delivery cannot finish a newer claim (postgres CAS; brokers
-	// best-effort).
+	// attempt must match the job.Attempts value returned by Dequeue.
+	// Returns ErrOutcomeNotApplied when the conditional update matches
+	// zero rows (stale attempt / missing / already moved).
 	Complete(ctx context.Context, id string, attempt int) error
 
 	// Fail marks a job as failed or re-queues it for retry for the given
 	// dequeue attempt. If attempts < maxRetries, the job is re-queued with
 	// a delay. Otherwise, the job is marked as permanently failed.
+	// Returns ErrOutcomeNotApplied when no row matches.
 	Fail(ctx context.Context, id string, attempt int, jobErr error) error
 
 	// Requeue moves a processing job back to pending without resetting
 	// attempts (unlike Admin.Retry, which is failed→pending with
-	// attempts=0). Used to reclaim a stale claim. Brokers may return
-	// ErrRequeueUnsupported.
-	Requeue(ctx context.Context, id string) error
+	// attempts=0). attempt must match the live claim; the row must be
+	// older than DefaultRequeueMinAge. Returns ErrRequeueConflict on
+	// zero rows, ErrRequeueUnsupported on brokers.
+	Requeue(ctx context.Context, id string, attempt int) error
 }
-
-// ErrRequeueUnsupported is returned by broker-backed queues that have no
-// queryable processing row to reclaim.
-var ErrRequeueUnsupported = errors.New("jobs: requeue unsupported for this queue driver")
 
 // NewJob creates a Job with sensible defaults.
 func NewJob(id, jobType string, payload map[string]interface{}) (Job, error) {

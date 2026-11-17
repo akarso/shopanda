@@ -29,7 +29,7 @@ type Logger interface {
 type MetricsRecorder interface {
 	JobFailure(jobType string)
 	// JobResult records handler duration for a finished attempt.
-	// outcome must be "success" or "failed" (bounded).
+	// outcome must be "success", "failed", or "skipped" (bounded).
 	JobResult(jobType, outcome string, duration time.Duration)
 }
 
@@ -189,6 +189,9 @@ func (w *Worker) processNext(ctx context.Context) bool {
 			}
 			mergeJobRequestID(skipFields, job.Payload)
 			w.log.Info("worker.job.outcome_skipped", skipFields)
+			// Leaves status=processing unless a fence already wrote an
+			// outcome or will Requeue. Distinct metric from success/failed.
+			w.metrics.JobResult(job.Type, "skipped", duration)
 			return true
 		}
 		failFields := map[string]interface{}{
@@ -259,7 +262,12 @@ func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobE
 	outcomeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeRecordTimeout)
 	defer cancel()
 	if failErr := w.queue.Fail(outcomeCtx, jobID, attempt, jobErr); failErr != nil {
-		w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": jobID, "attempt": attempt})
+		fields := map[string]interface{}{"job_id": jobID, "attempt": attempt}
+		if errors.Is(failErr, ErrOutcomeNotApplied) {
+			w.log.Error("worker.fail.not_applied", failErr, fields)
+			return
+		}
+		w.log.Error("worker.fail.error", failErr, fields)
 	}
 }
 
@@ -270,15 +278,14 @@ func (w *Worker) recordComplete(ctx context.Context, jobID string, attempt int, 
 		failFields := map[string]interface{}{
 			"job_id":      jobID,
 			"job_type":    jobType,
+			"attempt":     attempt,
 			"duration_ms": duration.Milliseconds(),
 		}
 		mergeJobRequestID(failFields, envelope)
+		// Handler ran but the queue did not accept the outcome (stale
+		// attempt, missing row, already moved). Never emit success —
+		// the job may still be processing or redelivered.
 		w.log.Error("worker.job.complete_failed", err, failFields)
-		// The handler itself succeeded, but the job may now be redelivered
-		// (e.g. duplicate webhook sends) since the queue never learned it
-		// finished — record it as a failure so dashboards aren't silent
-		// about a real, actionable problem. JobResult is recorded here
-		// (not before Complete) so success-rate metrics stay honest.
 		w.metrics.JobFailure(jobType)
 		w.metrics.JobResult(jobType, "failed", duration)
 		return
