@@ -24,6 +24,7 @@ type mockQueue struct {
 	failed          []string
 	failErrs        []error // jobErr as observed by each Fail call, in order
 	completeFn      func(id string) error
+	failFn          func(id string) error
 	failCtxErrs     []error // ctx.Err() as observed by each Fail call, in order
 	completeCtxErrs []error
 }
@@ -68,6 +69,11 @@ func (m *mockQueue) Fail(ctx context.Context, id string, attempt int, jobErr err
 	defer m.mu.Unlock()
 	m.failCtxErrs = append(m.failCtxErrs, ctx.Err())
 	m.failErrs = append(m.failErrs, jobErr)
+	if m.failFn != nil {
+		if err := m.failFn(id); err != nil {
+			return err
+		}
+	}
 	m.failed = append(m.failed, id)
 	return nil
 }
@@ -439,6 +445,32 @@ func TestWorker_HandlerError_RecordsMetric(t *testing.T) {
 	}
 	if len(m.results) != 1 || m.results[0].jobType != "fail_job" || m.results[0].outcome != "failed" {
 		t.Errorf("results = %+v, want one failed fail_job", m.results)
+	}
+}
+
+func TestWorker_FailNotApplied_DoesNotRecordJobFailure(t *testing.T) {
+	q := &mockQueue{}
+	q.failFn = func(string) error { return jobs.ErrOutcomeNotApplied }
+	log := &mockLogger{}
+	m := &mockMetrics{}
+	handler := &mockHandler{
+		jobType:  "fail_job",
+		handleFn: func(context.Context, jobs.Job) error { return errors.New("boom") },
+	}
+	w := jobs.NewWorker(q, log, time.Second).WithMetrics(m)
+	w.Register(handler)
+	job, _ := jobs.NewJob("j-stale-fail", "fail_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.failures) != 0 {
+		t.Fatalf("failures = %v, want none on Fail CAS miss", m.failures)
+	}
+	if len(m.results) != 1 || m.results[0].outcome != "not_applied" {
+		t.Fatalf("results = %+v, want not_applied", m.results)
 	}
 }
 

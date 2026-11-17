@@ -3,6 +3,7 @@ package redis_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,35 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/alicebob/miniredis/v2"
 )
+
+func listContains(t *testing.T, mr *miniredis.Miniredis, key, id string) bool {
+	t.Helper()
+	items, err := mr.List(key)
+	if err != nil {
+		// Empty / deleted list key — not present.
+		return false
+	}
+	for _, item := range items {
+		if item == id {
+			return true
+		}
+	}
+	return false
+}
+
+func delayedContains(t *testing.T, mr *miniredis.Miniredis, id string) bool {
+	t.Helper()
+	members, err := mr.ZMembers("test-queue:delayed")
+	if err != nil {
+		t.Fatalf("ZMembers delayed: %v", err)
+	}
+	for _, m := range members {
+		if m == id {
+			return true
+		}
+	}
+	return false
+}
 
 func setupJobQueue(t *testing.T) (*miniredis.Miniredis, jobs.Queue) {
 	t.Helper()
@@ -178,8 +208,88 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	_, q := setupJobQueue(t)
 	ctx := context.Background()
 
-	if err := q.Complete(ctx, id.New(), 1); err == nil {
-		t.Fatal("expected error for non-existent job")
+	err := q.Complete(ctx, id.New(), 1)
+	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete missing: %v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+func TestJobQueue_Fail_NotFound(t *testing.T) {
+	_, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	err := q.Fail(ctx, id.New(), 1, errors.New("boom"))
+	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail missing: %v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+func TestJobQueue_Complete_WrongAttempt_LeavesProcessing(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "cas", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Complete(ctx, got.ID, got.Attempts-1); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete wrong attempt: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want processing", doc["status"])
+	}
+	if !listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must remain on processing list after wrong-attempt Complete")
+	}
+}
+
+func TestJobQueue_Fail_WrongAttempt_LeavesProcessing(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "cas", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts-1, errors.New("stale")); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail wrong attempt: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want processing", doc["status"])
+	}
+	if !listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must remain on processing list after wrong-attempt Fail")
+	}
+}
+
+func TestJobQueue_Fail_Retry_LandsOnDelayed(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "retry", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("temp")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusPending) {
+		t.Fatalf("status = %v, want pending", doc["status"])
+	}
+	if listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must leave processing after Fail retry")
+	}
+	if !delayedContains(t, mr, got.ID) {
+		t.Fatalf("job %q missing from delayed set", got.ID)
 	}
 }
 

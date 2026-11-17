@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -11,6 +12,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// errJobNotFound is returned (wrapped) when the job hash key is missing.
+var errJobNotFound = errors.New("job not found")
 
 var _ jobs.Queue = (*JobQueue)(nil)
 
@@ -57,8 +61,9 @@ end
 return 1
 `
 
-// failJobLua atomically checks attempt + processing membership, then writes
-// failed or pending+delayed. Returns 1 ok, 0 not applied, -1 missing key.
+// failJobLua atomically checks attempt, then SET (+ ZADD for retry) before
+// LREM so a script error after LREM cannot leave the id with no delayed
+// entry and no processing claim. Returns 1 ok, 0 not applied, -1 missing.
 // KEYS: job, processing, delayed. ARGV: attempt, id, updated_at, last_error,
 // terminal (1=failed/0=retry), run_at RFC3339, run_at_ms, ttl_ms.
 const failJobLua = `
@@ -68,8 +73,6 @@ local job = cjson.decode(raw)
 if job['status'] ~= 'processing' or tonumber(job['attempts']) ~= tonumber(ARGV[1]) then
   return 0
 end
-local removed = redis.call('LREM', KEYS[2], 1, ARGV[2])
-if removed == 0 then return 0 end
 job['updated_at'] = ARGV[3]
 if ARGV[4] ~= '' then
   job['last_error'] = ARGV[4]
@@ -83,6 +86,7 @@ if tonumber(ARGV[5]) == 1 then
   else
     redis.call('SET', KEYS[1], encoded)
   end
+  redis.call('LREM', KEYS[2], 1, ARGV[2])
   return 1
 end
 job['status'] = 'pending'
@@ -90,6 +94,7 @@ job['run_at'] = ARGV[6]
 local encoded = cjson.encode(job)
 redis.call('SET', KEYS[1], encoded)
 redis.call('ZADD', KEYS[3], tonumber(ARGV[7]), ARGV[2])
+redis.call('LREM', KEYS[2], 1, ARGV[2])
 return 1
 `
 
@@ -211,7 +216,7 @@ func (q *JobQueue) releaseClaim(ctx context.Context, id string) error {
 func (q *JobQueue) loadJob(ctx context.Context, id string) (storedJob, error) {
 	raw, err := q.client.Get(ctx, q.jobKey(id)).Bytes()
 	if err == goredis.Nil {
-		return storedJob{}, fmt.Errorf("job_queue: job %s not found", id)
+		return storedJob{}, fmt.Errorf("job_queue: job %s: %w", id, errJobNotFound)
 	}
 	if err != nil {
 		return storedJob{}, fmt.Errorf("job_queue: load job %q: %w", id, err)
@@ -331,6 +336,9 @@ func queueRetryDelay(attempt int) time.Duration {
 func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
+		if errors.Is(err, errJobNotFound) {
+			return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
+		}
 		return err
 	}
 	// Pre-check attempt/status without mutating — Lua re-checks under one script.
