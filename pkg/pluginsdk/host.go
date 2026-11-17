@@ -35,7 +35,7 @@ type Host interface {
 	// RegisterMailSender replaces the core mail delivery port.
 	RegisterMailSender(sender extapi.MailSender)
 
-	RegisterPublicRoute(pattern string, handler http.Handler) error
+	RegisterPublicRoute(pattern string, handler http.Handler, opts ...PublicRouteOption) error
 	RegisterAdminRoute(pattern string, permission string, handler http.Handler) error
 	RegisterPermission(permission string, roles ...string) error
 
