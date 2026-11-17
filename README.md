@@ -257,7 +257,8 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:oss <file.csv>` | Export OSS/IOSS tax report (`--summary`, `--from=YYYY-MM-DD`, `--to=YYYY-MM-DD`) |
 | `jobs:list` | List background jobs (`--type=X`, `--status=Y`, `--limit=N`, `--offset=N`, `--json`) |
 | `jobs:show <id>` | Show a job's full detail (`--json`) |
-| `jobs:retry <id>` | Retry a failed job |
+| `jobs:retry <id>` | Retry a failed job (`attempts` reset to 0) |
+| `jobs:requeue <id>` | Requeue a stale processing claim (keeps attempts; postgres; min age) |
 | `jobs:cancel <id>` | Cancel a pending job |
 | `cache:stats` | Show cache occupancy (`--json`) |
 | `cache:clear` | Clear cache (`--prefix=<p>`, `--tag=<t>`, `--key=<k>`, or `--all`) |

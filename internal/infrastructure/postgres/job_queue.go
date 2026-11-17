@@ -128,9 +128,7 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	return &j, nil
 }
 
-// Complete marks a job as done for the given dequeue attempt. A mismatched
-// attempt (stale delivery) or non-processing row yields rows=0 and nil —
-// the newer claim owns the outcome.
+// Complete marks a job as done for the given dequeue attempt.
 func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
 	const query = `UPDATE jobs SET status = 'done', updated_at = NOW()
 		WHERE id = $1 AND status = 'processing' AND attempts = $2`
@@ -138,8 +136,12 @@ func (q *JobQueue) Complete(ctx context.Context, id string, attempt int) error {
 	if err != nil {
 		return fmt.Errorf("job_queue: complete: %w", err)
 	}
-	if _, err := result.RowsAffected(); err != nil {
+	rows, err := result.RowsAffected()
+	if err != nil {
 		return fmt.Errorf("job_queue: complete rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("job_queue: complete %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	return nil
 }
@@ -183,18 +185,8 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 		return nil
 	}
 
-	// Otherwise, re-queue with exponential backoff delay for this attempt.
-	const attemptsQ = `SELECT attempts FROM jobs WHERE id = $1 AND status = 'processing' AND attempts = $2 AND attempts < max_retries`
-	var attempts int
-	if err := q.db.QueryRowContext(ctx, attemptsQ, id, attempt).Scan(&attempts); err != nil {
-		if err == sql.ErrNoRows {
-			// Stale attempt or already moved on — benign for fence reclaim.
-			return nil
-		}
-		return fmt.Errorf("job_queue: fail lookup: %w", err)
-	}
-
-	delay := retryDelay(attempts - 1)
+	// Retry path: use the caller-supplied attempt for delay (no SELECT race).
+	delay := retryDelay(attempt - 1)
 	const retryQ = `UPDATE jobs SET status = 'pending', run_at = NOW() + $2::interval, updated_at = NOW(),
 			last_error = COALESCE($3, last_error)
 		WHERE id = $1 AND status = 'processing' AND attempts = $4 AND attempts < max_retries`
@@ -202,8 +194,12 @@ func (q *JobQueue) Fail(ctx context.Context, id string, attempt int, jobErr erro
 	if err != nil {
 		return fmt.Errorf("job_queue: fail retry: %w", err)
 	}
-	if _, err := result.RowsAffected(); err != nil {
+	retryRows, err := result.RowsAffected()
+	if err != nil {
 		return fmt.Errorf("job_queue: fail retry rows: %w", err)
+	}
+	if retryRows == 0 {
+		return fmt.Errorf("job_queue: fail %s attempt %d: %w", id, attempt, jobs.ErrOutcomeNotApplied)
 	}
 	return nil
 }
@@ -324,6 +320,26 @@ func (q *JobQueue) CountsByType(ctx context.Context, jobType string) (map[jobs.S
 		return nil, fmt.Errorf("job_queue: counts by type rows: %w", err)
 	}
 	return out, nil
+}
+
+// Requeue moves a processing job back to pending without resetting attempts.
+// Requires matching attempt and updated_at older than DefaultRequeueMinAge.
+func (q *JobQueue) Requeue(ctx context.Context, id string, attempt int) error {
+	const query = `UPDATE jobs SET status = 'pending', run_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'processing' AND attempts = $2
+		  AND updated_at < NOW() - ($3::text || ' milliseconds')::interval`
+	result, err := q.db.ExecContext(ctx, query, id, attempt, jobs.DefaultRequeueMinAge.Milliseconds())
+	if err != nil {
+		return fmt.Errorf("job_queue: requeue: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("job_queue: requeue rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("job_queue: requeue %s attempt %d: %w", id, attempt, jobs.ErrRequeueConflict)
+	}
+	return nil
 }
 
 // Retry resets a failed job back to pending so the worker picks it up

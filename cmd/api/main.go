@@ -172,6 +172,8 @@ func run() error {
 			return runJobsShow(os.Stdout, cfg, log, os.Args[2:])
 		case "jobs:retry":
 			return runJobsRetry(os.Stdout, cfg, log, os.Args[2:])
+		case "jobs:requeue":
+			return runJobsRequeue(os.Stdout, cfg, log, os.Args[2:])
 		case "jobs:cancel":
 			return runJobsCancel(os.Stdout, cfg, log, os.Args[2:])
 		case "cache:stats":
@@ -832,6 +834,7 @@ Commands:
   jobs:list            List background jobs ([--type=X] [--status=Y] [--limit=N] [--offset=N] [--json])
   jobs:show <id>       Show a job's full detail ([--json])
   jobs:retry <id>      Retry a failed job
+  jobs:requeue <id>    Requeue a processing job (stale claim; keeps attempts)
   jobs:cancel <id>     Cancel a pending job
   cache:stats          Show cache occupancy ([--json])
   cache:clear          Clear cache (--prefix=<p> | --tag=<t> | --key=<k> | --all)
