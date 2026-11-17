@@ -24,7 +24,7 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
 func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
 func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
-func (q *memQueue) Requeue(context.Context, string, int) error { return nil }
+func (q *memQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error { return nil }
 
 func testApp() *plugin.App {
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -187,7 +187,12 @@ func TestAppHost_OnQueueBoundAndOnRequeued(t *testing.T) {
 		return queue
 	})
 	var seen string
-	h.OnRequeued(func(_ context.Context, jobID string) { seen = jobID })
+	var seenAttempt int
+	h.OnRequeued(func(_ context.Context, jobID string, attempt int) error {
+		seen = jobID
+		seenAttempt = attempt
+		return nil
+	})
 
 	q := &memQueue{}
 	got, err := app.ApplyQueueBoundHooks(q)
@@ -198,10 +203,10 @@ func TestAppHost_OnQueueBoundAndOnRequeued(t *testing.T) {
 		t.Fatalf("OnQueueBound wrap applied=%v got=%v", wrapped, got)
 	}
 	nq := app.WrapRequeueNotify(q)
-	if err := nq.Requeue(context.Background(), "job-9", 1); err != nil {
+	if err := nq.Requeue(context.Background(), "job-9", 2); err != nil {
 		t.Fatal(err)
 	}
-	if seen != "job-9" {
-		t.Fatalf("OnRequeued seen=%q", seen)
+	if seen != "job-9" || seenAttempt != 2 {
+		t.Fatalf("OnRequeued seen=%q attempt=%d", seen, seenAttempt)
 	}
 }

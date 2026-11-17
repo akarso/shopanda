@@ -2,6 +2,8 @@ package plugin_test
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -12,15 +14,29 @@ type hookQueue struct {
 	stubQueue
 	requeued   []string
 	requeueErr error
+	beforeSeen []int
 }
 
-func (q *hookQueue) Requeue(_ context.Context, id string, _ int) error {
+func (q *hookQueue) Requeue(ctx context.Context, id string, attempt int, opts ...jobs.RequeueOption) error {
+	return q.RequeueWithBeforeCommit(ctx, id, attempt, nil, opts...)
+}
+
+func (q *hookQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
+	_ = opts
 	if q.requeueErr != nil {
 		return q.requeueErr
+	}
+	if before != nil {
+		if err := before(ctx, id, attempt); err != nil {
+			return err
+		}
+		q.beforeSeen = append(q.beforeSeen, attempt)
 	}
 	q.requeued = append(q.requeued, id)
 	return nil
 }
+
+var _ jobs.RequeueHookable = (*hookQueue)(nil)
 
 func TestApp_OnQueueBound_AppliesInOrder(t *testing.T) {
 	app := &plugin.App{}
@@ -49,19 +65,25 @@ func TestApp_OnQueueBound_AppliesInOrder(t *testing.T) {
 func TestApp_WrapRequeueNotify_FiresOnRequeued(t *testing.T) {
 	app := &plugin.App{}
 	inner := &hookQueue{}
-	var seen []string
-	app.OnRequeued(func(_ context.Context, jobID string) {
-		seen = append(seen, jobID)
+	var seenID string
+	var seenAttempt int
+	app.OnRequeued(func(_ context.Context, jobID string, attempt int) error {
+		seenID = jobID
+		seenAttempt = attempt
+		return nil
 	})
 	q := app.WrapRequeueNotify(inner)
-	if err := q.Requeue(context.Background(), "job-1", 1); err != nil {
+	if err := q.Requeue(context.Background(), "job-1", 3); err != nil {
 		t.Fatal(err)
 	}
 	if len(inner.requeued) != 1 || inner.requeued[0] != "job-1" {
 		t.Fatalf("inner requeued = %v", inner.requeued)
 	}
-	if len(seen) != 1 || seen[0] != "job-1" {
-		t.Fatalf("OnRequeued = %v", seen)
+	if len(inner.beforeSeen) != 1 || inner.beforeSeen[0] != 3 {
+		t.Fatalf("beforeSeen = %v, want attempt 3 before pending", inner.beforeSeen)
+	}
+	if seenID != "job-1" || seenAttempt != 3 {
+		t.Fatalf("OnRequeued = %s/%d", seenID, seenAttempt)
 	}
 }
 
@@ -70,7 +92,7 @@ func TestApp_WrapRequeueNotify_QuietOnError(t *testing.T) {
 	inner := &hookQueue{}
 	inner.requeueErr = jobs.ErrRequeueConflict
 	called := false
-	app.OnRequeued(func(context.Context, string) { called = true })
+	app.OnRequeued(func(context.Context, string, int) error { called = true; return nil })
 	q := app.WrapRequeueNotify(inner)
 	if err := q.Requeue(context.Background(), "job-1", 1); err == nil {
 		t.Fatal("expected error")
@@ -80,13 +102,31 @@ func TestApp_WrapRequeueNotify_QuietOnError(t *testing.T) {
 	}
 }
 
-func TestApp_WrapRequeueNotify_RecoversHookPanic(t *testing.T) {
+func TestApp_WrapRequeueNotify_HookPanicFailsRequeue(t *testing.T) {
 	app := &plugin.App{}
 	inner := &hookQueue{}
-	app.OnRequeued(func(context.Context, string) { panic("boom") })
+	app.OnRequeued(func(context.Context, string, int) error { panic("boom") })
 	q := app.WrapRequeueNotify(inner)
-	if err := q.Requeue(context.Background(), "job-1", 1); err != nil {
-		t.Fatalf("Requeue must still succeed after hook panic: %v", err)
+	if err := q.Requeue(context.Background(), "job-1", 1); err == nil {
+		t.Fatal("expected Requeue error after hook panic")
+	}
+	if len(inner.requeued) != 0 {
+		t.Fatalf("pending must not flip after hook panic: %v", inner.requeued)
+	}
+}
+
+func TestApp_WrapRequeueNotify_HookErrorFailsRequeue(t *testing.T) {
+	app := &plugin.App{}
+	inner := &hookQueue{}
+	want := errors.New("fence release failed")
+	app.OnRequeued(func(context.Context, string, int) error { return want })
+	q := app.WrapRequeueNotify(inner)
+	err := q.Requeue(context.Background(), "job-1", 1)
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if len(inner.requeued) != 0 {
+		t.Fatal("pending must not flip after hook error")
 	}
 }
 
@@ -96,6 +136,19 @@ func TestApp_ApplyQueueBoundHooks_NilReturnsError(t *testing.T) {
 	_, err := app.ApplyQueueBoundHooks(&hookQueue{})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestApp_ApplyQueueBoundHooks_TypedNilReturnsError(t *testing.T) {
+	app := &plugin.App{}
+	type fence struct{ jobs.Queue }
+	app.OnQueueBound(func(jobs.Queue) jobs.Queue {
+		var f *fence
+		return f
+	})
+	_, err := app.ApplyQueueBoundHooks(&hookQueue{})
+	if err == nil {
+		t.Fatal("expected typed-nil bind error")
 	}
 }
 
@@ -110,20 +163,28 @@ func TestApp_ApplyQueueBoundHooks_PanicReturnsError(t *testing.T) {
 
 type introspectableHookQueue struct {
 	hookQueue
+	retryN  atomic.Int32
+	cancelN atomic.Int32
 }
 
-func (introspectableHookQueue) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
+func (q *introspectableHookQueue) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
 	return nil, nil
 }
-func (introspectableHookQueue) Get(context.Context, string) (*jobs.Detail, error) { return nil, nil }
-func (introspectableHookQueue) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+func (q *introspectableHookQueue) Get(context.Context, string) (*jobs.Detail, error) { return nil, nil }
+func (q *introspectableHookQueue) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
 	return map[jobs.Status]int{}, nil
 }
-func (introspectableHookQueue) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
+func (q *introspectableHookQueue) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
 	return map[jobs.Status]int{}, nil
 }
-func (introspectableHookQueue) Retry(context.Context, string) error  { return nil }
-func (introspectableHookQueue) Cancel(context.Context, string) error { return nil }
+func (q *introspectableHookQueue) Retry(context.Context, string) error {
+	q.retryN.Add(1)
+	return nil
+}
+func (q *introspectableHookQueue) Cancel(context.Context, string) error {
+	q.cancelN.Add(1)
+	return nil
+}
 
 func TestApp_ApplyQueueBoundHooks_RejectsDroppedReader(t *testing.T) {
 	app := &plugin.App{}
@@ -149,6 +210,25 @@ func TestApp_WrapRequeueNotify_KeepsReaderAdmin(t *testing.T) {
 	}
 	if _, err := q.(jobs.Reader).CountsByStatus(context.Background()); err != nil {
 		t.Fatalf("CountsByStatus: %v", err)
+	}
+}
+
+func TestApp_WrapRequeueNotify_LiveAdminSameInstance(t *testing.T) {
+	app := &plugin.App{}
+	inner := &introspectableHookQueue{}
+	q := app.WrapRequeueNotify(inner)
+	ad := q.(jobs.Admin)
+	if err := ad.Retry(context.Background(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Requeue(context.Background(), "y", 1); err != nil {
+		t.Fatal(err)
+	}
+	if inner.retryN.Load() != 1 {
+		t.Fatalf("Retry must hit live inner, got %d", inner.retryN.Load())
+	}
+	if len(inner.requeued) != 1 {
+		t.Fatalf("Requeue must hit live inner, got %v", inner.requeued)
 	}
 }
 
@@ -179,5 +259,15 @@ func TestApp_WrapRequeueNotify_ValueWrapperWithFuncDoesNotPanic(t *testing.T) {
 	got := app.WrapRequeueNotify(wrapped)
 	if _, ok := got.(jobs.Reader); !ok {
 		t.Fatalf("%T must keep Reader through value fence", got)
+	}
+	// Retry and Requeue must resolve the same live inner (not a forked copy).
+	if err := got.(jobs.Admin).Retry(context.Background(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := got.Requeue(context.Background(), "b", 2); err != nil {
+		t.Fatal(err)
+	}
+	if inner.retryN.Load() != 1 || len(inner.requeued) != 1 {
+		t.Fatalf("live chain: retry=%d requeued=%v", inner.retryN.Load(), inner.requeued)
 	}
 }

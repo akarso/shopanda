@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # DSN-gated integration suite (portable CI contract, Phase 17).
 # Requires: go, jq, SHOPANDA_TEST_DSN (non-empty).
+# Optional: SHOPANDA_TEST_REDIS_URL pointing at Redis 5.x — when set, the
+# Redis 5 job-queue repair canary must pass (must not skip).
 # Usage: bash scripts/ci/integration.sh
 set -euo pipefail
 
@@ -22,6 +24,9 @@ pkgs=(
   ./internal/platform/migrate/...
   ./plugins/b2b/...
 )
+if [[ -n "${SHOPANDA_TEST_REDIS_URL:-}" ]]; then
+  pkgs+=(./internal/infrastructure/redis/)
+fi
 
 json="$(mktemp)"
 trap 'rm -f "$json"' EXIT
@@ -54,6 +59,11 @@ canaries=(
   "github.com/akarso/shopanda/internal/infrastructure/postgres|TestProductRepo_CreateAndFindByID"
   "github.com/akarso/shopanda/plugins/b2b/groups|TestPostgresRepo_SaveListFind"
 )
+if [[ -n "${SHOPANDA_TEST_REDIS_URL:-}" ]]; then
+  canaries+=(
+    "github.com/akarso/shopanda/internal/infrastructure/redis|TestJobQueue_RepairStaleReclaim_Redis5"
+  )
+fi
 for c in "${canaries[@]}"; do
   pkg="${c%%|*}"
   test="${c##*|}"

@@ -187,16 +187,17 @@ func TestJobQueue_Requeue_RequiresAgeAndAttempt(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected dequeued job")
 	}
-	// Too fresh → conflict even with matching attempt.
-	if err := q.Requeue(ctx, got.ID, got.Attempts); err == nil || !errors.Is(err, jobs.ErrRequeueConflict) {
-		t.Fatalf("Requeue fresh claim: %v", err)
+	minAge := jobs.WithRequeueMinAge(time.Minute)
+	// Too fresh → ErrRequeueTooFresh even with matching attempt (db clock).
+	if err := q.Requeue(ctx, got.ID, got.Attempts, minAge); err == nil || !errors.Is(err, jobs.ErrRequeueTooFresh) {
+		t.Fatalf("Requeue fresh claim: %v, want ErrRequeueTooFresh", err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE jobs SET updated_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, got.ID); err != nil {
 		t.Fatal(err)
 	}
 	// Aged but wrong attempt must leave the live row processing.
-	if err := q.Requeue(ctx, got.ID, got.Attempts-1); err == nil || !errors.Is(err, jobs.ErrRequeueConflict) {
-		t.Fatalf("Requeue wrong attempt on aged row: %v", err)
+	if err := q.Requeue(ctx, got.ID, got.Attempts-1, minAge); err == nil || !errors.Is(err, jobs.ErrRequeueWrongAttempt) {
+		t.Fatalf("Requeue wrong attempt on aged row: %v, want ErrRequeueWrongAttempt", err)
 	}
 	detail, err := q.Get(ctx, got.ID)
 	if err != nil || detail == nil {
@@ -205,7 +206,7 @@ func TestJobQueue_Requeue_RequiresAgeAndAttempt(t *testing.T) {
 	if detail.Status != jobs.StatusProcessing || detail.Attempts != got.Attempts {
 		t.Fatalf("after wrong attempt = %+v, want still processing", detail)
 	}
-	if err := q.Requeue(ctx, got.ID, got.Attempts); err != nil {
+	if err := q.Requeue(ctx, got.ID, got.Attempts, minAge); err != nil {
 		t.Fatalf("Requeue aged claim: %v", err)
 	}
 	detail, err = q.Get(ctx, got.ID)
@@ -214,6 +215,48 @@ func TestJobQueue_Requeue_RequiresAgeAndAttempt(t *testing.T) {
 	}
 	if detail.Status != jobs.StatusPending || detail.Attempts != got.Attempts {
 		t.Fatalf("after requeue = %+v, want pending with attempts kept", detail)
+	}
+}
+
+func TestJobQueue_RequeueWithBeforeCommit_HookErrorKeepsProcessing(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	job, _ := jobs.NewJob(id.New(), "requeue-hook", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE jobs SET updated_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, got.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("fence release failed")
+	var seenAttempt int
+	err = q.RequeueWithBeforeCommit(ctx, got.ID, got.Attempts, func(_ context.Context, _ string, attempt int) error {
+		seenAttempt = attempt
+		return want
+	}, jobs.WithRequeueMinAge(time.Minute))
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if seenAttempt != got.Attempts {
+		t.Fatalf("hook attempt = %d, want %d", seenAttempt, got.Attempts)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.Status != jobs.StatusProcessing {
+		t.Fatalf("status = %s, want processing after hook error", detail.Status)
 	}
 }
 

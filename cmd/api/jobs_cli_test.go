@@ -129,6 +129,23 @@ func TestRunJobsCancel_RequiresID(t *testing.T) {
 	}
 }
 
+func TestParseJobsRequeueArgs(t *testing.T) {
+	id, minAge, err := parseJobsRequeueArgs([]string{"job-1"})
+	if err != nil || id != "job-1" || minAge != domainjobs.DefaultRequeueMinAge {
+		t.Fatalf("default: id=%q minAge=%s err=%v", id, minAge, err)
+	}
+	id, minAge, err = parseJobsRequeueArgs([]string{"job-2", "--min-age=90s"})
+	if err != nil || id != "job-2" || minAge != 90*time.Second {
+		t.Fatalf("flag: id=%q minAge=%s err=%v", id, minAge, err)
+	}
+	if _, _, err := parseJobsRequeueArgs([]string{"--min-age=1ns", "x"}); err == nil {
+		t.Fatal("expected invalid min-age below 1s")
+	}
+	if _, _, err := parseJobsRequeueArgs(nil); err == nil {
+		t.Fatal("expected usage error")
+	}
+}
+
 func TestFormatJobsList_TextOutput(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	jobList := []domainjobs.Summary{

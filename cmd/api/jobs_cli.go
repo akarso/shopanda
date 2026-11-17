@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
@@ -138,21 +140,8 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 	reader, okR := bound.(domainjobs.Reader)
 	admin, okA := bound.(domainjobs.Admin)
 	if !okR || !okA {
-		if _, pluginQ := pluginApp.Queue(); pluginQ {
-			conn.Close()
-			return nil, fmt.Errorf("jobs:*: bound queue (%T) does not implement jobs.Reader/Admin — OnQueueBound wrappers must forward those ports (refusing a second JobQueue that would bypass the fence)", bound)
-		}
-		pg, err := postgres.NewJobQueue(conn)
-		if err != nil {
-			conn.Close()
-			return nil, fmt.Errorf("job queue: %w", err)
-		}
-		if !okR {
-			reader = pg
-		}
-		if !okA {
-			admin = pg
-		}
+		conn.Close()
+		return nil, fmt.Errorf("jobs:*: bound queue (%T) does not implement jobs.Reader/Admin — OnQueueBound wrappers must forward those ports (refusing a second JobQueue that would bypass the fence)", bound)
 	}
 	svc, err := jobsApp.NewService(reader, admin)
 	if err != nil {
@@ -334,10 +323,11 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 	return writeSuccessLinef(w, "Job %s queued for retry.\n", id)
 }
 
-// runJobsRequeue handles `app jobs:requeue <id>` — processing → pending
-// without resetting attempts (bound queue / OnQueueBound fence).
+// runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m]` —
+// processing → pending without resetting attempts (bound queue /
+// OnQueueBound fence). Hooks run under FOR UPDATE before pending.
 func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
-	id, err := parseSingleIDArg("jobs:requeue", args)
+	id, minAge, err := parseJobsRequeueArgs(args)
 	if err != nil {
 		return err
 	}
@@ -362,12 +352,49 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, wrongStatus)
 		return wrongStatus
 	}
-	requeueErr := rt.queue.Requeue(ctx, id, detail.Attempts)
+	requeueErr := rt.queue.Requeue(ctx, id, detail.Attempts, domainjobs.WithRequeueMinAge(minAge))
 	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, requeueErr)
 	if requeueErr != nil {
-		return fmt.Errorf("jobs:requeue: %w", requeueErr)
+		switch {
+		case errors.Is(requeueErr, domainjobs.ErrRequeueTooFresh):
+			return fmt.Errorf("jobs:requeue: claim younger than --min-age=%s (still a plausible live handler): %w", minAge, requeueErr)
+		case errors.Is(requeueErr, domainjobs.ErrRequeueInProgress):
+			return fmt.Errorf("jobs:requeue: another reclaim is in progress (wait for it to finish or for the default %s lease to expire): %w", domainjobs.DefaultRequeueMinAge, requeueErr)
+		case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
+			return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved): %w", requeueErr)
+		case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
+			return fmt.Errorf("jobs:requeue: not processing: %w", requeueErr)
+		default:
+			return fmt.Errorf("jobs:requeue: %w", requeueErr)
+		}
 	}
-	return writeSuccessLinef(w, "Job %s requeued (processing → pending, attempts=%d kept; requires claim age ≥ %s).\n", id, detail.Attempts, domainjobs.DefaultRequeueMinAge)
+	return writeSuccessLinef(w, "Job %s requeued (processing → pending, attempts=%d kept; min-age=%s).\n", id, detail.Attempts, minAge)
+}
+
+func parseJobsRequeueArgs(args []string) (id string, minAge time.Duration, err error) {
+	minAge = domainjobs.DefaultRequeueMinAge
+	var positional []string
+	for _, arg := range args {
+		switch {
+		case strings.HasPrefix(arg, "--min-age="):
+			raw := strings.TrimPrefix(arg, "--min-age=")
+			d, perr := time.ParseDuration(raw)
+			if perr != nil || d < time.Second {
+				return "", 0, fmt.Errorf("usage: app jobs:requeue <id> [--min-age=5m]: invalid --min-age %q (minimum 1s)", raw)
+			}
+			minAge = d
+		case arg == "--min-age":
+			return "", 0, fmt.Errorf("usage: app jobs:requeue <id> [--min-age=5m]")
+		case strings.HasPrefix(arg, "--"):
+			return "", 0, fmt.Errorf("usage: app jobs:requeue <id> [--min-age=5m]: unrecognized option %q", arg)
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
+		return "", 0, fmt.Errorf("usage: app jobs:requeue <id> [--min-age=5m]")
+	}
+	return positional[0], minAge, nil
 }
 
 // runJobsCancel handles `app jobs:cancel <id>`.
