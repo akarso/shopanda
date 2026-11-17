@@ -286,6 +286,14 @@ queue:
 #     enabled: false   # public SDK reference (pluginsdk.Adapt); GET /extref/health
 #   promodemo:
 #     enabled: false   # custom catalog promotion rule types (min_line_total, line_bonus_percent)
+#
+# Product (fork) plugins: use an unknown slug map — no typed field in core.
+# Flatten keys plugins.<slug>.*; Host.ConfigBool("plugins.<slug>.enabled"); env
+# SHOPANDA_PLUGINS_<SLUG>_<KEY> (slug without underscores in the env form).
+# plugins:
+#   myproduct:
+#     enabled: true
+#     api_key: "..."
 
 # --- B2B module (commercial) --------------------------------------------------
 # Requires a valid license key. See docs/COMMERCIAL.md and plugins/b2b/README.md.

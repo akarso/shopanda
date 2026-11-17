@@ -49,6 +49,14 @@ Register in `cmd/api/register_products.go` (product-owned; do not edit
 `register_plugins.go`), rebuild, hit the health route.
 Slugs that are Go keywords (`chan`, `type`, …) or first-party plugin names are refused.
 
+### Product plugin config (no typed core field)
+
+Unknown keys under `plugins:` are kept in `PluginsConfig.Extra` and flattened as
+`plugins.<slug>.*`. Read them with `Host.ConfigBool` / `ConfigValue` (scoped Host
+already namespaces to your plugin). Env overlay: `SHOPANDA_PLUGINS_<SLUG>_<KEY>`
+(use a slug without underscores in the env form, or set values in YAML). Do not
+add a typed struct field in `internal/platform/config` for product plugins.
+
 ## Portable checks (no CI required)
 
 ```bash
