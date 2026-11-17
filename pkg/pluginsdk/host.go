@@ -67,6 +67,9 @@ type Host interface {
 
 	Cart() (CartPort, bool)
 	Catalog() (CatalogPort, bool)
+	// CatalogSeed returns the catalog seed/write port when CapCatalogSeed is
+	// declared and bound. Distinct from read-only Catalog().
+	CatalogSeed() (CatalogSeedPort, bool)
 	Orders() (OrderPort, bool)
 	Customers() (CustomerPort, bool)
 

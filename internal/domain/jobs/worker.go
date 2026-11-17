@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -163,7 +164,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		// most needs last_error for — a misconfigured or typo'd job type —
 		// and Fail's COALESCE-based persistence (see job_queue.go) only
 		// records something when jobErr is non-nil.
-		w.recordFail(ctx, job.ID, fmt.Errorf("no handler registered for job type %q", job.Type))
+		w.recordFail(ctx, job.ID, job.Attempts, fmt.Errorf("no handler registered for job type %q", job.Type))
 		return true
 	}
 
@@ -179,6 +180,11 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	start := time.Now()
 	err = w.safeHandle(ctx, h, *job)
 	duration := time.Since(start)
+	// Handler (or queue wrapper) already recorded the outcome — do not
+	// call platform Complete/Fail again.
+	if errors.Is(err, ErrSkipOutcome) {
+		return true
+	}
 	if err != nil {
 		failFields := map[string]interface{}{
 			"job_id":      job.ID,
@@ -191,11 +197,11 @@ func (w *Worker) processNext(ctx context.Context) bool {
 		w.log.Error("worker.job.failed", err, failFields)
 		w.metrics.JobFailure(job.Type)
 		w.metrics.JobResult(job.Type, "failed", duration)
-		w.recordFail(ctx, job.ID, err)
+		w.recordFail(ctx, job.ID, job.Attempts, err)
 		return true
 	}
 
-	w.recordComplete(ctx, job.ID, job.Type, job.Payload, duration)
+	w.recordComplete(ctx, job.ID, job.Attempts, job.Type, job.Payload, duration)
 	return true
 }
 
