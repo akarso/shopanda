@@ -45,7 +45,8 @@ This creates `plugins/myproduct/` with:
 - README with registration and job-type notes
 - `PRODUCT_README.myproduct.md` — optional root README banner (does not overwrite `README.md`)
 
-Register in `cmd/api/register_plugins.go`, rebuild, hit the health route.
+Register in `cmd/api/register_products.go` (product-owned; do not edit
+`register_plugins.go`), rebuild, hit the health route.
 Slugs that are Go keywords (`chan`, `type`, …) or first-party plugin names are refused.
 
 ## Portable checks (no CI required)

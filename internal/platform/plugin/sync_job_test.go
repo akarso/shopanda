@@ -32,7 +32,8 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 }
 func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
 func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error  { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Requeue(context.Context, string, int) error { return nil }
 
 func (q *memQueue) snapshot() []jobs.Job {
 	q.mu.Lock()
@@ -358,6 +359,16 @@ func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {
 	}
 }
 
+func TestApp_BindQueue_AcceptsNotifyWrapper(t *testing.T) {
+	app := &plugin.App{}
+	pluginQ := &memQueue{}
+	app.RegisterQueue(pluginQ)
+	wrapped := app.WrapRequeueNotify(pluginQ)
+	if err := app.BindQueue(wrapped); err != nil {
+		t.Fatalf("BindQueue notify wrap of registered queue: %v", err)
+	}
+}
+
 func TestApp_BindQueue_NilGuards(t *testing.T) {
 	if err := (*plugin.App)(nil).BindQueue(&memQueue{}); err == nil {
 		t.Fatal("expected nil app error")
@@ -375,5 +386,34 @@ func TestApp_BindQueue_IdempotentSameInstance(t *testing.T) {
 	}
 	if err := app.BindQueue(q); err != nil {
 		t.Fatalf("re-bind same instance: %v", err)
+	}
+}
+
+func TestApp_BoundQueue_PrefersBound(t *testing.T) {
+	boundOnly := &plugin.App{}
+	q := &memQueue{}
+	if err := boundOnly.BindQueue(q); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := boundOnly.BoundQueue()
+	if !ok || got != q {
+		t.Fatalf("bound-only BoundQueue() = (%v, %v)", got, ok)
+	}
+	if _, ok := boundOnly.Queue(); ok {
+		t.Fatal("Queue() should be empty when only BindQueue ran")
+	}
+
+	registered := &plugin.App{}
+	r := &memQueue{}
+	registered.RegisterQueue(r)
+	if _, ok = registered.BoundQueue(); ok {
+		t.Fatal("BoundQueue must be empty before BindQueue")
+	}
+	if err := registered.BindQueue(r); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = registered.BoundQueue()
+	if !ok || got != r {
+		t.Fatalf("after bind BoundQueue() = (%v, %v)", got, ok)
 	}
 }

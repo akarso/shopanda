@@ -50,7 +50,7 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 		}, []string{"job_type"}),
 		jobResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "shopanda_job_results_total",
-			Help: "Total finished background job attempts, labelled by job type and outcome (success/failed).",
+			Help: "Total finished background job attempts, labelled by job type and outcome (success/failed/skipped/not_applied).",
 		}, []string{"job_type", "outcome"}),
 		jobDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "shopanda_job_duration_seconds",
@@ -117,7 +117,7 @@ func (r *PrometheusRecorder) JobFailure(jobType string) {
 
 func (r *PrometheusRecorder) JobResult(jobType, outcome string, duration time.Duration) {
 	switch outcome {
-	case OutcomeSuccess, OutcomeFailed:
+	case OutcomeSuccess, OutcomeFailed, OutcomeSkipped, OutcomeNotApplied:
 		// keep
 	default:
 		outcome = OutcomeFailed

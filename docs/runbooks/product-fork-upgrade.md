@@ -28,8 +28,9 @@ Do **not** merge from a local Shopanda working tree.
      `docs/GOVULN_BASELINE.md` if you run govuln; do not blindly delete
      `scripts/ci/`.
    - **`cmd/api/register_products.go`** — re-apply your plugin registration
-     (prefer this product-owned file; see PRODUCT_SITES). If you set
-     `merge=ours` in `.gitattributes`, Git keeps your copy automatically.
+     (prefer this product-owned file; do not add product plugins to
+     `register_plugins.go`). If you set `merge=ours` in `.gitattributes`,
+     Git keeps your copy automatically.
    - **Root product files** (`README`, `AGENTS`, `RUNBOOK`, `PLUGINS`,
      `.gitignore`, `Makefile.product`) — same: `merge=ours` avoids repeat
      resolves; see [PRODUCT_SITES.md](../guides/PRODUCT_SITES.md#product-owned-root-files-merge-conflicts).
@@ -56,7 +57,7 @@ Keep a short table in product docs (example):
 | Path | Why it differs | Since |
 | --- | --- | --- |
 | `README.md` | Product banner | init |
-| `cmd/api/register_plugins.go` | Register `plugins/<slug>` | init |
+| `cmd/api/register_products.go` | Register `plugins/<slug>` | init |
 | `.gitignore` | Product ignores | init |
 
 See also [`guides/PRODUCT_SITES.md`](../guides/PRODUCT_SITES.md).

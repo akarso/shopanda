@@ -3,6 +3,7 @@ package redis_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,7 +11,38 @@ import (
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 )
+
+func listContains(t *testing.T, mr *miniredis.Miniredis, key, id string) bool {
+	t.Helper()
+	items, err := mr.List(key)
+	if err != nil {
+		// Empty / deleted list key — not present.
+		return false
+	}
+	for _, item := range items {
+		if item == id {
+			return true
+		}
+	}
+	return false
+}
+
+func delayedContains(t *testing.T, mr *miniredis.Miniredis, id string) bool {
+	t.Helper()
+	members, err := mr.ZMembers("test-queue:delayed")
+	if err != nil {
+		// Missing delayed key means nothing is scheduled.
+		return false
+	}
+	for _, m := range members {
+		if m == id {
+			return true
+		}
+	}
+	return false
+}
 
 func setupJobQueue(t *testing.T) (*miniredis.Miniredis, jobs.Queue) {
 	t.Helper()
@@ -178,8 +210,193 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	_, q := setupJobQueue(t)
 	ctx := context.Background()
 
-	if err := q.Complete(ctx, id.New(), 1); err == nil {
-		t.Fatal("expected error for non-existent job")
+	err := q.Complete(ctx, id.New(), 1)
+	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete missing: %v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+func TestJobQueue_Fail_NotFound(t *testing.T) {
+	_, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	err := q.Fail(ctx, id.New(), 1, errors.New("boom"))
+	if err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail missing: %v, want ErrOutcomeNotApplied", err)
+	}
+}
+
+// TestJobQueue_Fail_PreservesEmptyPayloadArray pins the Redis cjson trap:
+// decode+encode turns JSON [] into {}. Fail must SET a Go-marshaled blob so
+// search.reindex product_ids:[] survives retry (scopedProductIDs requires an array).
+func TestJobQueue_Fail_PreservesEmptyPayloadArray(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	payload := map[string]interface{}{"scope": "products", "product_ids": []string{}}
+	job, _ := jobs.NewJob(id.New(), "search.reindex", payload)
+	if err := q.Enqueue(ctx, job); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	got, err := q.Dequeue(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Dequeue: %v %#v", err, got)
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("search down")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	storedPayload, _ := doc["payload"].(map[string]interface{})
+	rawIDs, ok := storedPayload["product_ids"]
+	if !ok {
+		t.Fatalf("payload missing product_ids: %#v", doc["payload"])
+	}
+	switch rawIDs.(type) {
+	case []interface{}:
+		// ok — empty array survived Go marshal (Redis cjson.encode would write {})
+	default:
+		t.Fatalf("product_ids = %T (%v), want []interface{} (empty array, not object)", rawIDs, rawIDs)
+	}
+	// Round-trip through loadJob the way a later Dequeue would.
+	c := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	raw, getErr := c.Get(ctx, "test-queue:job:"+got.ID).Bytes()
+	if getErr != nil {
+		t.Fatalf("GET job: %v", getErr)
+	}
+	var again jobs.Job
+	// storedJob shape matches Job fields used by toJob; unmarshal payload only.
+	var stored struct {
+		Payload map[string]interface{} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	again.Payload = stored.Payload
+	if _, ok := again.Payload["product_ids"].([]interface{}); !ok {
+		t.Fatalf("product_ids = %T, want []interface{}", again.Payload["product_ids"])
+	}
+}
+
+func TestJobQueue_Complete_WrongAttempt_LeavesProcessing(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "cas", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Complete(ctx, got.ID, got.Attempts-1); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete wrong attempt: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want processing", doc["status"])
+	}
+	if !listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must remain on processing list after wrong-attempt Complete")
+	}
+}
+
+func TestJobQueue_Fail_WrongAttempt_LeavesProcessing(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "cas", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts-1, errors.New("stale")); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail wrong attempt: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want processing", doc["status"])
+	}
+	if !listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must remain on processing list after wrong-attempt Fail")
+	}
+}
+
+func removeFromProcessing(t *testing.T, mr *miniredis.Miniredis, id string) {
+	t.Helper()
+	c := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.LRem(context.Background(), "test-queue:processing", 1, id).Err(); err != nil {
+		t.Fatalf("LRem processing: %v", err)
+	}
+}
+
+func TestJobQueue_Fail_NotOnProcessingList_NoWrite(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "orphan", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	// Simulate list/hash divergence: id left processing without Complete/Fail.
+	removeFromProcessing(t, mr, got.ID)
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Fail without processing claim: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want unchanged processing", doc["status"])
+	}
+	if delayedContains(t, mr, got.ID) {
+		t.Fatal("must not ZADD a second schedule when not on processing list")
+	}
+}
+
+func TestJobQueue_Complete_NotOnProcessingList_NoWrite(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "orphan", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	removeFromProcessing(t, mr, got.ID)
+	if err := q.Complete(ctx, got.ID, got.Attempts); err == nil || !errors.Is(err, jobs.ErrOutcomeNotApplied) {
+		t.Fatalf("Complete without processing claim: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusProcessing) {
+		t.Fatalf("status = %v, want unchanged processing", doc["status"])
+	}
+}
+
+func TestJobQueue_Fail_Retry_LandsOnDelayed(t *testing.T) {
+	mr, q := setupJobQueue(t)
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "retry", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("temp")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	doc := loadStoredJob(t, mr, got.ID)
+	if doc["status"] != string(jobs.StatusPending) {
+		t.Fatalf("status = %v, want pending", doc["status"])
+	}
+	if listContains(t, mr, "test-queue:processing", got.ID) {
+		t.Fatal("id must leave processing after Fail retry")
+	}
+	if !delayedContains(t, mr, got.ID) {
+		t.Fatalf("job %q missing from delayed set", got.ID)
 	}
 }
 
