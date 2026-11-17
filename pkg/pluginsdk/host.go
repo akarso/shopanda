@@ -88,6 +88,13 @@ type Host interface {
 	// BootstrapDB returns the composition-root database handle, if configured
 	// (e.g. for a Migrator plugin's integration-test helpers).
 	BootstrapDB() (*sql.DB, bool)
+
+	// OnQueueBound registers a wrap applied after queue resolve and before
+	// BindQueue (claim fence). wrap receives and must return the queue
+	// instance (jobs.Queue). Nil wrap is ignored.
+	OnQueueBound(wrap func(queue any) any)
+	// OnRequeued registers a callback after Queue.Requeue succeeds.
+	OnRequeued(fn func(ctx context.Context, jobID string))
 }
 
 // SlotsAPI registers storefront slot renderers without importing
