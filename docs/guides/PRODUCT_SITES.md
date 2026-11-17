@@ -45,7 +45,8 @@ This creates `plugins/myproduct/` with:
 - README with registration and job-type notes
 - `PRODUCT_README.myproduct.md` — optional root README banner (does not overwrite `README.md`)
 
-Register in `cmd/api/register_plugins.go`, rebuild, hit the health route.
+Register in `cmd/api/register_products.go` (product-owned; do not edit
+`register_plugins.go`), rebuild, hit the health route.
 Slugs that are Go keywords (`chan`, `type`, …) or first-party plugin names are refused.
 
 ## Portable checks (no CI required)
@@ -106,7 +107,7 @@ Contract summary: [`PLUGIN_RUNTIME_CONTRACT.md`](PLUGIN_RUNTIME_CONTRACT.md).
 | --- | --- |
 | `scripts/ci/*` if you run checks | Product README banner |
 | `docs/GOVULN_BASELINE.md` if you run govuln | Narrative guides under `docs/` |
-| Registration line in `register_plugins.go` | `plugins/<slug>/`, storefront |
+| Registration line in `register_products.go` | `plugins/<slug>/`, storefront |
 
 Do not assume a blank `docs/` tree is safe if you still run sample govuln/docs-policy jobs.
 
