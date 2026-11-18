@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -184,6 +185,10 @@ func catalogSeedTxStarterOf(db any) (catalogSeedTxStarter, error) {
 	}
 	switch v := db.(type) {
 	case *sql.DB:
+		// Typed nil *sql.DB boxed in any is not == nil above.
+		if v == nil {
+			return nil, nil
+		}
 		return sqlDBSeedStarter{begin: v.BeginTx}, nil
 	case interface {
 		BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
@@ -851,7 +856,12 @@ func catalogSeedAttributesMatch(stored map[string]interface{}, seed map[string]a
 	}
 	if len(seed) == 0 {
 		if len(stored) != 0 {
-			return fmt.Errorf("attributes not empty")
+			keys := make([]string, 0, len(stored))
+			for k := range stored {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return fmt.Errorf("attributes not empty: stored keys %v", keys)
 		}
 		return nil
 	}

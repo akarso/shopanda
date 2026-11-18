@@ -483,8 +483,10 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee", Attributes: map[string]any{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), "attributes not empty") {
-		t.Fatalf("empty-map assert err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "create-only") ||
+		!strings.Contains(err.Error(), "attributes not empty") ||
+		!strings.Contains(err.Error(), "parent_sku") {
+		t.Fatalf("empty attrs assert err = %v", err)
 	}
 
 	// Differing Status: error (do not soft-succeed).
@@ -567,11 +569,14 @@ func TestCatalogSeedPort_EnsureVariant_Attributes(t *testing.T) {
 		t.Fatalf("[]string must be deep-cloned, got %#v", got.Attributes["tags"])
 	}
 
-	// Existing SKU + different attrs → error.
+	// Existing SKU + different attrs → error (include stored/requested).
 	_, _, err = port.EnsureVariant(context.Background(), pluginsdk.CatalogVariantSeed{
 		ProductID: "p1", SKU: "TEE-M", Name: "Tee M", Attributes: map[string]any{"size": "L"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "create-only") {
+	if err == nil || !strings.Contains(err.Error(), "create-only") ||
+		!strings.Contains(err.Error(), `attribute "size" mismatch`) ||
+		!strings.Contains(err.Error(), `stored="M"`) ||
+		!strings.Contains(err.Error(), `requested="L"`) {
 		t.Fatalf("variant attrs mismatch err = %v", err)
 	}
 	// Subset match (only size): soft success even if stored has tags.
