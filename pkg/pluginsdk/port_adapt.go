@@ -119,34 +119,235 @@ func (p *catalogPort) FindProduct(ctx context.Context, id string) (*extapi.Catal
 	}, nil
 }
 
-// catalogSeedTxStarter begins a transaction for atomic price + history writes.
+// catalogSeedTx is Commit/Rollback only so unit tests can fake SQL without
+// *sql.Tx. Production wraps *sql.Tx via sqlCatalogSeedTx.
+type catalogSeedTx interface {
+	Commit() error
+	Rollback() error
+}
+
+// catalogSeedTxStarter begins a transaction for Import and standalone priceTx.
 type catalogSeedTxStarter interface {
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (catalogSeedTx, error)
 }
 
 type catalogSeedTxProducts interface {
 	catalog.ProductRepository
-	WithTx(tx *sql.Tx) catalog.ProductRepository
+	WithTx(tx catalogSeedTx) catalog.ProductRepository
 }
 
 type catalogSeedTxVariants interface {
 	catalog.VariantRepository
-	WithTx(tx *sql.Tx) catalog.VariantRepository
+	WithTx(tx catalogSeedTx) catalog.VariantRepository
 }
 
 type catalogSeedTxPrice interface {
 	pricing.PriceRepository
-	WithTx(tx *sql.Tx) pricing.PriceRepository
+	WithTx(tx catalogSeedTx) pricing.PriceRepository
 }
 
 type catalogSeedTxHistory interface {
 	pricing.PriceHistoryRepository
-	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
+	WithTx(tx catalogSeedTx) pricing.PriceHistoryRepository
 }
 
 type catalogSeedTxStock interface {
 	inventory.StockRepository
+	WithTx(tx catalogSeedTx) inventory.StockRepository
+}
+
+// sqlCatalogSeedTx adapts *sql.Tx to catalogSeedTx for postgres WithTx repos.
+type sqlCatalogSeedTx struct{ tx *sql.Tx }
+
+func (t sqlCatalogSeedTx) Commit() error   { return t.tx.Commit() }
+func (t sqlCatalogSeedTx) Rollback() error { return t.tx.Rollback() }
+func (t sqlCatalogSeedTx) SQLTx() *sql.Tx  { return t.tx }
+
+type sqlDBSeedStarter struct {
+	begin func(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+func (s sqlDBSeedStarter) BeginTx(ctx context.Context, opts *sql.TxOptions) (catalogSeedTx, error) {
+	tx, err := s.begin(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return sqlCatalogSeedTx{tx: tx}, nil
+}
+
+func catalogSeedTxStarterOf(db any) (catalogSeedTxStarter, error) {
+	if db == nil {
+		return nil, nil
+	}
+	if s, ok := db.(catalogSeedTxStarter); ok {
+		return s, nil
+	}
+	switch v := db.(type) {
+	case *sql.DB:
+		return sqlDBSeedStarter{begin: v.BeginTx}, nil
+	case interface {
+		BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+	}:
+		return sqlDBSeedStarter{begin: v.BeginTx}, nil
+	default:
+		return nil, fmt.Errorf("pluginsdk: catalog seed port: unsupported db type %T", db)
+	}
+}
+
+type sqlWithTxPrice interface {
+	pricing.PriceRepository
+	WithTx(tx *sql.Tx) pricing.PriceRepository
+}
+type sqlWithTxHistory interface {
+	pricing.PriceHistoryRepository
+	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
+}
+type sqlWithTxProducts interface {
+	catalog.ProductRepository
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+type sqlWithTxVariants interface {
+	catalog.VariantRepository
+	WithTx(tx *sql.Tx) catalog.VariantRepository
+}
+type sqlWithTxStock interface {
+	inventory.StockRepository
 	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
+type bridgedPriceRepo struct {
+	pricing.PriceRepository
+	with func(*sql.Tx) pricing.PriceRepository
+}
+
+func (b bridgedPriceRepo) WithTx(tx catalogSeedTx) pricing.PriceRepository {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		return b.PriceRepository
+	}
+	inner := b.with(st.SQLTx())
+	return bridgedPriceRepo{PriceRepository: inner, with: b.with}
+}
+
+type bridgedHistoryRepo struct {
+	pricing.PriceHistoryRepository
+	with func(*sql.Tx) pricing.PriceHistoryRepository
+}
+
+func (b bridgedHistoryRepo) WithTx(tx catalogSeedTx) pricing.PriceHistoryRepository {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		return b.PriceHistoryRepository
+	}
+	inner := b.with(st.SQLTx())
+	return bridgedHistoryRepo{PriceHistoryRepository: inner, with: b.with}
+}
+
+type bridgedProductsRepo struct {
+	catalog.ProductRepository
+	with func(*sql.Tx) catalog.ProductRepository
+}
+
+func (b bridgedProductsRepo) WithTx(tx catalogSeedTx) catalog.ProductRepository {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		return b.ProductRepository
+	}
+	inner := b.with(st.SQLTx())
+	return bridgedProductsRepo{ProductRepository: inner, with: b.with}
+}
+
+type bridgedVariantsRepo struct {
+	catalog.VariantRepository
+	with func(*sql.Tx) catalog.VariantRepository
+}
+
+func (b bridgedVariantsRepo) WithTx(tx catalogSeedTx) catalog.VariantRepository {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		return b.VariantRepository
+	}
+	inner := b.with(st.SQLTx())
+	return bridgedVariantsRepo{VariantRepository: inner, with: b.with}
+}
+
+type bridgedStockRepo struct {
+	inventory.StockRepository
+	with func(*sql.Tx) inventory.StockRepository
+}
+
+func (b bridgedStockRepo) WithTx(tx catalogSeedTx) inventory.StockRepository {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		return b.StockRepository
+	}
+	inner := b.with(st.SQLTx())
+	return bridgedStockRepo{StockRepository: inner, with: b.with}
+}
+
+func asCatalogSeedTxPrice(p pricing.PriceRepository) (catalogSeedTxPrice, bool) {
+	if p == nil {
+		return nil, false
+	}
+	if x, ok := p.(catalogSeedTxPrice); ok {
+		return x, true
+	}
+	if x, ok := p.(sqlWithTxPrice); ok {
+		return bridgedPriceRepo{PriceRepository: x, with: x.WithTx}, true
+	}
+	return nil, false
+}
+
+func asCatalogSeedTxHistory(h pricing.PriceHistoryRepository) (catalogSeedTxHistory, bool) {
+	if h == nil {
+		return nil, false
+	}
+	if x, ok := h.(catalogSeedTxHistory); ok {
+		return x, true
+	}
+	if x, ok := h.(sqlWithTxHistory); ok {
+		return bridgedHistoryRepo{PriceHistoryRepository: x, with: x.WithTx}, true
+	}
+	return nil, false
+}
+
+func asCatalogSeedTxProducts(p catalog.ProductRepository) (catalogSeedTxProducts, bool) {
+	if p == nil {
+		return nil, true // optional
+	}
+	if x, ok := p.(catalogSeedTxProducts); ok {
+		return x, true
+	}
+	if x, ok := p.(sqlWithTxProducts); ok {
+		return bridgedProductsRepo{ProductRepository: x, with: x.WithTx}, true
+	}
+	return nil, false
+}
+
+func asCatalogSeedTxVariants(v catalog.VariantRepository) (catalogSeedTxVariants, bool) {
+	if v == nil {
+		return nil, true
+	}
+	if x, ok := v.(catalogSeedTxVariants); ok {
+		return x, true
+	}
+	if x, ok := v.(sqlWithTxVariants); ok {
+		return bridgedVariantsRepo{VariantRepository: x, with: x.WithTx}, true
+	}
+	return nil, false
+}
+
+func asCatalogSeedTxStock(s inventory.StockRepository) (catalogSeedTxStock, bool) {
+	if s == nil {
+		return nil, true
+	}
+	if x, ok := s.(catalogSeedTxStock); ok {
+		return x, true
+	}
+	if x, ok := s.(sqlWithTxStock); ok {
+		return bridgedStockRepo{StockRepository: x, with: x.WithTx}, true
+	}
+	return nil, false
 }
 
 // catalogSeedPriceTx runs fn with price+history repos that share one
@@ -155,9 +356,34 @@ type catalogSeedTxStock interface {
 // BeginTx instead.
 type catalogSeedPriceTx func(ctx context.Context, fn func(prices pricing.PriceRepository, history pricing.PriceHistoryRepository) error) error
 
+func newCatalogSeedPriceTx(db catalogSeedTxStarter, tp catalogSeedTxPrice, th catalogSeedTxHistory) catalogSeedPriceTx {
+	return func(ctx context.Context, fn func(pricing.PriceRepository, pricing.PriceHistoryRepository) error) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+		if err := fn(tp.WithTx(tx), th.WithTx(tx)); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
+		}
+		committed = true
+		return nil
+	}
+}
+
 // NewCatalogSeedPort adapts catalog/pricing/inventory repositories to CatalogSeedPort.
-// When db is set and repos support WithTx (postgres), Import uses one transaction
-// and standalone EnsurePrice opens a short price+history transaction per call
+// db may be nil, *sql.DB, or a catalogSeedTxStarter. When db is set, prices and
+// history must support WithTx — otherwise NewCatalogSeedPort returns an error
+// (no silent sequential Upsert/Record split brain). Import uses one transaction;
+// standalone EnsurePrice opens one short price+history transaction per call
 // (prefer Import for large step-wise loops).
 func NewCatalogSeedPort(
 	products catalog.ProductRepository,
@@ -165,38 +391,39 @@ func NewCatalogSeedPort(
 	prices pricing.PriceRepository,
 	history pricing.PriceHistoryRepository,
 	stock inventory.StockRepository,
-	db catalogSeedTxStarter,
-) CatalogSeedPort {
+	db any,
+) (CatalogSeedPort, error) {
+	starter, err := catalogSeedTxStarterOf(db)
+	if err != nil {
+		return nil, err
+	}
 	p := &catalogSeedPort{
 		products: products,
 		variants: variants,
 		prices:   prices,
 		history:  history,
 		stock:    stock,
-		db:       db,
+		db:       starter,
 	}
-	if db != nil {
-		if tp, ok := prices.(catalogSeedTxPrice); ok {
-			if th, ok := history.(catalogSeedTxHistory); ok {
-				p.priceTx = func(ctx context.Context, fn func(pricing.PriceRepository, pricing.PriceHistoryRepository) error) error {
-					tx, err := db.BeginTx(ctx, nil)
-					if err != nil {
-						return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
-					}
-					err = fn(tp.WithTx(tx), th.WithTx(tx))
-					if err != nil {
-						_ = tx.Rollback()
-						return err
-					}
-					if err := tx.Commit(); err != nil {
-						return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
-					}
-					return nil
-				}
-			}
+	if starter != nil {
+		tp, okP := asCatalogSeedTxPrice(prices)
+		th, okH := asCatalogSeedTxHistory(history)
+		if !okP || !okH {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: db set but prices/history repos do not support WithTx")
 		}
+		// Import also requires product/variant/stock WithTx when those repos are bound.
+		if _, ok := asCatalogSeedTxProducts(products); !ok {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: db set but products repo does not support WithTx")
+		}
+		if _, ok := asCatalogSeedTxVariants(variants); !ok {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: db set but variants repo does not support WithTx")
+		}
+		if _, ok := asCatalogSeedTxStock(stock); !ok {
+			return nil, fmt.Errorf("pluginsdk: catalog seed port: db set but stock repo does not support WithTx")
+		}
+		p.priceTx = newCatalogSeedPriceTx(starter, tp, th)
 	}
-	return p
+	return p, nil
 }
 
 type catalogSeedPort struct {
@@ -209,32 +436,32 @@ type catalogSeedPort struct {
 	priceTx  catalogSeedPriceTx // nil → sequential Upsert then Record
 }
 
-func (p *catalogSeedPort) withTx(tx *sql.Tx) (*catalogSeedPort, error) {
+func (p *catalogSeedPort) withTx(tx catalogSeedTx) (*catalogSeedPort, error) {
 	out := *p
 	// Nested under Import's outer BeginTx: use tx-bound repos sequentially;
 	// do not open another price+history transaction per EnsurePrice.
 	out.priceTx = nil
-	if tp, ok := p.products.(catalogSeedTxProducts); ok {
+	if tp, ok := asCatalogSeedTxProducts(p.products); ok && tp != nil {
 		out.products = tp.WithTx(tx)
 	} else if p.products != nil {
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: products repo does not support WithTx")
 	}
-	if tv, ok := p.variants.(catalogSeedTxVariants); ok {
+	if tv, ok := asCatalogSeedTxVariants(p.variants); ok && tv != nil {
 		out.variants = tv.WithTx(tx)
 	} else if p.variants != nil {
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: variants repo does not support WithTx")
 	}
-	if tp, ok := p.prices.(catalogSeedTxPrice); ok {
+	if tp, ok := asCatalogSeedTxPrice(p.prices); ok {
 		out.prices = tp.WithTx(tx)
 	} else if p.prices != nil {
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: prices repo does not support WithTx")
 	}
-	if th, ok := p.history.(catalogSeedTxHistory); ok {
+	if th, ok := asCatalogSeedTxHistory(p.history); ok {
 		out.history = th.WithTx(tx)
 	} else if p.history != nil {
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: price history repo does not support WithTx")
 	}
-	if ts, ok := p.stock.(catalogSeedTxStock); ok {
+	if ts, ok := asCatalogSeedTxStock(p.stock); ok && ts != nil {
 		out.stock = ts.WithTx(tx)
 	} else if p.stock != nil {
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: stock repo does not support WithTx")
@@ -249,7 +476,7 @@ func (p *catalogSeedPort) Import(ctx context.Context, batch CatalogSeedBatch) (*
 		return nil, fmt.Errorf("pluginsdk: catalog seed port: not configured")
 	}
 	run := p
-	var tx *sql.Tx
+	var tx catalogSeedTx
 	if p.db != nil {
 		var err error
 		tx, err = p.db.BeginTx(ctx, nil)
