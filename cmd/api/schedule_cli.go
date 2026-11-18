@@ -259,7 +259,7 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := assertSchedulerNeedsMet(pluginApp); err != nil {
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
 		return err
 	}
 	freezePermissionRegistry(pluginApp)

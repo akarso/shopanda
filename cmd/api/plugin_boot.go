@@ -7,9 +7,11 @@ import (
 )
 
 // Process-kind AssertNeedsMetExcept lists — single source of truth for serve,
-// worker, scheduler, search reindex, and non-seed CLIs. Products and tests
-// call bootServePlugins / bootWorkerPlugins / assertSeedCLINeedsMet instead of
-// copying skip lists from main.go.
+// worker / scheduler / search reindex / non-seed CLIs, and plugin CLI.
+// Production composition roots call assert* after their own bind+Init.
+// Tests call bootServePlugins / bootWorkerPlugins to lock the same skip lists
+// (thinner than full wireServeRuntime / runWorker — skip-list coverage, not a
+// substitute for production Init wiring).
 
 func serveNeedsSkip() []plugin.Capability {
 	// CapCart is bound on serve; CapCatalogSeed is CLI-seed-only.
@@ -18,11 +20,9 @@ func serveNeedsSkip() []plugin.Capability {
 
 func workerNeedsSkip() []plugin.Capability {
 	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only.
+	// Scheduler, search reindex, and cache/jobs/extension-field CLIs share this list.
 	return []plugin.Capability{plugin.CapCart, plugin.CapCatalogSeed}
 }
-
-// schedulerNeedsSkip matches worker (no CartPort, no CatalogSeedPort).
-func schedulerNeedsSkip() []plugin.Capability { return workerNeedsSkip() }
 
 func assertServeNeedsMet(app *plugin.App) error {
 	if err := app.AssertNeedsMetExcept(serveNeedsSkip()...); err != nil {
@@ -33,13 +33,6 @@ func assertServeNeedsMet(app *plugin.App) error {
 
 func assertWorkerNeedsMet(app *plugin.App) error {
 	if err := app.AssertNeedsMetExcept(workerNeedsSkip()...); err != nil {
-		return fmt.Errorf("plugin capabilities: %w", err)
-	}
-	return nil
-}
-
-func assertSchedulerNeedsMet(app *plugin.App) error {
-	if err := app.AssertNeedsMetExcept(schedulerNeedsSkip()...); err != nil {
 		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	return nil
@@ -78,7 +71,8 @@ func assertPluginCLINeedsMet(app *plugin.App, bindSeed bool) error {
 }
 
 // bootServePlugins binds product ports, InitAll, late-binds cartPort, then
-// assertServeNeedsMet. Callable from tests without wireServeRuntime.
+// assertServeNeedsMet. Test helper to lock serveNeedsSkip — not the full
+// wireServeRuntime path (no integration writers).
 // cartPort may be any non-nil value accepted by BindCartPort (e.g. struct{}{}).
 func bootServePlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootstrap, cartPort any) error {
 	if reg == nil || app == nil {
@@ -89,7 +83,6 @@ func bootServePlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootst
 	}
 	preparePermissionRegistry(app)
 	summary := reg.InitAll(app)
-	freezePermissionRegistry(app)
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
@@ -99,11 +92,16 @@ func bootServePlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootst
 	if err := app.BindCartPort(cartPort); err != nil {
 		return err
 	}
-	return assertServeNeedsMet(app)
+	if err := assertServeNeedsMet(app); err != nil {
+		return err
+	}
+	freezePermissionRegistry(app)
+	return nil
 }
 
-// bootWorkerPlugins binds product ports, InitAll, then assertWorkerNeedsMet.
-// Same skip list as scheduler / search reindex / non-seed CLIs.
+// bootWorkerPlugins binds product ports, InitAll, then assertWorkerNeedsMet
+// (same skip list scheduler / search reindex / non-seed CLIs use via
+// assertWorkerNeedsMet). Order matches production: assert then freeze.
 func bootWorkerPlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootstrap) error {
 	if reg == nil || app == nil {
 		return fmt.Errorf("bootWorkerPlugins: registry and app are required")
@@ -113,26 +111,12 @@ func bootWorkerPlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Boots
 	}
 	preparePermissionRegistry(app)
 	summary := reg.InitAll(app)
-	freezePermissionRegistry(app)
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
-	return assertWorkerNeedsMet(app)
-}
-
-// bootSchedulerPlugins is the scheduler process kind (same skips as worker).
-func bootSchedulerPlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootstrap) error {
-	if reg == nil || app == nil {
-		return fmt.Errorf("bootSchedulerPlugins: registry and app are required")
-	}
-	if err := bindProductPorts(app, boot); err != nil {
+	if err := assertWorkerNeedsMet(app); err != nil {
 		return err
 	}
-	preparePermissionRegistry(app)
-	summary := reg.InitAll(app)
 	freezePermissionRegistry(app)
-	if err := plugin.InitSummaryError(summary); err != nil {
-		return err
-	}
-	return assertSchedulerNeedsMet(app)
+	return nil
 }

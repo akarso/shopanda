@@ -595,7 +595,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if bootInterrupted != nil {
 		return bootInterrupted
 	}
-	if err := assertSchedulerNeedsMet(pluginApp); err != nil {
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
 		return err
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
