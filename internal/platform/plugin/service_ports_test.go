@@ -58,6 +58,17 @@ func TestAssertNeedsMetExcept_SkipsCart(t *testing.T) {
 	}
 }
 
+func TestCapabilityNeeded(t *testing.T) {
+	app := &plugin.App{}
+	if app.CapabilityNeeded(plugin.CapCatalogSeed) {
+		t.Fatal("expected false before RecordNeeds")
+	}
+	app.RecordNeeds(plugin.CapCatalogSeed)
+	if !app.CapabilityNeeded(plugin.CapCatalogSeed) {
+		t.Fatal("expected true after RecordNeeds")
+	}
+}
+
 func TestAssertNeedsMetExcept_SkipsCatalogSeed(t *testing.T) {
 	app := &plugin.App{}
 	app.RecordNeeds(plugin.CapCatalogSeed)

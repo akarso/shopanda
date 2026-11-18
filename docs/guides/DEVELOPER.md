@@ -243,8 +243,9 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `RegisterField` / `RegisterFieldFor` — extension fields
 - `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()` — ports bound by the
   composition root (`(port, bool)`; declare with `Require(cap)`). `CapCart` is serve-only;
-  `CapCatalogSeed` is CLI-seed-only (`bindCatalogSeedPort`). Non-owning processes skip those
-  caps via `AssertNeedsMetExcept` after `InitAll`
+  `CapCatalogSeed` is CLI-seed-only: plugin CLI commands with `RequiresDB: true` auto-bind
+  when any plugin `Need(CapCatalogSeed)` (resolve the port in the command handler, not
+  `Init`). Non-owning processes skip those caps via `AssertNeedsMetExcept` after `InitAll`
 - `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own config
 - `BootstrapDB()` — the composition-root `*sql.DB`, for `pluginsdk.Migrator` plugins
 

@@ -346,6 +346,20 @@ func (a *App) assertNeedsMet(skip []Capability) error {
 	return nil
 }
 
+// CapabilityNeeded reports whether any plugin recorded cap as a Need
+// (NeedsDeclarer or Host.Require). Used by the plugin CLI composition root to
+// decide whether to bind CapCatalogSeed when a RequiresDB command runs.
+func (a *App) CapabilityNeeded(cap Capability) bool {
+	if a == nil || cap == "" {
+		return false
+	}
+	st := a.portsState()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.required[cap]
+	return ok
+}
+
 // CapabilityDeclaredBy reports whether pluginName has recorded cap as a Need
 // (via NeedsDeclarer or Host.Require) at some point up to this call. Used to
 // gate Host getters (BootstrapDB, Catalog, Orders, Customers) so a plugin
