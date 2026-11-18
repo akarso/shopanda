@@ -140,25 +140,21 @@ func (seedCLINoDBPlugin) Init(h pluginsdk.Host) error {
 }
 
 // peerRequiresDBPlugin does not Need CapCatalogSeed but registers RequiresDB.
+// Bind absence is asserted via App.CatalogSeedPort() in the test (Host getters
+// deny undeclared caps even if the port were wrongly bound).
 type peerRequiresDBPlugin struct {
-	host pluginsdk.Host
-	saw  bool
+	saw bool
 }
 
 func (p *peerRequiresDBPlugin) Name() string { return "test/peerdb" }
 
 func (p *peerRequiresDBPlugin) Init(h pluginsdk.Host) error {
-	p.host = h
 	sdk := pluginsdk.NewHost(h, p.Name())
 	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
 		Name:        "test:peer-db",
 		Description: "RequiresDB without CapCatalogSeed",
 		RequiresDB:  true,
 		Run: func(pluginsdk.CLIContext, []string) error {
-			_, ok := p.host.CatalogSeed()
-			if ok {
-				return errCatalogSeedUnbound // reuse: unexpected bind
-			}
 			p.saw = true
 			return nil
 		},
@@ -245,6 +241,14 @@ func TestRunPluginCLICommand_PeerRequiresDBDoesNotBindSeed(t *testing.T) {
 	peer := &peerRequiresDBPlugin{}
 	reg, app := initSeedCLIRuntime(t, probe, peer)
 
+	if !app.CapabilityDeclaredBy(plugin.CapCatalogSeed, probe.Name()) {
+		t.Fatal("premise: seed peer must Need CapCatalogSeed")
+	}
+	peerCmd, ok := reg.CLIRegistry().Get("test:peer-db")
+	if !ok || peerCmd.Plugin != peer.Name() {
+		t.Fatalf("peer cmd Plugin = %q, want %q", peerCmd.Plugin, peer.Name())
+	}
+
 	ran, err := runPluginCLICommandWithDeps(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
 		func() (*pluginCLIRuntime, error) {
 			return &pluginCLIRuntime{Registry: reg, App: app}, nil
@@ -255,8 +259,8 @@ func TestRunPluginCLICommand_PeerRequiresDBDoesNotBindSeed(t *testing.T) {
 	if !ran || !peer.saw {
 		t.Fatalf("ran=%v saw=%v", ran, peer.saw)
 	}
-	if _, ok := app.CatalogSeedPort(); ok {
-		t.Fatal("peer RequiresDB must not bind CapCatalogSeed when seed peer Needs it")
+	if port, ok := app.CatalogSeedPort(); ok || port != nil {
+		t.Fatalf("CatalogSeedPort() = (%v, %v): peer RequiresDB must leave write port unbound despite seed peer Need", port, ok)
 	}
 }
 
