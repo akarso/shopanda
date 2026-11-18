@@ -49,6 +49,11 @@ func (a *App) RegisterPublicRoute(pattern string, handler http.Handler, opts ...
 			opt(&route)
 		}
 	}
+	if route.NoCache {
+		if err := validateNoCachePattern(route.Pattern); err != nil {
+			return err
+		}
+	}
 	a.publicRoutes = append(a.publicRoutes, route)
 	return nil
 }
@@ -77,8 +82,14 @@ func (a *App) PublicRoutes() []PublicRoute {
 }
 
 // NoCachePathPrefixes returns URL path prefixes for routes registered with
-// WithNoCache, suitable for CacheControlMiddleware. Patterns like
-// "GET /api/foo" yield "/api/foo".
+// WithNoCache, suitable for CacheControlMiddleware. The denylist entry is the
+// longest static path before the first `{` (trailing `/` trimmed): e.g.
+// "GET /api/x/{id}" → "/api/x". Middleware matches path == prefix ||
+// HasPrefix(path, prefix+"/") — so siblings under that prefix also get
+// no-store. RegisterPublicRoute rejects NoCache when a `{` cut leaves an empty
+// or single-segment prefix (e.g. "/{id}", "/api/{v}/x" → "/api"), and rejects
+// known broad roots ("/api") even without braces; fully static one-segment
+// mounts (e.g. "GET /customizer") are allowed.
 func NoCachePathPrefixes(routes []PublicRoute) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -100,22 +111,67 @@ func NoCachePathPrefixes(routes []PublicRoute) []string {
 }
 
 func pathPrefixFromPattern(pattern string) string {
+	p, _ := staticPathBeforeParam(pattern)
+	return strings.TrimRight(p, "/")
+}
+
+// validateNoCachePattern rejects NoCache when a `{` cut shortens the path to an
+// empty or single-segment denylist prefix (would no-store a whole tree like
+// /api), or when the denylist is a known broad root (`/`, `/api`) even without
+// braces. Fully static non-root mounts — including one-segment mounts like
+// "GET /customizer" — are allowed as-is.
+func validateNoCachePattern(pattern string) error {
+	path, cut := staticPathBeforeParam(pattern)
+	prefix := strings.TrimRight(path, "/")
+	if prefix == "" {
+		if cut {
+			return fmt.Errorf("plugin: NoCache pattern %q has no static path before '{' (leading path params cannot be denylisted)", pattern)
+		}
+		return fmt.Errorf("plugin: NoCache pattern %q has no denylistable path", pattern)
+	}
+	if isKnownBroadNoCachePrefix(prefix) {
+		return fmt.Errorf("plugin: NoCache pattern %q yields denylist prefix %q which is a known broad root (refuse / and /api)", pattern, prefix)
+	}
+	if cut {
+		segs := strings.Split(strings.Trim(prefix, "/"), "/")
+		if len(segs) < 2 || segs[0] == "" {
+			return fmt.Errorf("plugin: NoCache pattern %q cuts at '{' to denylist prefix %q which is too broad (need at least /seg/seg before '{'; e.g. /api/{v}/… would denylist all of /api)", pattern, prefix)
+		}
+	}
+	return nil
+}
+
+func isKnownBroadNoCachePrefix(prefix string) bool {
+	switch prefix {
+	case "", "/api":
+		return true
+	default:
+		return false
+	}
+}
+
+// staticPathBeforeParam returns the URL path from pattern (method stripped) and
+// whether a `{` cut shortened it. Trailing slash is preserved for the caller.
+func staticPathBeforeParam(pattern string) (path string, cut bool) {
 	p := strings.TrimSpace(pattern)
 	if p == "" {
-		return ""
+		return "", false
 	}
 	if i := strings.IndexByte(p, ' '); i >= 0 {
 		p = strings.TrimSpace(p[i+1:])
 	}
 	if p == "" {
-		return ""
+		return "", false
 	}
 	if !strings.HasPrefix(p, "/") {
 		if i := strings.IndexByte(p, '/'); i >= 0 {
 			p = p[i:]
 		} else {
-			return ""
+			return "", false
 		}
 	}
-	return p
+	if i := strings.IndexByte(p, '{'); i >= 0 {
+		return p[:i], true
+	}
+	return p, false
 }
