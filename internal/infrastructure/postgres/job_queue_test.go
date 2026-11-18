@@ -369,6 +369,77 @@ func TestJobQueue_RequeueTerminal_RejectsProcessing(t *testing.T) {
 	}
 }
 
+func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	doneJob, _ := jobs.NewJob(id.New(), "terminal-done", nil)
+	_ = q.Enqueue(ctx, doneJob)
+	got, _ := q.Dequeue(ctx)
+	if err := q.Complete(ctx, got.ID, got.Attempts); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE jobs SET last_error = $2 WHERE id = $1`, got.ID, "prior-note"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Requeue(ctx, got.ID, got.Attempts, jobs.WithRequeueTerminal()); err != nil {
+		t.Fatalf("Requeue done: %v", err)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil || detail.Status != jobs.StatusPending || detail.Attempts != got.Attempts {
+		t.Fatalf("after done requeue = %+v err=%v", detail, err)
+	}
+	if detail.LastError != "prior-note" {
+		t.Fatalf("last_error = %q, want prior-note preserved", detail.LastError)
+	}
+
+	cancelJob, _ := jobs.NewJob(id.New(), "terminal-cancel", nil)
+	_ = q.Enqueue(ctx, cancelJob)
+	if err := q.Cancel(ctx, cancelJob.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	var cancelAttempts int
+	if err := db.QueryRowContext(ctx, `SELECT attempts FROM jobs WHERE id = $1`, cancelJob.ID).Scan(&cancelAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Requeue(ctx, cancelJob.ID, cancelAttempts, jobs.WithRequeueTerminal()); err != nil {
+		t.Fatalf("Requeue cancelled: %v", err)
+	}
+	detail, err = q.Get(ctx, cancelJob.ID)
+	if err != nil || detail == nil || detail.Status != jobs.StatusPending {
+		t.Fatalf("after cancel requeue = %+v err=%v", detail, err)
+	}
+}
+
+func TestJobQueue_Requeue_MissingID(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	if err := q.Requeue(ctx, "missing-id", 1); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("default missing: %v, want ErrRequeueNotFound", err)
+	}
+	if err := q.Requeue(ctx, "missing-id", 1, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("terminal missing: %v, want ErrRequeueNotFound", err)
+	}
+}
+
 func TestJobQueue_Fail_Retry(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {

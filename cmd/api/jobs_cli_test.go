@@ -59,13 +59,20 @@ func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
 		t.Skip("SHOPANDA_TEST_DSN not set")
 	}
 	t.Setenv("DATABASE_URL", dsn)
+	// Empty media.storage still loads core/storage-local; give it a usable
+	// local root so Init does not fail on empty base_path (and hide under
+	// io.Discard). Dev mode allows empty sign_secret (ephemeral key).
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
 	cfg := &config.Config{}
 	cfg.Queue.Driver = "postgres"
+	cfg.Media.Local.BasePath = t.TempDir()
+	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
 	cfg.Plugins.WarehouseDemo.Enabled = true
 	cfg.Plugins.WarehouseDemo.WarehouseBaseURL = "http://127.0.0.1:9/warehouse"
-	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(io.Discard, "error"))
+	var logBuf bytes.Buffer
+	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(&logBuf, "error"))
 	if err != nil {
-		t.Fatalf("newJobsRuntime with warehousedemo: %v", err)
+		t.Fatalf("newJobsRuntime with warehousedemo: %v\ninit logs:\n%s", err, logBuf.String())
 	}
 	defer rt.conn.Close()
 	if rt.queue == nil || rt.svc == nil {
@@ -130,26 +137,62 @@ func TestRunJobsCancel_RequiresID(t *testing.T) {
 }
 
 func TestParseJobsRequeueArgs(t *testing.T) {
-	id, minAge, terminal, err := parseJobsRequeueArgs([]string{"job-1"})
-	if err != nil || id != "job-1" || minAge != domainjobs.DefaultRequeueMinAge || terminal {
-		t.Fatalf("default: id=%q minAge=%s terminal=%v err=%v", id, minAge, terminal, err)
+	got, err := parseJobsRequeueArgs([]string{"job-1"})
+	if err != nil || got.ID != "job-1" || got.MinAge != domainjobs.DefaultRequeueMinAge || got.Terminal || got.Force {
+		t.Fatalf("default: %+v err=%v", got, err)
 	}
-	id, minAge, terminal, err = parseJobsRequeueArgs([]string{"job-2", "--min-age=90s"})
-	if err != nil || id != "job-2" || minAge != 90*time.Second || terminal {
-		t.Fatalf("flag: id=%q minAge=%s terminal=%v err=%v", id, minAge, terminal, err)
+	got, err = parseJobsRequeueArgs([]string{"job-2", "--min-age=90s"})
+	if err != nil || got.ID != "job-2" || got.MinAge != 90*time.Second || got.Terminal {
+		t.Fatalf("flag: %+v err=%v", got, err)
 	}
-	id, minAge, terminal, err = parseJobsRequeueArgs([]string{"job-3", "--terminal"})
-	if err != nil || id != "job-3" || !terminal {
-		t.Fatalf("terminal: id=%q terminal=%v err=%v", id, terminal, err)
+	got, err = parseJobsRequeueArgs([]string{"job-3", "--terminal"})
+	if err != nil || got.ID != "job-3" || !got.Terminal || got.Force {
+		t.Fatalf("terminal: %+v err=%v", got, err)
 	}
-	if _, _, _, err := parseJobsRequeueArgs([]string{"job-4", "--terminal", "--min-age=90s"}); err == nil {
+	got, err = parseJobsRequeueArgs([]string{"job-4", "--terminal", "--force"})
+	if err != nil || !got.Terminal || !got.Force {
+		t.Fatalf("force: %+v err=%v", got, err)
+	}
+	if _, err := parseJobsRequeueArgs([]string{"job-5", "--force"}); err == nil {
+		t.Fatal("expected --force without --terminal error")
+	}
+	if _, err := parseJobsRequeueArgs([]string{"job-6", "--terminal", "--min-age=90s"}); err == nil {
 		t.Fatal("expected error combining --terminal and --min-age")
 	}
-	if _, _, _, err := parseJobsRequeueArgs([]string{"--min-age=1ns", "x"}); err == nil {
+	if _, err := parseJobsRequeueArgs([]string{"--min-age=1ns", "x"}); err == nil {
 		t.Fatal("expected invalid min-age below 1s")
 	}
-	if _, _, _, err := parseJobsRequeueArgs(nil); err == nil {
+	if _, err := parseJobsRequeueArgs(nil); err == nil {
 		t.Fatal("expected usage error")
+	}
+}
+
+func TestValidateJobsRequeueStatus(t *testing.T) {
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, true, false); err != nil {
+		t.Fatalf("failed+terminal: %v", err)
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusDone, true, false); err == nil {
+		t.Fatal("done without --force must fail")
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusDone, true, true); err != nil {
+		t.Fatalf("done+force: %v", err)
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusCancelled, true, true); err != nil {
+		t.Fatalf("cancelled+force: %v", err)
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusProcessing, false, false); err != nil {
+		t.Fatalf("processing: %v", err)
+	}
+}
+
+func TestJobsRequeueSuccessMessage_ExhaustedWarns(t *testing.T) {
+	msg := jobsRequeueSuccessMessage("j1", domainjobs.StatusFailed, 3, 3, true, 0)
+	if !strings.Contains(msg, "attempts>=max_retries") {
+		t.Fatalf("msg=%q, want exhausted warning", msg)
+	}
+	msg = jobsRequeueSuccessMessage("j1", domainjobs.StatusDone, 1, 5, true, 0)
+	if !strings.Contains(msg, "resurrected") {
+		t.Fatalf("msg=%q, want done resurrection warning", msg)
 	}
 }
 

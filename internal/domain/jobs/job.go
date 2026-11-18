@@ -83,12 +83,15 @@ var ErrRequeueTooFresh = errors.New("jobs: requeue claim too fresh")
 // ErrRequeueWrongAttempt means attempts did not match the live claim.
 var ErrRequeueWrongAttempt = errors.New("jobs: requeue wrong attempt")
 
-// ErrRequeueNotProcessing means the row is missing or not status=processing
-// (default reclaim mode).
+// ErrRequeueNotFound means no jobs row matched the id (FOR UPDATE miss).
+var ErrRequeueNotFound = errors.New("jobs: requeue job not found")
+
+// ErrRequeueNotProcessing means the row exists but is not status=processing
+// (default reclaim mode). Missing rows use ErrRequeueNotFound.
 var ErrRequeueNotProcessing = errors.New("jobs: requeue not processing")
 
 // ErrRequeueNotTerminal means WithRequeueTerminal was set but the row is not
-// failed/done/cancelled (or is missing).
+// failed/done/cancelled. Missing rows use ErrRequeueNotFound.
 var ErrRequeueNotTerminal = errors.New("jobs: requeue not terminal")
 
 // ErrRequeueInProgress means another Requeue already holds reclaiming and
@@ -122,7 +125,8 @@ type RequeueSettings struct {
 }
 
 // WithRequeueMinAge sets how old a processing claim must be before reclaim.
-// Values <= 0 fall back to DefaultRequeueMinAge. Ignored with WithRequeueTerminal.
+// Values <= 0 fall back to DefaultRequeueMinAge. When WithRequeueTerminal is
+// also set, MinAge is ignored (no age check on terminal rows).
 func WithRequeueMinAge(d time.Duration) RequeueOption {
 	return func(c *requeueConfig) { c.MinAge = d }
 }
@@ -131,12 +135,16 @@ func WithRequeueMinAge(d time.Duration) RequeueOption {
 // attempts, running OnRequeued / RequeueTx in the same transaction, setting
 // run_at=NOW(), and leaving last_error unchanged. Does not accept
 // pending/processing (use default reclaim for stale processing claims).
-// Admin.Retry remains failed-only with attempts=0 and no hooks.
+// Re-pending done/cancelled can double-run side effects — CLI requires
+// --force for those statuses; Admin.Retry remains failed-only with
+// attempts=0 and no hooks.
 func WithRequeueTerminal() RequeueOption {
 	return func(c *requeueConfig) { c.Terminal = true }
 }
 
 // ResolveRequeueOptions resolves min-age and terminal mode for backends.
+// Terminal=true ignores MinAge (returned MinAge is still normalized for
+// callers that log it; backends must skip the age predicate).
 func ResolveRequeueOptions(opts []RequeueOption) RequeueSettings {
 	cfg := requeueConfig{MinAge: DefaultRequeueMinAge}
 	for _, o := range opts {

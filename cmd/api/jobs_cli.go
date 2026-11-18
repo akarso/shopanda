@@ -9,7 +9,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
@@ -323,11 +322,11 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 	return writeSuccessLinef(w, "Job %s queued for retry.\n", id)
 }
 
-// runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m|--terminal]` —
-// default: processing → pending; --terminal: failed/done/cancelled → pending.
-// Attempts kept; OnRequeued runs under FOR UPDATE before pending.
+// runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m|--terminal [--force]]`.
+// Default: processing → pending. --terminal: failed → pending; --force also
+// allows done/cancelled. Attempts kept; OnRequeued under FOR UPDATE.
 func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
-	id, minAge, terminal, err := parseJobsRequeueArgs(args)
+	parsed, err := parseJobsRequeueArgs(args)
 	if err != nil {
 		return err
 	}
@@ -337,92 +336,53 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	}
 	defer rt.conn.Close()
 	ctx := context.Background()
-	detail, err := rt.svc.Get(ctx, id)
+	detail, err := rt.svc.Get(ctx, parsed.ID)
+	details := map[string]interface{}{"terminal": parsed.Terminal, "force": parsed.Force}
 	if err != nil {
-		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, err)
+		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, err)
 		return fmt.Errorf("jobs:requeue: %w", err)
 	}
 	if detail == nil {
-		notFound := fmt.Errorf("jobs:requeue: no job with id %q", id)
-		auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, notFound)
+		notFound := fmt.Errorf("jobs:requeue: no job with id %q", parsed.ID)
+		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, notFound)
 		return notFound
 	}
+	details = jobsRequeueAuditDetails(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force, parsed.MinAge)
+	if pre := validateJobsRequeueStatus(detail.Status, parsed.Terminal, parsed.Force); pre != nil {
+		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, pre)
+		return pre
+	}
 	var opts []domainjobs.RequeueOption
-	if terminal {
-		if !domainjobs.IsTerminalRequeueStatus(detail.Status) {
-			wrongStatus := fmt.Errorf("jobs:requeue: job is %s, not failed/done/cancelled — omit --terminal for stale processing claims (use jobs:retry to reset attempts on failed)", detail.Status)
-			auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, wrongStatus)
-			return wrongStatus
-		}
+	if parsed.Terminal {
 		opts = append(opts, domainjobs.WithRequeueTerminal())
 	} else {
-		if detail.Status != domainjobs.StatusProcessing {
-			wrongStatus := fmt.Errorf("jobs:requeue: job is %s, not processing — use --terminal for failed/done/cancelled (keeps attempts) or jobs:retry for failed (resets attempts)", detail.Status)
-			auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, wrongStatus)
-			return wrongStatus
-		}
-		opts = append(opts, domainjobs.WithRequeueMinAge(minAge))
+		opts = append(opts, domainjobs.WithRequeueMinAge(parsed.MinAge))
 	}
-	requeueErr := rt.queue.Requeue(ctx, id, detail.Attempts, opts...)
-	auditCLIAction(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", id, requeueErr)
+	requeueErr := rt.queue.Requeue(ctx, parsed.ID, detail.Attempts, opts...)
+	auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, requeueErr)
 	if requeueErr != nil {
 		switch {
 		case errors.Is(requeueErr, domainjobs.ErrRequeueTooFresh):
-			return fmt.Errorf("jobs:requeue: claim younger than --min-age=%s (still a plausible live handler): %w", minAge, requeueErr)
+			return fmt.Errorf("jobs:requeue: claim younger than --min-age=%s (still a plausible live handler): %w", parsed.MinAge, requeueErr)
 		case errors.Is(requeueErr, domainjobs.ErrRequeueInProgress):
 			return fmt.Errorf("jobs:requeue: another reclaim is in progress (wait for it to finish or for the default %s lease to expire): %w", domainjobs.DefaultRequeueMinAge, requeueErr)
 		case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
-			return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved): %w", requeueErr)
+			return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved under TOCTOU): %w", requeueErr)
+		case errors.Is(requeueErr, domainjobs.ErrRequeueNotFound):
+			return fmt.Errorf("jobs:requeue: job disappeared (deleted under TOCTOU): %w", requeueErr)
 		case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
-			return fmt.Errorf("jobs:requeue: not processing: %w", requeueErr)
+			return fmt.Errorf("jobs:requeue: status no longer processing (moved under TOCTOU): %w", requeueErr)
 		case errors.Is(requeueErr, domainjobs.ErrRequeueNotTerminal):
-			return fmt.Errorf("jobs:requeue: not terminal: %w", requeueErr)
+			return fmt.Errorf("jobs:requeue: status no longer terminal (moved under TOCTOU): %w", requeueErr)
+		case errors.Is(requeueErr, domainjobs.ErrRequeueConflict):
+			return fmt.Errorf("jobs:requeue: concurrent update lost the reclaim race: %w", requeueErr)
 		case errors.Is(requeueErr, domainjobs.ErrRequeueUnsupported):
 			return fmt.Errorf("jobs:requeue: unsupported for this queue driver: %w", requeueErr)
 		default:
 			return fmt.Errorf("jobs:requeue: %w", requeueErr)
 		}
 	}
-	if terminal {
-		return writeSuccessLinef(w, "Job %s requeued (%s → pending, attempts=%d kept; terminal).\n", id, detail.Status, detail.Attempts)
-	}
-	return writeSuccessLinef(w, "Job %s requeued (processing → pending, attempts=%d kept; min-age=%s).\n", id, detail.Attempts, minAge)
-}
-
-func parseJobsRequeueArgs(args []string) (id string, minAge time.Duration, terminal bool, err error) {
-	minAge = domainjobs.DefaultRequeueMinAge
-	var positional []string
-	usage := "usage: app jobs:requeue <id> [--min-age=5m|--terminal]"
-	for _, arg := range args {
-		switch {
-		case arg == "--terminal":
-			terminal = true
-		case strings.HasPrefix(arg, "--min-age="):
-			raw := strings.TrimPrefix(arg, "--min-age=")
-			d, perr := time.ParseDuration(raw)
-			if perr != nil || d < time.Second {
-				return "", 0, false, fmt.Errorf("%s: invalid --min-age %q (minimum 1s)", usage, raw)
-			}
-			minAge = d
-		case arg == "--min-age":
-			return "", 0, false, fmt.Errorf("%s", usage)
-		case strings.HasPrefix(arg, "--"):
-			return "", 0, false, fmt.Errorf("%s: unrecognized option %q", usage, arg)
-		default:
-			positional = append(positional, arg)
-		}
-	}
-	if terminal {
-		for _, arg := range args {
-			if strings.HasPrefix(arg, "--min-age=") || arg == "--min-age" {
-				return "", 0, false, fmt.Errorf("%s: --terminal ignores --min-age (do not combine)", usage)
-			}
-		}
-	}
-	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
-		return "", 0, false, fmt.Errorf("%s", usage)
-	}
-	return positional[0], minAge, terminal, nil
+	return writeSuccessLinef(w, "%s", jobsRequeueSuccessMessage(parsed.ID, detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.MinAge))
 }
 
 // runJobsCancel handles `app jobs:cancel <id>`.

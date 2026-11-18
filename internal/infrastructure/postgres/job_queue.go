@@ -358,10 +358,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 		id, settings.MinAge.Milliseconds(),
 	).Scan(&status, &attempts, &updatedAt, &aged)
 	if errors.Is(err, sql.ErrNoRows) {
-		if settings.Terminal {
-			return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotTerminal)
-		}
-		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotProcessing)
+		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("job_queue: requeue lock: %w", err)
