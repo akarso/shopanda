@@ -86,8 +86,9 @@ func (a *App) PublicRoutes() []PublicRoute {
 // longest static path before the first `{` (trailing `/` trimmed): e.g.
 // "GET /api/x/{id}" → "/api/x". Middleware matches path == prefix ||
 // HasPrefix(path, prefix+"/") — so siblings under that prefix also get
-// no-store. RegisterPublicRoute rejects NoCache patterns whose cut prefix is
-// empty or only one segment (e.g. "/{id}", "/api/{v}/x" → "/api").
+// no-store. RegisterPublicRoute rejects NoCache when a `{` cut leaves an empty
+// or single-segment prefix (e.g. "/{id}", "/api/{v}/x" → "/api"); fully
+// static one-segment mounts (e.g. "GET /customizer") are allowed.
 func NoCachePathPrefixes(routes []PublicRoute) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -109,41 +110,55 @@ func NoCachePathPrefixes(routes []PublicRoute) []string {
 }
 
 func pathPrefixFromPattern(pattern string) string {
+	p, _ := staticPathBeforeParam(pattern)
+	return strings.TrimRight(p, "/")
+}
+
+// validateNoCachePattern rejects NoCache when a `{` cut shortens the path to an
+// empty or single-segment denylist prefix (would no-store a whole tree like
+// /api). Fully static patterns — including one-segment mounts like
+// "GET /customizer" — are allowed as-is.
+func validateNoCachePattern(pattern string) error {
+	path, cut := staticPathBeforeParam(pattern)
+	prefix := strings.TrimRight(path, "/")
+	if cut {
+		if prefix == "" {
+			return fmt.Errorf("plugin: NoCache pattern %q has no static path before '{' (leading path params cannot be denylisted)", pattern)
+		}
+		segs := strings.Split(strings.Trim(prefix, "/"), "/")
+		if len(segs) < 2 || segs[0] == "" {
+			return fmt.Errorf("plugin: NoCache pattern %q cuts at '{' to denylist prefix %q which is too broad (need at least /seg/seg before '{'; e.g. /api/{v}/… would denylist all of /api)", pattern, prefix)
+		}
+		return nil
+	}
+	if prefix == "" {
+		return fmt.Errorf("plugin: NoCache pattern %q has no denylistable path", pattern)
+	}
+	return nil
+}
+
+// staticPathBeforeParam returns the URL path from pattern (method stripped) and
+// whether a `{` cut shortened it. Trailing slash is preserved for the caller.
+func staticPathBeforeParam(pattern string) (path string, cut bool) {
 	p := strings.TrimSpace(pattern)
 	if p == "" {
-		return ""
+		return "", false
 	}
 	if i := strings.IndexByte(p, ' '); i >= 0 {
 		p = strings.TrimSpace(p[i+1:])
 	}
 	if p == "" {
-		return ""
+		return "", false
 	}
 	if !strings.HasPrefix(p, "/") {
 		if i := strings.IndexByte(p, '/'); i >= 0 {
 			p = p[i:]
 		} else {
-			return ""
+			return "", false
 		}
 	}
-	// Cut at the first path parameter so "/api/x/{id}" → "/api/x".
 	if i := strings.IndexByte(p, '{'); i >= 0 {
-		p = p[:i]
+		return p[:i], true
 	}
-	p = strings.TrimRight(p, "/")
-	return p
-}
-
-// validateNoCachePattern ensures the denylist prefix after cutting at `{` is
-// useful: at least two path segments (e.g. /api/customizer), never empty.
-func validateNoCachePattern(pattern string) error {
-	prefix := pathPrefixFromPattern(pattern)
-	if prefix == "" {
-		return fmt.Errorf("plugin: NoCache pattern %q has no static path before '{' (leading path params cannot be denylisted)", pattern)
-	}
-	segs := strings.Split(strings.Trim(prefix, "/"), "/")
-	if len(segs) < 2 || segs[0] == "" {
-		return fmt.Errorf("plugin: NoCache pattern %q yields denylist prefix %q which is too broad (need at least /seg/seg before '{'; otherwise e.g. /api/{v}/… denylists all of /api)", pattern, prefix)
-	}
-	return nil
+	return p, false
 }

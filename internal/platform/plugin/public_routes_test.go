@@ -118,6 +118,7 @@ func TestApp_RegisterPublicRoute_NoCacheRejectsBroadOrEmptyPrefix(t *testing.T) 
 		"GET /{id}",
 		"GET /{locale}/health",
 		"GET /api/{ver}/products",
+		"GET /webhook/{id}",
 		"/{id}/x",
 	} {
 		err := app.RegisterPublicRoute(pattern, handler, plugin.WithNoCache())
@@ -135,6 +136,18 @@ func TestApp_RegisterPublicRoute_NoCacheRejectsBroadOrEmptyPrefix(t *testing.T) 
 	}
 	prefixes := plugin.NoCachePathPrefixes(app.PublicRoutes())
 	if len(prefixes) != 1 || prefixes[0] != "/api/x" {
+		t.Fatalf("prefixes = %#v", prefixes)
+	}
+}
+
+func TestApp_RegisterPublicRoute_NoCacheAllowsStaticOneSegment(t *testing.T) {
+	app := &plugin.App{}
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	if err := app.RegisterPublicRoute("GET /customizer", handler, plugin.WithNoCache()); err != nil {
+		t.Fatalf("static one-segment NoCache: %v", err)
+	}
+	prefixes := plugin.NoCachePathPrefixes(app.PublicRoutes())
+	if len(prefixes) != 1 || prefixes[0] != "/customizer" {
 		t.Fatalf("prefixes = %#v", prefixes)
 	}
 }

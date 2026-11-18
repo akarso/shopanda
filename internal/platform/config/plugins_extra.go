@@ -250,11 +250,15 @@ func looksSecretPluginKey(key string) bool {
 // slugs that are not typed fields. Slug is the first underscore-separated
 // token after the prefix (lowercased); the remainder is the key (lowercased).
 // Product slugs with underscores in the slug itself should set values via YAML.
+// Env intentionally overrides YAML. Conflicting env keys that alias to the
+// same path ('.' ≡ '_') fail closed — same rule as YAML.
 func applyPluginsExtraEnv(cfg *Config) error {
 	if cfg == nil {
 		return nil
 	}
 	const prefix = "SHOPANDA_PLUGINS_"
+	// Collect first so env↔env alias conflicts are detected before YAML merge.
+	pending := map[string]map[string]string{}
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, prefix) {
 			continue
@@ -282,14 +286,23 @@ func applyPluginsExtraEnv(cfg *Config) error {
 		if _, typed := typedPluginYAMLKeys[slug]; typed {
 			continue
 		}
+		if pending[slug] == nil {
+			pending[slug] = make(map[string]string)
+		}
+		if err := setPluginExtraKey(pending[slug], key, kv[1]); err != nil {
+			return fmt.Errorf("plugins.%s: env: %w", slug, err)
+		}
+	}
+	for slug, kv := range pending {
 		if cfg.Plugins.Extra == nil {
 			cfg.Plugins.Extra = make(map[string]map[string]string)
 		}
 		if cfg.Plugins.Extra[slug] == nil {
 			cfg.Plugins.Extra[slug] = make(map[string]string)
 		}
-		// Env intentionally overrides YAML; refresh all . / _ aliases.
-		overwritePluginExtraKey(cfg.Plugins.Extra[slug], key, kv[1])
+		for k, v := range kv {
+			cfg.Plugins.Extra[slug][k] = v
+		}
 	}
 	return nil
 }

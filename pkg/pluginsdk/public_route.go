@@ -12,7 +12,9 @@ type publicRouteOpts struct {
 // NoCache marks the public route for Cache-Control no-store (guest GET/HEAD
 // would otherwise receive the default public max-age policy). The denylist
 // entry is the static path before the first `{` (e.g. /api/x/{id} → /api/x);
-// registration fails if that prefix is empty or only one segment.
+// siblings under that prefix also get no-store. Registration fails when a `{`
+// cut leaves an empty or single-segment prefix; fully static mounts
+// (including one segment, e.g. GET /customizer) are allowed.
 func NoCache() PublicRouteOption {
 	return func(o *publicRouteOpts) { o.noCache = true }
 }

@@ -202,6 +202,22 @@ plugins:
 	}
 }
 
+func TestLoad_PluginsExtraEnvAliasConflict(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  myproduct:
+    enabled: true
+`)
+	// Underscore and dotted env forms alias to the same Extra keys.
+	t.Setenv("SHOPANDA_PLUGINS_MYPRODUCT_MY_KEY", "a")
+	t.Setenv("SHOPANDA_PLUGINS_MYPRODUCT_MY.KEY", "b")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "conflicting keys") {
+		t.Fatalf("err = %v, want env conflicting keys", err)
+	}
+}
+
 func TestSetPluginExtraKey_ConflictBothOrders(t *testing.T) {
 	m := map[string]string{}
 	if err := setPluginExtraKey(m, "my_key", "a"); err != nil {
