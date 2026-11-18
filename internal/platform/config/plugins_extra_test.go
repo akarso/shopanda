@@ -153,3 +153,89 @@ plugins:
 		t.Fatalf("err = %v, want lists rejected", err)
 	}
 }
+
+func TestLoad_PluginsExtraSecretAliasRedacted(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  myproduct:
+    api_key: "secret-value"
+    warehouse_api_key: "wh-secret"
+`)
+	_, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Package Get uses the redacted flatten from Load.
+	if got := Get("plugins.myproduct.api_key"); got != "***" {
+		t.Fatalf("api_key Get = %q, want ***", got)
+	}
+	if got := Get("plugins.myproduct.api.key"); got != "***" {
+		t.Fatalf("api.key alias Get = %q, want *** (must not leak)", got)
+	}
+	if got := Get("plugins.myproduct.warehouse_api_key"); got != "***" {
+		t.Fatalf("warehouse_api_key = %q", got)
+	}
+	if got := Get("plugins.myproduct.warehouse.api.key"); got != "***" {
+		t.Fatalf("warehouse.api.key alias = %q, want ***", got)
+	}
+	// Unredacted Flatten still exposes secrets for Host.Config*.
+	cfg, _ := loadCfg(t, path)
+	flat := Flatten(cfg)
+	if flat["plugins.myproduct.api.key"] != "secret-value" {
+		t.Fatalf("unredacted Flatten alias = %q", flat["plugins.myproduct.api.key"])
+	}
+}
+
+func TestLoad_PluginsExtraConflictingFlatAndNested(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  myproduct:
+    my_key: a
+    my:
+      key: b
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "conflicting keys") {
+		t.Fatalf("err = %v, want conflicting keys", err)
+	}
+}
+
+func TestSetPluginExtraKey_ConflictBothOrders(t *testing.T) {
+	m := map[string]string{}
+	if err := setPluginExtraKey(m, "my_key", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setPluginExtraKey(m, "my.key", "b"); err == nil {
+		t.Fatal("expected conflict underscore-then-dot")
+	}
+	m2 := map[string]string{}
+	if err := setPluginExtraKey(m2, "my.key", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setPluginExtraKey(m2, "my_key", "a"); err == nil {
+		t.Fatal("expected conflict dot-then-underscore")
+	}
+}
+
+func TestLoad_PluginsExtraThreeLevelNesting(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  myproduct:
+    generation:
+      openai:
+        model: "gpt-4"
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Plugins.Extra["myproduct"]["generation.openai.model"] != "gpt-4" {
+		t.Fatalf("extra = %#v", cfg.Plugins.Extra["myproduct"])
+	}
+	if cfg.Plugins.Extra["myproduct"]["generation_openai_model"] != "gpt-4" {
+		t.Fatalf("underscore alias missing: %#v", cfg.Plugins.Extra["myproduct"])
+	}
+}

@@ -93,12 +93,11 @@ func TestNoCachePathPrefixes_StripsMethod(t *testing.T) {
 func TestNoCachePathPrefixes_CutsPathParams(t *testing.T) {
 	cases := []struct {
 		pattern string
-		want    string // empty → skipped
+		want    string
 	}{
 		{"GET /api/x/{id}", "/api/x"},
 		{"GET /api/x/{id}/y", "/api/x"},
 		{"GET /api/x/", "/api/x"},
-		{"/{id}", ""},
 		{"/api/x/{id}", "/api/x"},
 		{"POST /api/v1/graphql", "/api/v1/graphql"},
 	}
@@ -106,14 +105,36 @@ func TestNoCachePathPrefixes_CutsPathParams(t *testing.T) {
 		prefixes := plugin.NoCachePathPrefixes([]plugin.PublicRoute{
 			{Pattern: tc.pattern, NoCache: true},
 		})
-		if tc.want == "" {
-			if len(prefixes) != 0 {
-				t.Fatalf("%q: prefixes = %#v, want skip", tc.pattern, prefixes)
-			}
-			continue
-		}
 		if len(prefixes) != 1 || prefixes[0] != tc.want {
 			t.Fatalf("%q: prefixes = %#v, want [%q]", tc.pattern, prefixes, tc.want)
 		}
+	}
+}
+
+func TestApp_RegisterPublicRoute_NoCacheRejectsBroadOrEmptyPrefix(t *testing.T) {
+	app := &plugin.App{}
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, pattern := range []string{
+		"GET /{id}",
+		"GET /{locale}/health",
+		"GET /api/{ver}/products",
+		"/{id}/x",
+	} {
+		err := app.RegisterPublicRoute(pattern, handler, plugin.WithNoCache())
+		if err == nil {
+			t.Fatalf("%q: expected NoCache registration error", pattern)
+		}
+	}
+	// Same patterns without NoCache still register.
+	if err := app.RegisterPublicRoute("GET /{locale}/ok", handler); err != nil {
+		t.Fatalf("without NoCache: %v", err)
+	}
+	// Two-segment static prefix before `{` is accepted.
+	if err := app.RegisterPublicRoute("GET /api/x/{id}", handler, plugin.WithNoCache()); err != nil {
+		t.Fatalf("accepted pattern: %v", err)
+	}
+	prefixes := plugin.NoCachePathPrefixes(app.PublicRoutes())
+	if len(prefixes) != 1 || prefixes[0] != "/api/x" {
+		t.Fatalf("prefixes = %#v", prefixes)
 	}
 }

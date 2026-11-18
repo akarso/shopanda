@@ -69,6 +69,29 @@ func TestCacheControlMiddleware_PluginNoCachePrefix(t *testing.T) {
 	}
 }
 
+func TestCacheControlMiddleware_PluginNoCachePrefixAfterParamCut(t *testing.T) {
+	// pathPrefixFromPattern("GET /api/x/{id}") → "/api/x"; real request /api/x/123.
+	noCachePrefixes := []string{"/api/x"}
+	mw := shared.CacheControlMiddleware(noCachePrefixes)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/x/123", nil)
+	handler.ServeHTTP(rr, req)
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("/api/x/123 Cache-Control = %q, want no-store", got)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/y/123", nil)
+	handler.ServeHTTP(rr, req)
+	if got := rr.Header().Get("Cache-Control"); got != "public, max-age=300" {
+		t.Fatalf("/api/y/123 Cache-Control = %q, want public max-age", got)
+	}
+}
+
 func TestCacheControlMiddleware_POSTAlwaysNoStore(t *testing.T) {
 	mw := shared.CacheControlMiddleware(nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

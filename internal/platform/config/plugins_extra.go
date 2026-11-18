@@ -94,9 +94,12 @@ func yamlMapToStringMap(node *yaml.Node) (map[string]string, error) {
 	}
 	// Keep . / _ aliases so env SHOPANDA_PLUGINS_<SLUG>_GENERATION_PROVIDER
 	// matches YAML generation.provider through Host.Config* / Flatten.
+	// Both forms are written (exact lookup); conflicting values fail closed.
 	synced := make(map[string]string, len(out)*2)
 	for k, v := range out {
-		setPluginExtraKey(synced, k, v)
+		if err := setPluginExtraKey(synced, k, v); err != nil {
+			return nil, err
+		}
 	}
 	return synced, nil
 }
@@ -175,18 +178,40 @@ func stringifyYAMLScalar(v interface{}) string {
 
 // setPluginExtraKey writes key=val and keeps '.' / '_' aliases in sync so
 // YAML generation.provider and env GENERATION_PROVIDER both resolve via
-// Host.Config* / Flatten.
-func setPluginExtraKey(m map[string]string, key, val string) {
+// Host.Config* / Flatten (exact map keys — both forms are stored). Returns
+// an error when an alias already exists with a different value (YAML
+// collision). Env overlay uses overwritePluginExtraKey instead.
+func setPluginExtraKey(m map[string]string, key, val string) error {
+	return writePluginExtraKey(m, key, val, false)
+}
+
+func overwritePluginExtraKey(m map[string]string, key, val string) {
+	_ = writePluginExtraKey(m, key, val, true)
+}
+
+func writePluginExtraKey(m map[string]string, key, val string, overwrite bool) error {
 	if m == nil || key == "" {
-		return
+		return nil
 	}
-	m[key] = val
+	forms := []string{key}
 	if alt := strings.ReplaceAll(key, "_", "."); alt != key {
-		m[alt] = val
+		forms = append(forms, alt)
 	}
 	if alt := strings.ReplaceAll(key, ".", "_"); alt != key {
-		m[alt] = val
+		forms = append(forms, alt)
 	}
+	if !overwrite {
+		for _, k := range forms {
+			if existing, ok := m[k]; ok && existing != val {
+				return fmt.Errorf("conflicting keys %q and %q ('.' and '_' are aliases; values %q vs %q)",
+					key, k, val, existing)
+			}
+		}
+	}
+	for _, k := range forms {
+		m[k] = val
+	}
+	return nil
 }
 
 func flattenPluginsExtra(m map[string]string, cfg *Config, redactFn func(string) string) {
@@ -213,19 +238,21 @@ func flattenPluginsExtra(m map[string]string, cfg *Config, redactFn func(string)
 
 func looksSecretPluginKey(key string) bool {
 	k := strings.ToLower(key)
-	return strings.Contains(k, "secret") ||
-		strings.Contains(k, "api_key") ||
-		strings.Contains(k, "license") ||
-		strings.HasSuffix(k, "_key") && strings.Contains(k, "license")
+	// Normalise dotted aliases (api.key) so they match underscore forms (api_key).
+	u := strings.ReplaceAll(k, ".", "_")
+	return strings.Contains(u, "secret") ||
+		strings.Contains(u, "api_key") ||
+		strings.Contains(u, "license") ||
+		strings.HasSuffix(u, "_key") && strings.Contains(u, "license")
 }
 
 // applyPluginsExtraEnv overlays SHOPANDA_PLUGINS_<SLUG>_<KEY> onto Extra for
 // slugs that are not typed fields. Slug is the first underscore-separated
 // token after the prefix (lowercased); the remainder is the key (lowercased).
 // Product slugs with underscores in the slug itself should set values via YAML.
-func applyPluginsExtraEnv(cfg *Config) {
+func applyPluginsExtraEnv(cfg *Config) error {
 	if cfg == nil {
-		return
+		return nil
 	}
 	const prefix = "SHOPANDA_PLUGINS_"
 	for _, e := range os.Environ() {
@@ -261,8 +288,10 @@ func applyPluginsExtraEnv(cfg *Config) {
 		if cfg.Plugins.Extra[slug] == nil {
 			cfg.Plugins.Extra[slug] = make(map[string]string)
 		}
-		setPluginExtraKey(cfg.Plugins.Extra[slug], key, kv[1])
+		// Env intentionally overrides YAML; refresh all . / _ aliases.
+		overwritePluginExtraKey(cfg.Plugins.Extra[slug], key, kv[1])
 	}
+	return nil
 }
 
 func isTypedPluginEnvRest(rest string) bool {

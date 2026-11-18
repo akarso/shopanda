@@ -49,6 +49,11 @@ func (a *App) RegisterPublicRoute(pattern string, handler http.Handler, opts ...
 			opt(&route)
 		}
 	}
+	if route.NoCache {
+		if err := validateNoCachePattern(route.Pattern); err != nil {
+			return err
+		}
+	}
 	a.publicRoutes = append(a.publicRoutes, route)
 	return nil
 }
@@ -77,10 +82,12 @@ func (a *App) PublicRoutes() []PublicRoute {
 }
 
 // NoCachePathPrefixes returns URL path prefixes for routes registered with
-// WithNoCache, suitable for CacheControlMiddleware. Patterns like
-// "GET /api/foo" yield "/api/foo"; "GET /api/x/{id}" yields "/api/x" so the
-// denylist matches real request paths (middleware: path == prefix ||
-// HasPrefix(path, prefix+"/")).
+// WithNoCache, suitable for CacheControlMiddleware. The denylist entry is the
+// longest static path before the first `{` (trailing `/` trimmed): e.g.
+// "GET /api/x/{id}" → "/api/x". Middleware matches path == prefix ||
+// HasPrefix(path, prefix+"/") — so siblings under that prefix also get
+// no-store. RegisterPublicRoute rejects NoCache patterns whose cut prefix is
+// empty or only one segment (e.g. "/{id}", "/api/{v}/x" → "/api").
 func NoCachePathPrefixes(routes []PublicRoute) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -125,4 +132,18 @@ func pathPrefixFromPattern(pattern string) string {
 	}
 	p = strings.TrimRight(p, "/")
 	return p
+}
+
+// validateNoCachePattern ensures the denylist prefix after cutting at `{` is
+// useful: at least two path segments (e.g. /api/customizer), never empty.
+func validateNoCachePattern(pattern string) error {
+	prefix := pathPrefixFromPattern(pattern)
+	if prefix == "" {
+		return fmt.Errorf("plugin: NoCache pattern %q has no static path before '{' (leading path params cannot be denylisted)", pattern)
+	}
+	segs := strings.Split(strings.Trim(prefix, "/"), "/")
+	if len(segs) < 2 || segs[0] == "" {
+		return fmt.Errorf("plugin: NoCache pattern %q yields denylist prefix %q which is too broad (need at least /seg/seg before '{'; otherwise e.g. /api/{v}/… denylists all of /api)", pattern, prefix)
+	}
+	return nil
 }
