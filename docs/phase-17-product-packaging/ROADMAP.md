@@ -153,6 +153,8 @@ Track E is **not** required to start a product fork; it removes the fork tax lat
 | PR-1569 | Plugins Extra nested map flatten + env aliases | done |
 | PR-1570 | MetalDogs config via Extra (drop typed core field) | done |
 | PR-1571 | Extra env empty value = unset | done |
+| PR-1572 | CapCatalogSeed CLI-only (serve/worker skip) | done |
+| PR-1573 | CatalogSeedPort attribute mismatch shows values | done |
 | E2–E4 | External module publish + fork→module guide | later |
 
 See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
@@ -210,6 +212,8 @@ See [`specs/PUBLIC_EXTENSION_SDK.md`](specs/PUBLIC_EXTENSION_SDK.md).
 | `Config.Extra` does not flatten nested maps | Scalars-only flatten blocked `generation.provider`; Metal Dogs carried `expandMetalDogsGeneration`. | **done (PR-1569)** — dotted flatten, list error, `.`/`_` aliases for env |
 | Typed `MetalDogsPluginConfig` still in core | `internal/platform/config/config.go` keeps `Plugins.MetalDogs` (`Enabled` only) and `plugins_extra.go` lists `"metaldogs"` in `typedPluginYAMLKeys` ("migrate-next"). A typed slug blocks `Config.Extra` for it, so Metal Dogs cannot read `plugins.metaldogs.generation.*` through `Host.Config*` and carries a deviation on both files. Remove the typed field, the `typedPluginYAMLKeys` entry, the env branch for `SHOPANDA_PLUGINS_METALDOGS_ENABLED` and the `plugins.metaldogs.enabled` flatten line; the plugin reads `enabled` from `Extra` | **done (PR-1570)** — `metaldogs` → Extra; Host.Config* |
 | Empty `SHOPANDA_PLUGINS_<SLUG>_<KEY>` overrides YAML | `applyPluginsExtraEnv` stores empty env values, so `SHOPANDA_PLUGINS_METALDOGS_ENABLED=""` overwrites `enabled: true` from YAML and disables the plugin. Typed plugin envs ignore empty values (`if v != ""`). Skip empty env values in `applyPluginsExtraEnv` (empty = unset) and add a test with YAML true + empty env | **done (PR-1571)** — empty env = unset |
+| `CapCatalogSeed` is required in every process | A plugin that declares `CapCatalogSeed` in `Needs()` must have the port bound at every `Init` (serve, worker), although only its CLI seed command uses it. Carts already have `AssertNeedsMetExcept(CapCart)` for CLI/worker. Offer the same for write capabilities (e.g. a `NeedsInCLI` / per-context capability, or a generic `AssertNeedsMetExcept` that products can use for `CapCatalogSeed`) so serve and worker do not get catalog write access | **done (PR-1572)** — CLI-only `bindCatalogSeedPort`; serve/worker skip |
+| `CatalogSeedPort` attribute mismatch error hides the values | On an existing product or variant, `catalogSeedAttributesMatch` fails without the stored and requested values, so an operator cannot see which `parent_sku` conflict they have (Metal Dogs' old seed printed both). Include key, stored value and requested value in the error | **done (PR-1573)** — key + stored + requested in error |
 | Product-owned root files conflict on every bump | `README`, `AGENTS`, `RUNBOOK`, `PLUGINS`, `.gitignore`, `Makefile`, CI workflows differ in every product fork. Document `.gitattributes` `merge=ours` for product-owned files and a `Makefile` `-include Makefile.product` hook; keep product targets out of the shared Makefile | **done (PR-1562)** — PRODUCT_SITES + `-include Makefile.product` |
 
 ---

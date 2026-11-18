@@ -505,7 +505,10 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee", Attributes: map[string]any{"parent_sku": "B"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), `attribute "parent_sku" mismatch`) {
+	if err == nil || !strings.Contains(err.Error(), "create-only") ||
+		!strings.Contains(err.Error(), `attribute "parent_sku" mismatch`) ||
+		!strings.Contains(err.Error(), `stored="A"`) ||
+		!strings.Contains(err.Error(), `requested="B"`) {
 		t.Fatalf("attrs mismatch err = %v", err)
 	}
 
@@ -513,7 +516,10 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee", Attributes: map[string]any{"new_key": "x"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), `attribute "new_key" mismatch`) {
+	if err == nil || !strings.Contains(err.Error(), "create-only") ||
+		!strings.Contains(err.Error(), `attribute "new_key" mismatch`) ||
+		!strings.Contains(err.Error(), "stored=<missing>") ||
+		!strings.Contains(err.Error(), `requested="x"`) {
 		t.Fatalf("missing seed key err = %v", err)
 	}
 

@@ -149,7 +149,7 @@ func (a *App) BindCatalogPort(port any) error {
 
 // BindCatalogSeedPort wires the Host-visible catalog seed/write port
 // (pkg/pluginsdk.CatalogSeedPort). Satisfies CapCatalogSeed only — does not
-// widen CapCatalog.
+// widen CapCatalog. Call from CLI seed composition roots only (not serve/worker).
 func (a *App) BindCatalogSeedPort(port any) error {
 	if a == nil {
 		return fmt.Errorf("plugin: BindCatalogSeedPort: app is nil")
@@ -306,8 +306,10 @@ func (a *App) AssertNeedsMet() error {
 // binding CartPort — serve is the only process that constructs cart.Service
 // and calls BindCartPort — so they must skip CapCart here instead of
 // refusing to boot whenever any registered plugin declares Needs(CapCart)
-// (e.g. plugins/extref). Serve itself keeps calling the strict AssertNeedsMet
-// after BindCartPort.
+// (e.g. plugins/extref). CapCatalogSeed is CLI-seed-only (not bound on
+// serve/worker); those processes skip CapCatalogSeed the same way. Serve
+// calls AssertNeedsMetExcept(CapCatalogSeed) after BindCartPort; a CLI seed
+// root that calls BindCatalogSeedPort keeps CapCatalogSeed off the skip list.
 func (a *App) AssertNeedsMetExcept(skip ...Capability) error {
 	return a.assertNeedsMet(skip)
 }

@@ -125,7 +125,7 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("plugin capabilities: %w", err)
 	}

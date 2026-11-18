@@ -58,6 +58,20 @@ func TestAssertNeedsMetExcept_SkipsCart(t *testing.T) {
 	}
 }
 
+func TestAssertNeedsMetExcept_SkipsCatalogSeed(t *testing.T) {
+	app := &plugin.App{}
+	app.RecordNeeds(plugin.CapCatalogSeed)
+	if err := app.AssertNeedsMetExcept(plugin.CapCatalogSeed); err != nil {
+		t.Fatalf("AssertNeedsMetExcept(CapCatalogSeed): %v", err)
+	}
+	if err := app.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
+		t.Fatalf("AssertNeedsMetExcept(CapCart, CapCatalogSeed): %v", err)
+	}
+	if err := app.AssertNeedsMet(); err == nil {
+		t.Fatal("AssertNeedsMet: expected error for unbound CapCatalogSeed")
+	}
+}
+
 // TestAssertNeedsMetExcept_OtherCapsStillEnforced confirms the skip list is
 // scoped to the named capabilities only — a different unmet Need still fails.
 func TestAssertNeedsMetExcept_OtherCapsStillEnforced(t *testing.T) {
