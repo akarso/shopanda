@@ -83,10 +83,18 @@ type Host interface {
 	// ConfigValue reads a dot-notation config value (e.g. "plugins.acme.enabled")
 	// from this app's loaded config, or "" when unset. ConfigBool/Int/Int64
 	// parse the same value, returning the zero value on a missing/invalid entry.
+	// Scoped hosts (AsHostFor / Adapt) only see plugins.<slug>.*; use
+	// PlatformConfig for allowlisted core driver switches (e.g. queue.driver).
 	ConfigValue(key string) string
 	ConfigBool(key string) bool
 	ConfigInt(key string) int
 	ConfigInt64(key string) int64
+
+	// PlatformConfig reads an allowlisted non-secret core setting (e.g.
+	// "queue.driver", "search.engine"). Unknown or non-allowlisted keys
+	// return "". Does not open plugins.<other>.* or secrets (database.*,
+	// broker URLs). See config.PlatformConfigAllowlist.
+	PlatformConfig(key string) string
 
 	// BootstrapDB returns the composition-root database handle, if configured
 	// (e.g. for a Migrator plugin's integration-test helpers).
