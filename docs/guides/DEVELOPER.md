@@ -245,8 +245,9 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
   bound by the composition root (`(port, bool)`; declare with `Require(cap)`). `CapCart` is
   serve-only; `CapCatalogSeed` is CLI-seed-only: the owning plugin's `RequiresDB: true`
   command auto-binds CatalogSeed (resolve in the handler, not `Init`). Raw DB stays behind
-  `BootstrapDB` + `CapDB`. Non-owning processes skip process-scoped caps via
-  `AssertNeedsMetExcept` after `InitAll`
+  `BootstrapDB` + `CapDB`.   Non-owning processes skip process-scoped caps via
+  `assertServeNeedsMet` / `assertWorkerNeedsMet` / `assertPluginCLINeedsMet`
+  (`cmd/api/plugin_boot.go`) after `InitAll`
 - `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own config
 - `BootstrapDB()` — the composition-root `*sql.DB`, for `pluginsdk.Migrator` plugins
 
@@ -315,7 +316,8 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 
 `main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, binds the service
 ports `Host` exposes (`bindProductPorts`; seed CLIs also `bindCatalogSeedPort`), runs
-`registry.InitAll(pluginApp)`, then `AssertNeedsMetExcept` for process-scoped caps
+`registry.InitAll(pluginApp)`, then process-kind assert helpers
+(`assertServeNeedsMet` / `assertWorkerNeedsMet` / … in `cmd/api/plugin_boot.go`)
 (`CapCart` / `CapCatalogSeed` — see EXTENSION_POINTS pitfalls).
 
 Reference implementations: [`plugins/example/`](../../plugins/example/) — pricing step,

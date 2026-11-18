@@ -10,7 +10,8 @@ import (
 // bindProductPorts binds catalog/order/customer read ports and CapDB before
 // plugin Init. Cart is late-bound after cart.Service exists in serve via
 // BindCartPort. Catalog seed write (CapCatalogSeed) is CLI-only — see
-// bindCatalogSeedPort; serve/worker skip it with AssertNeedsMetExcept.
+// bindCatalogSeedPort; serve/worker skip it via assertServeNeedsMet /
+// assertWorkerNeedsMet (plugin_boot.go).
 func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	if app == nil {
 		return nil
@@ -38,12 +39,11 @@ func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 
 // bindCatalogSeedPort wires CapCatalogSeed for CLI seed/import composition
 // roots. Serve and worker must not call this — they skip CapCatalogSeed via
-// AssertNeedsMetExcept so plugins that Need it for CLI-only commands can
-// still boot without catalog write access in those processes.
+// assertServeNeedsMet / assertWorkerNeedsMet so plugins that Need it for
+// CLI-only commands can still boot without catalog write access.
 //
 // Seed CLI pattern: bindProductPorts + bindCatalogSeedPort, then
-// AssertNeedsMetExcept(CapCart) only — do not copy the dual CapCart+
-// CapCatalogSeed skip used by serve/worker.
+// assertSeedCLINeedsMet (plugin_boot.go) — do not hand-copy skip lists.
 func bindCatalogSeedPort(app *plugin.App, boot *plugin.Bootstrap) error {
 	if app == nil {
 		return nil

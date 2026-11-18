@@ -259,11 +259,8 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	// Non-serve process: CartPort is never bound here (only serve constructs
-	// cart.Service and calls BindCartPort), so a plugin declaring
-	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
-		return fmt.Errorf("plugin capabilities: %w", err)
+	if err := assertSchedulerNeedsMet(pluginApp); err != nil {
+		return err
 	}
 	freezePermissionRegistry(pluginApp)
 

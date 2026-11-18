@@ -135,23 +135,9 @@ func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap, cmd cli
 			return err
 		}
 	}
-
-	// Plugin CLI does not wire CapCart (serve-only) or CapIntegration*
-	// (jobs/serve wire those before Init). Failed Init of warehousedemo still
-	// leaves CapIntegration* in required — skip them here like CapCart.
-	skip := []plugin.Capability{
-		plugin.CapCart,
-		plugin.CapIntegrationOrder,
-		plugin.CapIntegrationShipment,
-		plugin.CapIntegrationStock,
-	}
-	if !bindSeed {
-		skip = append(skip, plugin.CapCatalogSeed)
-	}
-	if err := app.AssertNeedsMetExcept(skip...); err != nil {
-		return fmt.Errorf("plugin capabilities: %w", err)
-	}
-	return nil
+	// Always skip CapCart + CapIntegration* on plugin CLI; CapCatalogSeed only
+	// when this command did not bind it (peer Needs must not force the port).
+	return assertPluginCLINeedsMet(app, bindSeed)
 }
 
 func pluginCLIHelpLines(registryFn func() (*pluginCLIRuntime, error)) []string {

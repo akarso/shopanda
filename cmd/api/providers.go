@@ -69,11 +69,8 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
-	// Non-serve process: CartPort is never bound here (only serve constructs
-	// cart.Service and calls BindCartPort), so a plugin declaring
-	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
-		return fmt.Errorf("plugin capabilities: %w", err)
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		return err
 	}
 	// Do not abort on unrelated plugin init failures; only the search provider is required.
 	if summary.Failed > 0 {

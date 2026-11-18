@@ -125,10 +125,9 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("plugin capabilities: %w", err)
+		return nil, err
 	}
 	freezePermissionRegistry(pluginApp)
 
