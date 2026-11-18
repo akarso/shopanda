@@ -13,8 +13,9 @@ type publicRouteOpts struct {
 // would otherwise receive the default public max-age policy). The denylist
 // entry is the static path before the first `{` (e.g. /api/x/{id} → /api/x);
 // siblings under that prefix also get no-store. Registration fails when a `{`
-// cut leaves an empty or single-segment prefix; fully static mounts
-// (including one segment, e.g. GET /customizer) are allowed.
+// cut leaves an empty or single-segment prefix, or for known broad roots
+// (/api) even without braces; fully static mounts (including one segment,
+// e.g. GET /customizer) are allowed.
 func NoCache() PublicRouteOption {
 	return func(o *publicRouteOpts) { o.noCache = true }
 }

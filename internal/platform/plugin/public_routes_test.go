@@ -151,3 +151,14 @@ func TestApp_RegisterPublicRoute_NoCacheAllowsStaticOneSegment(t *testing.T) {
 		t.Fatalf("prefixes = %#v", prefixes)
 	}
 }
+
+func TestApp_RegisterPublicRoute_NoCacheRejectsStaticBroadRoot(t *testing.T) {
+	app := &plugin.App{}
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	if err := app.RegisterPublicRoute("GET /api", handler, plugin.WithNoCache()); err == nil {
+		t.Fatal("expected NoCache rejection for static /api")
+	}
+	if err := app.RegisterPublicRoute("GET /api", handler); err != nil {
+		t.Fatalf("without NoCache: %v", err)
+	}
+}

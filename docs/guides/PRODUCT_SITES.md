@@ -57,16 +57,19 @@ Unknown keys under `plugins:` are kept in `PluginsConfig.Extra` and flattened as
 (`SHOPANDA_PLUGINS_<SLUG>_GENERATION_PROVIDER`). Both forms are **stored** as
 exact map keys (aliases stay in sync); Host.Config* does exact lookup — do not
 assume a runtime `.`↔`_` rewrite. Conflicting flat vs nested keys that alias
-to the same path (`my_key` vs `my.key`) fail Load — including conflicting env
-forms. Lists under a product slug are rejected. Use a slug without underscores
-in the env form, or set values in YAML. Do not add a typed struct field in
+to the same path (`my_key` vs `my.key`) fail Load. Env↔env conflicts need two
+env names that alias under `.`≡`_` (e.g. `…_MY_KEY` and `…_MY.KEY` with
+different values); normal underscore-only overlays do not hit that path. Lists
+under a product slug are rejected. Use a slug without underscores in the env
+form, or set values in YAML. Do not add a typed struct field in
 `internal/platform/config` for product plugins.
 
 Public routes with `pluginsdk.NoCache()` denylist the longest static path
 before the first `{` (prefix match, so siblings under that prefix also get
 no-store). A `{` cut that leaves an empty or one-segment prefix is rejected at
-registration (`/{id}`, `/api/{v}/…`); a fully static one-segment mount
-(`GET /customizer`) is allowed.
+registration (`/{id}`, `/api/{v}/…`); known broad roots (`/api`) are refused
+even without braces. A fully static one-segment mount (`GET /customizer`) is
+allowed.
 
 ## Portable checks (no CI required)
 

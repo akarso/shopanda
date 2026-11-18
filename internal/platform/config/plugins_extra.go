@@ -179,17 +179,10 @@ func stringifyYAMLScalar(v interface{}) string {
 // setPluginExtraKey writes key=val and keeps '.' / '_' aliases in sync so
 // YAML generation.provider and env GENERATION_PROVIDER both resolve via
 // Host.Config* / Flatten (exact map keys — both forms are stored). Returns
-// an error when an alias already exists with a different value (YAML
-// collision). Env overlay uses overwritePluginExtraKey instead.
+// an error when an alias already exists with a different value.
+// Callers: YAML flatten (synced map) and applyPluginsExtraEnv (pending map
+// first — env↔env conflicts fail there; pending then overwrites YAML keys).
 func setPluginExtraKey(m map[string]string, key, val string) error {
-	return writePluginExtraKey(m, key, val, false)
-}
-
-func overwritePluginExtraKey(m map[string]string, key, val string) {
-	_ = writePluginExtraKey(m, key, val, true)
-}
-
-func writePluginExtraKey(m map[string]string, key, val string, overwrite bool) error {
 	if m == nil || key == "" {
 		return nil
 	}
@@ -200,12 +193,10 @@ func writePluginExtraKey(m map[string]string, key, val string, overwrite bool) e
 	if alt := strings.ReplaceAll(key, ".", "_"); alt != key {
 		forms = append(forms, alt)
 	}
-	if !overwrite {
-		for _, k := range forms {
-			if existing, ok := m[k]; ok && existing != val {
-				return fmt.Errorf("conflicting keys %q and %q ('.' and '_' are aliases; values %q vs %q)",
-					key, k, val, existing)
-			}
+	for _, k := range forms {
+		if existing, ok := m[k]; ok && existing != val {
+			return fmt.Errorf("conflicting keys %q and %q ('.' and '_' are aliases; values %q vs %q)",
+				key, k, val, existing)
 		}
 	}
 	for _, k := range forms {

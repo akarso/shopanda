@@ -87,8 +87,9 @@ func (a *App) PublicRoutes() []PublicRoute {
 // "GET /api/x/{id}" → "/api/x". Middleware matches path == prefix ||
 // HasPrefix(path, prefix+"/") — so siblings under that prefix also get
 // no-store. RegisterPublicRoute rejects NoCache when a `{` cut leaves an empty
-// or single-segment prefix (e.g. "/{id}", "/api/{v}/x" → "/api"); fully
-// static one-segment mounts (e.g. "GET /customizer") are allowed.
+// or single-segment prefix (e.g. "/{id}", "/api/{v}/x" → "/api"), and rejects
+// known broad roots ("/api") even without braces; fully static one-segment
+// mounts (e.g. "GET /customizer") are allowed.
 func NoCachePathPrefixes(routes []PublicRoute) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -116,25 +117,37 @@ func pathPrefixFromPattern(pattern string) string {
 
 // validateNoCachePattern rejects NoCache when a `{` cut shortens the path to an
 // empty or single-segment denylist prefix (would no-store a whole tree like
-// /api). Fully static patterns — including one-segment mounts like
+// /api), or when the denylist is a known broad root (`/`, `/api`) even without
+// braces. Fully static non-root mounts — including one-segment mounts like
 // "GET /customizer" — are allowed as-is.
 func validateNoCachePattern(pattern string) error {
 	path, cut := staticPathBeforeParam(pattern)
 	prefix := strings.TrimRight(path, "/")
-	if cut {
-		if prefix == "" {
+	if prefix == "" {
+		if cut {
 			return fmt.Errorf("plugin: NoCache pattern %q has no static path before '{' (leading path params cannot be denylisted)", pattern)
 		}
+		return fmt.Errorf("plugin: NoCache pattern %q has no denylistable path", pattern)
+	}
+	if isKnownBroadNoCachePrefix(prefix) {
+		return fmt.Errorf("plugin: NoCache pattern %q yields denylist prefix %q which is a known broad root (refuse / and /api)", pattern, prefix)
+	}
+	if cut {
 		segs := strings.Split(strings.Trim(prefix, "/"), "/")
 		if len(segs) < 2 || segs[0] == "" {
 			return fmt.Errorf("plugin: NoCache pattern %q cuts at '{' to denylist prefix %q which is too broad (need at least /seg/seg before '{'; e.g. /api/{v}/… would denylist all of /api)", pattern, prefix)
 		}
-		return nil
-	}
-	if prefix == "" {
-		return fmt.Errorf("plugin: NoCache pattern %q has no denylistable path", pattern)
 	}
 	return nil
+}
+
+func isKnownBroadNoCachePrefix(prefix string) bool {
+	switch prefix {
+	case "", "/api":
+		return true
+	default:
+		return false
+	}
 }
 
 // staticPathBeforeParam returns the URL path from pattern (method stripped) and
