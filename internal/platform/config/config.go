@@ -580,8 +580,7 @@ type PluginsConfig struct {
 	WarehouseDemo   WarehouseDemoPluginConfig   `yaml:"warehousedemo"`
 	PimDemo         PimDemoPluginConfig         `yaml:"pimdemo"`
 	B2B             B2BPluginConfig             `yaml:"b2b"`
-	ExtRef          ExtRefPluginConfig          `yaml:"extref"`
-	MetalDogs       MetalDogsPluginConfig       `yaml:"metaldogs"`
+	ExtRef ExtRefPluginConfig `yaml:"extref"`
 	// Extra holds unknown plugins.<slug> maps for product plugins (see
 	// UnmarshalYAML). Flattened as plugins.<slug>.<key>; env overlay
 	// SHOPANDA_PLUGINS_<SLUG>_<KEY>. Typed fields above win when both exist.
@@ -675,18 +674,6 @@ type PimDemoPluginConfig struct {
 type B2BPluginConfig struct {
 	Enabled    bool   `yaml:"enabled"`
 	LicenseKey string `yaml:"license_key"`
-}
-
-// MetalDogsPluginConfig toggles the Metal Dogs product plugin in plugins/metaldogs.
-// Default enabled=false (dark); set plugins.metaldogs.enabled or
-// SHOPANDA_PLUGINS_METALDOGS_ENABLED to expose /api/customizer/* (not a
-// process probe — use /healthz and /readyz for orchestrators).
-//
-// migrate-next: product forks should prefer Extra / Host.Config* for new
-// product slugs instead of adding typed fields here; MetalDogs remains typed
-// until a dedicated migration removes this field.
-type MetalDogsPluginConfig struct {
-	Enabled bool `yaml:"enabled"`
 }
 
 // CorePluginsConfig allows explicit enable/disable of core infrastructure plugins.
@@ -1338,9 +1325,6 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_LICENSE_KEY"); v != "" {
 		cfg.Plugins.B2B.LicenseKey = v
 	}
-	if v := os.Getenv("SHOPANDA_PLUGINS_METALDOGS_ENABLED"); v != "" {
-		cfg.Plugins.MetalDogs.Enabled = parseEnvBool(v)
-	}
 	if err := applyPluginsExtraEnv(cfg); err != nil {
 		return err
 	}
@@ -1614,7 +1598,6 @@ func flattenWith(cfg *Config, redact func(string) string) map[string]string {
 	m["plugins.pimdemo.cache_ttl"] = cfg.Plugins.PimDemo.CacheTTL
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["plugins.b2b.license_key"] = redact(cfg.Plugins.B2B.LicenseKey)
-	m["plugins.metaldogs.enabled"] = strconv.FormatBool(cfg.Plugins.MetalDogs.Enabled)
 	flattenPluginsExtra(m, cfg, redact)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
