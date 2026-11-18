@@ -43,11 +43,8 @@ func (needsCatalogSeedSDKPlugin) Init(h pluginsdk.Host) error {
 	return nil
 }
 
-// TestNonServeBoot_SkipsCapCartAndCapCatalogSeed exercises the same wiring
-// path worker, scheduler, and the cache/schedule/extension-field CLIs use:
-// bindProductPorts (no CartPort, no CatalogSeedPort), InitAll, then
-// AssertNeedsMetExcept(CapCart, CapCatalogSeed). Plugins that declare those
-// Needs must not block this boot path.
+// TestNonServeBoot_SkipsCapCartAndCapCatalogSeed uses assertWorkerNeedsMet —
+// the same skip list as worker / scheduler / search reindex / non-seed CLIs.
 func TestNonServeBoot_SkipsCapCartAndCapCatalogSeed(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
@@ -64,11 +61,11 @@ func TestNonServeBoot_SkipsCapCartAndCapCatalogSeed(t *testing.T) {
 		t.Fatalf("InitAll summary = %+v, want no failures", summary)
 	}
 
-	if err := app.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
-		t.Fatalf("AssertNeedsMetExcept(CapCart, CapCatalogSeed): %v, want nil", err)
+	if err := assertWorkerNeedsMet(app); err != nil {
+		t.Fatalf("assertWorkerNeedsMet: %v, want nil", err)
 	}
-	if err := app.AssertNeedsMetExcept(plugin.CapCart); err == nil {
-		t.Fatal("AssertNeedsMetExcept(CapCart only): expected CapCatalogSeed unbound error")
+	if err := assertServeNeedsMet(app); err == nil {
+		t.Fatal("assertServeNeedsMet: expected CapCart unbound error")
 	}
 	if err := app.AssertNeedsMet(); err == nil {
 		t.Fatal("AssertNeedsMet: expected error — CartPort and CatalogSeedPort were never bound")
@@ -113,9 +110,8 @@ func TestSeedBoot_BindsCatalogSeed(t *testing.T) {
 		t.Fatalf("InitAll summary = %+v, want no failures", summary)
 	}
 
-	// Seed CLI pattern: CapCatalogSeed bound → skip CapCart only.
-	if err := app.AssertNeedsMetExcept(plugin.CapCart); err != nil {
-		t.Fatalf("AssertNeedsMetExcept(CapCart): %v", err)
+	if err := assertSeedCLINeedsMet(app); err != nil {
+		t.Fatalf("assertSeedCLINeedsMet: %v", err)
 	}
 	if _, ok := app.CatalogSeedPort(); !ok {
 		t.Fatal("CatalogSeedPort must be bound after bindCatalogSeedPort")
@@ -136,18 +132,15 @@ func TestServeBoot_SkipsCatalogSeedUnbound(t *testing.T) {
 	if summary.Failed != 0 {
 		t.Fatalf("InitAll summary = %+v", summary)
 	}
-	// Serve late-binds CartPort; CapCatalogSeed stays unbound.
 	if err := app.BindCartPort(struct{}{}); err != nil {
 		t.Fatalf("BindCartPort: %v", err)
 	}
-	if err := app.AssertNeedsMetExcept(plugin.CapCatalogSeed); err != nil {
-		t.Fatalf("AssertNeedsMetExcept(CapCatalogSeed): %v", err)
+	if err := assertServeNeedsMet(app); err != nil {
+		t.Fatalf("assertServeNeedsMet: %v", err)
 	}
 	if _, ok := app.CatalogSeedPort(); ok {
 		t.Fatal("serve path must leave CatalogSeedPort unbound")
 	}
-	// Mistaken bind would satisfy Needs; assert still passes but port present —
-	// guard: a future wire_services bindCatalogSeedPort must fail this test.
 	if err := app.AssertNeedsMet(); err == nil {
 		t.Fatal("AssertNeedsMet must still fail while CapCatalogSeed is unbound")
 	}

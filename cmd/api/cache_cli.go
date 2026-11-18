@@ -54,12 +54,9 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 		conn.Close()
 		return nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	// Non-serve process: CartPort is never bound here (only serve constructs
-	// cart.Service and calls BindCartPort), so a plugin declaring
-	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("plugin capabilities: %w", err)
+		return nil, nil, err
 	}
 	freezePermissionRegistry(pluginApp)
 
