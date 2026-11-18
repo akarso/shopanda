@@ -177,7 +177,7 @@ func (w *Worker) processNext(ctx context.Context) bool {
 	err = w.safeHandle(ctx, h, *job)
 	duration := time.Since(start)
 	if err != nil {
-		if errors.Is(err, ErrSkipOutcome) {
+		if errIsSkipOnly(err) {
 			skipFields := map[string]interface{}{
 				"job_id":   job.ID,
 				"job_type": job.Type,
@@ -228,6 +228,45 @@ func mergeJobRequestID(fields map[string]interface{}, envelope map[string]interf
 	}
 }
 
+// errIsSkipOnly reports whether err contains ErrSkipOutcome and every
+// node in the unwrap tree is skip-only: the sentinel itself, a bare
+// context cancel/deadline, or a multi-error whose children are all
+// skip-only. Walk Unwrap() []error before treating context.Canceled as
+// a leaf — errors.Join(ErrSkipOutcome, context.Canceled, real) must Fail.
+func errIsSkipOnly(err error) bool {
+	if err == nil || !errors.Is(err, ErrSkipOutcome) {
+		return false
+	}
+	var walk func(error) bool
+	walk = func(e error) bool {
+		if e == nil {
+			return true
+		}
+		if e == ErrSkipOutcome {
+			return true
+		}
+		if multi, ok := e.(interface{ Unwrap() []error }); ok {
+			kids := multi.Unwrap()
+			if len(kids) == 0 {
+				return true
+			}
+			for _, x := range kids {
+				if !walk(x) {
+					return false
+				}
+			}
+			return true
+		}
+		if u := errors.Unwrap(e); u != nil {
+			return walk(u)
+		}
+		return e == ErrSkipOutcome ||
+			e == context.Canceled ||
+			e == context.DeadlineExceeded
+	}
+	return walk(err)
+}
+
 // safeHandle runs h.Handle with panic recovery, converting a panic into a
 // normal error on the same path a handler-returned error already takes
 // (logged, counted, and the job marked Fail'd) instead of letting it
@@ -260,6 +299,10 @@ func (w *Worker) recordFail(ctx context.Context, jobID string, attempt int, jobT
 		fields := map[string]interface{}{"job_id": jobID, "attempt": attempt, "job_type": jobType}
 		if errors.Is(failErr, ErrOutcomeNotApplied) {
 			// Stale claim after Requeue/newer dequeue — not a handler failure.
+			// Handler error stays at info so reclaim races do not page.
+			if jobErr != nil {
+				fields["handler_error"] = jobErr.Error()
+			}
 			w.log.Info("worker.fail.not_applied", fields)
 			w.metrics.JobResult(jobType, "not_applied", duration)
 			return

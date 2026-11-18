@@ -14,6 +14,12 @@ const (
 	StatusProcessing Status = "processing"
 	StatusDone       Status = "done"
 	StatusFailed     Status = "failed"
+	// StatusReclaiming is a Redis (and similar) intermediate during
+	// RequeueWithBeforeCommit: claim is held off ready/processing lists
+	// while OnRequeued runs. Dequeue ignores it; Complete/Fail will not
+	// treat it as a live processing claim. Postgres keeps the row
+	// processing under FOR UPDATE instead.
+	StatusReclaiming Status = "reclaiming"
 	// StatusCancelled is a terminal state reached only via an admin-triggered
 	// Cancel (see jobs.Admin) on a still-pending job — never set by the
 	// worker itself. A processing job cannot be cancelled (no in-flight
@@ -50,9 +56,10 @@ type Handler interface {
 // ErrSkipOutcome tells the worker to skip platform Complete/Fail for this
 // delivery. Handlers (or product fence wrappers) use it when they already
 // wrote the outcome or intentionally leave the claim for reclaim/Requeue.
-// Return this sentinel alone (or wrapping only context) — do not wrap a
-// real handler failure with ErrSkipOutcome or Fail/last_error will not run.
-// Skipping without a fence Complete/Fail/Requeue leaves status=processing.
+// Return this sentinel alone (or wrapping only context cancellation) —
+// joining/wrapping a real handler failure with ErrSkipOutcome still Fail's
+// so last_error is written. Skipping without a fence Complete/Fail/Requeue
+// leaves status=processing.
 var ErrSkipOutcome = errors.New("jobs: skip outcome")
 
 // ErrOutcomeNotApplied means Complete/Fail matched zero rows (missing id,
@@ -65,14 +72,80 @@ var ErrOutcomeNotApplied = errors.New("jobs: outcome not applied")
 // queryable processing row to reclaim.
 var ErrRequeueUnsupported = errors.New("jobs: requeue unsupported for this queue driver")
 
-// ErrRequeueConflict means Requeue matched zero rows (wrong attempt, not
-// processing, or not yet past DefaultRequeueMinAge).
+// ErrRequeueConflict is a generic reclaim miss. Prefer the more specific
+// errors below when the backend can distinguish the predicate.
 var ErrRequeueConflict = errors.New("jobs: requeue conflict")
 
-// DefaultRequeueMinAge is how long a processing row must sit before
-// Requeue may reclaim it. Protects a live handler whose Complete has not
-// landed yet from being set back to pending by jobs:requeue / a sweeper.
-const DefaultRequeueMinAge = time.Minute
+// ErrRequeueTooFresh means the processing claim is younger than the caller
+// min-age (still a plausible live handler).
+var ErrRequeueTooFresh = errors.New("jobs: requeue claim too fresh")
+
+// ErrRequeueWrongAttempt means attempts did not match the live claim.
+var ErrRequeueWrongAttempt = errors.New("jobs: requeue wrong attempt")
+
+// ErrRequeueNotProcessing means the row is missing or not status=processing.
+var ErrRequeueNotProcessing = errors.New("jobs: requeue not processing")
+
+// ErrRequeueInProgress means another Requeue already holds reclaiming and
+// its reclaim is younger than the fixed DefaultRequeueMinAge lease (not the
+// caller's min-age) — do not abort that reclaim.
+var ErrRequeueInProgress = errors.New("jobs: requeue already in progress")
+
+// DefaultRequeueMinAge is the default minimum claim age when the caller
+// does not pass WithRequeueMinAge (aligned with jobs:requeue). Age alone
+// does not prove the worker is dead — prefer waiting for Fail then Retry.
+const DefaultRequeueMinAge = 5 * time.Minute
+
+// MinRequeueMinAge is the lowest WithRequeueMinAge value backends honor
+// (matches jobs:requeue CLI floor). Smaller positive values fall back to
+// DefaultRequeueMinAge.
+const MinRequeueMinAge = time.Second
+
+// RequeueOption configures Queue.Requeue.
+type RequeueOption func(*requeueConfig)
+
+type requeueConfig struct {
+	MinAge time.Duration
+}
+
+// WithRequeueMinAge sets how old a processing claim must be before reclaim.
+// Values <= 0 fall back to DefaultRequeueMinAge.
+func WithRequeueMinAge(d time.Duration) RequeueOption {
+	return func(c *requeueConfig) { c.MinAge = d }
+}
+
+// ApplyRequeueOptions resolves min-age for backends. Values <= 0 or below
+// MinRequeueMinAge fall back to DefaultRequeueMinAge.
+func ApplyRequeueOptions(opts []RequeueOption) time.Duration {
+	cfg := requeueConfig{MinAge: DefaultRequeueMinAge}
+	for _, o := range opts {
+		if o != nil {
+			o(&cfg)
+		}
+	}
+	if cfg.MinAge < MinRequeueMinAge {
+		return DefaultRequeueMinAge
+	}
+	return cfg.MinAge
+}
+
+// RequeueBeforeCommit runs after reclaim predicates pass and before the
+// job becomes dequeueable (postgres: still processing under FOR UPDATE;
+// redis: status=reclaiming, off ready). OnRequeued fence release sees
+// attempt N. Return non-nil to abort — row must not land on ready/pending.
+//
+// Hooks must not open a second connection and UPDATE the same jobs row
+// (deadlocks the reclaim lock). On Postgres, use RequeueTx(ctx) /
+// pluginsdk.RequeueTx so fence writes commit with the jobs row. External
+// side effects that commit before the reclaim TX must be independently
+// idempotent — COMMIT failure does not re-run the hook.
+type RequeueBeforeCommit func(ctx context.Context, jobID string, attempt int) error
+
+// RequeueHookable is implemented by backends that can run a before-commit
+// callback under the same lock/transaction as the pending update.
+type RequeueHookable interface {
+	RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before RequeueBeforeCommit, opts ...RequeueOption) error
+}
 
 // Queue is the port for job queue backends.
 type Queue interface {
@@ -98,9 +171,10 @@ type Queue interface {
 	// Requeue moves a processing job back to pending without resetting
 	// attempts (unlike Admin.Retry, which is failed→pending with
 	// attempts=0). attempt must match the live claim; the row must be
-	// older than DefaultRequeueMinAge. Returns ErrRequeueConflict on
-	// zero rows, ErrRequeueUnsupported on brokers.
-	Requeue(ctx context.Context, id string, attempt int) error
+	// older than the configured min-age (default DefaultRequeueMinAge).
+	// Returns ErrRequeueTooFresh / WrongAttempt / NotProcessing (or
+	// ErrRequeueConflict), or ErrRequeueUnsupported on brokers.
+	Requeue(ctx context.Context, id string, attempt int, opts ...RequeueOption) error
 }
 
 // NewJob creates a Job with sensible defaults.

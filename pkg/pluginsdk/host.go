@@ -96,8 +96,10 @@ type Host interface {
 	// BindQueue (claim fence). wrap receives and must return the queue
 	// instance (jobs.Queue). Nil wrap is ignored.
 	OnQueueBound(wrap func(queue any) any)
-	// OnRequeued registers a callback after Queue.Requeue succeeds.
-	OnRequeued(fn func(ctx context.Context, jobID string))
+	// OnRequeued registers a callback run under the reclaim lock before
+	// status flips to pending (attempt is the claim being released).
+	// Non-nil error or panic aborts Requeue. Not called for Admin.Retry.
+	OnRequeued(fn func(ctx context.Context, jobID string, attempt int) error)
 }
 
 // SlotsAPI registers storefront slot renderers without importing

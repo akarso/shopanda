@@ -3,6 +3,7 @@ package plugin
 import (
 	"database/sql"
 	"fmt"
+	"reflect"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -95,6 +96,26 @@ func (a *App) BindQueue(queue jobs.Queue) error {
 	return nil
 }
 
+// queueSame compares two Queue values without panicking on incomparable
+// dynamic types (value wrappers holding funcs). Pointer identity is used
+// when either side is not comparable.
+func queueSame(a, b jobs.Queue) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() {
+		return false
+	}
+	if !va.Type().Comparable() {
+		if va.Kind() == reflect.Ptr && vb.Kind() == reflect.Ptr {
+			return va.Pointer() == vb.Pointer()
+		}
+		return false
+	}
+	return a == b
+}
+
 // queueChainContains reports whether want is outer or reachable via
 // UnwrapQueue (notify / fence wrappers). Depth-bounded — do not key a map
 // with jobs.Queue (unhashable value wrappers panic).
@@ -103,7 +124,7 @@ func queueChainContains(outer, want jobs.Queue) bool {
 		return false
 	}
 	for depth := 0; outer != nil && depth < maxQueueUnwrapDepth; depth++ {
-		if outer == want {
+		if queueSame(outer, want) {
 			return true
 		}
 		u, ok := outer.(queueUnwrapper)
@@ -111,7 +132,7 @@ func queueChainContains(outer, want jobs.Queue) bool {
 			return false
 		}
 		next := u.UnwrapQueue()
-		if next == nil || next == outer {
+		if next == nil || queueSame(next, outer) {
 			return false
 		}
 		outer = next

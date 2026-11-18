@@ -3,6 +3,7 @@ package pluginsdk
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -372,16 +373,18 @@ func (h *appHost) OnQueueBound(wrap func(queue any) any) {
 	}
 	h.app.OnQueueBound(func(q jobs.Queue) jobs.Queue {
 		out := wrap(q)
-		next, ok := out.(jobs.Queue)
-		if !ok || next == nil {
-			// ApplyQueueBoundHooks treats nil as an error at bind time.
+		if out == nil {
 			return nil
+		}
+		next, ok := out.(jobs.Queue)
+		if !ok {
+			panic(fmt.Sprintf("pluginsdk: OnQueueBound returned %T, want jobs.Queue", out))
 		}
 		return next
 	})
 }
 
-func (h *appHost) OnRequeued(fn func(ctx context.Context, jobID string)) {
+func (h *appHost) OnRequeued(fn func(ctx context.Context, jobID string, attempt int) error) {
 	if h == nil || h.app == nil || fn == nil {
 		return
 	}

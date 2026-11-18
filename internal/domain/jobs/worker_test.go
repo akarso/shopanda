@@ -62,7 +62,7 @@ func (m *mockQueue) Complete(ctx context.Context, id string, attempt int) error 
 	return nil
 }
 
-func (m *mockQueue) Requeue(context.Context, string, int) error { return nil }
+func (m *mockQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error { return nil }
 
 func (m *mockQueue) Fail(ctx context.Context, id string, attempt int, jobErr error) error {
 	m.mu.Lock()
@@ -330,6 +330,60 @@ func TestWorker_ErrSkipOutcome_SkipsCompleteAndFail(t *testing.T) {
 	defer metrics.mu.Unlock()
 	if len(metrics.results) != 1 || metrics.results[0].outcome != "skipped" {
 		t.Fatalf("metrics = %+v, want skipped", metrics.results)
+	}
+}
+
+func TestWorker_ErrSkipOutcome_WrappedRealErrorStillFails(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	metrics := &mockMetrics{}
+	realErr := errors.New("handler boom")
+	handler := &mockHandler{
+		jobType: "skip_wrap",
+		handleFn: func(context.Context, jobs.Job) error {
+			return errors.Join(jobs.ErrSkipOutcome, realErr)
+		},
+	}
+	w := jobs.NewWorker(q, log, time.Second).WithMetrics(metrics)
+	w.Register(handler)
+	job, _ := jobs.NewJob("j-skip-wrap", "skip_wrap", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failed) != 1 {
+		t.Fatalf("failed=%v, want Fail when sentinel wraps a real error", q.failed)
+	}
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	if len(metrics.results) != 1 || metrics.results[0].outcome != "failed" {
+		t.Fatalf("metrics = %+v, want failed", metrics.results)
+	}
+}
+
+func TestWorker_ErrSkipOutcome_JoinCancelAndRealStillFails(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	metrics := &mockMetrics{}
+	handler := &mockHandler{
+		jobType: "skip_join",
+		handleFn: func(context.Context, jobs.Job) error {
+			return errors.Join(jobs.ErrSkipOutcome, context.Canceled, errors.New("boom"))
+		},
+	}
+	w := jobs.NewWorker(q, log, time.Second).WithMetrics(metrics)
+	w.Register(handler)
+	job, _ := jobs.NewJob("j-skip-join", "skip_join", nil)
+	_ = q.Enqueue(context.Background(), job)
+	if !w.ProcessOne(context.Background()) {
+		t.Fatal("expected job processed")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failed) != 1 {
+		t.Fatalf("failed=%v, want Fail when Join includes a real error beside cancel", q.failed)
 	}
 }
 
