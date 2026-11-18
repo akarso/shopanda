@@ -85,15 +85,64 @@ func yamlMapToStringMap(node *yaml.Node) (map[string]string, error) {
 	if len(m) == 0 {
 		return nil, nil
 	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		key := strings.TrimSpace(strings.ToLower(k))
-		if key == "" {
-			continue
-		}
-		out[key] = stringifyYAMLScalar(v)
+	out := make(map[string]string)
+	if err := flattenYAMLValue("", m, out); err != nil {
+		return nil, err
 	}
-	return out, nil
+	if len(out) == 0 {
+		return nil, nil
+	}
+	// Keep . / _ aliases so env SHOPANDA_PLUGINS_<SLUG>_GENERATION_PROVIDER
+	// matches YAML generation.provider through Host.Config* / Flatten.
+	synced := make(map[string]string, len(out)*2)
+	for k, v := range out {
+		setPluginExtraKey(synced, k, v)
+	}
+	return synced, nil
+}
+
+// flattenYAMLValue writes dotted keys into out. Nested maps become
+// "generation.provider"; lists are rejected (Host.Config* is stringly).
+func flattenYAMLValue(prefix string, v interface{}, out map[string]string) error {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		if len(t) == 0 {
+			return nil
+		}
+		for k, child := range t {
+			key := strings.TrimSpace(strings.ToLower(k))
+			if key == "" {
+				continue
+			}
+			full := key
+			if prefix != "" {
+				full = prefix + "." + key
+			}
+			if err := flattenYAMLValue(full, child, out); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[interface{}]interface{}:
+		// Defensive: some YAML paths decode map keys as interface{}.
+		norm := make(map[string]interface{}, len(t))
+		for k, child := range t {
+			norm[fmt.Sprint(k)] = child
+		}
+		return flattenYAMLValue(prefix, norm, out)
+	case []interface{}:
+		path := prefix
+		if path == "" {
+			path = "(root)"
+		}
+		return fmt.Errorf("lists are not supported at %q (use a scalar or nested map)", path)
+	default:
+		if prefix == "" {
+			return fmt.Errorf("plugin config must be a map")
+		}
+		out[prefix] = stringifyYAMLScalar(v)
+		return nil
+	}
 }
 
 func stringifyYAMLScalar(v interface{}) string {
@@ -121,6 +170,22 @@ func stringifyYAMLScalar(v interface{}) string {
 		return fmt.Sprintf("%v", t)
 	default:
 		return fmt.Sprintf("%v", t)
+	}
+}
+
+// setPluginExtraKey writes key=val and keeps '.' / '_' aliases in sync so
+// YAML generation.provider and env GENERATION_PROVIDER both resolve via
+// Host.Config* / Flatten.
+func setPluginExtraKey(m map[string]string, key, val string) {
+	if m == nil || key == "" {
+		return
+	}
+	m[key] = val
+	if alt := strings.ReplaceAll(key, "_", "."); alt != key {
+		m[alt] = val
+	}
+	if alt := strings.ReplaceAll(key, ".", "_"); alt != key {
+		m[alt] = val
 	}
 }
 
@@ -196,7 +261,7 @@ func applyPluginsExtraEnv(cfg *Config) {
 		if cfg.Plugins.Extra[slug] == nil {
 			cfg.Plugins.Extra[slug] = make(map[string]string)
 		}
-		cfg.Plugins.Extra[slug][key] = kv[1]
+		setPluginExtraKey(cfg.Plugins.Extra[slug], key, kv[1])
 	}
 }
 

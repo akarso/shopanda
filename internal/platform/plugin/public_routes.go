@@ -78,7 +78,9 @@ func (a *App) PublicRoutes() []PublicRoute {
 
 // NoCachePathPrefixes returns URL path prefixes for routes registered with
 // WithNoCache, suitable for CacheControlMiddleware. Patterns like
-// "GET /api/foo" yield "/api/foo".
+// "GET /api/foo" yield "/api/foo"; "GET /api/x/{id}" yields "/api/x" so the
+// denylist matches real request paths (middleware: path == prefix ||
+// HasPrefix(path, prefix+"/")).
 func NoCachePathPrefixes(routes []PublicRoute) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -117,5 +119,10 @@ func pathPrefixFromPattern(pattern string) string {
 			return ""
 		}
 	}
+	// Cut at the first path parameter so "/api/x/{id}" → "/api/x".
+	if i := strings.IndexByte(p, '{'); i >= 0 {
+		p = p[:i]
+	}
+	p = strings.TrimRight(p, "/")
 	return p
 }

@@ -89,3 +89,31 @@ func TestNoCachePathPrefixes_StripsMethod(t *testing.T) {
 		t.Fatalf("prefixes = %#v", prefixes)
 	}
 }
+
+func TestNoCachePathPrefixes_CutsPathParams(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    string // empty → skipped
+	}{
+		{"GET /api/x/{id}", "/api/x"},
+		{"GET /api/x/{id}/y", "/api/x"},
+		{"GET /api/x/", "/api/x"},
+		{"/{id}", ""},
+		{"/api/x/{id}", "/api/x"},
+		{"POST /api/v1/graphql", "/api/v1/graphql"},
+	}
+	for _, tc := range cases {
+		prefixes := plugin.NoCachePathPrefixes([]plugin.PublicRoute{
+			{Pattern: tc.pattern, NoCache: true},
+		})
+		if tc.want == "" {
+			if len(prefixes) != 0 {
+				t.Fatalf("%q: prefixes = %#v, want skip", tc.pattern, prefixes)
+			}
+			continue
+		}
+		if len(prefixes) != 1 || prefixes[0] != tc.want {
+			t.Fatalf("%q: prefixes = %#v, want [%q]", tc.pattern, prefixes, tc.want)
+		}
+	}
+}
