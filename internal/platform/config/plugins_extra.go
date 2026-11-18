@@ -28,8 +28,7 @@ var typedPluginYAMLKeys = map[string]struct{}{
 	"warehousedemo":    {},
 	"pimdemo":          {},
 	"b2b":              {},
-	"extref":           {},
-	"metaldogs":        {}, // migrate-next: prefer Extra + Host.Config* for product forks
+	"extref": {},
 }
 
 // UnmarshalYAML decodes typed plugin fields and captures unknown plugin slugs
@@ -241,7 +240,8 @@ func looksSecretPluginKey(key string) bool {
 // slugs that are not typed fields. Slug is the first underscore-separated
 // token after the prefix (lowercased); the remainder is the key (lowercased).
 // Product slugs with underscores in the slug itself should set values via YAML.
-// Env intentionally overrides YAML. Conflicting env keys that alias to the
+// Env intentionally overrides YAML when the value is non-empty (empty env =
+// unset, same as typed plugin envs). Conflicting env keys that alias to the
 // same path ('.' ≡ '_') fail closed — same rule as YAML.
 func applyPluginsExtraEnv(cfg *Config) error {
 	if cfg == nil {
@@ -256,6 +256,10 @@ func applyPluginsExtraEnv(cfg *Config) error {
 		}
 		kv := strings.SplitN(e, "=", 2)
 		if len(kv) != 2 {
+			continue
+		}
+		if kv[1] == "" {
+			// Empty = unset; do not clobber YAML (matches typed if v != "").
 			continue
 		}
 		rest := strings.TrimPrefix(kv[0], prefix)
