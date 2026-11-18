@@ -288,12 +288,15 @@ queue:
 #     enabled: false   # custom catalog promotion rule types (min_line_total, line_bonus_percent)
 #
 # Product (fork) plugins: use an unknown slug map — no typed field in core.
-# Flatten keys plugins.<slug>.*; Host.ConfigBool("plugins.<slug>.enabled"); env
-# SHOPANDA_PLUGINS_<SLUG>_<KEY> (slug without underscores in the env form).
+# Nested YAML maps flatten to dotted keys (generation.provider). Env uses
+# underscores (SHOPANDA_PLUGINS_MYPRODUCT_GENERATION_PROVIDER); Host.Config*
+# accepts either notation. Lists under plugins.<slug> are rejected.
 # plugins:
 #   myproduct:
 #     enabled: true
 #     api_key: "..."
+#     generation:
+#       provider: openai
 
 # --- B2B module (commercial) --------------------------------------------------
 # Requires a valid license key. See docs/COMMERCIAL.md and plugins/b2b/README.md.

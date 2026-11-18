@@ -52,10 +52,24 @@ Slugs that are Go keywords (`chan`, `type`, …) or first-party plugin names are
 ### Product plugin config (no typed core field)
 
 Unknown keys under `plugins:` are kept in `PluginsConfig.Extra` and flattened as
-`plugins.<slug>.*`. Read them with `Host.ConfigBool` / `ConfigValue` (scoped Host
-already namespaces to your plugin). Env overlay: `SHOPANDA_PLUGINS_<SLUG>_<KEY>`
-(use a slug without underscores in the env form, or set values in YAML). Do not
-add a typed struct field in `internal/platform/config` for product plugins.
+`plugins.<slug>.*`. Nested YAML maps become dotted keys
+(`generation.provider`). Env overlay uses underscores
+(`SHOPANDA_PLUGINS_<SLUG>_GENERATION_PROVIDER`). Both forms are **stored** as
+exact map keys (aliases stay in sync); Host.Config* does exact lookup — do not
+assume a runtime `.`↔`_` rewrite. Conflicting flat vs nested keys that alias
+to the same path (`my_key` vs `my.key`) fail Load. Env↔env conflicts need two
+env names that alias under `.`≡`_` (e.g. `…_MY_KEY` and `…_MY.KEY` with
+different values); normal underscore-only overlays do not hit that path. Lists
+under a product slug are rejected. Use a slug without underscores in the env
+form, or set values in YAML. Do not add a typed struct field in
+`internal/platform/config` for product plugins.
+
+Public routes with `pluginsdk.NoCache()` denylist the longest static path
+before the first `{` (prefix match, so siblings under that prefix also get
+no-store). A `{` cut that leaves an empty or one-segment prefix is rejected at
+registration (`/{id}`, `/api/{v}/…`); known broad roots (`/api`) are refused
+even without braces. A fully static one-segment mount (`GET /customizer`) is
+allowed.
 
 ## Portable checks (no CI required)
 

@@ -62,7 +62,8 @@ There is no runtime plugin discovery, `.so` loading, or marketplace in the curre
 - Use a vendor-prefixed unique name (e.g. `acme/loyalty`)
 - Avoid modifying `internal/domain` or bypassing domain ports
 - Keep optional config under `plugins.<name>.*` in YAML/env. Product (fork) plugins
-  use an unknown slug map (`PluginsConfig.Extra`) — Host.Config* reads flatten keys;
+  use an unknown slug map (`PluginsConfig.Extra`) — nested YAML → dotted flatten keys;
+  env uses underscores; Host.Config* accepts `.` or `_`;
   do not add a typed field in `internal/platform/config` for product plugins
 
 ### External plugins MUST NOT
