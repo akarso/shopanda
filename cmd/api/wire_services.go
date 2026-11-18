@@ -739,7 +739,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err := pluginApp.BindCartPort(pluginsdk.NewCartPort(cartService)); err != nil {
 		return nil, err
 	}
-	if err := pluginApp.AssertNeedsMet(); err != nil {
+	// CapCatalogSeed is CLI-seed-only (not bound on serve). CapCart is bound above.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCatalogSeed); err != nil {
 		return nil, fmt.Errorf("plugin capabilities: %w", err)
 	}
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).

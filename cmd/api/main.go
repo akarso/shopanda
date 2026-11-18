@@ -597,8 +597,8 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	// Non-serve process: CartPort is never bound here (only serve constructs
 	// cart.Service and calls BindCartPort), so a plugin declaring
-	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
 		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
@@ -1088,8 +1088,8 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	// Non-serve process: CartPort is never bound here (only serve constructs
 	// cart.Service and calls BindCartPort), so a plugin declaring
-	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
 		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
@@ -1257,8 +1257,8 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 	}
 	// Non-serve process: CartPort is never bound here (only serve constructs
 	// cart.Service and calls BindCartPort), so a plugin declaring
-	// Needs(CapCart) (e.g. plugins/extref) must not block this boot path.
-	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only — skip both here.
+	if err := pluginApp.AssertNeedsMetExcept(plugin.CapCart, plugin.CapCatalogSeed); err != nil {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("plugin capabilities: %w", err)
 	}
