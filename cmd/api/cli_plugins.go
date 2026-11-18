@@ -20,6 +20,14 @@ type pluginCLIRuntime struct {
 	App      *plugin.App
 }
 
+// Injectable for tests (open DB / bind ports without a live Postgres).
+var (
+	pluginCLIOpenDB = func(cfg *config.Config) (*sql.DB, error) {
+		return db.Open(config.DatabaseDSN(cfg))
+	}
+	pluginCLIBindPorts = bindPluginCLIPorts
+)
+
 func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) (*pluginCLIRuntime, error) {
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
@@ -53,20 +61,25 @@ func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func(
 		return false, nil
 	}
 
+	// Seed plugins that Need CapCatalogSeed must use RequiresDB so the root
+	// can bind CatalogSeedPort before Run.
+	if cmd.Plugin != "" && rt.App != nil &&
+		rt.App.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) && !cmd.RequiresDB {
+		return true, fmt.Errorf("plugin CLI: command %q (plugin %q) Needs CapCatalogSeed but RequiresDB is false", name, cmd.Plugin)
+	}
+
 	ctx := cli.Context{
 		Ctx:    context.Background(),
 		Config: cfg,
 		Logger: log,
 	}
 	if cmd.RequiresDB {
-		dsn := config.DatabaseDSN(cfg)
-		conn, err := db.Open(dsn)
+		conn, err := pluginCLIOpenDB(cfg)
 		if err != nil {
 			return true, fmt.Errorf("database: %w", err)
 		}
 		defer conn.Close()
-		ctx.DB = conn
-		if err := bindPluginCLIPorts(rt.App, conn); err != nil {
+		if err := pluginCLIBindPorts(rt.App, conn, cmd); err != nil {
 			return true, err
 		}
 	}
@@ -74,17 +87,17 @@ func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func(
 }
 
 // bindPluginCLIPorts wires product ports on the Init App after DB open.
-// When any plugin Needs CapCatalogSeed, also binds the write port so seed
-// commands get Host.CatalogSeed() without a product edit of this file.
-func bindPluginCLIPorts(app *plugin.App, conn *sql.DB) error {
+// CapCatalogSeed is bound only when the running command's owning plugin
+// declared that Need — not for every RequiresDB command when a peer needs seed.
+func bindPluginCLIPorts(app *plugin.App, conn *sql.DB, cmd cli.Command) error {
 	boot, err := newPluginBootstrap(conn)
 	if err != nil {
 		return err
 	}
-	return bindPluginCLIPortsFromBoot(app, boot)
+	return bindPluginCLIPortsFromBoot(app, boot, cmd)
 }
 
-func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap) error {
+func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap, cmd cli.Command) error {
 	if app == nil {
 		return fmt.Errorf("plugin CLI: app is nil")
 	}
@@ -95,13 +108,27 @@ func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap) error {
 	if err := bindProductPorts(app, boot); err != nil {
 		return err
 	}
-	if app.CapabilityNeeded(plugin.CapCatalogSeed) {
+
+	bindSeed := cmd.Plugin != "" && app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin)
+	if bindSeed {
 		if err := bindCatalogSeedPort(app, boot); err != nil {
 			return err
 		}
 	}
-	// CapCart stays unbound (serve-only). CapCatalogSeed is bound above when needed.
-	if err := app.AssertNeedsMetExcept(plugin.CapCart); err != nil {
+
+	// Plugin CLI does not wire CapCart (serve-only) or CapIntegration*
+	// (jobs/serve wire those before Init). Failed Init of warehousedemo still
+	// leaves CapIntegration* in required — skip them here like CapCart.
+	skip := []plugin.Capability{
+		plugin.CapCart,
+		plugin.CapIntegrationOrder,
+		plugin.CapIntegrationShipment,
+		plugin.CapIntegrationStock,
+	}
+	if !bindSeed {
+		skip = append(skip, plugin.CapCatalogSeed)
+	}
+	if err := app.AssertNeedsMetExcept(skip...); err != nil {
 		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	return nil

@@ -2,17 +2,16 @@ package pluginsdk
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/akarso/shopanda/internal/platform/cli"
 )
 
 // CLIContext provides runtime facilities to a CLI command handler.
+// Catalog/DB access goes through Host (CatalogSeed, BootstrapDB + CapDB) —
+// not a raw *sql.DB on this context.
 type CLIContext struct {
 	Ctx    context.Context
 	Logger Logger
-	// DB is set when CLICommand.RequiresDB is true (composition root opens it).
-	DB *sql.DB
 }
 
 // CLICommand is a named CLI subcommand registered explicitly at startup.
@@ -20,8 +19,8 @@ type CLIContext struct {
 type CLICommand struct {
 	Name        string
 	Description string
-	// RequiresDB opens the platform DB before Run and, when any plugin Needs
-	// CapCatalogSeed, binds CatalogSeedPort on the Init App automatically.
+	// RequiresDB asks the composition root to open the platform DB before Run
+	// so Host ports (including CatalogSeed when this plugin Needs it) can bind.
 	RequiresDB bool
 	Run        func(ctx CLIContext, args []string) error
 }
@@ -43,7 +42,7 @@ func (c *CLI) RegisterCommand(cmd CLICommand) {
 		Description: cmd.Description,
 		RequiresDB:  cmd.RequiresDB,
 		Run: func(ctx cli.Context, args []string) error {
-			return cmd.Run(CLIContext{Ctx: ctx.Ctx, Logger: ctx.Logger, DB: ctx.DB}, args)
+			return cmd.Run(CLIContext{Ctx: ctx.Ctx, Logger: ctx.Logger}, args)
 		},
 	})
 }

@@ -21,5 +21,8 @@ type Command struct {
 	Name        string
 	Description string
 	RequiresDB  bool
-	Run         func(ctx Context, args []string) error
+	// Plugin is the registering plugin name (set by plugin.App.RegisterCommand
+	// from CurrentPluginName during Init). Empty for non-plugin registrations.
+	Plugin string
+	Run    func(ctx Context, args []string) error
 }
