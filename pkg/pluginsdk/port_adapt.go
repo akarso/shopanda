@@ -215,17 +215,24 @@ type sqlWithTxStock interface {
 	WithTx(tx *sql.Tx) inventory.StockRepository
 }
 
+// sqlTxOrPanic extracts the underlying *sql.Tx from a production seed tx.
+// Bridged postgres repos must never fall back to the unbound base repo — that
+// would look transactional while writing on the live connection.
+func sqlTxOrPanic(tx catalogSeedTx) *sql.Tx {
+	st, ok := tx.(interface{ SQLTx() *sql.Tx })
+	if !ok || st.SQLTx() == nil {
+		panic("pluginsdk: catalog seed port: bridged WithTx requires a *sql.Tx handle")
+	}
+	return st.SQLTx()
+}
+
 type bridgedPriceRepo struct {
 	pricing.PriceRepository
 	with func(*sql.Tx) pricing.PriceRepository
 }
 
 func (b bridgedPriceRepo) WithTx(tx catalogSeedTx) pricing.PriceRepository {
-	st, ok := tx.(interface{ SQLTx() *sql.Tx })
-	if !ok || st.SQLTx() == nil {
-		return b.PriceRepository
-	}
-	inner := b.with(st.SQLTx())
+	inner := b.with(sqlTxOrPanic(tx))
 	return bridgedPriceRepo{PriceRepository: inner, with: b.with}
 }
 
@@ -235,11 +242,7 @@ type bridgedHistoryRepo struct {
 }
 
 func (b bridgedHistoryRepo) WithTx(tx catalogSeedTx) pricing.PriceHistoryRepository {
-	st, ok := tx.(interface{ SQLTx() *sql.Tx })
-	if !ok || st.SQLTx() == nil {
-		return b.PriceHistoryRepository
-	}
-	inner := b.with(st.SQLTx())
+	inner := b.with(sqlTxOrPanic(tx))
 	return bridgedHistoryRepo{PriceHistoryRepository: inner, with: b.with}
 }
 
@@ -249,11 +252,7 @@ type bridgedProductsRepo struct {
 }
 
 func (b bridgedProductsRepo) WithTx(tx catalogSeedTx) catalog.ProductRepository {
-	st, ok := tx.(interface{ SQLTx() *sql.Tx })
-	if !ok || st.SQLTx() == nil {
-		return b.ProductRepository
-	}
-	inner := b.with(st.SQLTx())
+	inner := b.with(sqlTxOrPanic(tx))
 	return bridgedProductsRepo{ProductRepository: inner, with: b.with}
 }
 
@@ -263,11 +262,7 @@ type bridgedVariantsRepo struct {
 }
 
 func (b bridgedVariantsRepo) WithTx(tx catalogSeedTx) catalog.VariantRepository {
-	st, ok := tx.(interface{ SQLTx() *sql.Tx })
-	if !ok || st.SQLTx() == nil {
-		return b.VariantRepository
-	}
-	inner := b.with(st.SQLTx())
+	inner := b.with(sqlTxOrPanic(tx))
 	return bridgedVariantsRepo{VariantRepository: inner, with: b.with}
 }
 
@@ -277,11 +272,7 @@ type bridgedStockRepo struct {
 }
 
 func (b bridgedStockRepo) WithTx(tx catalogSeedTx) inventory.StockRepository {
-	st, ok := tx.(interface{ SQLTx() *sql.Tx })
-	if !ok || st.SQLTx() == nil {
-		return b.StockRepository
-	}
-	inner := b.with(st.SQLTx())
+	inner := b.with(sqlTxOrPanic(tx))
 	return bridgedStockRepo{StockRepository: inner, with: b.with}
 }
 
@@ -380,11 +371,12 @@ func newCatalogSeedPriceTx(db catalogSeedTxStarter, tp catalogSeedTxPrice, th ca
 }
 
 // NewCatalogSeedPort adapts catalog/pricing/inventory repositories to CatalogSeedPort.
-// db may be nil, *sql.DB, or a catalogSeedTxStarter. When db is set, prices and
-// history must support WithTx — otherwise NewCatalogSeedPort returns an error
-// (no silent sequential Upsert/Record split brain). Import uses one transaction;
-// standalone EnsurePrice opens one short price+history transaction per call
-// (prefer Import for large step-wise loops).
+// Breaking vs PR-1564: returns (CatalogSeedPort, error). db may be nil, *sql.DB,
+// or a catalogSeedTxStarter. When db is set, bound repos must support WithTx —
+// otherwise NewCatalogSeedPort returns an error (no silent sequential
+// Upsert/Record split brain). Import uses one transaction; standalone
+// EnsurePrice opens one short price+history transaction per call (prefer
+// Import for large step-wise loops).
 func NewCatalogSeedPort(
 	products catalog.ProductRepository,
 	variants catalog.VariantRepository,
@@ -732,8 +724,9 @@ func (p *catalogSeedPort) EnsurePrice(ctx context.Context, in CatalogPriceSeed) 
 	if err != nil {
 		return false, err
 	}
-	// Create-only hit before money validation: garbage currency/amount must
-	// not fail a soft no-op (or an Import batch that only restates prices).
+	// Create-only hit before money validation: a matching Find soft-no-ops
+	// even when Amount would fail NewPrice/NewMoney (e.g. negative). Currency
+	// typos do not hit this branch — Find misses and create-path validates.
 	if existing != nil && !in.Update {
 		return false, nil
 	}

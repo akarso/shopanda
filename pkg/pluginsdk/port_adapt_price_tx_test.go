@@ -122,7 +122,8 @@ func (s *recordingSeedStarter) BeginTx(context.Context, *sql.TxOptions) (catalog
 func (t *recordingSeedTx) Commit() error {
 	t.s.commits++
 	*t.s.prices = *t.s.workPrices
-	*t.s.history = *t.s.workHistory
+	// Promote snapshots only — do not copy failOn/n into the durable base.
+	t.s.history.snaps = append([]*pricing.PriceSnapshot(nil), t.s.workHistory.snaps...)
 	t.s.workPrices = nil
 	t.s.workHistory = nil
 	return nil
@@ -135,6 +136,9 @@ func (t *recordingSeedTx) Rollback() error {
 	return nil
 }
 
+// stagingPriceTx is a minimal callback for unit-testing writePriceWithHistory /
+// EnsurePrice honor of priceTx itself — not production NewCatalogSeedPort wiring
+// (see TestNewCatalogSeedPort_* for BeginTx/Commit/Rollback counts).
 func stagingPriceTx(baseP *memPriceRepo, baseH *memHistoryRepo, failHistoryOn int) catalogSeedPriceTx {
 	return func(ctx context.Context, fn func(pricing.PriceRepository, pricing.PriceHistoryRepository) error) error {
 		stagedP := baseP.clone()
@@ -242,6 +246,49 @@ func TestNewCatalogSeedPort_PriceTxRollbackOnHistoryFailure(t *testing.T) {
 	if prices.byKey["v1|PLN|"].Amount.Amount() != 1000 {
 		t.Fatalf("base amount changed: %d", prices.byKey["v1|PLN|"].Amount.Amount())
 	}
+}
+
+func TestNewCatalogSeedPort_PriceTxCommitsOnSuccess(t *testing.T) {
+	money := shared.MustNewMoney(1000, "PLN")
+	prices := &memPriceRepo{byKey: map[string]*pricing.Price{
+		"v1|PLN|": {ID: "p1", VariantID: "v1", Amount: money},
+	}}
+	history := &memHistoryRepo{}
+	starter := &recordingSeedStarter{prices: prices, history: history}
+
+	port, err := NewCatalogSeedPort(nil, nil, prices, history, nil, starter)
+	if err != nil {
+		t.Fatalf("NewCatalogSeedPort: %v", err)
+	}
+
+	written, err := port.EnsurePrice(context.Background(), CatalogPriceSeed{
+		VariantID: "v1", Amount: 2500, Currency: "PLN", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if starter.begins != 1 || starter.commits != 1 || starter.rollbacks != 0 {
+		t.Fatalf("tx counts begin=%d commit=%d rollback=%d", starter.begins, starter.commits, starter.rollbacks)
+	}
+	if prices.byKey["v1|PLN|"].Amount.Amount() != 2500 {
+		t.Fatalf("amount=%d, want 2500", prices.byKey["v1|PLN|"].Amount.Amount())
+	}
+	if len(history.snaps) != 1 || history.snaps[0].Amount.Amount() != 2500 {
+		t.Fatalf("history = %#v", history.snaps)
+	}
+}
+
+func TestBridgedWithTx_PanicsWithoutSQLTx(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic when bridged WithTx lacks *sql.Tx")
+		}
+	}()
+	bridge := bridgedPriceRepo{
+		PriceRepository: &memPriceRepo{},
+		with:            func(*sql.Tx) pricing.PriceRepository { return &memPriceRepo{} },
+	}
+	_ = bridge.WithTx(&recordingSeedTx{s: &recordingSeedStarter{}})
 }
 
 func TestNewCatalogSeedPort_FailsClosedWithoutWithTx(t *testing.T) {
