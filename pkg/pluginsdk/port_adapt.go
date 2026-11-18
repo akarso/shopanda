@@ -149,8 +149,16 @@ type catalogSeedTxStock interface {
 	WithTx(tx *sql.Tx) inventory.StockRepository
 }
 
+// catalogSeedPriceTx runs fn with price+history repos that share one
+// transaction. Used by standalone EnsurePrice when db + WithTx repos are
+// bound. Import sets db=nil on the tx-bound port and relies on the outer
+// BeginTx instead.
+type catalogSeedPriceTx func(ctx context.Context, fn func(prices pricing.PriceRepository, history pricing.PriceHistoryRepository) error) error
+
 // NewCatalogSeedPort adapts catalog/pricing/inventory repositories to CatalogSeedPort.
-// When db is set and repos support WithTx (postgres), Import uses one transaction.
+// When db is set and repos support WithTx (postgres), Import uses one transaction
+// and standalone EnsurePrice opens a short price+history transaction per call
+// (prefer Import for large step-wise loops).
 func NewCatalogSeedPort(
 	products catalog.ProductRepository,
 	variants catalog.VariantRepository,
@@ -159,7 +167,7 @@ func NewCatalogSeedPort(
 	stock inventory.StockRepository,
 	db catalogSeedTxStarter,
 ) CatalogSeedPort {
-	return &catalogSeedPort{
+	p := &catalogSeedPort{
 		products: products,
 		variants: variants,
 		prices:   prices,
@@ -167,6 +175,28 @@ func NewCatalogSeedPort(
 		stock:    stock,
 		db:       db,
 	}
+	if db != nil {
+		if tp, ok := prices.(catalogSeedTxPrice); ok {
+			if th, ok := history.(catalogSeedTxHistory); ok {
+				p.priceTx = func(ctx context.Context, fn func(pricing.PriceRepository, pricing.PriceHistoryRepository) error) error {
+					tx, err := db.BeginTx(ctx, nil)
+					if err != nil {
+						return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
+					}
+					err = fn(tp.WithTx(tx), th.WithTx(tx))
+					if err != nil {
+						_ = tx.Rollback()
+						return err
+					}
+					if err := tx.Commit(); err != nil {
+						return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
+					}
+					return nil
+				}
+			}
+		}
+	}
+	return p
 }
 
 type catalogSeedPort struct {
@@ -176,10 +206,14 @@ type catalogSeedPort struct {
 	history  pricing.PriceHistoryRepository
 	stock    inventory.StockRepository
 	db       catalogSeedTxStarter
+	priceTx  catalogSeedPriceTx // nil → sequential Upsert then Record
 }
 
 func (p *catalogSeedPort) withTx(tx *sql.Tx) (*catalogSeedPort, error) {
 	out := *p
+	// Nested under Import's outer BeginTx: use tx-bound repos sequentially;
+	// do not open another price+history transaction per EnsurePrice.
+	out.priceTx = nil
 	if tp, ok := p.products.(catalogSeedTxProducts); ok {
 		out.products = tp.WithTx(tx)
 	} else if p.products != nil {
@@ -471,73 +505,59 @@ func (p *catalogSeedPort) EnsurePrice(ctx context.Context, in CatalogPriceSeed) 
 	if err != nil {
 		return false, err
 	}
+	// Create-only hit before money validation: garbage currency/amount must
+	// not fail a soft no-op (or an Import batch that only restates prices).
+	if existing != nil && !in.Update {
+		return false, nil
+	}
 	money, err := shared.NewMoney(in.Amount, currency)
 	if err != nil {
 		return false, fmt.Errorf("pluginsdk: catalog seed port: invalid money: %w", err)
 	}
 	if existing != nil {
-		if !in.Update {
-			return false, nil
-		}
 		if existing.Amount.Equal(money) {
 			return false, nil
 		}
 		price := *existing
 		price.Amount = money
-		return true, p.writePriceWithHistory(ctx, &price, variantID, storeID, money)
+		if err := p.writePriceWithHistory(ctx, &price); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	price, err := pricing.NewPrice(id.New(), variantID, storeID, money)
 	if err != nil {
 		return false, err
 	}
-	return true, p.writePriceWithHistory(ctx, &price, variantID, storeID, money)
+	if err := p.writePriceWithHistory(ctx, &price); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// writePriceWithHistory upserts the price and records a snapshot. Prefer one
-// DB transaction when WithTx repos are available outside Import; inside
-// Import, repos are already tx-bound and db is nil.
-func (p *catalogSeedPort) writePriceWithHistory(
-	ctx context.Context,
-	price *pricing.Price,
-	variantID, storeID string,
-	money shared.Money,
-) error {
-	snap, err := pricing.NewPriceSnapshot(id.New(), variantID, storeID, money)
+// writePriceWithHistory upserts the price and records a snapshot derived from
+// that row. When priceTx is set (standalone Ensure with db+WithTx), both run
+// in one transaction. Under Import, priceTx is nil and repos are already
+// bound to the outer tx (or sequential when no db was configured).
+func (p *catalogSeedPort) writePriceWithHistory(ctx context.Context, price *pricing.Price) error {
+	if price == nil {
+		return fmt.Errorf("pluginsdk: catalog seed port: price must not be nil")
+	}
+	snap, err := pricing.NewPriceSnapshot(id.New(), price.VariantID, price.StoreID, price.Amount)
 	if err != nil {
 		return err
 	}
-
-	if p.db != nil {
-		if txPrices, ok := p.prices.(catalogSeedTxPrice); ok {
-			if txHistory, ok := p.history.(catalogSeedTxHistory); ok {
-				tx, err := p.db.BeginTx(ctx, nil)
-				if err != nil {
-					return fmt.Errorf("pluginsdk: catalog seed port: begin tx: %w", err)
-				}
-				if err := txPrices.WithTx(tx).Upsert(ctx, price); err != nil {
-					_ = tx.Rollback()
-					return err
-				}
-				if err := txHistory.WithTx(tx).Record(ctx, &snap); err != nil {
-					_ = tx.Rollback()
-					return err
-				}
-				if err := tx.Commit(); err != nil {
-					return fmt.Errorf("pluginsdk: catalog seed port: commit price+history: %w", err)
-				}
-				return nil
-			}
+	write := func(prices pricing.PriceRepository, history pricing.PriceHistoryRepository) error {
+		if err := prices.Upsert(ctx, price); err != nil {
+			return err
 		}
+		return history.Record(ctx, &snap)
 	}
-
-	if err := p.prices.Upsert(ctx, price); err != nil {
-		return err
+	if p.priceTx != nil {
+		return p.priceTx(ctx, write)
 	}
-	if err := p.history.Record(ctx, &snap); err != nil {
-		return err
-	}
-	return nil
+	return write(p.prices, p.history)
 }
 
 func (p *catalogSeedPort) SetStock(ctx context.Context, variantID string, qty int) error {

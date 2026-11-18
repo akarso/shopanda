@@ -498,6 +498,14 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 		t.Fatalf("attrs mismatch err = %v", err)
 	}
 
+	// Seed key absent from stored → error (cannot add attributes on re-seed).
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Attributes: map[string]any{"new_key": "x"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), `attribute "new_key" mismatch`) {
+		t.Fatalf("missing seed key err = %v", err)
+	}
+
 	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "new-bad-attrs", Attributes: map[string]any{"bad": func() {}},
 	})
@@ -827,6 +835,94 @@ func TestCatalogSeedPort_Import_PriceUpdate(t *testing.T) {
 	}
 	if len(history.snaps) != 1 {
 		t.Fatalf("import history = %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_EnsurePrice_CreateOnlyIgnoresInvalidCurrency(t *testing.T) {
+	money := shared.MustNewMoney(1000, "PLN")
+	prices := &seedPrices{byKey: map[string]*pricing.Price{
+		// Lookup key uses the seed currency string; seed below uses "PLN" for Find
+		// then we also assert a typo currency soft-no-ops only when Find hits.
+		priceKey("v1", "PLN", ""): {ID: "p1", VariantID: "v1", Amount: money},
+	}}
+	history := &seedHistory{}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	// Existing hit + Update=false: soft no-op even with a nonsense amount
+	// (currency must still match the lookup key to find the row).
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: -999, Currency: "PLN",
+	})
+	if err != nil || written {
+		t.Fatalf("create-only hit: written=%v err=%v", written, err)
+	}
+	if prices.byKey[priceKey("v1", "PLN", "")].Amount.Amount() != 1000 {
+		t.Fatal("create-only mutated amount")
+	}
+
+	// Invalid currency that does not match any row → create path validates money.
+	_, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "Pln",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid money") {
+		t.Fatalf("miss + bad currency err = %v", err)
+	}
+}
+
+func TestCatalogSeedPort_EnsurePrice_UpdateCreateMissAndStoreScoped(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	// Update=true with no existing row → create.
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN", StoreID: "store-a", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("create-miss: written=%v err=%v", written, err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "store-a")]
+	if got == nil || got.StoreID != "store-a" || got.Amount.Amount() != 1000 {
+		t.Fatalf("store-scoped create = %#v", got)
+	}
+	prevID := got.ID
+
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2000, Currency: "PLN", StoreID: "store-a", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("store-scoped update: written=%v err=%v", written, err)
+	}
+	got = prices.byKey[priceKey("v1", "PLN", "store-a")]
+	if got.ID != prevID || got.Amount.Amount() != 2000 {
+		t.Fatalf("store-scoped update = %#v, want id %q", got, prevID)
+	}
+	// Global key untouched.
+	if prices.byKey[priceKey("v1", "PLN", "")] != nil {
+		t.Fatal("unexpected global price row")
+	}
+}
+
+func TestCatalogSeedPort_Import_CreateOnlyLeavesAmount(t *testing.T) {
+	money := shared.MustNewMoney(1000, "PLN")
+	prices := &seedPrices{byKey: map[string]*pricing.Price{
+		priceKey("v1", "PLN", ""): {ID: "p1", VariantID: "v1", Amount: money},
+	}}
+	history := &seedHistory{}
+	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, prices, history, nil, nil)
+	_, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Prices: []pluginsdk.CatalogPriceSeed{{
+			VariantID: "v1", Amount: 9999, Currency: "PLN", // Update=false
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if prices.byKey[priceKey("v1", "PLN", "")].Amount.Amount() != 1000 {
+		t.Fatal("Import create-only changed amount")
+	}
+	if len(history.snaps) != 0 {
+		t.Fatalf("unexpected history: %#v", history.snaps)
 	}
 }
 

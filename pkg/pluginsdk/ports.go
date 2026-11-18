@@ -110,9 +110,15 @@ type CatalogVariantSeed struct {
 // CatalogPriceSeed is the EnsurePrice / Import input. Empty StoreID means the
 // global/default price. Amount is minor units (plugin parses "80,49" itself).
 // Default (Update=false) is create-only: an existing variant+currency+store
-// row is left unchanged. When Update is true, a differing amount is written
-// and a price-history snapshot is recorded in the same transaction (same
-// amount is a no-op). Missing rows are always created regardless of Update.
+// row is left unchanged (soft no-op before money validation). When Update is
+// true, a differing amount is written and a price-history snapshot is
+// recorded in the same transaction when db+WithTx are bound (same amount is
+// a no-op). Missing rows are always created regardless of Update.
+//
+// Seed price writes do not emit pricing.EventPriceUpserted and do not run
+// admin LockTypeAndModes guards (grouped / dynamic-bundle rejection). Prefer
+// Import for large loops; after Update re-seeds, operators must reindex /
+// invalidate (see EXTENSION_POINTS / RUNBOOK).
 type CatalogPriceSeed struct {
 	VariantID  string
 	VariantSKU string // optional Import helper when VariantID is empty
@@ -159,9 +165,11 @@ type CatalogSeedPort interface {
 
 	EnsureProduct(ctx context.Context, in CatalogProductSeed) (id string, created bool, err error)
 	EnsureVariant(ctx context.Context, in CatalogVariantSeed) (id string, created bool, err error)
-	// EnsurePrice returns written=true when a price row was created or an
-	// Update changed the amount (history recorded). written=false on
-	// create-only hit or Update with the same amount.
+	// EnsurePrice returns written=true only after a successful create or
+	// amount-changing Update (history recorded). written=false on create-only
+	// hit, same-amount Update, or any error. Breaking vs PR-1564's created
+	// flag: true no longer means "row inserted" only — Update re-seeds that
+	// change the amount also return true.
 	EnsurePrice(ctx context.Context, in CatalogPriceSeed) (written bool, err error)
 	SetStock(ctx context.Context, variantID string, qty int) error
 }
