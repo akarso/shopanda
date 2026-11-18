@@ -20,13 +20,21 @@ type pluginCLIRuntime struct {
 	App      *plugin.App
 }
 
-// Injectable for tests (open DB / bind ports without a live Postgres).
-var (
-	pluginCLIOpenDB = func(cfg *config.Config) (*sql.DB, error) {
-		return db.Open(config.DatabaseDSN(cfg))
+// pluginCLIDeps opens the DB and binds ports for RequiresDB commands.
+// Tests pass a stub deps into runPluginCLICommandWithDeps (no package globals).
+type pluginCLIDeps struct {
+	OpenDB func(*config.Config) (*sql.DB, error)
+	Bind   func(*plugin.App, *sql.DB, cli.Command) error
+}
+
+func defaultPluginCLIDeps() pluginCLIDeps {
+	return pluginCLIDeps{
+		OpenDB: func(cfg *config.Config) (*sql.DB, error) {
+			return db.Open(config.DatabaseDSN(cfg))
+		},
+		Bind: bindPluginCLIPorts,
 	}
-	pluginCLIBindPorts = bindPluginCLIPorts
-)
+}
 
 func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) (*pluginCLIRuntime, error) {
 	registry := plugin.NewRegistry(log)
@@ -45,6 +53,10 @@ func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) (*pluginC
 }
 
 func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func() (*pluginCLIRuntime, error), name string, args []string) (bool, error) {
+	return runPluginCLICommandWithDeps(cfg, log, registryFn, name, args, defaultPluginCLIDeps())
+}
+
+func runPluginCLICommandWithDeps(cfg *config.Config, log logger.Logger, registryFn func() (*pluginCLIRuntime, error), name string, args []string, deps pluginCLIDeps) (bool, error) {
 	rt, err := registryFn()
 	if err != nil {
 		return false, err
@@ -74,12 +86,20 @@ func runPluginCLICommand(cfg *config.Config, log logger.Logger, registryFn func(
 		Logger: log,
 	}
 	if cmd.RequiresDB {
-		conn, err := pluginCLIOpenDB(cfg)
+		// Any RequiresDB opens DB and binds product read ports. CapCatalogSeed
+		// bind is owner-scoped (see bindPluginCLIPortsFromBoot).
+		if cmd.Plugin == "" && rt.App != nil && rt.App.CapabilityNeeded(plugin.CapCatalogSeed) {
+			return true, fmt.Errorf("plugin CLI: command %q RequiresDB but has empty Plugin owner while CapCatalogSeed is Needed", name)
+		}
+		if deps.OpenDB == nil || deps.Bind == nil {
+			return true, fmt.Errorf("plugin CLI: open/bind deps not configured")
+		}
+		conn, err := deps.OpenDB(cfg)
 		if err != nil {
 			return true, fmt.Errorf("database: %w", err)
 		}
 		defer conn.Close()
-		if err := pluginCLIBindPorts(rt.App, conn, cmd); err != nil {
+		if err := deps.Bind(rt.App, conn, cmd); err != nil {
 			return true, err
 		}
 	}

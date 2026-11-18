@@ -347,8 +347,9 @@ func (a *App) assertNeedsMet(skip []Capability) error {
 }
 
 // CapabilityNeeded reports whether any plugin recorded cap as a Need
-// (NeedsDeclarer or Host.Require). Used by the plugin CLI composition root to
-// decide whether to bind CapCatalogSeed when a RequiresDB command runs.
+// (NeedsDeclarer or Host.Require). Diagnostic / composition-root helper —
+// e.g. plugin CLI fails closed when RequiresDB has an empty Plugin owner
+// while CapCatalogSeed is Needed somewhere.
 func (a *App) CapabilityNeeded(cap Capability) bool {
 	if a == nil || cap == "" {
 		return false

@@ -25,6 +25,19 @@ func cliContextForTest(t *testing.T) cli.Context {
 	}
 }
 
+// stubPluginCLIDeps opens a non-connecting *sql.DB and binds via stubSeedBoot.
+func stubPluginCLIDeps(t *testing.T) pluginCLIDeps {
+	t.Helper()
+	return pluginCLIDeps{
+		OpenDB: func(*config.Config) (*sql.DB, error) {
+			return sql.Open("pgx", "host=/dev/null")
+		},
+		Bind: func(a *plugin.App, _ *sql.DB, cmd cli.Command) error {
+			return bindPluginCLIPortsFromBoot(a, stubSeedBoot(), cmd)
+		},
+	}
+}
+
 func TestRunPluginCLICommand_UnknownReturnsFalse(t *testing.T) {
 	cfg := &config.Config{}
 	log := logger.New("error")
@@ -126,6 +139,33 @@ func (seedCLINoDBPlugin) Init(h pluginsdk.Host) error {
 	return nil
 }
 
+// peerRequiresDBPlugin does not Need CapCatalogSeed but registers RequiresDB.
+type peerRequiresDBPlugin struct {
+	host pluginsdk.Host
+	saw  bool
+}
+
+func (p *peerRequiresDBPlugin) Name() string { return "test/peerdb" }
+
+func (p *peerRequiresDBPlugin) Init(h pluginsdk.Host) error {
+	p.host = h
+	sdk := pluginsdk.NewHost(h, p.Name())
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:peer-db",
+		Description: "RequiresDB without CapCatalogSeed",
+		RequiresDB:  true,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			_, ok := p.host.CatalogSeed()
+			if ok {
+				return errCatalogSeedUnbound // reuse: unexpected bind
+			}
+			p.saw = true
+			return nil
+		},
+	})
+	return nil
+}
+
 // integrationRequireFailPlugin Requires CapIntegrationStock then fails Init
 // (mirrors warehousedemo without syncer). Leaves CapIntegration* in required.
 type integrationRequireFailPlugin struct{}
@@ -153,35 +193,39 @@ func stubSeedBoot() *plugin.Bootstrap {
 	}
 }
 
-func TestRunPluginCLICommand_RequiresDBBindsCatalogSeed(t *testing.T) {
+func initSeedCLIRuntime(t *testing.T, plugs ...pluginsdk.Plugin) (*plugin.Registry, *plugin.App) {
+	t.Helper()
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
-	probe := &seedCLIProbePlugin{}
-	reg.Register(pluginsdk.Adapt(probe))
-
+	for _, p := range plugs {
+		reg.Register(pluginsdk.Adapt(p))
+	}
 	app := &plugin.App{Logger: log, Config: &config.Config{}}
 	preparePermissionRegistry(app)
 	summary := reg.InitAll(app)
 	freezePermissionRegistry(app)
-	if err := plugin.InitSummaryError(summary); err != nil || summary.Failed != 0 {
-		t.Fatalf("Init: summary=%+v err=%v", summary, err)
+	if err := plugin.InitSummaryError(summary); err != nil {
+		t.Fatalf("InitSummaryError: %v", err)
+	}
+	return reg, app
+}
+
+func TestRunPluginCLICommand_RequiresDBBindsCatalogSeed(t *testing.T) {
+	probe := &seedCLIProbePlugin{}
+	reg, app := initSeedCLIRuntime(t, probe)
+
+	cmd, ok := reg.CLIRegistry().Get("test:seed-probe")
+	if !ok {
+		t.Fatal("command not registered")
+	}
+	if cmd.Plugin != probe.Name() {
+		t.Fatalf("cmd.Plugin = %q, want %q (SDK RegisterCommand attribution)", cmd.Plugin, probe.Name())
 	}
 
-	prevOpen, prevBind := pluginCLIOpenDB, pluginCLIBindPorts
-	t.Cleanup(func() {
-		pluginCLIOpenDB, pluginCLIBindPorts = prevOpen, prevBind
-	})
-	pluginCLIOpenDB = func(*config.Config) (*sql.DB, error) {
-		// sql.Open does not connect until use; Close is safe.
-		return sql.Open("pgx", "host=/dev/null")
-	}
-	pluginCLIBindPorts = func(a *plugin.App, _ *sql.DB, cmd cli.Command) error {
-		return bindPluginCLIPortsFromBoot(a, stubSeedBoot(), cmd)
-	}
-
-	ran, err := runPluginCLICommand(&config.Config{}, log, func() (*pluginCLIRuntime, error) {
-		return &pluginCLIRuntime{Registry: reg, App: app}, nil
-	}, "test:seed-probe", nil)
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:seed-probe", nil, stubPluginCLIDeps(t))
 	if err != nil {
 		t.Fatalf("runPluginCLICommand: %v", err)
 	}
@@ -196,59 +240,50 @@ func TestRunPluginCLICommand_RequiresDBBindsCatalogSeed(t *testing.T) {
 	}
 }
 
-func TestRunPluginCLICommand_SeedNeedWithoutRequiresDBFailsClosed(t *testing.T) {
-	log := logger.NewWithWriter(io.Discard, "error")
-	reg := plugin.NewRegistry(log)
-	reg.Register(pluginsdk.Adapt(seedCLINoDBPlugin{}))
+func TestRunPluginCLICommand_PeerRequiresDBDoesNotBindSeed(t *testing.T) {
+	probe := &seedCLIProbePlugin{}
+	peer := &peerRequiresDBPlugin{}
+	reg, app := initSeedCLIRuntime(t, probe, peer)
 
-	app := &plugin.App{Logger: log, Config: &config.Config{}}
-	preparePermissionRegistry(app)
-	summary := reg.InitAll(app)
-	freezePermissionRegistry(app)
-	if summary.Failed != 0 {
-		t.Fatalf("InitAll = %+v", summary)
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:peer-db", nil, stubPluginCLIDeps(t))
+	if err != nil {
+		t.Fatalf("peer RequiresDB: %v", err)
 	}
+	if !ran || !peer.saw {
+		t.Fatalf("ran=%v saw=%v", ran, peer.saw)
+	}
+	if _, ok := app.CatalogSeedPort(); ok {
+		t.Fatal("peer RequiresDB must not bind CapCatalogSeed when seed peer Needs it")
+	}
+}
 
-	ran, err := runPluginCLICommand(&config.Config{}, log, func() (*pluginCLIRuntime, error) {
-		return &pluginCLIRuntime{Registry: reg, App: app}, nil
-	}, "test:seed-nodb", nil)
+func TestRunPluginCLICommand_SeedNeedWithoutRequiresDBFailsClosed(t *testing.T) {
+	reg, app := initSeedCLIRuntime(t, seedCLINoDBPlugin{})
+
+	ran, err := runPluginCLICommand(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:seed-nodb", nil)
 	if !ran || err == nil || !strings.Contains(err.Error(), "RequiresDB is false") {
 		t.Fatalf("ran=%v err=%v, want RequiresDB fail-closed", ran, err)
 	}
 }
 
 func TestRunPluginCLICommand_FailedIntegrationInitDoesNotBreakSeedAssert(t *testing.T) {
-	log := logger.NewWithWriter(io.Discard, "error")
-	reg := plugin.NewRegistry(log)
 	probe := &seedCLIProbePlugin{}
-	reg.Register(pluginsdk.Adapt(integrationRequireFailPlugin{}))
-	reg.Register(pluginsdk.Adapt(probe))
-
-	app := &plugin.App{Logger: log, Config: &config.Config{}}
-	preparePermissionRegistry(app)
-	summary := reg.InitAll(app)
-	freezePermissionRegistry(app)
-	if summary.Failed < 1 {
-		t.Fatalf("expected integration plugin Failed, got %+v", summary)
-	}
-	if !app.CapabilityNeeded(plugin.CapIntegrationStock) {
-		t.Fatal("failed Init must leave CapIntegrationStock in required (regression premise)")
+	reg, app := initSeedCLIRuntime(t, &integrationRequireFailPlugin{}, probe)
+	// initSeedCLIRuntime ignores Failed count — re-check premise.
+	if !app.CapabilityDeclaredBy(plugin.CapIntegrationStock, "test/intfail") {
+		t.Fatal("failed Init must leave CapIntegrationStock attributed to intfail")
 	}
 
-	prevOpen, prevBind := pluginCLIOpenDB, pluginCLIBindPorts
-	t.Cleanup(func() {
-		pluginCLIOpenDB, pluginCLIBindPorts = prevOpen, prevBind
-	})
-	pluginCLIOpenDB = func(*config.Config) (*sql.DB, error) {
-		return sql.Open("pgx", "host=/dev/null")
-	}
-	pluginCLIBindPorts = func(a *plugin.App, _ *sql.DB, cmd cli.Command) error {
-		return bindPluginCLIPortsFromBoot(a, stubSeedBoot(), cmd)
-	}
-
-	ran, err := runPluginCLICommand(&config.Config{}, log, func() (*pluginCLIRuntime, error) {
-		return &pluginCLIRuntime{Registry: reg, App: app}, nil
-	}, "test:seed-probe", nil)
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:seed-probe", nil, stubPluginCLIDeps(t))
 	if err != nil {
 		t.Fatalf("seed CLI must not fail on CapIntegration* left by failed Init: %v", err)
 	}
@@ -257,26 +292,39 @@ func TestRunPluginCLICommand_FailedIntegrationInitDoesNotBreakSeedAssert(t *test
 	}
 }
 
-func TestBindPluginCLIPorts_OnlyOwnerGetsCatalogSeed(t *testing.T) {
-	app := &plugin.App{}
-	app.RecordNeedsFor("test/seedcli", plugin.CapCatalogSeed)
-	app.RecordNeedsFor("other/plugin", plugin.CapCatalog)
+func TestRunPluginCLICommand_NilAppRequiresDBFailsClosed(t *testing.T) {
+	probe := &seedCLIProbePlugin{}
+	reg, _ := initSeedCLIRuntime(t, probe)
 
-	boot := stubSeedBoot()
-	// Peer RequiresDB command — owner did not declare CapCatalogSeed.
-	if err := bindPluginCLIPortsFromBoot(app, boot, cli.Command{
-		Name: "other:cmd", Plugin: "other/plugin", RequiresDB: true,
-	}); err != nil {
-		t.Fatalf("bind for other: %v", err)
-	}
-	if _, ok := app.CatalogSeedPort(); ok {
-		t.Fatal("must not bind CapCatalogSeed for a command whose owner did not Need it")
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: nil}, nil
+		}, "test:seed-probe", nil, stubPluginCLIDeps(t))
+	if !ran || err == nil || !strings.Contains(err.Error(), "app is nil") {
+		t.Fatalf("ran=%v err=%v, want app is nil", ran, err)
 	}
 }
 
-func TestBindPluginCLIPorts_NilAppFailsClosed(t *testing.T) {
-	err := bindPluginCLIPortsFromBoot(nil, stubSeedBoot(), cli.Command{Name: "x:y", RequiresDB: true})
-	if err == nil || !strings.Contains(err.Error(), "app is nil") {
-		t.Fatalf("err = %v, want app is nil", err)
+func TestRunPluginCLICommand_EmptyPluginOwnerFailsClosedWhenSeedNeeded(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+	app := &plugin.App{Logger: log, Config: &config.Config{}}
+	preparePermissionRegistry(app)
+	app.RecordNeedsFor("ghost/seed", plugin.CapCatalogSeed)
+	reg.CLIRegistry().Register(cli.Command{
+		Name:        "ghost:seed",
+		Description: "RequiresDB with empty Plugin",
+		RequiresDB:  true,
+		Plugin:      "", // explicit empty owner
+		Run:         func(cli.Context, []string) error { return nil },
+	})
+	freezePermissionRegistry(app)
+
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "ghost:seed", nil, stubPluginCLIDeps(t))
+	if !ran || err == nil || !strings.Contains(err.Error(), "empty Plugin owner") {
+		t.Fatalf("ran=%v err=%v, want empty Plugin fail-closed", ran, err)
 	}
 }
