@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -184,6 +185,10 @@ func catalogSeedTxStarterOf(db any) (catalogSeedTxStarter, error) {
 	}
 	switch v := db.(type) {
 	case *sql.DB:
+		// Typed nil *sql.DB boxed in any is not == nil above.
+		if v == nil {
+			return nil, nil
+		}
 		return sqlDBSeedStarter{begin: v.BeginTx}, nil
 	case interface {
 		BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
@@ -851,17 +856,33 @@ func catalogSeedAttributesMatch(stored map[string]interface{}, seed map[string]a
 	}
 	if len(seed) == 0 {
 		if len(stored) != 0 {
-			return fmt.Errorf("attributes not empty")
+			keys := make([]string, 0, len(stored))
+			for k := range stored {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return fmt.Errorf("attributes not empty: stored keys %v", keys)
 		}
 		return nil
 	}
 	for k, want := range seed {
 		got, ok := stored[k]
-		if !ok || !jsonValuesEqual(got, want) {
-			return fmt.Errorf("attribute %q mismatch", k)
+		if !ok {
+			return fmt.Errorf("attribute %q mismatch: stored=<missing> requested=%s", k, formatAttrValue(want))
+		}
+		if !jsonValuesEqual(got, want) {
+			return fmt.Errorf("attribute %q mismatch: stored=%s requested=%s", k, formatAttrValue(got), formatAttrValue(want))
 		}
 	}
 	return nil
+}
+
+func formatAttrValue(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
 
 func jsonValuesEqual(a, b any) bool {

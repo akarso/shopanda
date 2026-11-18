@@ -1,13 +1,16 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
-// bindProductPorts binds catalog/order/customer read ports, catalog seed write
-// port, and CapDB before plugin Init. Cart is late-bound after cart.Service
-// exists in serve via BindCartPort.
+// bindProductPorts binds catalog/order/customer read ports and CapDB before
+// plugin Init. Cart is late-bound after cart.Service exists in serve via
+// BindCartPort. Catalog seed write (CapCatalogSeed) is CLI-only — see
+// bindCatalogSeedPort; serve/worker skip it with AssertNeedsMetExcept.
 func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	if app == nil {
 		return nil
@@ -17,18 +20,6 @@ func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	}
 	if boot != nil && (boot.Products != nil || boot.Variants != nil) {
 		if err := app.BindCatalogPort(pluginsdk.NewCatalogPort(boot.Products, boot.Variants)); err != nil {
-			return err
-		}
-	}
-	if boot != nil && boot.Products != nil && boot.Variants != nil &&
-		boot.Prices != nil && boot.PriceHistory != nil && boot.Stock != nil {
-		seedPort, err := pluginsdk.NewCatalogSeedPort(
-			boot.Products, boot.Variants, boot.Prices, boot.PriceHistory, boot.Stock, boot.DB,
-		)
-		if err != nil {
-			return err
-		}
-		if err := app.BindCatalogSeedPort(seedPort); err != nil {
 			return err
 		}
 	}
@@ -43,4 +34,37 @@ func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 		}
 	}
 	return nil
+}
+
+// bindCatalogSeedPort wires CapCatalogSeed for CLI seed/import composition
+// roots. Serve and worker must not call this — they skip CapCatalogSeed via
+// AssertNeedsMetExcept so plugins that Need it for CLI-only commands can
+// still boot without catalog write access in those processes.
+//
+// Seed CLI pattern: bindProductPorts + bindCatalogSeedPort, then
+// AssertNeedsMetExcept(CapCart) only — do not copy the dual CapCart+
+// CapCatalogSeed skip used by serve/worker.
+func bindCatalogSeedPort(app *plugin.App, boot *plugin.Bootstrap) error {
+	if app == nil {
+		return nil
+	}
+	if boot == nil {
+		return fmt.Errorf("bindCatalogSeedPort: bootstrap is required")
+	}
+	if boot.Products == nil || boot.Variants == nil ||
+		boot.Prices == nil || boot.PriceHistory == nil || boot.Stock == nil {
+		return fmt.Errorf("bindCatalogSeedPort: products, variants, prices, price history, and stock are required")
+	}
+	// Avoid boxing a typed-nil *sql.DB into any (would look non-nil to NewCatalogSeedPort).
+	var db any
+	if boot.DB != nil {
+		db = boot.DB
+	}
+	seedPort, err := pluginsdk.NewCatalogSeedPort(
+		boot.Products, boot.Variants, boot.Prices, boot.PriceHistory, boot.Stock, db,
+	)
+	if err != nil {
+		return err
+	}
+	return app.BindCatalogSeedPort(seedPort)
 }

@@ -241,9 +241,10 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `RegisterConfig` — admin-editable settings (string/int/bool) for this plugin
 - `Slots(registrant)`, `Hooks(registrant)` — storefront slots and hook registration
 - `RegisterField` / `RegisterFieldFor` — extension fields
-- `Cart()`, `Catalog()`, `Orders()`, `Customers()` — minimal read/write ports bound by the
-  composition root (`(port, bool)`; declare the dependency up front with `Require(cap)` so
-  `AssertNeedsMet` fails fast if the root never binds it)
+- `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()` — ports bound by the
+  composition root (`(port, bool)`; declare with `Require(cap)`). `CapCart` is serve-only;
+  `CapCatalogSeed` is CLI-seed-only (`bindCatalogSeedPort`). Non-owning processes skip those
+  caps via `AssertNeedsMetExcept` after `InitAll`
 - `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own config
 - `BootstrapDB()` — the composition-root `*sql.DB`, for `pluginsdk.Migrator` plugins
 
@@ -311,7 +312,9 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 ```
 
 `main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, binds the service
-ports `Host` exposes (`bindProductPorts`), and runs `registry.InitAll(pluginApp)`.
+ports `Host` exposes (`bindProductPorts`; seed CLIs also `bindCatalogSeedPort`), runs
+`registry.InitAll(pluginApp)`, then `AssertNeedsMetExcept` for process-scoped caps
+(`CapCart` / `CapCatalogSeed` — see EXTENSION_POINTS pitfalls).
 
 Reference implementations: [`plugins/example/`](../../plugins/example/) — pricing step,
 `order.created` listener, admin permission, CLI command; [`plugins/extref/`](../../plugins/extref/)
