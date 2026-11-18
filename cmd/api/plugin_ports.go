@@ -22,9 +22,13 @@ func bindProductPorts(app *plugin.App, boot *plugin.Bootstrap) error {
 	}
 	if boot != nil && boot.Products != nil && boot.Variants != nil &&
 		boot.Prices != nil && boot.PriceHistory != nil && boot.Stock != nil {
-		if err := app.BindCatalogSeedPort(pluginsdk.NewCatalogSeedPort(
+		seedPort, err := pluginsdk.NewCatalogSeedPort(
 			boot.Products, boot.Variants, boot.Prices, boot.PriceHistory, boot.Stock, boot.DB,
-		)); err != nil {
+		)
+		if err != nil {
+			return err
+		}
+		if err := app.BindCatalogSeedPort(seedPort); err != nil {
 			return err
 		}
 	}

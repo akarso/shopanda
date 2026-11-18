@@ -7,12 +7,24 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/inventory"
 	domainorder "github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
+
+
+func mustSeedPort(t *testing.T, products catalog.ProductRepository, variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, stock inventory.StockRepository, db any) pluginsdk.CatalogSeedPort {
+	t.Helper()
+	port, err := pluginsdk.NewCatalogSeedPort(products, variants, prices, history, stock, db)
+	if err != nil {
+		t.Fatalf("NewCatalogSeedPort: %v", err)
+	}
+	return port
+}
 
 type stubProducts struct {
 	byID map[string]*catalog.Product
@@ -267,7 +279,7 @@ func TestOrdersPort_FindByID(t *testing.T) {
 }
 
 func TestCatalogSeedPort_EnsureProductValidation(t *testing.T) {
-	port := pluginsdk.NewCatalogSeedPort(stubProducts{}, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, stubProducts{}, stubVariants{}, nil, nil, nil, nil)
 	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{Name: "X"}); err == nil {
 		t.Fatal("expected empty slug error")
 	}
@@ -298,7 +310,7 @@ func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
 	products := &seedProducts{bySlug: map[string]*catalog.Product{
 		"tee": {ID: "p-existing", Slug: "tee", Name: "Tee"},
 	}}
-	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
 	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee",
 	})
@@ -307,7 +319,7 @@ func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
 	}
 
 	products2 := &seedProducts{}
-	port2 := pluginsdk.NewCatalogSeedPort(products2, stubVariants{}, nil, nil, nil, nil)
+	port2 := mustSeedPort(t, products2, stubVariants{}, nil, nil, nil, nil)
 	id2, created2, err := port2.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Hoodie", Slug: "hoodie", Description: "warm",
 	})
@@ -324,7 +336,7 @@ func TestCatalogSeedPort_EnsureProductIdempotent(t *testing.T) {
 
 func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
 	products := &seedProducts{}
-	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
 	attrs := map[string]any{
 		"parent_sku": "TEE-PARENT",
 		"meta":       map[string]any{"nested": "v"},
@@ -367,7 +379,7 @@ func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
 	}
 
 	productsActive := &seedProducts{}
-	portActive := pluginsdk.NewCatalogSeedPort(productsActive, stubVariants{}, nil, nil, nil, nil)
+	portActive := mustSeedPort(t, productsActive, stubVariants{}, nil, nil, nil, nil)
 	_, _, err = portActive.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Live", Slug: "live", Status: "active",
 	})
@@ -379,7 +391,7 @@ func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
 	}
 
 	productsArchived := &seedProducts{}
-	portArchived := pluginsdk.NewCatalogSeedPort(productsArchived, stubVariants{}, nil, nil, nil, nil)
+	portArchived := mustSeedPort(t, productsArchived, stubVariants{}, nil, nil, nil, nil)
 	_, _, err = portArchived.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Old", Slug: "old", Status: "archived",
 	})
@@ -391,7 +403,7 @@ func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
 	}
 
 	productsWS := &seedProducts{}
-	portWS := pluginsdk.NewCatalogSeedPort(productsWS, stubVariants{}, nil, nil, nil, nil)
+	portWS := mustSeedPort(t, productsWS, stubVariants{}, nil, nil, nil, nil)
 	_, _, err = portWS.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "WS", Slug: "ws", Status: "   ", Type: "   ",
 	})
@@ -408,7 +420,7 @@ func TestCatalogSeedPort_EnsureProduct_StatusTypeAttributes(t *testing.T) {
 
 func TestCatalogSeedPort_EnsureProduct_StringSliceClone(t *testing.T) {
 	products := &seedProducts{}
-	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
 	tags := []string{"a", "b"}
 	_, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee-tags", Attributes: map[string]any{"tags": tags},
@@ -426,7 +438,7 @@ func TestCatalogSeedPort_EnsureProduct_StringSliceClone(t *testing.T) {
 }
 
 func TestCatalogSeedPort_EnsureProduct_DownloadableActiveRejected(t *testing.T) {
-	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, nil, nil, nil, nil)
 	_, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Ebook", Slug: "ebook", Status: "active", Type: "downloadable",
 	})
@@ -443,7 +455,7 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 			Attributes: map[string]interface{}{"parent_sku": "A", "extra": "from-admin"},
 		},
 	}}
-	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
 
 	// Empty seed fields: create-only soft success (no requested Status/Type/Attrs).
 	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
@@ -497,6 +509,14 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 		t.Fatalf("attrs mismatch err = %v", err)
 	}
 
+	// Seed key absent from stored → error (cannot add attributes on re-seed).
+	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Tee", Slug: "tee", Attributes: map[string]any{"new_key": "x"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "create-only") || !strings.Contains(err.Error(), `attribute "new_key" mismatch`) {
+		t.Fatalf("missing seed key err = %v", err)
+	}
+
 	_, _, err = port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "new-bad-attrs", Attributes: map[string]any{"bad": func() {}},
 	})
@@ -508,7 +528,7 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 	empty := &seedProducts{bySlug: map[string]*catalog.Product{
 		"bare": {ID: "p2", Slug: "bare", Status: catalog.StatusDraft, Type: catalog.TypeSimple, Attributes: map[string]interface{}{}},
 	}}
-	portEmpty := pluginsdk.NewCatalogSeedPort(empty, stubVariants{}, nil, nil, nil, nil)
+	portEmpty := mustSeedPort(t, empty, stubVariants{}, nil, nil, nil, nil)
 	if _, _, err := portEmpty.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Bare", Slug: "bare", Attributes: map[string]any{},
 	}); err != nil {
@@ -518,7 +538,7 @@ func TestCatalogSeedPort_EnsureProduct_ExistingMismatch(t *testing.T) {
 
 func TestCatalogSeedPort_EnsureVariant_Attributes(t *testing.T) {
 	variants := &seedVariants{}
-	port := pluginsdk.NewCatalogSeedPort(&seedProducts{}, variants, nil, nil, nil, nil)
+	port := mustSeedPort(t, &seedProducts{}, variants, nil, nil, nil, nil)
 	tags := []string{"a", "b"}
 	attrs := map[string]any{"size": "M", "tags": tags}
 	_, created, err := port.EnsureVariant(context.Background(), pluginsdk.CatalogVariantSeed{
@@ -581,7 +601,7 @@ func (s *seedVariants) Create(_ context.Context, v *catalog.Variant) error {
 func TestCatalogSeedPort_Import_ResolvesSlugs(t *testing.T) {
 	products := &seedProducts{}
 	variants := &seedVariants{}
-	port := pluginsdk.NewCatalogSeedPort(products, variants, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, variants, nil, nil, nil, nil)
 	res, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
 		Products: []pluginsdk.CatalogProductSeed{{Name: "Tee", Slug: "tee"}},
 		Variants: []pluginsdk.CatalogVariantSeed{{ProductSlug: "tee", SKU: "TEE-1", Name: "Tee"}},
@@ -600,7 +620,7 @@ func TestCatalogSeedPort_Import_ResolvesSlugs(t *testing.T) {
 func TestCatalogSeedPort_Import_StatusTypeAttributes(t *testing.T) {
 	products := &seedProducts{}
 	variants := &seedVariants{}
-	port := pluginsdk.NewCatalogSeedPort(products, variants, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, variants, nil, nil, nil, nil)
 	res, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
 		Products: []pluginsdk.CatalogProductSeed{{
 			Name: "Tee", Slug: "tee", Status: "draft", Type: "virtual",
@@ -634,7 +654,7 @@ func TestCatalogSeedPort_Import_MismatchFailsBatch(t *testing.T) {
 			Attributes: map[string]interface{}{},
 		},
 	}}
-	port := pluginsdk.NewCatalogSeedPort(products, &seedVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, &seedVariants{}, nil, nil, nil, nil)
 	_, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
 		Products: []pluginsdk.CatalogProductSeed{{
 			Name: "Tee", Slug: "tee", Status: "active",
@@ -678,7 +698,7 @@ func (s *conflictProducts) Create(_ context.Context, p *catalog.Product) error {
 
 func TestCatalogSeedPort_EnsureProduct_ConflictRereadMatch(t *testing.T) {
 	products := &conflictProducts{}
-	port := pluginsdk.NewCatalogSeedPort(products, stubVariants{}, nil, nil, nil, nil)
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
 
 	// Seed Status matches the raced row → soft success after conflict re-read.
 	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
@@ -690,11 +710,243 @@ func TestCatalogSeedPort_EnsureProduct_ConflictRereadMatch(t *testing.T) {
 
 	// Fresh port: conflict again, but seed Status disagrees with raced row.
 	products2 := &conflictProducts{}
-	port2 := pluginsdk.NewCatalogSeedPort(products2, stubVariants{}, nil, nil, nil, nil)
+	port2 := mustSeedPort(t, products2, stubVariants{}, nil, nil, nil, nil)
 	_, _, err = port2.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
 		Name: "Tee", Slug: "tee-race2", Status: "active",
 	})
 	if err == nil || !strings.Contains(err.Error(), "create-only") {
 		t.Fatalf("mismatch after conflict err = %v", err)
+	}
+}
+
+type seedPrices struct {
+	byKey map[string]*pricing.Price
+}
+
+func priceKey(variantID, currency, storeID string) string {
+	return variantID + "|" + currency + "|" + storeID
+}
+
+func (s *seedPrices) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
+	if s.byKey == nil {
+		return nil, nil
+	}
+	return s.byKey[priceKey(variantID, currency, storeID)], nil
+}
+func (s *seedPrices) FindByVariantsCurrencyAndStore(context.Context, []string, string, string) (map[string]*pricing.Price, error) {
+	return nil, nil
+}
+func (s *seedPrices) ListByVariantID(context.Context, string) ([]pricing.Price, error) { return nil, nil }
+func (s *seedPrices) List(context.Context, int, int) ([]pricing.Price, error)          { return nil, nil }
+func (s *seedPrices) Upsert(_ context.Context, p *pricing.Price) error {
+	if s.byKey == nil {
+		s.byKey = map[string]*pricing.Price{}
+	}
+	cp := *p
+	s.byKey[priceKey(p.VariantID, p.Amount.Currency(), p.StoreID)] = &cp
+	return nil
+}
+
+type seedHistory struct {
+	snaps []*pricing.PriceSnapshot
+}
+
+func (s *seedHistory) Record(_ context.Context, snap *pricing.PriceSnapshot) error {
+	cp := *snap
+	s.snaps = append(s.snaps, &cp)
+	return nil
+}
+func (s *seedHistory) LowestSince(context.Context, string, string, string, time.Time) (*pricing.PriceSnapshot, error) {
+	return nil, nil
+}
+func (s *seedHistory) LowestSinceByVariants(context.Context, []string, string, string, time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	return nil, nil
+}
+
+func TestCatalogSeedPort_EnsurePrice_CreateOnlyAndUpdate(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN",
+	})
+	if err != nil || !written {
+		t.Fatalf("create: written=%v err=%v", written, err)
+	}
+	if len(history.snaps) != 1 || history.snaps[0].Amount.Amount() != 1000 {
+		t.Fatalf("history after create = %#v", history.snaps)
+	}
+
+	// Create-only: existing row unchanged, no new history.
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2500, Currency: "PLN",
+	})
+	if err != nil || written {
+		t.Fatalf("create-only hit: written=%v err=%v", written, err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 1000 {
+		t.Fatalf("create-only mutated amount to %d", got.Amount.Amount())
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("create-only wrote history: %#v", history.snaps)
+	}
+
+	// Update=true, same amount: no-op.
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN", Update: true,
+	})
+	if err != nil || written {
+		t.Fatalf("update same: written=%v err=%v", written, err)
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("same-amount history = %#v", history.snaps)
+	}
+
+	// Update=true, new amount: write + history; keep price id.
+	prevID := got.ID
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2500, Currency: "PLN", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("update: written=%v err=%v", written, err)
+	}
+	got = prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 2500 || got.ID != prevID {
+		t.Fatalf("updated price = %#v, want id %q amount 2500", got, prevID)
+	}
+	if len(history.snaps) != 2 || history.snaps[1].Amount.Amount() != 2500 {
+		t.Fatalf("history after update = %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_Import_PriceUpdate(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	money, err := shared.NewMoney(1000, "PLN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prices.byKey = map[string]*pricing.Price{
+		priceKey("v1", "PLN", ""): {ID: "p-existing", VariantID: "v1", Amount: money},
+	}
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, prices, history, nil, nil)
+	_, err = port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Prices: []pluginsdk.CatalogPriceSeed{{
+			VariantID: "v1", Amount: 3333, Currency: "PLN", Update: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "")]
+	if got.Amount.Amount() != 3333 || got.ID != "p-existing" {
+		t.Fatalf("import update = %#v", got)
+	}
+	if len(history.snaps) != 1 {
+		t.Fatalf("import history = %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_EnsurePrice_CreateOnlySoftNoOpBeforeMoneyValidation(t *testing.T) {
+	money := shared.MustNewMoney(1000, "PLN")
+	prices := &seedPrices{byKey: map[string]*pricing.Price{
+		priceKey("v1", "PLN", ""): {ID: "p1", VariantID: "v1", Amount: money},
+	}}
+	history := &seedHistory{}
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	// Existing hit + Update=false: soft no-op before NewMoney (negative amount
+	// would fail NewPrice if we reached the write path).
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: -999, Currency: "PLN",
+	})
+	if err != nil || written {
+		t.Fatalf("create-only hit: written=%v err=%v", written, err)
+	}
+	if prices.byKey[priceKey("v1", "PLN", "")].Amount.Amount() != 1000 {
+		t.Fatal("create-only mutated amount")
+	}
+
+	// Typo currency does not match the stored PLN key → Find misses → create
+	// path validates money and errors (not a create-only hit).
+	_, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "Pln",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid money") {
+		t.Fatalf("miss + bad currency err = %v", err)
+	}
+}
+
+func TestCatalogSeedPort_EnsurePrice_UpdateCreateMissAndStoreScoped(t *testing.T) {
+	prices := &seedPrices{}
+	history := &seedHistory{}
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, prices, history, nil, nil)
+
+	// Update=true with no existing row → create.
+	written, err := port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 1000, Currency: "PLN", StoreID: "store-a", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("create-miss: written=%v err=%v", written, err)
+	}
+	got := prices.byKey[priceKey("v1", "PLN", "store-a")]
+	if got == nil || got.StoreID != "store-a" || got.Amount.Amount() != 1000 {
+		t.Fatalf("store-scoped create = %#v", got)
+	}
+	prevID := got.ID
+
+	written, err = port.EnsurePrice(context.Background(), pluginsdk.CatalogPriceSeed{
+		VariantID: "v1", Amount: 2000, Currency: "PLN", StoreID: "store-a", Update: true,
+	})
+	if err != nil || !written {
+		t.Fatalf("store-scoped update: written=%v err=%v", written, err)
+	}
+	got = prices.byKey[priceKey("v1", "PLN", "store-a")]
+	if got.ID != prevID || got.Amount.Amount() != 2000 {
+		t.Fatalf("store-scoped update = %#v, want id %q", got, prevID)
+	}
+	// Global key untouched.
+	if prices.byKey[priceKey("v1", "PLN", "")] != nil {
+		t.Fatal("unexpected global price row")
+	}
+}
+
+func TestCatalogSeedPort_Import_CreateOnlyLeavesAmount(t *testing.T) {
+	money := shared.MustNewMoney(1000, "PLN")
+	prices := &seedPrices{byKey: map[string]*pricing.Price{
+		priceKey("v1", "PLN", ""): {ID: "p1", VariantID: "v1", Amount: money},
+	}}
+	history := &seedHistory{}
+	port := mustSeedPort(t, &seedProducts{}, stubVariants{}, prices, history, nil, nil)
+	_, err := port.Import(context.Background(), pluginsdk.CatalogSeedBatch{
+		Prices: []pluginsdk.CatalogPriceSeed{{
+			VariantID: "v1", Amount: 9999, Currency: "PLN", // Update=false
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if prices.byKey[priceKey("v1", "PLN", "")].Amount.Amount() != 1000 {
+		t.Fatal("Import create-only changed amount")
+	}
+	if len(history.snaps) != 0 {
+		t.Fatalf("unexpected history: %#v", history.snaps)
+	}
+}
+
+func TestCatalogSeedPort_EnsureProduct_EmptyStatusOnActiveIsNoOp(t *testing.T) {
+	// Documented contract: empty Status on an existing active product is soft
+	// success (create-only does not check unset Status).
+	products := &seedProducts{bySlug: map[string]*catalog.Product{
+		"live": {ID: "p1", Slug: "live", Status: catalog.StatusActive, Type: catalog.TypeSimple},
+	}}
+	port := mustSeedPort(t, products, stubVariants{}, nil, nil, nil, nil)
+	id, created, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{
+		Name: "Live", Slug: "live",
+	})
+	if err != nil || created || id != "p1" {
+		t.Fatalf("empty status on active: id=%q created=%v err=%v", id, created, err)
 	}
 }
