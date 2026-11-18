@@ -7,6 +7,8 @@ import (
 )
 
 // CLIContext provides runtime facilities to a CLI command handler.
+// Catalog/DB access goes through Host (CatalogSeed, BootstrapDB + CapDB) —
+// not a raw *sql.DB on this context.
 type CLIContext struct {
 	Ctx    context.Context
 	Logger Logger
@@ -17,7 +19,10 @@ type CLIContext struct {
 type CLICommand struct {
 	Name        string
 	Description string
-	Run         func(ctx CLIContext, args []string) error
+	// RequiresDB asks the composition root to open the platform DB before Run
+	// so Host ports (including CatalogSeed when this plugin Needs it) can bind.
+	RequiresDB bool
+	Run        func(ctx CLIContext, args []string) error
 }
 
 // CLI returns CLI command registration helpers for the SDK plugin.
@@ -35,6 +40,7 @@ func (c *CLI) RegisterCommand(cmd CLICommand) {
 	coreApp(c.sdk.host).RegisterCommand(cli.Command{
 		Name:        cmd.Name,
 		Description: cmd.Description,
+		RequiresDB:  cmd.RequiresDB,
 		Run: func(ctx cli.Context, args []string) error {
 			return cmd.Run(CLIContext{Ctx: ctx.Ctx, Logger: ctx.Logger}, args)
 		},
