@@ -287,10 +287,12 @@ queue:
 #   promodemo:
 #     enabled: false   # custom catalog promotion rule types (min_line_total, line_bonus_percent)
 #
-# Product (fork) plugins: use an unknown slug map — no typed field in core.
+# Product (fork) plugins: use an unknown slug map — no typed field in core
+# (metaldogs and other product slugs land in Extra; read via Host.Config*).
 # Nested YAML maps flatten to dotted keys (generation.provider). Env uses
-# underscores (SHOPANDA_PLUGINS_MYPRODUCT_GENERATION_PROVIDER); Host.Config*
-# accepts either notation. Lists under plugins.<slug> are rejected.
+# underscores (SHOPANDA_PLUGINS_MYPRODUCT_GENERATION_PROVIDER); empty env is
+# unset (does not override YAML). Host.Config* accepts either notation. Lists
+# under plugins.<slug> are rejected.
 # plugins:
 #   myproduct:
 #     enabled: true

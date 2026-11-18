@@ -78,6 +78,53 @@ plugins:
 	}
 }
 
+func TestLoad_PluginsExtraMetalDogsInExtra(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  metaldogs:
+    enabled: true
+    generation:
+      provider: openai
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	extra := cfg.Plugins.Extra["metaldogs"]
+	if extra["enabled"] != "true" {
+		t.Fatalf("enabled = %#v", extra)
+	}
+	if extra["generation.provider"] != "openai" {
+		t.Fatalf("generation.provider = %#v", extra)
+	}
+	flat := Flatten(cfg)
+	if flat["plugins.metaldogs.enabled"] != "true" {
+		t.Fatalf("flatten enabled = %q", flat["plugins.metaldogs.enabled"])
+	}
+	if flat["plugins.metaldogs.generation.provider"] != "openai" {
+		t.Fatalf("flatten generation = %q", flat["plugins.metaldogs.generation.provider"])
+	}
+}
+
+func TestLoad_PluginsExtraEmptyEnvDoesNotOverrideYAML(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+plugins:
+  myproduct:
+    enabled: true
+`)
+	t.Setenv("SHOPANDA_PLUGINS_MYPRODUCT_ENABLED", "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Plugins.Extra["myproduct"]["enabled"] != "true" {
+		t.Fatalf("empty env must not clobber YAML: %#v", cfg.Plugins.Extra["myproduct"])
+	}
+}
+
 func TestLoad_PluginsExtraNestedMap(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, `
