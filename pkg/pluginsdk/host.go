@@ -98,7 +98,8 @@ type Host interface {
 	OnQueueBound(wrap func(queue any) any)
 	// OnRequeued registers a callback run under the reclaim lock before
 	// status flips to pending (attempt is the claim being released).
-	// Non-nil error or panic aborts Requeue. Not called for Admin.Retry.
+	// Non-nil error or panic aborts Requeue — including WithRequeueTerminal.
+	// Not called for Admin.Retry (attempts reset, no fence TX).
 	OnRequeued(fn func(ctx context.Context, jobID string, attempt int) error)
 }
 

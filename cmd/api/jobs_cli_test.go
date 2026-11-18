@@ -130,18 +130,25 @@ func TestRunJobsCancel_RequiresID(t *testing.T) {
 }
 
 func TestParseJobsRequeueArgs(t *testing.T) {
-	id, minAge, err := parseJobsRequeueArgs([]string{"job-1"})
-	if err != nil || id != "job-1" || minAge != domainjobs.DefaultRequeueMinAge {
-		t.Fatalf("default: id=%q minAge=%s err=%v", id, minAge, err)
+	id, minAge, terminal, err := parseJobsRequeueArgs([]string{"job-1"})
+	if err != nil || id != "job-1" || minAge != domainjobs.DefaultRequeueMinAge || terminal {
+		t.Fatalf("default: id=%q minAge=%s terminal=%v err=%v", id, minAge, terminal, err)
 	}
-	id, minAge, err = parseJobsRequeueArgs([]string{"job-2", "--min-age=90s"})
-	if err != nil || id != "job-2" || minAge != 90*time.Second {
-		t.Fatalf("flag: id=%q minAge=%s err=%v", id, minAge, err)
+	id, minAge, terminal, err = parseJobsRequeueArgs([]string{"job-2", "--min-age=90s"})
+	if err != nil || id != "job-2" || minAge != 90*time.Second || terminal {
+		t.Fatalf("flag: id=%q minAge=%s terminal=%v err=%v", id, minAge, terminal, err)
 	}
-	if _, _, err := parseJobsRequeueArgs([]string{"--min-age=1ns", "x"}); err == nil {
+	id, minAge, terminal, err = parseJobsRequeueArgs([]string{"job-3", "--terminal"})
+	if err != nil || id != "job-3" || !terminal {
+		t.Fatalf("terminal: id=%q terminal=%v err=%v", id, terminal, err)
+	}
+	if _, _, _, err := parseJobsRequeueArgs([]string{"job-4", "--terminal", "--min-age=90s"}); err == nil {
+		t.Fatal("expected error combining --terminal and --min-age")
+	}
+	if _, _, _, err := parseJobsRequeueArgs([]string{"--min-age=1ns", "x"}); err == nil {
 		t.Fatal("expected invalid min-age below 1s")
 	}
-	if _, _, err := parseJobsRequeueArgs(nil); err == nil {
+	if _, _, _, err := parseJobsRequeueArgs(nil); err == nil {
 		t.Fatal("expected usage error")
 	}
 }

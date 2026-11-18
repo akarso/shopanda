@@ -1086,7 +1086,13 @@ func (q *JobQueue) Requeue(ctx context.Context, id string, attempt int, opts ...
 // a durable context and retry so reclaiming is not a sink. Hook failure
 // never LPUSHes ready; original updated_at is preserved on abort.
 func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
-	minAge := jobs.ApplyRequeueOptions(opts)
+	settings := jobs.ResolveRequeueOptions(opts)
+	if settings.Terminal {
+		// Terminal re-pend is Postgres jobs-table only for now (Reader/Admin
+		// parity). Products needing fence+attempts on Redis should pin postgres.
+		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueUnsupported)
+	}
+	minAge := settings.MinAge
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
 		if errors.Is(err, errJobNotFound) {

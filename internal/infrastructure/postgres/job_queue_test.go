@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -257,6 +258,114 @@ func TestJobQueue_RequeueWithBeforeCommit_HookErrorKeepsProcessing(t *testing.T)
 	}
 	if detail.Status != jobs.StatusProcessing {
 		t.Fatalf("status = %s, want processing after hook error", detail.Status)
+	}
+}
+
+func TestJobQueue_RequeueTerminal_KeepsAttempts(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	job, _ := jobs.NewJob(id.New(), "terminal-requeue", nil)
+	job.MaxRetries = 1
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if got == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	var beforeAttempts int
+	var lastError sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT attempts, last_error FROM jobs WHERE id = $1`, got.ID).Scan(&beforeAttempts, &lastError); err != nil {
+		t.Fatalf("precondition query: %v", err)
+	}
+	if beforeAttempts != got.Attempts {
+		t.Fatalf("precondition attempts = %d, want %d", beforeAttempts, got.Attempts)
+	}
+	if err := q.Requeue(ctx, got.ID, beforeAttempts, jobs.WithRequeueTerminal()); err != nil {
+		t.Fatalf("Requeue terminal: %v", err)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.Status != jobs.StatusPending || detail.Attempts != beforeAttempts {
+		t.Fatalf("after terminal requeue = %+v, want pending attempts=%d", detail, beforeAttempts)
+	}
+	var afterErr sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT last_error FROM jobs WHERE id = $1`, got.ID).Scan(&afterErr); err != nil {
+		t.Fatalf("last_error query: %v", err)
+	}
+	if afterErr.String != lastError.String {
+		t.Fatalf("last_error changed: %q → %q", lastError.String, afterErr.String)
+	}
+	next, err := q.Dequeue(ctx)
+	if err != nil || next == nil || next.ID != got.ID {
+		t.Fatalf("Dequeue after terminal requeue = %+v err=%v", next, err)
+	}
+}
+
+func TestJobQueue_RequeueTerminal_HookErrorKeepsFailed(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	job, _ := jobs.NewJob(id.New(), "terminal-hook", nil)
+	job.MaxRetries = 1
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if err := q.Fail(ctx, got.ID, got.Attempts, errors.New("boom")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	want := errors.New("fence write failed")
+	err = q.RequeueWithBeforeCommit(ctx, got.ID, got.Attempts, func(_ context.Context, _ string, _ int) error {
+		return want
+	}, jobs.WithRequeueTerminal())
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil || detail == nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.Status != jobs.StatusFailed {
+		t.Fatalf("status = %s, want failed after hook error", detail.Status)
+	}
+}
+
+func TestJobQueue_RequeueTerminal_RejectsProcessing(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	job, _ := jobs.NewJob(id.New(), "terminal-processing", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if err := q.Requeue(ctx, got.ID, got.Attempts, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotTerminal) {
+		t.Fatalf("err = %v, want ErrRequeueNotTerminal", err)
 	}
 }
 
