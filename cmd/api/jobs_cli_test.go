@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -78,6 +79,54 @@ func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
 	defer rt.conn.Close()
 	if rt.queue == nil || rt.svc == nil {
 		t.Fatal("expected bound queue and jobs service")
+	}
+}
+
+// Operator path without DSN: inject Get that returns (nil, nil) for a bad id
+// (same miss shape as postgres.JobQueue.Get after UUID reject).
+func TestRunJobsRequeue_GetMissFriendlyNotFound(t *testing.T) {
+	parsed, err := parseJobsRequeueArgs([]string{"missing-id"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	requeueCalled := false
+	err = runJobsRequeueWith(io.Discard, parsed, jobsRequeuePorts{
+		Get: func(context.Context, string) (*domainjobs.Detail, error) {
+			return nil, nil
+		},
+		Requeue: func(context.Context, string, int, ...domainjobs.RequeueOption) error {
+			requeueCalled = true
+			return nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected not found")
+	}
+	if requeueCalled {
+		t.Fatal("Requeue must not run when Get misses")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `no job with id "missing-id"`) {
+		t.Fatalf("err = %v, want friendly not-found", err)
+	}
+	if strings.Contains(msg, "22P02") || strings.Contains(msg, "invalid input syntax") {
+		t.Fatalf("err leaked SQL: %v", err)
+	}
+}
+
+func TestRunJobsShow_GetMissFriendlyNotFound(t *testing.T) {
+	err := runJobsShowGet(io.Discard, "missing-id", false, func(context.Context, string) (*domainjobs.Detail, error) {
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected not found")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `no job with id "missing-id"`) {
+		t.Fatalf("err = %v, want friendly not-found", err)
+	}
+	if strings.Contains(msg, "22P02") || strings.Contains(msg, "invalid input syntax") {
+		t.Fatalf("err leaked SQL: %v", err)
 	}
 }
 
@@ -246,11 +295,11 @@ func TestFormatJobsRequeueError_Mapping(t *testing.T) {
 
 func TestJobsRequeueAuditDetails_ForceFlagAndRequired(t *testing.T) {
 	for _, tc := range []struct {
-		name                         string
-		status                       domainjobs.Status
-		attempts, maxRetries         int
-		forceFlag                    bool
-		wantRequired                 bool
+		name                 string
+		status               domainjobs.Status
+		attempts, maxRetries int
+		forceFlag            bool
+		wantRequired         bool
 	}{
 		{"non-exhausted failed + force", domainjobs.StatusFailed, 1, 5, true, false},
 		{"done + force", domainjobs.StatusDone, 1, 5, true, true},

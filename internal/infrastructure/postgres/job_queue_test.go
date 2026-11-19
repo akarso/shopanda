@@ -447,6 +447,8 @@ func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
 	}
 }
 
+// Well-formed absent UUID hits FOR UPDATE / sql.ErrNoRows (not the parse
+// reject path). Requires SHOPANDA_TEST_DSN.
 func TestJobQueue_Requeue_MissingID(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
@@ -459,11 +461,87 @@ func TestJobQueue_Requeue_MissingID(t *testing.T) {
 		t.Fatalf("NewJobQueue: %v", err)
 	}
 	ctx := context.Background()
-	if err := q.Requeue(ctx, "missing-id", 1); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+	missing := id.New()
+	if err := q.Requeue(ctx, missing, 1); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
 		t.Fatalf("default missing: %v, want ErrRequeueNotFound", err)
 	}
-	if err := q.Requeue(ctx, "missing-id", 1, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+	if err := q.Requeue(ctx, missing, 1, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
 		t.Fatalf("terminal missing: %v, want ErrRequeueNotFound", err)
+	}
+}
+
+// Non-UUID ids are rejected before BeginTx (no DSN). Same sentinel as a miss.
+func TestJobQueue_Requeue_InvalidUUIDNoDB(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	if err := q.Requeue(ctx, "missing-id", 1); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("default: %v, want ErrRequeueNotFound", err)
+	}
+	if err := q.RequeueWithBeforeCommit(ctx, "not-a-uuid", 1, nil, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("terminal WithBeforeCommit: %v, want ErrRequeueNotFound", err)
+	}
+}
+
+// Get is on the jobs:requeue / jobs:show / admin get path; non-UUID must
+// return (nil, nil), not SQLSTATE 22P02.
+func TestJobQueue_Get_InvalidUUIDNoDB(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	got, err := q.Get(context.Background(), "missing-id")
+	if err != nil {
+		t.Fatalf("Get: %v, want nil err (no SQLSTATE)", err)
+	}
+	if got != nil {
+		t.Fatalf("Get: got %+v, want nil", got)
+	}
+}
+
+func TestJobQueue_RetryCancel_InvalidUUIDNoDB(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		fn   func(context.Context, string) error
+	}{
+		{"Retry", q.Retry},
+		{"Cancel", q.Cancel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.fn(ctx, "not-a-uuid")
+			if err == nil {
+				t.Fatal("expected not found")
+			}
+			var appErr *apperror.Error
+			if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+				t.Fatalf("err = %v, want not_found", err)
+			}
+			if strings.Contains(err.Error(), "22P02") || strings.Contains(err.Error(), "invalid input syntax") {
+				t.Fatalf("err leaked SQL: %v", err)
+			}
+		})
 	}
 }
 

@@ -262,7 +262,13 @@ func runJobsShow(w io.Writer, cfg *config.Config, log logger.Logger, args []stri
 	defer conn.Close()
 	_ = log
 
-	job, err := svc.Get(context.Background(), id)
+	return runJobsShowGet(w, id, jsonOut, svc.Get)
+}
+
+// runJobsShowGet is the post-parse show path; tests inject a Get that returns
+// (nil, nil) for bad ids (same miss shape as postgres.JobQueue.Get).
+func runJobsShowGet(w io.Writer, id string, jsonOut bool, get func(context.Context, string) (*domainjobs.Detail, error)) error {
+	job, err := get(context.Background(), id)
 	if err != nil {
 		return fmt.Errorf("jobs:show: %w", err)
 	}
@@ -321,6 +327,15 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 	return writeSuccessLinef(w, "Job %s queued for retry.\n", id)
 }
 
+// jobsRequeuePorts is the Get + Requeue surface after arg parse. Tests inject
+// a Reader-shaped Get that returns (nil, nil) for bad ids so the operator
+// miss line is covered without DSN / plugin boot.
+type jobsRequeuePorts struct {
+	Get     func(ctx context.Context, id string) (*domainjobs.Detail, error)
+	Requeue func(ctx context.Context, id string, attempt int, opts ...domainjobs.RequeueOption) error
+	Audit   func(ctx context.Context, details map[string]interface{}, cmdErr error)
+}
+
 // runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m|--terminal [--force]]`.
 // Default: processing → pending. Production failed is exhausted — prefer
 // jobs:retry or --terminal --force; bare --terminal is rare. --force also
@@ -335,22 +350,37 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 		return err
 	}
 	defer rt.conn.Close()
+	return runJobsRequeueWith(w, parsed, jobsRequeuePorts{
+		Get:     rt.svc.Get,
+		Requeue: rt.queue.Requeue,
+		Audit: func(ctx context.Context, details map[string]interface{}, cmdErr error) {
+			auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, cmdErr)
+		},
+	})
+}
+
+func runJobsRequeueWith(w io.Writer, parsed jobsRequeueArgs, ports jobsRequeuePorts) error {
 	ctx := context.Background()
-	detail, err := rt.svc.Get(ctx, parsed.ID)
+	audit := ports.Audit
+	if audit == nil {
+		audit = func(context.Context, map[string]interface{}, error) {}
+	}
+	detail, err := ports.Get(ctx, parsed.ID)
 	if err != nil {
 		details := jobsRequeueAuditDetails("", 0, 0, parsed.Terminal, parsed.Force, parsed.MinAge, false)
-		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, err)
+		audit(ctx, details, err)
 		return fmt.Errorf("jobs:requeue: %w", err)
 	}
 	if detail == nil {
+		// Unusable / missing id (Get returns nil for non-UUID on Postgres).
 		notFound := fmt.Errorf("jobs:requeue: no job with id %q", parsed.ID)
 		details := jobsRequeueAuditDetails("", 0, 0, parsed.Terminal, parsed.Force, parsed.MinAge, false)
-		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, notFound)
+		audit(ctx, details, notFound)
 		return notFound
 	}
 	details := jobsRequeueAuditDetails(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force, parsed.MinAge, true)
 	if pre := validateJobsRequeueStatus(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force); pre != nil {
-		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, pre)
+		audit(ctx, details, pre)
 		return pre
 	}
 	var opts []domainjobs.RequeueOption
@@ -359,8 +389,8 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	} else {
 		opts = append(opts, domainjobs.WithRequeueMinAge(parsed.MinAge))
 	}
-	requeueErr := rt.queue.Requeue(ctx, parsed.ID, detail.Attempts, opts...)
-	auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, requeueErr)
+	requeueErr := ports.Requeue(ctx, parsed.ID, detail.Attempts, opts...)
+	audit(ctx, details, requeueErr)
 	if requeueErr != nil {
 		return formatJobsRequeueError(requeueErr, parsed.MinAge)
 	}
