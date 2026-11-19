@@ -265,6 +265,23 @@ Every non-core plugin under `plugins/` (including the commercial [`plugins/b2b/`
 module) follows this pattern; `plugins/plugin_imports_test.go`'s `TestImportBoundary` enforces the
 `pkg/*`-only import rule at build time.
 
+### Dropping `internal/platform/plugin` (Host + Adapt)
+
+Product plugins should not import `internal/platform/plugin`. Map the old symbols:
+
+| Was (`internal/platform/plugin`) | Use instead |
+| --- | --- |
+| `App` in `Init(app *App)` | `pluginsdk.Host` via `pluginsdk.Adapt` / `AsHostFor`; helpers via `pluginsdk.NewHost(h, name)` |
+| `SyncJobRegistration` / `RegisterSyncJob` | `pluginsdk.NewHost(h, name).Integration(slug).RegisterCron` / `RegisterOnEvent` / `RegisterManual` |
+| `NewSyncJobEnvelope` | Not needed — `SyncJobs.Enqueue` builds the envelope |
+| `InjectRequestID` | Automatic in `Enqueue`; or `pluginsdk.InjectRequestID` when stamping a payload yourself |
+| `MigrationSpec` / `Migrator` | `pluginsdk.MigrationSpec` / `pluginsdk.Migrator` (+ `ApplyMigrationFS` in tests) |
+| `Capability` / `Cap*` | `pluginsdk.Capability` / `CapCart`, `CapJobs`, `CapMedia`, … |
+| Request id read | `pluginsdk.RequestIDFromContext` |
+| `RegisterSearchProvider` / `Bus` / composition-root binds | Stay on the App in `cmd/api` — not a plugin import |
+
+Reference: [`plugins/extref`](plugins/extref/) production sources import only `pkg/*` (tests may still build a minimal `plugin.App` for Host wiring; prefer `pkg/pluginsdk/harness`).
+
 ---
 
 ## Core-owned capabilities (no main.go plugin wiring)

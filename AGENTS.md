@@ -272,6 +272,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` — not `internal/domain/jobs` |
 | Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 | Isolated Postgres in plugin tests | `harness.OpenIsolated` (+ `AdaptInit` `Options.DB` for `BootstrapDB`) |
+| Drop `plugin.App` import | Host + `Adapt` / `NewHost`; sync via `SDK.Integration`; map in PLUGINS.md |
 
 ---
 
