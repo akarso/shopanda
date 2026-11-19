@@ -71,3 +71,36 @@ func TestStatus_Constants(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveRequeueOptions_Terminal(t *testing.T) {
+	s := jobs.ResolveRequeueOptions([]jobs.RequeueOption{jobs.WithRequeueTerminal()})
+	if !s.Terminal {
+		t.Fatal("Terminal = false, want true")
+	}
+	s = jobs.ResolveRequeueOptions(nil)
+	if s.Terminal || s.MinAge != jobs.DefaultRequeueMinAge {
+		t.Fatalf("default = %+v", s)
+	}
+}
+
+func TestIsTerminalRequeueStatus(t *testing.T) {
+	for _, st := range []jobs.Status{jobs.StatusFailed, jobs.StatusDone, jobs.StatusCancelled} {
+		if !jobs.IsTerminalRequeueStatus(st) {
+			t.Fatalf("%s: want terminal", st)
+		}
+	}
+	for _, st := range []jobs.Status{jobs.StatusPending, jobs.StatusProcessing} {
+		if jobs.IsTerminalRequeueStatus(st) {
+			t.Fatalf("%s: want non-terminal", st)
+		}
+	}
+}
+
+func TestTerminalRequeueNeedsForce(t *testing.T) {
+	if jobs.TerminalRequeueNeedsForce(jobs.StatusFailed) {
+		t.Fatal("failed must not need force for status alone")
+	}
+	if !jobs.TerminalRequeueNeedsForce(jobs.StatusDone) || !jobs.TerminalRequeueNeedsForce(jobs.StatusCancelled) {
+		t.Fatal("done/cancelled need force in CLI")
+	}
+}

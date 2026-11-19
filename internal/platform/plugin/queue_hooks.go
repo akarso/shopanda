@@ -21,8 +21,9 @@ type QueueBoundHook func(jobs.Queue) jobs.Queue
 // RequeuedHook runs under the reclaim lock after predicates pass and
 // before status flips to pending (postgres RequeueHookable). attempt is
 // the claim being released. A non-nil error or panic aborts Requeue —
-// the row stays processing and jobs:requeue must not audit success.
-// Not called for Admin.Retry (failed → pending).
+// the row stays in its prior status (processing for default reclaim;
+// failed/done/cancelled for WithRequeueTerminal) and jobs:requeue must
+// not audit success. Not called for Admin.Retry (failed → pending).
 type RequeuedHook func(ctx context.Context, jobID string, attempt int) error
 
 // OnQueueBound registers a wrap hook applied in resolveAndBindJobQueue.

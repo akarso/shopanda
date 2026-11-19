@@ -249,7 +249,11 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
   `assertServeNeedsMet` (after `BindCartPort`) /
   `assertWorkerNeedsMet` / `assertPluginCLINeedsMet`
   (`cmd/api/plugin_boot.go`)
-- `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own config
+- `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own
+  `plugins.<slug>.*` config (scoped Hosts cannot see core keys or other plugins)
+- `PlatformConfig` — allowlisted non-secret core driver switches (`queue.driver`,
+  `search.engine`, `cache.driver`, `media.storage`). Use `pluginsdk.RequireQueueDriver`
+  in `Init` when the plugin only supports a subset of queue backends
 - `BootstrapDB()` — the composition-root `*sql.DB`, for `pluginsdk.Migrator` plugins
 
 See [`docs/guides/PLUGIN_COMPOSITION.md`](PLUGIN_COMPOSITION.md) for the full extension-point

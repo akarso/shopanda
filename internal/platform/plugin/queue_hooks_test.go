@@ -15,6 +15,7 @@ type hookQueue struct {
 	requeued   []string
 	requeueErr error
 	beforeSeen []int
+	lastOpts   jobs.RequeueSettings
 }
 
 func (q *hookQueue) Requeue(ctx context.Context, id string, attempt int, opts ...jobs.RequeueOption) error {
@@ -22,7 +23,7 @@ func (q *hookQueue) Requeue(ctx context.Context, id string, attempt int, opts ..
 }
 
 func (q *hookQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
-	_ = opts
+	q.lastOpts = jobs.ResolveRequeueOptions(opts)
 	if q.requeueErr != nil {
 		return q.requeueErr
 	}
@@ -127,6 +128,38 @@ func TestApp_WrapRequeueNotify_HookErrorFailsRequeue(t *testing.T) {
 	}
 	if len(inner.requeued) != 0 {
 		t.Fatal("pending must not flip after hook error")
+	}
+}
+
+func TestApp_WrapRequeueNotify_TerminalOptionFiresOnRequeued(t *testing.T) {
+	app := &plugin.App{}
+	inner := &hookQueue{}
+	var seen bool
+	app.OnRequeued(func(context.Context, string, int) error {
+		seen = true
+		return nil
+	})
+	q := app.WrapRequeueNotify(inner)
+	if err := q.Requeue(context.Background(), "job-term", 2, jobs.WithRequeueTerminal()); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || !inner.lastOpts.Terminal || len(inner.requeued) != 1 {
+		t.Fatalf("seen=%v terminal=%v requeued=%v", seen, inner.lastOpts.Terminal, inner.requeued)
+	}
+}
+
+func TestApp_WrapRequeueNotify_TerminalHookErrorAborts(t *testing.T) {
+	app := &plugin.App{}
+	inner := &hookQueue{}
+	want := errors.New("fence write failed")
+	app.OnRequeued(func(context.Context, string, int) error { return want })
+	q := app.WrapRequeueNotify(inner)
+	err := q.Requeue(context.Background(), "job-term", 2, jobs.WithRequeueTerminal())
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if len(inner.requeued) != 0 {
+		t.Fatal("terminal reclaim must not commit after hook error")
 	}
 }
 

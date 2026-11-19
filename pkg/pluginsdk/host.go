@@ -83,10 +83,18 @@ type Host interface {
 	// ConfigValue reads a dot-notation config value (e.g. "plugins.acme.enabled")
 	// from this app's loaded config, or "" when unset. ConfigBool/Int/Int64
 	// parse the same value, returning the zero value on a missing/invalid entry.
+	// Scoped hosts (AsHostFor / Adapt) only see plugins.<slug>.*; use
+	// PlatformConfig for allowlisted core driver switches (e.g. queue.driver).
 	ConfigValue(key string) string
 	ConfigBool(key string) bool
 	ConfigInt(key string) int
 	ConfigInt64(key string) int64
+
+	// PlatformConfig reads an allowlisted non-secret core setting (e.g.
+	// "queue.driver", "search.engine"). Unknown or non-allowlisted keys
+	// return "". Does not open plugins.<other>.* or secrets (database.*,
+	// broker URLs). See config.PlatformConfigAllowlist.
+	PlatformConfig(key string) string
 
 	// BootstrapDB returns the composition-root database handle, if configured
 	// (e.g. for a Migrator plugin's integration-test helpers).
@@ -98,7 +106,8 @@ type Host interface {
 	OnQueueBound(wrap func(queue any) any)
 	// OnRequeued registers a callback run under the reclaim lock before
 	// status flips to pending (attempt is the claim being released).
-	// Non-nil error or panic aborts Requeue. Not called for Admin.Retry.
+	// Non-nil error or panic aborts Requeue — including WithRequeueTerminal.
+	// Not called for Admin.Retry (attempts reset, no fence TX).
 	OnRequeued(fn func(ctx context.Context, jobID string, attempt int) error)
 }
 

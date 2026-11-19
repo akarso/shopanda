@@ -357,6 +357,22 @@ func (h *appHost) ConfigInt64(key string) int64 {
 	return n
 }
 
+// PlatformConfig reads allowlisted core driver switches regardless of plugin
+// ConfigValue scoping. Non-allowlisted keys (including secrets) return "".
+func (h *appHost) PlatformConfig(key string) string {
+	if h.app == nil || h.app.Config == nil {
+		return ""
+	}
+	if !config.IsPlatformConfigKey(key) {
+		return ""
+	}
+	flat := h.flatConfig()
+	if flat == nil {
+		return ""
+	}
+	return flat[key]
+}
+
 func (h *appHost) BootstrapDB() (*sql.DB, bool) {
 	if !h.declaredOrUnscoped(plugin.CapDB) {
 		return nil, false
