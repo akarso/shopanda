@@ -427,8 +427,12 @@ func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
 	if err := q.Cancel(ctx, cancelJob.ID); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
+	if _, err := db.ExecContext(ctx, `UPDATE jobs SET run_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, cancelJob.ID); err != nil {
+		t.Fatal(err)
+	}
 	var cancelAttempts int
-	if err := db.QueryRowContext(ctx, `SELECT attempts FROM jobs WHERE id = $1`, cancelJob.ID).Scan(&cancelAttempts); err != nil {
+	var cancelRunAtBefore time.Time
+	if err := db.QueryRowContext(ctx, `SELECT attempts, run_at FROM jobs WHERE id = $1`, cancelJob.ID).Scan(&cancelAttempts, &cancelRunAtBefore); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Requeue(ctx, cancelJob.ID, cancelAttempts, jobs.WithRequeueTerminal()); err != nil {
@@ -437,6 +441,9 @@ func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
 	detail, err = q.Get(ctx, cancelJob.ID)
 	if err != nil || detail == nil || detail.Status != jobs.StatusPending {
 		t.Fatalf("after cancel requeue = %+v err=%v", detail, err)
+	}
+	if !detail.RunAt.After(cancelRunAtBefore) {
+		t.Fatalf("cancel run_at = %s, want after prior %s", detail.RunAt, cancelRunAtBefore)
 	}
 }
 

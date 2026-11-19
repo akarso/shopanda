@@ -138,7 +138,8 @@ func WithRequeueMinAge(d time.Duration) RequeueOption {
 //
 // API is ungated: any caller may pass this option for done/cancelled.
 // The jobs:requeue CLI separately requires --force for done/cancelled
-// (and for exhausted attempts>=max_retries); do not assume Queue.Requeue
+// and for exhausted attempts>=max_retries (including max_retries=0);
+// --force is a no-op on non-exhausted failed. Do not assume Queue.Requeue
 // enforces that. Admin.Retry remains failed-only with attempts=0 and no hooks.
 func WithRequeueTerminal() RequeueOption {
 	return func(c *requeueConfig) { c.Terminal = true }

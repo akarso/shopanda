@@ -258,7 +258,7 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `jobs:list` | List background jobs (`--type=X`, `--status=Y`, `--limit=N`, `--offset=N`, `--json`) |
 | `jobs:show <id>` | Show a job's full detail (`--json`) |
 | `jobs:retry <id>` | Retry a failed job (`attempts` reset to 0) |
-| `jobs:requeue <id> [--min-age=5m` / `--terminal [--force]]` | Requeue processing (min-age) or failed (`--terminal`; `--force` for done/cancelled); keeps attempts; OnRequeued; postgres |
+| `jobs:requeue <id> [--min-age=5m` / `--terminal [--force]]` | Requeue processing (min-age) or terminal failed (`--terminal`; `--force` for done/cancelled or exhausted attempts; no-op force otherwise); keeps attempts; OnRequeued; postgres API ungated |
 | `jobs:cancel <id>` | Cancel a pending job |
 | `cache:stats` | Show cache occupancy (`--json`) |
 | `cache:clear` | Clear cache (`--prefix=<p>`, `--tag=<t>`, `--key=<k>`, or `--all`) |

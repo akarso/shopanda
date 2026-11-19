@@ -322,8 +322,9 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 }
 
 // runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m|--terminal [--force]]`.
-// Default: processing → pending. --terminal: failed → pending; --force also
-// allows done/cancelled. Attempts kept; OnRequeued under FOR UPDATE.
+// Default: processing → pending. --terminal: failed → pending; --force when
+// required for done/cancelled or exhausted failed (no-op otherwise).
+// Attempts kept; OnRequeued under FOR UPDATE. API remains ungated.
 func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
 	parsed, err := parseJobsRequeueArgs(args)
 	if err != nil {
@@ -336,17 +337,18 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	defer rt.conn.Close()
 	ctx := context.Background()
 	detail, err := rt.svc.Get(ctx, parsed.ID)
-	details := map[string]interface{}{"terminal": parsed.Terminal, "force": parsed.Force}
 	if err != nil {
+		details := jobsRequeueAuditDetails("", 0, 0, parsed.Terminal, parsed.Force, parsed.MinAge, false)
 		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, err)
 		return fmt.Errorf("jobs:requeue: %w", err)
 	}
 	if detail == nil {
 		notFound := fmt.Errorf("jobs:requeue: no job with id %q", parsed.ID)
+		details := jobsRequeueAuditDetails("", 0, 0, parsed.Terminal, parsed.Force, parsed.MinAge, false)
 		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, notFound)
 		return notFound
 	}
-	details = jobsRequeueAuditDetails(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force, parsed.MinAge)
+	details := jobsRequeueAuditDetails(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force, parsed.MinAge, true)
 	if pre := validateJobsRequeueStatus(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force); pre != nil {
 		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, pre)
 		return pre
