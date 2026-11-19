@@ -1130,7 +1130,12 @@ Customers download through the grant gate, not through permanent media URLs:
 
 **POST, not GET** — delivery increments `download_count` and must not be triggered by prefetch/probes.
 
-Flow: `PrepareDelivery` (ownership + `CanDownload`, no count change) → load Media asset → prove object exists (`SignedURLStorage.Head` on S3, or `ReadableStorage.Read` locally) → prepare signed URL (`SignURLOptions` with ~60s TTL capped to remaining grant expiry; response overrides `Cache-Control: private, no-store` + `Content-Disposition: attachment`) or hold stream bytes → `ClaimDelivery` (ownership-checked atomic `download_count + 1`) → **302** or stream. Never return `storage.URL()`. Presign/Head failures return **500** with a stable message (cause logged) and **do not** increment. Missing blob → **404**, no increment. Wrong owner / guest → **403**. Missing grant → **404**. Expired / exhausted → **422**. Concurrent last-slot race → **409**.
+Flow: `PrepareDelivery` (ownership + `CanDownload`, no count change) → load Media asset → prove object exists → deliver → `ClaimDelivery` (ownership-checked atomic `download_count + 1`) → **302** or stream. Never return `storage.URL()`.
+
+- **SignedURLStorage** (localfs and S3): `Head(ctx, path)` then short-lived `SignedURL` (`SignURLOptions` with ~60s TTL capped to remaining grant expiry; response overrides `Cache-Control: private, no-store` + `Content-Disposition: attachment`) → **302**. Local HMAC GET streams via `Open` + `http.ServeContent` (client disconnect stops the body write). This is the storefront grant path when the backend implements signed URLs — including localfs after PR-1090.
+- **ReadableStorage only** (backends without signed URLs): `Read(ctx, path)` loads bytes then streams the response. `ctx` must be non-nil; cancellation is cooperative between I/O. Callers treat `context.Canceled` / `DeadlineExceeded` as client-gone (no Internal 500). localfs also implements `ReadableStorage` for admin invoice PDF reload and product wrappers — that path is not the local grant download hot path.
+
+Presign/Head failures return **500** with a stable message (cause logged) and **do not** increment. Missing blob → **404**, no increment. Wrong owner / guest → **403**. Missing grant → **404**. Expired / exhausted → **422**. Concurrent last-slot race → **409**.
 
 **Private download prefix:** upload with form field `private_download=true` (or `1`) so the asset lands under `private/downloads/{assetID}/…`. S3 `Save` then sets `Cache-Control: private, no-store` and skips public ACL. Admin SPA media library checkbox sends `private_download=1`. **`DownloadableFileService.Attach` rejects** assets whose path is not under `private/downloads/` so public `uploads/` objects cannot become **new** grant targets.
 

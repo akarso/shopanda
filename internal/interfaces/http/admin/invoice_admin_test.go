@@ -104,7 +104,7 @@ func (s *stubReadableStorage) Name() string                 { return "stub-reada
 func (s *stubReadableStorage) Save(string, io.Reader) error { return nil }
 func (s *stubReadableStorage) Delete(string) error          { return nil }
 func (s *stubReadableStorage) URL(string) string            { return "" }
-func (s *stubReadableStorage) Read(path string) ([]byte, error) {
+func (s *stubReadableStorage) Read(_ context.Context, path string) ([]byte, error) {
 	if data, ok := s.files[path]; ok {
 		return data, nil
 	}

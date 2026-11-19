@@ -44,7 +44,9 @@ func (s *Storage) Handler() http.Handler {
 			mod = st.ModTime()
 		}
 		w.Header().Set("Content-Disposition", media.ContentDispositionValue(disp, filename))
-		// ServeContent sets Content-Type from filename (or octet-stream) and streams.
+		// ServeContent sets Content-Type from filename (or octet-stream) and
+		// streams. Client disconnect stops further writes (this is the local
+		// grant download body path — not ReadableStorage.Read).
 		http.ServeContent(w, r, filename, mod, f)
 	})
 }

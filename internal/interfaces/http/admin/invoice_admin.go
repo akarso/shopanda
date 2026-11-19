@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -117,8 +119,11 @@ func (h *InvoiceAdminHandler) DownloadPDF() http.HandlerFunc {
 			return
 		}
 
-		pdfBytes, err := h.loadPDFBytes(*inv)
+		pdfBytes, err := h.loadPDFBytes(r.Context(), *inv)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "download invoice pdf failed", err))
 			return
 		}
@@ -132,10 +137,10 @@ func (h *InvoiceAdminHandler) DownloadPDF() http.HandlerFunc {
 	}
 }
 
-func (h *InvoiceAdminHandler) loadPDFBytes(inv domainInvoice.Invoice) ([]byte, error) {
+func (h *InvoiceAdminHandler) loadPDFBytes(ctx context.Context, inv domainInvoice.Invoice) ([]byte, error) {
 	pdfPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
 	if reader, ok := h.storage.(media.ReadableStorage); ok {
-		data, err := reader.Read(pdfPath)
+		data, err := reader.Read(ctx, pdfPath)
 		if err == nil && len(data) > 0 {
 			return data, nil
 		}
