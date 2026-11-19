@@ -17,6 +17,8 @@ const (
 	CapOrders              Capability = "orders"
 	CapCustomers           Capability = "customers"
 	CapDB                  Capability = "db"
+	CapJobs                Capability = "jobs"
+	CapMedia               Capability = "media"
 	CapIntegrationOrder    Capability = "integration.order_status"
 	CapIntegrationShipment Capability = "integration.shipment_status"
 	CapIntegrationStock    Capability = "integration.stock"
@@ -35,6 +37,7 @@ type servicePorts struct {
 	orders      any
 	cart        any
 	customers   any
+	jobs        any
 
 	required    map[Capability]struct{}
 	satisfied   map[Capability]struct{}
@@ -225,6 +228,28 @@ func (a *App) BindCustomerPort(port any) error {
 	return nil
 }
 
+// BindJobsPort wires the Host-visible jobs read/requeue port (Get,
+// CountsByStatus, Requeue). Satisfies CapJobs. Call after BindQueue when the
+// bound queue also implements jobs.Reader (Postgres). Broker queues without a
+// Reader leave CapJobs unbound.
+func (a *App) BindJobsPort(port any) error {
+	if a == nil {
+		return fmt.Errorf("plugin: BindJobsPort: app is nil")
+	}
+	if port == nil {
+		return fmt.Errorf("plugin: BindJobsPort: port must not be nil")
+	}
+	st := a.portsState()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.jobs != nil {
+		return fmt.Errorf("plugin: BindJobsPort: already bound")
+	}
+	st.jobs = port
+	st.satisfied[CapJobs] = struct{}{}
+	return nil
+}
+
 // CustomerPort returns the bound customer port, if any.
 func (a *App) CustomerPort() (any, bool) {
 	if a == nil {
@@ -293,6 +318,20 @@ func (a *App) CartPort() (any, bool) {
 		return nil, false
 	}
 	return st.cart, true
+}
+
+// JobsPort returns the bound jobs port, if any.
+func (a *App) JobsPort() (any, bool) {
+	if a == nil {
+		return nil, false
+	}
+	st := a.portsState()
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.jobs == nil {
+		return nil, false
+	}
+	return st.jobs, true
 }
 
 // AssertNeedsMet returns an error when a recorded capability was not bound.

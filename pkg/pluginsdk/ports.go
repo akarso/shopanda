@@ -108,7 +108,7 @@ type CatalogVariantSeed struct {
 }
 
 // CatalogPriceSeed is the EnsurePrice / Import input. Empty StoreID means the
-// global/default price. Amount is minor units (plugin parses "80,49" itself).
+// global/default price. Amount is minor units (use extapi.ParseMinorUnits).
 // Default (Update=false) is create-only: an existing variant+currency+store
 // row is left unchanged (soft no-op before money validation). When Update is
 // true, a differing amount is written and a price-history snapshot is

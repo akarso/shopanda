@@ -88,6 +88,9 @@ func TestResolveAndBindJobQueue_UsesPluginRegisteredQueue(t *testing.T) {
 	if err := got.Enqueue(context.Background(), jobs.Job{ID: "x", Type: "t"}); err != nil {
 		t.Fatalf("Enqueue via bound queue: %v", err)
 	}
+	if _, ok := app.JobsPort(); ok {
+		t.Fatal("Queue-only backend must not BindJobsPort / CapJobs")
+	}
 }
 
 func TestResolveAndBindJobQueue_PostgresShapeKeepsReaderAdmin(t *testing.T) {
@@ -112,6 +115,9 @@ func TestResolveAndBindJobQueue_PostgresShapeKeepsReaderAdmin(t *testing.T) {
 	}
 	if err := admin.Retry(context.Background(), "id"); err != nil {
 		t.Fatalf("Retry: %v", err)
+	}
+	if _, ok := app.JobsPort(); !ok {
+		t.Fatal("Postgres-shaped queue must BindJobsPort (CapJobs)")
 	}
 }
 

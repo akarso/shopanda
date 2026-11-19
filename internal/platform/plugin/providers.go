@@ -184,6 +184,7 @@ func (a *App) BindMediaStorage(storage media.Storage) error {
 		return fmt.Errorf("plugin: BindMediaStorage: media already bound to a different instance")
 	}
 	a.boundMedia = storage
+	a.MarkCapabilitySatisfied(CapMedia)
 	return nil
 }
 

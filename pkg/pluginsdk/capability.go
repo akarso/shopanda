@@ -12,6 +12,8 @@ const (
 	CapOrders              = plugin.CapOrders
 	CapCustomers           = plugin.CapCustomers
 	CapDB                  = plugin.CapDB
+	CapJobs                = plugin.CapJobs
+	CapMedia               = plugin.CapMedia
 	CapIntegrationOrder    = plugin.CapIntegrationOrder
 	CapIntegrationShipment = plugin.CapIntegrationShipment
 	CapIntegrationStock    = plugin.CapIntegrationStock

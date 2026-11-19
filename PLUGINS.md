@@ -126,6 +126,8 @@ Available today through `plugin.App`:
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll`. Pass `pluginsdk.NoCache()` when guest GET/HEAD must not receive the default `public, max-age=300` Cache-Control (path is merged into the HTTP cache denylist). For the storefront session cart use `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`) — keep `cart_id` out of response JSON (see `plugins/extref` design-line). Auth: opaque (non-JWT) owner bearer → session or guest; failed/JWT-shaped customer token → 401; staff Bearer defers to session; `pluginsdk.CustomerID(r)` is any non-guest actor |
 | **Catalog reads** | `Host.Catalog()` | `FindVariant` / `FindVariants` / `FindProduct`; `ProductVisible` + `ProductSlug`; use `extapi.ClassifyProductSlug` in `cart.validate` (Match / Other / Unknown) |
 | **CartPort** (Needs `CapCart`) | `Host.Cart()` | `AddItem`, `Get`, `EnsureActive`, `EnsureStorefrontCart`, `DiscardEmptyGuestCart`, `DeleteLineExtension`, `UpsertLineExtension`; trusted plugin-only writes via `WithPluginWrite` on the call ctx (Host pins the plugin name) |
+| **JobsPort** (Needs `CapJobs`) | `Host.Jobs()` | `Get`, `CountsByStatus`, `Requeue` (+ `WithRequeueMinAge` / `WithRequeueTerminal`, `ErrRequeue*`, `JobStatus*`). Bound by `resolveAndBindJobQueue` when the queue implements `jobs.Reader` (Postgres) on serve (`setupWorker`), worker, scheduler, search-reindex, jobs CLI, schedule CLI — **before** `assertWorkerNeedsMet`. `Get` returns `(nil, nil)` on miss / non-UUID. Requeue is unscoped (any CapJobs plugin may requeue any id). Broker queues leave CapJobs unbound. Cache/extension-field/discovery skip CapJobs via `assertWorkerLiteNeedsMet`. |
+| **MediaPort** (Needs `CapMedia`) | `Host.Media()` | `Name`/`Save`/`Delete`/`URL`; `AsReadableStorage` / `AsSignedURLStorage` when supported. Raw storage — no key-prefix / content-type hardening; plugins that wrap for safety still must. Satisfied by `BindMediaStorage` on the same CapJobs process set (including jobs CLI). Cache/extension-field/discovery skip CapMedia. |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
@@ -262,6 +264,23 @@ func registerProductPlugins(registry *plugin.Registry, cfg *config.Config) {
 Every non-core plugin under `plugins/` (including the commercial [`plugins/b2b/`](plugins/b2b/)
 module) follows this pattern; `plugins/plugin_imports_test.go`'s `TestImportBoundary` enforces the
 `pkg/*`-only import rule at build time.
+
+### Dropping `internal/platform/plugin` (Host + Adapt)
+
+Product plugins should not import `internal/platform/plugin`. Map the old symbols:
+
+| Was (`internal/platform/plugin`) | Use instead |
+| --- | --- |
+| `App` in `Init(app *App)` | `pluginsdk.Host` via `pluginsdk.Adapt` / `AsHostFor`; helpers via `pluginsdk.NewHost(h, name)` |
+| `SyncJobRegistration` / `RegisterSyncJob` | `pluginsdk.NewHost(h, name).Integration(slug).RegisterCron` / `RegisterOnEvent` / `RegisterManual` |
+| `NewSyncJobEnvelope` | Not needed — `SyncJobs.Enqueue` builds the envelope |
+| `InjectRequestID` | Automatic in `Enqueue`; or `pluginsdk.InjectRequestID` when stamping a payload yourself |
+| `MigrationSpec` / `Migrator` | `pluginsdk.MigrationSpec` / `pluginsdk.Migrator` (+ `ApplyMigrationFS` in tests) |
+| `Capability` / `Cap*` | `pluginsdk.Capability` / `CapCart`, `CapJobs`, `CapMedia`, … |
+| Request id read | `pluginsdk.RequestIDFromContext` |
+| `RegisterSearchProvider` / `Bus` / composition-root binds | Stay on the App in `cmd/api` — not a plugin import |
+
+Reference: [`plugins/extref`](plugins/extref/) production sources import only `pkg/*` (tests may still build a minimal `plugin.App` for Host wiring; prefer `pkg/pluginsdk/harness`).
 
 ---
 
