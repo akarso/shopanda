@@ -297,6 +297,18 @@ func (h *appHost) Customers() (CustomerPort, bool) {
 	return cp, ok
 }
 
+func (h *appHost) Jobs() (JobsPort, bool) {
+	if !h.declaredOrUnscoped(plugin.CapJobs) {
+		return nil, false
+	}
+	p, ok := h.app.JobsPort()
+	if !ok {
+		return nil, false
+	}
+	jp, ok := p.(JobsPort)
+	return jp, ok
+}
+
 func (h *appHost) IntegrationOrderStatusUpdater() extapi.IntegrationOrderStatusUpdater {
 	if !h.declaredOrUnscoped(plugin.CapIntegrationOrder) {
 		return nil

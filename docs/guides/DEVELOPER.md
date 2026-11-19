@@ -242,7 +242,9 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `Slots(registrant)`, `Hooks(registrant)` — storefront slots and hook registration
 - `RegisterField` / `RegisterFieldFor` — extension fields
 - `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()`, `BootstrapDB()` — ports
-  bound by the composition root (`(port, bool)`; declare with `Require(cap)`). `CapCart` is
+  bound by the composition root (`(port, bool)`; declare with `Require(cap)`). `CapJobs` is
+  bound on serve/worker/scheduler/jobs CLI when the queue implements Reader (Postgres);
+  broker queues leave it unbound. `CapCart` is
   serve-only; `CapCatalogSeed` is CLI-seed-only: the owning plugin's `RequiresDB: true`
   command auto-binds CatalogSeed (resolve in the handler, not `Init`). Raw DB stays behind
   `BootstrapDB` + `CapDB`.   Non-owning processes skip process-scoped caps via
