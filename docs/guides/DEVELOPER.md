@@ -335,6 +335,9 @@ Reference implementations: [`plugins/example/`](../../plugins/example/) — pric
 For Postgres plugin tests use `harness.OpenIsolated` (skips without `SHOPANDA_TEST_DSN`;
 pins `search_path`, applies core/plugin migrations, drops schema on cleanup) and pass
 `Options.DB` into `AdaptInit` when `Host.BootstrapDB()` is needed.
+Do not import `internal/platform/plugin` from product plugins — see the symbol map in
+[PLUGINS.md](../../PLUGINS.md#dropping-internalplatformplugin-host--adapt) (`Host` + `Adapt`,
+`SyncJobs`, `Migrator`, `InjectRequestID` / `RequestIDFromContext`).
 
 Current behavior to keep in mind:
 

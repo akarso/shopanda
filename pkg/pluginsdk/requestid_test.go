@@ -20,3 +20,15 @@ func TestRequestIDFromContext_RoundTrip(t *testing.T) {
 		t.Fatalf("RequestIDFromContext = %q, want req-from-http", got)
 	}
 }
+
+func TestInjectRequestID_FromContext(t *testing.T) {
+	ctx := requestctx.WithRequestID(context.Background(), "req-http")
+	out := pluginsdk.InjectRequestID(ctx, map[string]interface{}{"a": 1})
+	if out["request_id"] != "req-http" {
+		t.Fatalf("InjectRequestID = %#v", out)
+	}
+	kept := pluginsdk.InjectRequestID(ctx, map[string]interface{}{"request_id": "already"})
+	if kept["request_id"] != "already" {
+		t.Fatalf("preserved explicit request_id = %#v", kept)
+	}
+}
