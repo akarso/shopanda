@@ -266,6 +266,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Signed-in customer + owner-token on plugin route | Keep `AuthMiddleware` for opaque (non-JWT) owner tokens; JWT-shaped owners still 401 until confirmed; `pluginsdk.CustomerID(r)` |
 | Variant → product slug in hooks | `extapi.ClassifyProductSlug` / `FindVariants` — Match validate; Other skip; Unknown fail closed |
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
+| Read `queue.driver` (or search/cache/media) at Init | `Host.PlatformConfig` / `pluginsdk.RequireQueueDriver` — not `ConfigValue` |
 
 ---
 
