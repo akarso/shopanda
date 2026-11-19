@@ -322,9 +322,9 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 }
 
 // runJobsRequeue handles `app jobs:requeue <id> [--min-age=5m|--terminal [--force]]`.
-// Default: processing → pending. --terminal: failed → pending; --force when
-// required for done/cancelled or exhausted failed (no-op otherwise).
-// Attempts kept; OnRequeued under FOR UPDATE. API remains ungated.
+// Default: processing → pending. Production failed is exhausted — prefer
+// jobs:retry or --terminal --force; bare --terminal is rare. --force also
+// covers done/cancelled (no-op when not required). API remains ungated.
 func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
 	parsed, err := parseJobsRequeueArgs(args)
 	if err != nil {

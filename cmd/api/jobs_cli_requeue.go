@@ -72,23 +72,25 @@ func terminalRequeueForceRequired(status domainjobs.Status, attempts, maxRetries
 }
 
 // validateJobsRequeueStatus applies CLI-only preflight before Queue.Requeue.
-// --force means "I accept risk"; it is required when force_required, and is a
-// no-op on non-exhausted failed. Queue.Requeue does not enforce --force.
+// Production failed rows are exhausted by Fail (attempts >= max_retries), so
+// the common ops paths are jobs:retry or --terminal --force. Bare --terminal
+// without --force only fits anomalous non-exhausted failed. --force is a
+// no-op when not required. Queue.Requeue does not enforce --force.
 func validateJobsRequeueStatus(status domainjobs.Status, attempts, maxRetries int, terminal, force bool) error {
 	if !terminal {
 		if status != domainjobs.StatusProcessing {
-			return fmt.Errorf("jobs:requeue: job is %s, not processing — use --terminal for failed (keeps attempts; --force for done/cancelled or exhausted) or jobs:retry for failed (resets attempts)", status)
+			return fmt.Errorf("jobs:requeue: job is %s, not processing — for failed use jobs:retry (reset attempts) or --terminal --force (keep attempts; production failed is usually exhausted); omit --terminal only for stale processing", status)
 		}
 		return nil
 	}
 	if !domainjobs.IsTerminalRequeueStatus(status) {
-		return fmt.Errorf("jobs:requeue: job is %s, not failed/done/cancelled — omit --terminal for stale processing claims (use jobs:retry to reset attempts on failed)", status)
+		return fmt.Errorf("jobs:requeue: job is %s, not failed/done/cancelled — omit --terminal for stale processing claims", status)
 	}
 	if terminalRequeueForceRequired(status, attempts, maxRetries) && !force {
 		if domainjobs.TerminalRequeueNeedsForce(status) {
-			return fmt.Errorf("jobs:requeue: job is %s — re-pending done/cancelled can double-run side effects; pass --force with --terminal (Queue.Requeue API is ungated; CLI only)", status)
+			return fmt.Errorf("jobs:requeue: job is %s — re-pending done/cancelled can double-run side effects; pass --terminal --force (Queue.Requeue API is ungated; CLI only)", status)
 		}
-		return fmt.Errorf("jobs:requeue: attempts=%d >= max_retries=%d — next Fail is permanent; use jobs:retry for a fresh attempt budget, or pass --force to re-pend keeping attempts", attempts, maxRetries)
+		return fmt.Errorf("jobs:requeue: attempts=%d >= max_retries=%d (normal after Fail) — use jobs:retry for a fresh attempt budget, or --terminal --force to re-pend keeping attempts", attempts, maxRetries)
 	}
 	return nil
 }
@@ -96,21 +98,23 @@ func validateJobsRequeueStatus(status domainjobs.Status, attempts, maxRetries in
 // jobsRequeueAuditDetails builds a single audit schema for every requeue path
 // (including early Get failures). force_flag is what the operator passed;
 // force_required is whether this snapshot needed --force. Unknown status
-// (pre-Get) leaves force_required false.
+// (pre-Get) uses snapshot=pre_get and leaves force_required false.
 func jobsRequeueAuditDetails(prior domainjobs.Status, attempts, maxRetries int, terminal, forceFlag bool, minAge time.Duration, knownStatus bool) map[string]interface{} {
 	d := map[string]interface{}{
 		"terminal":       terminal,
 		"force_flag":     forceFlag,
 		"force_required": false,
-		"snapshot":       "pre_lock_get",
 	}
 	if knownStatus {
+		d["snapshot"] = "pre_lock_get"
 		d["prior_status"] = string(prior)
 		d["attempts"] = attempts
 		d["max_retries"] = maxRetries
 		if terminal {
 			d["force_required"] = terminalRequeueForceRequired(prior, attempts, maxRetries)
 		}
+	} else {
+		d["snapshot"] = "pre_get"
 	}
 	if !terminal {
 		d["min_age"] = minAge.String()

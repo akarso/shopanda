@@ -831,7 +831,7 @@ Commands:
   jobs:list            List background jobs ([--type=X] [--status=Y] [--limit=N] [--offset=N] [--json])
   jobs:show <id>       Show a job's full detail ([--json])
   jobs:retry <id>      Retry a failed job
-  jobs:requeue <id> [--min-age=5m|--terminal [--force]]  Requeue processing or failed (--terminal; --force for done/cancelled or exhausted; no-op otherwise; API ungated)
+  jobs:requeue <id> [--min-age=5m|--terminal [--force]]  Requeue processing, or --terminal --force for exhausted failed/done/cancelled (bare --terminal rare; prefer jobs:retry to reset)
   jobs:cancel <id>     Cancel a pending job
   cache:stats          Show cache occupancy ([--json])
   cache:clear          Clear cache (--prefix=<p> | --tag=<t> | --key=<k> | --all)

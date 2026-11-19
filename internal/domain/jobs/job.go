@@ -137,10 +137,12 @@ func WithRequeueMinAge(d time.Duration) RequeueOption {
 // pending/processing (use default reclaim for stale processing claims).
 //
 // API is ungated: any caller may pass this option for done/cancelled.
-// The jobs:requeue CLI separately requires --force for done/cancelled
-// and for exhausted attempts>=max_retries (including max_retries=0);
-// --force is a no-op on non-exhausted failed. Do not assume Queue.Requeue
-// enforces that. Admin.Retry remains failed-only with attempts=0 and no hooks.
+// The jobs:requeue CLI treats production failed as exhausted (Fail only
+// marks failed when attempts>=max_retries) — operators use jobs:retry or
+// --terminal --force; bare --terminal is for anomalous non-exhausted failed.
+// --force also covers done/cancelled and is a no-op when not required.
+// Do not assume Queue.Requeue enforces that. Admin.Retry remains failed-only
+// with attempts=0 and no hooks.
 func WithRequeueTerminal() RequeueOption {
 	return func(c *requeueConfig) { c.Terminal = true }
 }

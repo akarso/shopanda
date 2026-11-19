@@ -202,6 +202,9 @@ func TestValidateJobsRequeueStatus(t *testing.T) {
 	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 0, 0, true, false); err == nil {
 		t.Fatal("max_retries=0 with attempts=0 counts as exhausted (matches Fail predicate)")
 	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 0, 0, true, true); err != nil {
+		t.Fatalf("max_retries=0 + --force must allow: %v", err)
+	}
 	if err := validateJobsRequeueStatus(domainjobs.StatusProcessing, 1, 5, false, false); err != nil {
 		t.Fatalf("processing: %v", err)
 	}
@@ -211,6 +214,10 @@ func TestJobsRequeueSuccessMessage_ExhaustedWarns(t *testing.T) {
 	msg := jobsRequeueSuccessMessage("j1", domainjobs.StatusFailed, 3, 3, true, 0)
 	if !strings.Contains(msg, "attempts>=max_retries") || !strings.Contains(msg, "jobs:retry") {
 		t.Fatalf("msg=%q, want exhausted warning + jobs:retry", msg)
+	}
+	msg = jobsRequeueSuccessMessage("j1", domainjobs.StatusFailed, 0, 0, true, 0)
+	if !strings.Contains(msg, "attempts>=max_retries") || !strings.Contains(msg, "jobs:retry") {
+		t.Fatalf("max_retries=0 msg=%q, want exhausted warning + jobs:retry", msg)
 	}
 	msg = jobsRequeueSuccessMessage("j1", domainjobs.StatusDone, 1, 5, true, 0)
 	if !strings.Contains(msg, "resurrected") {
@@ -256,9 +263,16 @@ func TestJobsRequeueAuditDetails_ForceFlagAndRequired(t *testing.T) {
 	if d["force_required"] != true || d["force_flag"] != false {
 		t.Fatalf("exhausted: %+v", d)
 	}
+	d = jobsRequeueAuditDetails(domainjobs.StatusFailed, 0, 0, true, true, 0, true)
+	if d["force_required"] != true || d["force_flag"] != true {
+		t.Fatalf("max_retries=0 exhausted: %+v", d)
+	}
 	d = jobsRequeueAuditDetails("", 0, 0, true, true, 0, false)
 	if d["force_flag"] != true || d["force_required"] != false {
 		t.Fatalf("pre-Get: %+v", d)
+	}
+	if d["snapshot"] != "pre_get" {
+		t.Fatalf("pre-Get snapshot = %v, want pre_get", d["snapshot"])
 	}
 	if _, ok := d["prior_status"]; ok {
 		t.Fatal("pre-Get must omit prior_status")
