@@ -19,7 +19,7 @@ type jobsRequeueArgs struct {
 
 func parseJobsRequeueArgs(args []string) (jobsRequeueArgs, error) {
 	out := jobsRequeueArgs{MinAge: domainjobs.DefaultRequeueMinAge}
-	usage := "usage: app jobs:requeue <id> [--min-age=5m|--terminal [--force]]"
+	usage := "usage: app jobs:requeue <id> [--min-age=5m|--terminal --force]  (keep-attempts terminal: --terminal --force; bare --terminal rare)"
 	var positional []string
 	var sawMinAge bool
 	for _, arg := range args {
@@ -79,7 +79,14 @@ func terminalRequeueForceRequired(status domainjobs.Status, attempts, maxRetries
 func validateJobsRequeueStatus(status domainjobs.Status, attempts, maxRetries int, terminal, force bool) error {
 	if !terminal {
 		if status != domainjobs.StatusProcessing {
-			return fmt.Errorf("jobs:requeue: job is %s, not processing — for failed use jobs:retry (reset attempts) or --terminal --force (keep attempts; production failed is usually exhausted); omit --terminal only for stale processing", status)
+			switch status {
+			case domainjobs.StatusFailed:
+				return fmt.Errorf("jobs:requeue: job is failed, not processing — use jobs:retry (reset attempts) or --terminal --force (keep attempts; production failed is usually exhausted)")
+			case domainjobs.StatusDone, domainjobs.StatusCancelled:
+				return fmt.Errorf("jobs:requeue: job is %s, not processing — use --terminal --force to re-pend keeping attempts (duplicate side-effect risk)", status)
+			default:
+				return fmt.Errorf("jobs:requeue: job is %s, not processing — omit flags and reclaim only a stale processing claim (--min-age)", status)
+			}
 		}
 		return nil
 	}

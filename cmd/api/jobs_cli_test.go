@@ -245,29 +245,30 @@ func TestFormatJobsRequeueError_Mapping(t *testing.T) {
 }
 
 func TestJobsRequeueAuditDetails_ForceFlagAndRequired(t *testing.T) {
-	d := jobsRequeueAuditDetails(domainjobs.StatusFailed, 1, 5, true, true, 0, true)
-	if d["force_flag"] != true {
-		t.Fatalf("force_flag = %v, want true (operator intent)", d["force_flag"])
+	for _, tc := range []struct {
+		name                         string
+		status                       domainjobs.Status
+		attempts, maxRetries         int
+		forceFlag                    bool
+		wantRequired                 bool
+	}{
+		{"non-exhausted failed + force", domainjobs.StatusFailed, 1, 5, true, false},
+		{"done + force", domainjobs.StatusDone, 1, 5, true, true},
+		{"exhausted failed", domainjobs.StatusFailed, 3, 3, false, true},
+		{"max_retries=0 exhausted", domainjobs.StatusFailed, 0, 0, true, true},
+	} {
+		d := jobsRequeueAuditDetails(tc.status, tc.attempts, tc.maxRetries, true, tc.forceFlag, 0, true)
+		if d["snapshot"] != "pre_lock_get" {
+			t.Fatalf("%s: snapshot = %v, want pre_lock_get", tc.name, d["snapshot"])
+		}
+		if d["force_flag"] != tc.forceFlag {
+			t.Fatalf("%s: force_flag = %v, want %v", tc.name, d["force_flag"], tc.forceFlag)
+		}
+		if d["force_required"] != tc.wantRequired {
+			t.Fatalf("%s: force_required = %v, want %v", tc.name, d["force_required"], tc.wantRequired)
+		}
 	}
-	if d["force_required"] != false {
-		t.Fatalf("force_required = %v, want false for non-exhausted failed", d["force_required"])
-	}
-	if d["snapshot"] != "pre_lock_get" {
-		t.Fatalf("snapshot = %v", d["snapshot"])
-	}
-	d = jobsRequeueAuditDetails(domainjobs.StatusDone, 1, 5, true, true, 0, true)
-	if d["force_required"] != true {
-		t.Fatalf("done must require force: %v", d["force_required"])
-	}
-	d = jobsRequeueAuditDetails(domainjobs.StatusFailed, 3, 3, true, false, 0, true)
-	if d["force_required"] != true || d["force_flag"] != false {
-		t.Fatalf("exhausted: %+v", d)
-	}
-	d = jobsRequeueAuditDetails(domainjobs.StatusFailed, 0, 0, true, true, 0, true)
-	if d["force_required"] != true || d["force_flag"] != true {
-		t.Fatalf("max_retries=0 exhausted: %+v", d)
-	}
-	d = jobsRequeueAuditDetails("", 0, 0, true, true, 0, false)
+	d := jobsRequeueAuditDetails("", 0, 0, true, true, 0, false)
 	if d["force_flag"] != true || d["force_required"] != false {
 		t.Fatalf("pre-Get: %+v", d)
 	}
@@ -276,6 +277,21 @@ func TestJobsRequeueAuditDetails_ForceFlagAndRequired(t *testing.T) {
 	}
 	if _, ok := d["prior_status"]; ok {
 		t.Fatal("pre-Get must omit prior_status")
+	}
+}
+
+func TestValidateJobsRequeueStatus_NonProcessingHints(t *testing.T) {
+	err := validateJobsRequeueStatus(domainjobs.StatusFailed, 3, 3, false, false)
+	if err == nil || !strings.Contains(err.Error(), "jobs:retry") || !strings.Contains(err.Error(), "--terminal --force") {
+		t.Fatalf("failed hint: %v", err)
+	}
+	err = validateJobsRequeueStatus(domainjobs.StatusDone, 1, 5, false, false)
+	if err == nil || !strings.Contains(err.Error(), "--terminal --force") || strings.Contains(err.Error(), "jobs:retry") {
+		t.Fatalf("done hint: %v", err)
+	}
+	err = validateJobsRequeueStatus(domainjobs.StatusPending, 0, 5, false, false)
+	if err == nil || !strings.Contains(err.Error(), "stale processing") {
+		t.Fatalf("pending hint: %v", err)
 	}
 }
 
