@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -168,31 +169,80 @@ func TestParseJobsRequeueArgs(t *testing.T) {
 }
 
 func TestValidateJobsRequeueStatus(t *testing.T) {
-	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, true, false); err != nil {
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 1, 5, true, false); err != nil {
 		t.Fatalf("failed+terminal: %v", err)
 	}
-	if err := validateJobsRequeueStatus(domainjobs.StatusDone, true, false); err == nil {
+	if err := validateJobsRequeueStatus(domainjobs.StatusCancelled, 1, 5, true, false); err == nil {
+		t.Fatal("cancelled without --force must fail")
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusDone, 1, 5, true, false); err == nil {
 		t.Fatal("done without --force must fail")
 	}
-	if err := validateJobsRequeueStatus(domainjobs.StatusDone, true, true); err != nil {
+	if err := validateJobsRequeueStatus(domainjobs.StatusDone, 1, 5, true, true); err != nil {
 		t.Fatalf("done+force: %v", err)
 	}
-	if err := validateJobsRequeueStatus(domainjobs.StatusCancelled, true, true); err != nil {
+	if err := validateJobsRequeueStatus(domainjobs.StatusCancelled, 1, 5, true, true); err != nil {
 		t.Fatalf("cancelled+force: %v", err)
 	}
-	if err := validateJobsRequeueStatus(domainjobs.StatusProcessing, false, false); err != nil {
+	if err := validateJobsRequeueStatus(domainjobs.StatusProcessing, 1, 5, true, false); err == nil {
+		t.Fatal("processing+terminal must fail")
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusPending, 0, 5, true, false); err == nil {
+		t.Fatal("pending+terminal must fail")
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 3, 3, true, false); err == nil || !strings.Contains(err.Error(), "jobs:retry") {
+		t.Fatalf("exhausted without force: %v", err)
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 3, 3, true, true); err != nil {
+		t.Fatalf("exhausted+force: %v", err)
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusFailed, 1, 5, true, true); err == nil {
+		t.Fatal("force on non-exhausted failed must fail")
+	}
+	if err := validateJobsRequeueStatus(domainjobs.StatusProcessing, 1, 5, false, false); err != nil {
 		t.Fatalf("processing: %v", err)
 	}
 }
 
 func TestJobsRequeueSuccessMessage_ExhaustedWarns(t *testing.T) {
 	msg := jobsRequeueSuccessMessage("j1", domainjobs.StatusFailed, 3, 3, true, 0)
-	if !strings.Contains(msg, "attempts>=max_retries") {
-		t.Fatalf("msg=%q, want exhausted warning", msg)
+	if !strings.Contains(msg, "attempts>=max_retries") || !strings.Contains(msg, "jobs:retry") {
+		t.Fatalf("msg=%q, want exhausted warning + jobs:retry", msg)
 	}
 	msg = jobsRequeueSuccessMessage("j1", domainjobs.StatusDone, 1, 5, true, 0)
 	if !strings.Contains(msg, "resurrected") {
 		t.Fatalf("msg=%q, want done resurrection warning", msg)
+	}
+}
+
+func TestFormatJobsRequeueError_Mapping(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{domainjobs.ErrRequeueNotFound, "disappeared"},
+		{domainjobs.ErrRequeueConflict, "reclaim race"},
+		{domainjobs.ErrRequeueNotProcessing, "no longer processing"},
+		{domainjobs.ErrRequeueNotTerminal, "no longer terminal"},
+		{domainjobs.ErrRequeueWrongAttempt, "TOCTOU"},
+	}
+	for _, tc := range cases {
+		got := formatJobsRequeueError(tc.err, domainjobs.DefaultRequeueMinAge)
+		if got == nil || !errors.Is(got, tc.err) || !strings.Contains(got.Error(), tc.want) {
+			t.Fatalf("err=%v got=%v want substring %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestEffectiveJobsRequeueForce(t *testing.T) {
+	if effectiveJobsRequeueForce(domainjobs.StatusFailed, 1, 5, true) {
+		t.Fatal("force on non-exhausted failed must audit false")
+	}
+	if !effectiveJobsRequeueForce(domainjobs.StatusDone, 1, 5, true) {
+		t.Fatal("force on done must audit true")
+	}
+	if !effectiveJobsRequeueForce(domainjobs.StatusFailed, 3, 3, true) {
+		t.Fatal("force on exhausted failed must audit true")
 	}
 }
 

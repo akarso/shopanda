@@ -500,6 +500,14 @@ func TestJobQueue_RequeueTerminal_Unsupported(t *testing.T) {
 	}
 }
 
+func TestJobQueue_Requeue_MissingID_NotFound(t *testing.T) {
+	_, q := setupJobQueue(t)
+	err := q.Requeue(context.Background(), "missing-redis-job", 1, jobs.WithRequeueMinAge(time.Minute))
+	if err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("err = %v, want ErrRequeueNotFound", err)
+	}
+}
+
 func TestJobQueue_Requeue_HookErrorDoesNotPushReady(t *testing.T) {
 	mr, q := setupJobQueue(t)
 	ctx := context.Background()

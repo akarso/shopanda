@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -348,7 +347,7 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 		return notFound
 	}
 	details = jobsRequeueAuditDetails(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force, parsed.MinAge)
-	if pre := validateJobsRequeueStatus(detail.Status, parsed.Terminal, parsed.Force); pre != nil {
+	if pre := validateJobsRequeueStatus(detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.Force); pre != nil {
 		auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, pre)
 		return pre
 	}
@@ -361,26 +360,7 @@ func runJobsRequeue(w io.Writer, cfg *config.Config, log logger.Logger, args []s
 	requeueErr := rt.queue.Requeue(ctx, parsed.ID, detail.Attempts, opts...)
 	auditCLIActionDetails(ctx, rt.conn, log, adminApp.AuditJobRequeue, "job", parsed.ID, details, requeueErr)
 	if requeueErr != nil {
-		switch {
-		case errors.Is(requeueErr, domainjobs.ErrRequeueTooFresh):
-			return fmt.Errorf("jobs:requeue: claim younger than --min-age=%s (still a plausible live handler): %w", parsed.MinAge, requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueInProgress):
-			return fmt.Errorf("jobs:requeue: another reclaim is in progress (wait for it to finish or for the default %s lease to expire): %w", domainjobs.DefaultRequeueMinAge, requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
-			return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved under TOCTOU): %w", requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueNotFound):
-			return fmt.Errorf("jobs:requeue: job disappeared (deleted under TOCTOU): %w", requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
-			return fmt.Errorf("jobs:requeue: status no longer processing (moved under TOCTOU): %w", requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueNotTerminal):
-			return fmt.Errorf("jobs:requeue: status no longer terminal (moved under TOCTOU): %w", requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueConflict):
-			return fmt.Errorf("jobs:requeue: concurrent update lost the reclaim race: %w", requeueErr)
-		case errors.Is(requeueErr, domainjobs.ErrRequeueUnsupported):
-			return fmt.Errorf("jobs:requeue: unsupported for this queue driver: %w", requeueErr)
-		default:
-			return fmt.Errorf("jobs:requeue: %w", requeueErr)
-		}
+		return formatJobsRequeueError(requeueErr, parsed.MinAge)
 	}
 	return writeSuccessLinef(w, "%s", jobsRequeueSuccessMessage(parsed.ID, detail.Status, detail.Attempts, detail.MaxRetries, parsed.Terminal, parsed.MinAge))
 }

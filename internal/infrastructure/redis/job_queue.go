@@ -1096,7 +1096,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
 		if errors.Is(err, errJobNotFound) {
-			return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotProcessing)
+			return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotFound)
 		}
 		return err
 	}

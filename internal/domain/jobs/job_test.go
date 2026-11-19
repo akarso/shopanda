@@ -95,3 +95,12 @@ func TestIsTerminalRequeueStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalRequeueNeedsForce(t *testing.T) {
+	if jobs.TerminalRequeueNeedsForce(jobs.StatusFailed) {
+		t.Fatal("failed must not need force for status alone")
+	}
+	if !jobs.TerminalRequeueNeedsForce(jobs.StatusDone) || !jobs.TerminalRequeueNeedsForce(jobs.StatusCancelled) {
+		t.Fatal("done/cancelled need force in CLI")
+	}
+}

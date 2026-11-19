@@ -382,13 +382,25 @@ func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	doneJob, _ := jobs.NewJob(id.New(), "terminal-done", nil)
-	_ = q.Enqueue(ctx, doneJob)
-	got, _ := q.Dequeue(ctx)
+	doneJob, err := jobs.NewJob(id.New(), "terminal-done", nil)
+	if err != nil {
+		t.Fatalf("NewJob: %v", err)
+	}
+	if err := q.Enqueue(ctx, doneJob); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	got, err := q.Dequeue(ctx)
+	if err != nil || got == nil {
+		t.Fatalf("Dequeue: %v %#v", err, got)
+	}
 	if err := q.Complete(ctx, got.ID, got.Attempts); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `UPDATE jobs SET last_error = $2 WHERE id = $1`, got.ID, "prior-note"); err != nil {
+	if _, err := db.ExecContext(ctx, `UPDATE jobs SET last_error = $2, run_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, got.ID, "prior-note"); err != nil {
+		t.Fatal(err)
+	}
+	var runAtBefore time.Time
+	if err := db.QueryRowContext(ctx, `SELECT run_at FROM jobs WHERE id = $1`, got.ID).Scan(&runAtBefore); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Requeue(ctx, got.ID, got.Attempts, jobs.WithRequeueTerminal()); err != nil {
@@ -401,9 +413,17 @@ func TestJobQueue_RequeueTerminal_DoneAndCancelled(t *testing.T) {
 	if detail.LastError != "prior-note" {
 		t.Fatalf("last_error = %q, want prior-note preserved", detail.LastError)
 	}
+	if !detail.RunAt.After(runAtBefore) {
+		t.Fatalf("run_at = %s, want after prior %s", detail.RunAt, runAtBefore)
+	}
 
-	cancelJob, _ := jobs.NewJob(id.New(), "terminal-cancel", nil)
-	_ = q.Enqueue(ctx, cancelJob)
+	cancelJob, err := jobs.NewJob(id.New(), "terminal-cancel", nil)
+	if err != nil {
+		t.Fatalf("NewJob cancel: %v", err)
+	}
+	if err := q.Enqueue(ctx, cancelJob); err != nil {
+		t.Fatalf("Enqueue cancel: %v", err)
+	}
 	if err := q.Cancel(ctx, cancelJob.ID); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}

@@ -135,9 +135,11 @@ func WithRequeueMinAge(d time.Duration) RequeueOption {
 // attempts, running OnRequeued / RequeueTx in the same transaction, setting
 // run_at=NOW(), and leaving last_error unchanged. Does not accept
 // pending/processing (use default reclaim for stale processing claims).
-// Re-pending done/cancelled can double-run side effects — CLI requires
-// --force for those statuses; Admin.Retry remains failed-only with
-// attempts=0 and no hooks.
+//
+// API is ungated: any caller may pass this option for done/cancelled.
+// The jobs:requeue CLI separately requires --force for done/cancelled
+// (and for exhausted attempts>=max_retries); do not assume Queue.Requeue
+// enforces that. Admin.Retry remains failed-only with attempts=0 and no hooks.
 func WithRequeueTerminal() RequeueOption {
 	return func(c *requeueConfig) { c.Terminal = true }
 }
@@ -166,7 +168,7 @@ func ApplyRequeueOptions(opts []RequeueOption) time.Duration {
 }
 
 // IsTerminalRequeueStatus reports whether status may be re-pended with
-// WithRequeueTerminal.
+// WithRequeueTerminal (API). CLI force rules use TerminalRequeueNeedsForce.
 func IsTerminalRequeueStatus(s Status) bool {
 	switch s {
 	case StatusFailed, StatusDone, StatusCancelled:
@@ -176,10 +178,19 @@ func IsTerminalRequeueStatus(s Status) bool {
 	}
 }
 
+// TerminalRequeueNeedsForce reports statuses the jobs:requeue CLI treats as
+// high-risk (done/cancelled resurrection). Failed never needs force for
+// status alone; exhausted attempts are a separate CLI check.
+func TerminalRequeueNeedsForce(s Status) bool {
+	return s == StatusDone || s == StatusCancelled
+}
+
 // RequeueBeforeCommit runs after reclaim predicates pass and before the
-// job becomes dequeueable (postgres: still processing under FOR UPDATE;
-// redis: status=reclaiming, off ready). OnRequeued fence release sees
-// attempt N. Return non-nil to abort — row must not land on ready/pending.
+// job becomes dequeueable (postgres: row locked under FOR UPDATE in its
+// prior status — processing for default reclaim, or failed/done/cancelled
+// for WithRequeueTerminal; redis: status=reclaiming, off ready).
+// OnRequeued fence release sees attempt N. Return non-nil to abort — row
+// must not land on ready/pending.
 //
 // Hooks must not open a second connection and UPDATE the same jobs row
 // (deadlocks the reclaim lock). On Postgres, use RequeueTx(ctx) /
@@ -219,9 +230,10 @@ type Queue interface {
 	// (unlike Admin.Retry, which is failed→pending with attempts=0 and
 	// no OnRequeued). Default: processing only; attempt must match; row
 	// older than min-age (DefaultRequeueMinAge). WithRequeueTerminal:
-	// failed/done/cancelled only; no min-age; same attempt CAS; run_at
-	// = NOW(); last_error unchanged; OnRequeued runs in the reclaim TX.
-	// Returns ErrRequeueTooFresh / WrongAttempt / NotProcessing /
+	// failed/done/cancelled only (API ungated — CLI --force is separate);
+	// no min-age; same attempt CAS; run_at=NOW(); last_error unchanged;
+	// OnRequeued runs in the reclaim TX.
+	// Returns ErrRequeueNotFound / TooFresh / WrongAttempt / NotProcessing /
 	// NotTerminal / Conflict, or ErrRequeueUnsupported on brokers.
 	Requeue(ctx context.Context, id string, attempt int, opts ...RequeueOption) error
 }

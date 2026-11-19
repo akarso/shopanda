@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ type jobsRequeueArgs struct {
 	ID       string
 	MinAge   time.Duration
 	Terminal bool
-	Force    bool // with --terminal: allow done/cancelled (failed needs no force)
+	Force    bool // done/cancelled, or exhausted failed (API remains ungated)
 }
 
 func parseJobsRequeueArgs(args []string) (jobsRequeueArgs, error) {
@@ -56,36 +57,51 @@ func parseJobsRequeueArgs(args []string) (jobsRequeueArgs, error) {
 	return out, nil
 }
 
-// validateJobsRequeueStatus applies CLI preflight before Queue.Requeue.
-// --terminal without --force accepts failed only; --force also allows
-// done/cancelled (duplicate-execution risk).
-func validateJobsRequeueStatus(status domainjobs.Status, terminal, force bool) error {
-	if terminal {
-		switch status {
-		case domainjobs.StatusFailed:
-			return nil
-		case domainjobs.StatusDone, domainjobs.StatusCancelled:
-			if force {
-				return nil
-			}
-			return fmt.Errorf("jobs:requeue: job is %s — re-pending done/cancelled can double-run side effects; pass --force with --terminal (or omit --terminal for stale processing)", status)
-		default:
-			return fmt.Errorf("jobs:requeue: job is %s, not failed — omit --terminal for stale processing claims (use jobs:retry to reset attempts on failed)", status)
+// validateJobsRequeueStatus applies CLI-only preflight before Queue.Requeue.
+// Queue.Requeue + WithRequeueTerminal does not enforce --force.
+func validateJobsRequeueStatus(status domainjobs.Status, attempts, maxRetries int, terminal, force bool) error {
+	if !terminal {
+		if status != domainjobs.StatusProcessing {
+			return fmt.Errorf("jobs:requeue: job is %s, not processing — use --terminal for failed (keeps attempts; --force for done/cancelled or exhausted) or jobs:retry for failed (resets attempts)", status)
 		}
+		return nil
 	}
-	if status != domainjobs.StatusProcessing {
-		return fmt.Errorf("jobs:requeue: job is %s, not processing — use --terminal for failed (keeps attempts; --force for done/cancelled) or jobs:retry for failed (resets attempts)", status)
+	if !domainjobs.IsTerminalRequeueStatus(status) {
+		return fmt.Errorf("jobs:requeue: job is %s, not failed/done/cancelled — omit --terminal for stale processing claims (use jobs:retry to reset attempts on failed)", status)
+	}
+	if domainjobs.TerminalRequeueNeedsForce(status) && !force {
+		return fmt.Errorf("jobs:requeue: job is %s — re-pending done/cancelled can double-run side effects; pass --force with --terminal (Queue.Requeue API is ungated; CLI only)", status)
+	}
+	exhausted := maxRetries > 0 && attempts >= maxRetries
+	if status == domainjobs.StatusFailed && exhausted && !force {
+		return fmt.Errorf("jobs:requeue: attempts=%d >= max_retries=%d — next Fail is permanent; use jobs:retry for a fresh attempt budget, or pass --force to re-pend keeping attempts", attempts, maxRetries)
+	}
+	if force && status == domainjobs.StatusFailed && !exhausted {
+		return fmt.Errorf("jobs:requeue: --force is not needed for non-exhausted failed (omit --force, or use jobs:retry to reset attempts)")
 	}
 	return nil
+}
+
+// effectiveJobsRequeueForce is what we audit: only true when force was
+// required for this status/attempts snapshot.
+func effectiveJobsRequeueForce(status domainjobs.Status, attempts, maxRetries int, force bool) bool {
+	if !force {
+		return false
+	}
+	if domainjobs.TerminalRequeueNeedsForce(status) {
+		return true
+	}
+	return status == domainjobs.StatusFailed && maxRetries > 0 && attempts >= maxRetries
 }
 
 func jobsRequeueAuditDetails(prior domainjobs.Status, attempts, maxRetries int, terminal, force bool, minAge time.Duration) map[string]interface{} {
 	d := map[string]interface{}{
 		"terminal":     terminal,
-		"force":        force,
+		"force":        effectiveJobsRequeueForce(prior, attempts, maxRetries, force),
 		"prior_status": string(prior),
 		"attempts":     attempts,
 		"max_retries":  maxRetries,
+		"snapshot":     "pre_lock_get",
 	}
 	if !terminal {
 		d["min_age"] = minAge.String()
@@ -97,12 +113,35 @@ func jobsRequeueSuccessMessage(id string, prior domainjobs.Status, attempts, max
 	if terminal {
 		msg := fmt.Sprintf("Job %s requeued (%s → pending, attempts=%d kept; terminal)", id, prior, attempts)
 		if attempts >= maxRetries && maxRetries > 0 {
-			msg += fmt.Sprintf("; WARNING: attempts>=max_retries (%d) — next Fail is permanent", maxRetries)
+			msg += fmt.Sprintf("; WARNING: attempts>=max_retries (%d) — next Fail is permanent (jobs:retry resets attempts)", maxRetries)
 		}
-		if prior == domainjobs.StatusDone || prior == domainjobs.StatusCancelled {
+		if domainjobs.TerminalRequeueNeedsForce(prior) {
 			msg += "; WARNING: resurrected terminal success/cancel — handlers must be idempotent"
 		}
 		return msg + ".\n"
 	}
 	return fmt.Sprintf("Job %s requeued (processing → pending, attempts=%d kept; min-age=%s).\n", id, attempts, minAge)
+}
+
+func formatJobsRequeueError(requeueErr error, minAge time.Duration) error {
+	switch {
+	case errors.Is(requeueErr, domainjobs.ErrRequeueTooFresh):
+		return fmt.Errorf("jobs:requeue: claim younger than --min-age=%s (still a plausible live handler): %w", minAge, requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueInProgress):
+		return fmt.Errorf("jobs:requeue: another reclaim is in progress (wait for it to finish or for the default %s lease to expire): %w", domainjobs.DefaultRequeueMinAge, requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
+		return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved under TOCTOU): %w", requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueNotFound):
+		return fmt.Errorf("jobs:requeue: job disappeared (deleted under TOCTOU): %w", requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
+		return fmt.Errorf("jobs:requeue: status no longer processing (moved under TOCTOU): %w", requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueNotTerminal):
+		return fmt.Errorf("jobs:requeue: status no longer terminal (moved under TOCTOU): %w", requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueConflict):
+		return fmt.Errorf("jobs:requeue: concurrent update lost the reclaim race: %w", requeueErr)
+	case errors.Is(requeueErr, domainjobs.ErrRequeueUnsupported):
+		return fmt.Errorf("jobs:requeue: unsupported for this queue driver: %w", requeueErr)
+	default:
+		return fmt.Errorf("jobs:requeue: %w", requeueErr)
+	}
 }
