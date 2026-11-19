@@ -317,13 +317,16 @@ type failExistingSaveCartRepo struct {
 }
 
 func (r *failExistingSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
-	r.mu.RLock()
-	_, exists := r.carts[c.ID]
-	r.mu.RUnlock()
-	if exists {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.carts[c.ID]; exists {
 		return errors.New("disk full")
 	}
-	return r.stubCartRepo.Save(ctx, c)
+	clone := *c
+	clone.Items = make([]domainCart.Item, len(c.Items))
+	copy(clone.Items, c.Items)
+	r.carts[c.ID] = &clone
+	return nil
 }
 
 func TestService_DiscardEmptyGuestCart_PurgesOrphanExtensions(t *testing.T) {
@@ -1138,13 +1141,15 @@ func TestService_ClaimGuestCart_ReplaceTargetFailKeepsSnapshotForRetryClaim(t *t
 // barrierSaveCartRepo, once armed, blocks merge Saves (MergedGuestID set)
 // until both callers have entered, then lets the first commit and returns a
 // version conflict for the second. The loser waits until the winner's Save
-// has finished so FindByID sees MergedGuestID (production skips restore in
-// that case). Setup Saves pass through unblocked.
+// has finished so FindByID sees MergedGuestID and ClaimGuestCart returns
+// success via the durable-merge short-circuit (no snapshot restore).
+// Setup Saves pass through unblocked.
 type barrierSaveCartRepo struct {
 	*versionCartRepo
 	entered     chan struct{}
 	release     chan struct{}
 	winnerSaved chan struct{}
+	closeWinner sync.Once
 	mu          sync.Mutex
 	armed       bool
 	merges      int
@@ -1166,9 +1171,8 @@ func (r *barrierSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) erro
 	r.entered <- struct{}{}
 	<-r.release
 	if n == 1 {
-		err := r.versionCartRepo.Save(ctx, c)
-		close(r.winnerSaved)
-		return err
+		defer r.closeWinner.Do(func() { close(r.winnerSaved) })
+		return r.versionCartRepo.Save(ctx, c)
 	}
 	<-r.winnerSaved
 	return apperror.Conflict("cart was modified concurrently")
@@ -1176,8 +1180,9 @@ func (r *barrierSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) erro
 
 // TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions
 // covers: two overlapping merges both CopyTarget; one Save commits
-// MergedGuestID; the loser must not ReplaceTarget the pre-merge snapshot
-// back over the winner's guest extension values.
+// MergedGuestID; the loser's Save Conflict must take the durable-merge
+// short-circuit (both ClaimGuestCart succeed) and must not ReplaceTarget
+// the pre-merge snapshot back over the winner's guest extension values.
 func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(domainext.FieldDef{
@@ -1227,45 +1232,43 @@ func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *te
 	carts.armed = true
 	carts.mu.Unlock()
 
+	type claimResult struct {
+		cart *domainCart.Cart
+		err  error
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	errs := make(chan error, 2)
+	results := make(chan claimResult, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
-			errs <- err
+			c, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
+			results <- claimResult{cart: c, err: err}
 		}()
 	}
 	<-carts.entered
 	<-carts.entered
 	close(carts.release)
 	wg.Wait()
-	close(errs)
-	// barrierSaveCartRepo lets the first merge Save commit and returns
-	// Conflict for the second — the loser is expected, not a hard failure.
-	var nOK, nConflict int
-	for err := range errs {
-		if err == nil {
-			nOK++
-			continue
+	close(results)
+
+	// Under winnerSaved, production maps the loser's Save Conflict to the
+	// MergedGuestID short-circuit → both calls succeed (no restore).
+	var got []*domainCart.Cart
+	for res := range results {
+		if res.err != nil {
+			t.Fatalf("ClaimGuestCart: %v (want both nil via durable-merge short-circuit)", res.err)
 		}
-		var appErr *apperror.Error
-		if errors.As(err, &appErr) && appErr.Code == apperror.CodeConflict {
-			nConflict++
-			continue
+		if res.cart == nil {
+			t.Fatal("ClaimGuestCart returned nil cart")
 		}
-		if strings.Contains(err.Error(), "modified concurrently") {
-			nConflict++
-			continue
+		if res.cart.MergedGuestID != guestCart.ID {
+			t.Fatalf("MergedGuestID = %q, want %q", res.cart.MergedGuestID, guestCart.ID)
 		}
-		t.Fatalf("ClaimGuestCart: %v", err)
+		got = append(got, res.cart)
 	}
-	if nOK == 0 {
-		t.Fatal("want at least one successful ClaimGuestCart")
-	}
-	if nOK+nConflict != 2 {
-		t.Fatalf("outcomes: ok=%d conflict=%d, want 2 total", nOK, nConflict)
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want 2", len(got))
 	}
 
 	stored, err := repo.ListByTarget(ctx, domainext.CartItemTarget(customerCart.ID, "var-1"))
@@ -1275,12 +1278,12 @@ func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *te
 	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "guest" {
 		t.Fatalf("after concurrent claim = %+v, want guest value", stored)
 	}
-	got, err := carts.FindByID(ctx, customerCart.ID)
+	persisted, err := carts.FindByID(ctx, customerCart.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.MergedGuestID != guestCart.ID {
-		t.Fatalf("MergedGuestID = %q, want %q", got.MergedGuestID, guestCart.ID)
+	if persisted == nil || persisted.MergedGuestID != guestCart.ID {
+		t.Fatalf("persisted MergedGuestID = %q, want %q", persisted.MergedGuestID, guestCart.ID)
 	}
 }
 

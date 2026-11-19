@@ -130,10 +130,14 @@ func (r *stubPriceRepo) setWithStore(variantID, currency, storeID string, amount
 
 func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.reads++
 	p := r.prices[variantID+":"+currency+":"+storeID]
-	r.mu.Unlock()
-	return p, nil
+	if p == nil {
+		return nil, nil
+	}
+	clone := *p
+	return &clone, nil
 }
 
 func (r *stubPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
