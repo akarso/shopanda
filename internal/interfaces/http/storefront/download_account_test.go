@@ -123,7 +123,7 @@ func (s *memReadableStorage) URL(path string) string {
 	}
 	return "https://public.example/" + path
 }
-func (s *memReadableStorage) Read(path string) ([]byte, error) {
+func (s *memReadableStorage) Read(_ context.Context, path string) ([]byte, error) {
 	b, ok := s.files[path]
 	if !ok {
 		return nil, os.ErrNotExist

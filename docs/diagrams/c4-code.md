@@ -513,7 +513,7 @@ classDiagram
     }
     class ReadableStorage {
         <<interface>>
-        +Read(path) []byte
+        +Read(ctx, path) []byte
     }
     class SignedURLStorage {
         <<interface>>
@@ -527,7 +527,8 @@ classDiagram
         +Head(ctx, path) error
         +SignedURL(ctx, path, opts) string
         +Handler() http.Handler
-        +Read(path) []byte
+        +Read(ctx, path) []byte
+        +ReadContext(ctx, path) []byte
         +Open(path) *os.File
     }
     class S3Storage {

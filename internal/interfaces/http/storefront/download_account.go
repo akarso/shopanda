@@ -133,7 +133,7 @@ func (h *DownloadAccountHandler) Deliver() http.HandlerFunc {
 			))
 			return
 		}
-		data, err := reader.Read(asset.Path)
+		data, err := reader.Read(r.Context(), asset.Path)
 		if err != nil {
 			if media.IsNotFound(err) {
 				httpshared.JSONError(w, apperror.NotFound("download file not found in storage"))

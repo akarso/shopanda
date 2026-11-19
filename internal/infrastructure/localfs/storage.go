@@ -216,18 +216,49 @@ func (s *Storage) Delete(path string) error {
 	return nil
 }
 
-// Read returns file contents from basePath/path.
-func (s *Storage) Read(path string) ([]byte, error) {
+// readChunkSize is the byte window between ctx.Err() checks in ReadContext.
+const readChunkSize = 32 * 1024
+
+// Read implements media.ReadableStorage — chunked via ReadContext.
+func (s *Storage) Read(ctx context.Context, path string) ([]byte, error) {
+	return s.ReadContext(ctx, path)
+}
+
+// ReadContext returns file contents from basePath/path, honouring ctx
+// cancellation before open and between 32 KiB chunks so a cancelled request
+// or worker job does not keep reading a large blob.
+func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	full, err := s.resolveSafePath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err := os.ReadFile(full)
+	f, err := os.Open(full)
 	if err != nil {
 		return nil, fmt.Errorf("localfs: read: %w", err)
 	}
-	return data, nil
+	defer f.Close()
+
+	var data []byte
+	chunk := make([]byte, readChunkSize)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := f.Read(chunk)
+		if n > 0 {
+			data = append(data, chunk[:n]...)
+		}
+		if readErr == io.EOF {
+			return data, nil
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("localfs: read: %w", readErr)
+		}
+	}
 }
 
 // Open returns a read-only file for streaming signed GETs.

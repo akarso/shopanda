@@ -189,8 +189,10 @@ type Storage interface {
 type ReadableStorage interface {
 	Storage
 
-	// Read returns the stored object bytes at path.
-	Read(path string) ([]byte, error)
+	// Read returns the stored object bytes at path. Implementations must
+	// honour ctx cancellation (localfs checks between 32 KiB chunks). S3
+	// grant delivery uses SignedURLStorage instead of this method.
+	Read(ctx context.Context, path string) ([]byte, error)
 }
 
 // Disposition selects Content-Disposition on a signed GET.

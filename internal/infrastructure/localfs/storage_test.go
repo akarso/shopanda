@@ -1,6 +1,9 @@
 package localfs_test
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +123,7 @@ func TestStorage_Read(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := s.Read("invoices/inv-1/invoice-1.pdf")
+	got, err := s.Read(context.Background(), "invoices/inv-1/invoice-1.pdf")
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -132,11 +135,51 @@ func TestStorage_Read(t *testing.T) {
 func TestStorage_Read_DirectoryTraversal(t *testing.T) {
 	s := mustLocal(t, t.TempDir(), "/media")
 
-	_, err := s.Read("../../etc/passwd")
+	_, err := s.Read(context.Background(), "../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for directory traversal")
 	}
 	if !strings.Contains(err.Error(), "escapes base directory") {
 		t.Errorf("error = %q, want mention of escapes base directory", err.Error())
+	}
+}
+
+func TestStorage_ReadContext_Canceled(t *testing.T) {
+	dir := t.TempDir()
+	s := mustLocal(t, dir, "/media")
+
+	// Multi-chunk blob so a non-cancelled read would loop; cancelled ctx
+	// must return before loading the full object into memory.
+	const size = 128 * 1024
+	content := bytes.Repeat([]byte("x"), size)
+	if err := s.Save("blobs/large.bin", bytes.NewReader(content)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := s.ReadContext(ctx, "blobs/large.bin")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if got != nil {
+		t.Fatalf("got %d bytes, want nil on cancel", len(got))
+	}
+}
+
+func TestStorage_ReadContext_MultiChunk(t *testing.T) {
+	dir := t.TempDir()
+	s := mustLocal(t, dir, "/media")
+
+	content := bytes.Repeat([]byte("ab"), 40*1024) // 80 KiB > one 32 KiB chunk
+	if err := s.Save("blobs/multi.bin", bytes.NewReader(content)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.ReadContext(context.Background(), "blobs/multi.bin")
+	if err != nil {
+		t.Fatalf("ReadContext: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("len=%d, want %d", len(got), len(content))
 	}
 }
