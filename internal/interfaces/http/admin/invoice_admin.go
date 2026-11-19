@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -120,6 +121,9 @@ func (h *InvoiceAdminHandler) DownloadPDF() http.HandlerFunc {
 
 		pdfBytes, err := h.loadPDFBytes(r.Context(), *inv)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "download invoice pdf failed", err))
 			return
 		}

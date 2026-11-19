@@ -216,18 +216,18 @@ func (s *Storage) Delete(path string) error {
 	return nil
 }
 
-// readChunkSize is the byte window between ctx.Err() checks in ReadContext.
-const readChunkSize = 32 * 1024
+// readChunkSize is the byte window between ctx.Err() checks in Read.
+// Mutable for tests that exercise between-chunk cancellation.
+var readChunkSize = 32 * 1024
 
-// Read implements media.ReadableStorage — chunked via ReadContext.
+// testAfterReadChunk is invoked after each successful chunk append (tests only).
+var testAfterReadChunk func(n int)
+
+// Read implements media.ReadableStorage. ctx must be non-nil. Cancellation is
+// checked before open and between readChunkSize windows; a single blocking
+// f.Read may still finish after cancel. Success path preallocates from Stat
+// when size is known (same order of cost as os.ReadFile for complete reads).
 func (s *Storage) Read(ctx context.Context, path string) ([]byte, error) {
-	return s.ReadContext(ctx, path)
-}
-
-// ReadContext returns file contents from basePath/path, honouring ctx
-// cancellation before open and between 32 KiB chunks so a cancelled request
-// or worker job does not keep reading a large blob.
-func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -243,6 +243,9 @@ func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) 
 	defer f.Close()
 
 	var data []byte
+	if st, err := f.Stat(); err == nil && st.Size() > 0 {
+		data = make([]byte, 0, st.Size())
+	}
 	chunk := make([]byte, readChunkSize)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -251,6 +254,9 @@ func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) 
 		n, readErr := f.Read(chunk)
 		if n > 0 {
 			data = append(data, chunk[:n]...)
+			if testAfterReadChunk != nil {
+				testAfterReadChunk(n)
+			}
 		}
 		if readErr == io.EOF {
 			return data, nil
@@ -259,6 +265,12 @@ func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) 
 			return nil, fmt.Errorf("localfs: read: %w", readErr)
 		}
 	}
+}
+
+// ReadContext is a Metal Dogs / product alias for Read. Prefer Read via
+// media.ReadableStorage; this name remains for concrete-type call sites.
+func (s *Storage) ReadContext(ctx context.Context, path string) ([]byte, error) {
+	return s.Read(ctx, path)
 }
 
 // Open returns a read-only file for streaming signed GETs.

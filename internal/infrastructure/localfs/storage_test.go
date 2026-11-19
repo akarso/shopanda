@@ -144,12 +144,10 @@ func TestStorage_Read_DirectoryTraversal(t *testing.T) {
 	}
 }
 
-func TestStorage_ReadContext_Canceled(t *testing.T) {
+func TestStorage_Read_CanceledBeforeOpen(t *testing.T) {
 	dir := t.TempDir()
 	s := mustLocal(t, dir, "/media")
 
-	// Multi-chunk blob so a non-cancelled read would loop; cancelled ctx
-	// must return before loading the full object into memory.
 	const size = 128 * 1024
 	content := bytes.Repeat([]byte("x"), size)
 	if err := s.Save("blobs/large.bin", bytes.NewReader(content)); err != nil {
@@ -158,7 +156,7 @@ func TestStorage_ReadContext_Canceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	got, err := s.ReadContext(ctx, "blobs/large.bin")
+	got, err := s.Read(ctx, "blobs/large.bin")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -167,7 +165,7 @@ func TestStorage_ReadContext_Canceled(t *testing.T) {
 	}
 }
 
-func TestStorage_ReadContext_MultiChunk(t *testing.T) {
+func TestStorage_Read_MultiChunk(t *testing.T) {
 	dir := t.TempDir()
 	s := mustLocal(t, dir, "/media")
 
@@ -175,9 +173,9 @@ func TestStorage_ReadContext_MultiChunk(t *testing.T) {
 	if err := s.Save("blobs/multi.bin", bytes.NewReader(content)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	got, err := s.ReadContext(context.Background(), "blobs/multi.bin")
+	got, err := s.Read(context.Background(), "blobs/multi.bin")
 	if err != nil {
-		t.Fatalf("ReadContext: %v", err)
+		t.Fatalf("Read: %v", err)
 	}
 	if !bytes.Equal(got, content) {
 		t.Fatalf("len=%d, want %d", len(got), len(content))

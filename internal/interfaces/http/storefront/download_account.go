@@ -1,6 +1,8 @@
 package storefront
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -137,6 +139,10 @@ func (h *DownloadAccountHandler) Deliver() http.HandlerFunc {
 		if err != nil {
 			if media.IsNotFound(err) {
 				httpshared.JSONError(w, apperror.NotFound("download file not found in storage"))
+				return
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// Client gone mid-read — no Internal / no error-level ops noise.
 				return
 			}
 			h.logDeliveryError("storefront.download.delivery.read_failed", err, grantID, asset.ID)

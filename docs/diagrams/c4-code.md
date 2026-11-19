@@ -528,7 +528,6 @@ classDiagram
         +SignedURL(ctx, path, opts) string
         +Handler() http.Handler
         +Read(ctx, path) []byte
-        +ReadContext(ctx, path) []byte
         +Open(path) *os.File
     }
     class S3Storage {
