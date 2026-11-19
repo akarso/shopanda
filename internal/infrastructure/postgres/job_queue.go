@@ -13,6 +13,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -339,7 +340,12 @@ func (q *JobQueue) Requeue(ctx context.Context, id string, attempt int, opts ...
 // they commit with the jobs row (or be independently idempotent). External
 // side effects that commit before this TX are not retried on COMMIT failure —
 // the reclaim returns the commit error and the row stays in its prior status.
-func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
+func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, jobID string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
+	// jobs.id is uuid; a non-UUID must not surface as a raw 22P02 to
+	// operators (jobs:requeue <not-a-uuid>). Same sentinel as a miss.
+	if !id.IsUUID(jobID) {
+		return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
+	}
 	settings := jobs.ResolveRequeueOptions(opts)
 	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -355,30 +361,34 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 		`SELECT status, attempts, updated_at,
 		        (updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
 		 FROM jobs WHERE id = $1 FOR UPDATE`,
-		id, settings.MinAge.Milliseconds(),
+		jobID, settings.MinAge.Milliseconds(),
 	).Scan(&status, &attempts, &updatedAt, &aged)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotFound)
+		return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
 	}
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+			return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
+		}
 		return fmt.Errorf("job_queue: requeue lock: %w", err)
 	}
 	jobStatus := jobs.Status(status)
 	if settings.Terminal {
 		if !jobs.IsTerminalRequeueStatus(jobStatus) {
-			return fmt.Errorf("job_queue: requeue %s status %s: %w", id, status, jobs.ErrRequeueNotTerminal)
+			return fmt.Errorf("job_queue: requeue %s status %s: %w", jobID, status, jobs.ErrRequeueNotTerminal)
 		}
 	} else {
 		if jobStatus != jobs.StatusProcessing {
-			return fmt.Errorf("job_queue: requeue %s status %s: %w", id, status, jobs.ErrRequeueNotProcessing)
+			return fmt.Errorf("job_queue: requeue %s status %s: %w", jobID, status, jobs.ErrRequeueNotProcessing)
 		}
 		if !aged {
 			return fmt.Errorf("job_queue: requeue %s updated_at %s younger than %s (db clock): %w",
-				id, updatedAt.UTC().Format(time.RFC3339Nano), settings.MinAge, jobs.ErrRequeueTooFresh)
+				jobID, updatedAt.UTC().Format(time.RFC3339Nano), settings.MinAge, jobs.ErrRequeueTooFresh)
 		}
 	}
 	if attempts != attempt {
-		return fmt.Errorf("job_queue: requeue %s attempt %d (have %d): %w", id, attempt, attempts, jobs.ErrRequeueWrongAttempt)
+		return fmt.Errorf("job_queue: requeue %s attempt %d (have %d): %w", jobID, attempt, attempts, jobs.ErrRequeueWrongAttempt)
 	}
 
 	hookCtx := jobs.WithRequeueTx(ctx, tx)
@@ -390,7 +400,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 					beforeErr = fmt.Errorf("job_queue: requeue before-commit panic: %v", rec)
 				}
 			}()
-			beforeErr = before(hookCtx, id, attempt)
+			beforeErr = before(hookCtx, jobID, attempt)
 		}()
 		if beforeErr != nil {
 			return beforeErr
@@ -400,7 +410,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 	result, err := tx.ExecContext(ctx,
 		`UPDATE jobs SET status = 'pending', run_at = NOW(), updated_at = NOW()
 		 WHERE id = $1 AND status = $2 AND attempts = $3`,
-		id, status, attempt,
+		jobID, status, attempt,
 	)
 	if err != nil {
 		return fmt.Errorf("job_queue: requeue update: %w", err)
@@ -410,7 +420,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 		return fmt.Errorf("job_queue: requeue rows: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueConflict)
+		return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueConflict)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("job_queue: requeue commit: %w", err)

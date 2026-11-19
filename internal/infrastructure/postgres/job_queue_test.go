@@ -467,6 +467,27 @@ func TestJobQueue_Requeue_MissingID(t *testing.T) {
 	}
 }
 
+// Invalid UUID is rejected before BeginTx (no DSN required). Same sentinel
+// as a missing row so jobs:requeue <not-a-uuid> does not surface 22P02.
+func TestJobQueue_Requeue_InvalidUUIDNoDB(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+	if err := q.Requeue(ctx, "missing-id", 1); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("default: %v, want ErrRequeueNotFound", err)
+	}
+	if err := q.RequeueWithBeforeCommit(ctx, "not-a-uuid", 1, nil, jobs.WithRequeueTerminal()); err == nil || !errors.Is(err, jobs.ErrRequeueNotFound) {
+		t.Fatalf("terminal WithBeforeCommit: %v, want ErrRequeueNotFound", err)
+	}
+}
+
 func TestJobQueue_Fail_Retry(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
