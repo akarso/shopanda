@@ -322,22 +322,25 @@ func (q *JobQueue) CountsByType(ctx context.Context, jobType string) (map[jobs.S
 	return out, nil
 }
 
-// Requeue moves a processing job back to pending without resetting attempts.
+// Requeue moves a job back to pending without resetting attempts.
 func (q *JobQueue) Requeue(ctx context.Context, id string, attempt int, opts ...jobs.RequeueOption) error {
 	return q.RequeueWithBeforeCommit(ctx, id, attempt, nil, opts...)
 }
 
-// RequeueWithBeforeCommit locks the row, validates reclaim predicates on the
-// database clock, runs before (fence release) while still processing under
-// FOR UPDATE, then sets pending. A non-nil before error or panic aborts —
-// the row stays processing.
+// RequeueWithBeforeCommit locks the row, validates reclaim predicates, runs
+// before (fence release) under FOR UPDATE, then sets pending. A non-nil
+// before error or panic aborts — the row stays in its prior status.
+//
+// Default mode: processing only + min-age (db clock). Terminal mode
+// (WithRequeueTerminal): failed/done/cancelled only, no min-age; last_error
+// unchanged; run_at=NOW(); attempts kept.
 //
 // Hooks must use jobs.RequeueTx / pluginsdk.RequeueTx for fence writes so
 // they commit with the jobs row (or be independently idempotent). External
 // side effects that commit before this TX are not retried on COMMIT failure —
-// the reclaim returns the commit error and the row stays processing.
+// the reclaim returns the commit error and the row stays in its prior status.
 func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
-	minAge := jobs.ApplyRequeueOptions(opts)
+	settings := jobs.ResolveRequeueOptions(opts)
 	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("job_queue: requeue begin: %w", err)
@@ -352,23 +355,30 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 		`SELECT status, attempts, updated_at,
 		        (updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
 		 FROM jobs WHERE id = $1 FOR UPDATE`,
-		id, minAge.Milliseconds(),
+		id, settings.MinAge.Milliseconds(),
 	).Scan(&status, &attempts, &updatedAt, &aged)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotProcessing)
+		return fmt.Errorf("job_queue: requeue %s: %w", id, jobs.ErrRequeueNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("job_queue: requeue lock: %w", err)
 	}
-	if status != string(jobs.StatusProcessing) {
-		return fmt.Errorf("job_queue: requeue %s status %s: %w", id, status, jobs.ErrRequeueNotProcessing)
+	jobStatus := jobs.Status(status)
+	if settings.Terminal {
+		if !jobs.IsTerminalRequeueStatus(jobStatus) {
+			return fmt.Errorf("job_queue: requeue %s status %s: %w", id, status, jobs.ErrRequeueNotTerminal)
+		}
+	} else {
+		if jobStatus != jobs.StatusProcessing {
+			return fmt.Errorf("job_queue: requeue %s status %s: %w", id, status, jobs.ErrRequeueNotProcessing)
+		}
+		if !aged {
+			return fmt.Errorf("job_queue: requeue %s updated_at %s younger than %s (db clock): %w",
+				id, updatedAt.UTC().Format(time.RFC3339Nano), settings.MinAge, jobs.ErrRequeueTooFresh)
+		}
 	}
 	if attempts != attempt {
 		return fmt.Errorf("job_queue: requeue %s attempt %d (have %d): %w", id, attempt, attempts, jobs.ErrRequeueWrongAttempt)
-	}
-	if !aged {
-		return fmt.Errorf("job_queue: requeue %s updated_at %s younger than %s (db clock): %w",
-			id, updatedAt.UTC().Format(time.RFC3339Nano), minAge, jobs.ErrRequeueTooFresh)
 	}
 
 	hookCtx := jobs.WithRequeueTx(ctx, tx)
@@ -389,8 +399,8 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, id string, attem
 
 	result, err := tx.ExecContext(ctx,
 		`UPDATE jobs SET status = 'pending', run_at = NOW(), updated_at = NOW()
-		 WHERE id = $1 AND status = 'processing' AND attempts = $2`,
-		id, attempt,
+		 WHERE id = $1 AND status = $2 AND attempts = $3`,
+		id, status, attempt,
 	)
 	if err != nil {
 		return fmt.Errorf("job_queue: requeue update: %w", err)

@@ -83,8 +83,16 @@ var ErrRequeueTooFresh = errors.New("jobs: requeue claim too fresh")
 // ErrRequeueWrongAttempt means attempts did not match the live claim.
 var ErrRequeueWrongAttempt = errors.New("jobs: requeue wrong attempt")
 
-// ErrRequeueNotProcessing means the row is missing or not status=processing.
+// ErrRequeueNotFound means no jobs row matched the id (FOR UPDATE miss).
+var ErrRequeueNotFound = errors.New("jobs: requeue job not found")
+
+// ErrRequeueNotProcessing means the row exists but is not status=processing
+// (default reclaim mode). Missing rows use ErrRequeueNotFound.
 var ErrRequeueNotProcessing = errors.New("jobs: requeue not processing")
+
+// ErrRequeueNotTerminal means WithRequeueTerminal was set but the row is not
+// failed/done/cancelled. Missing rows use ErrRequeueNotFound.
+var ErrRequeueNotTerminal = errors.New("jobs: requeue not terminal")
 
 // ErrRequeueInProgress means another Requeue already holds reclaiming and
 // its reclaim is younger than the fixed DefaultRequeueMinAge lease (not the
@@ -94,6 +102,7 @@ var ErrRequeueInProgress = errors.New("jobs: requeue already in progress")
 // DefaultRequeueMinAge is the default minimum claim age when the caller
 // does not pass WithRequeueMinAge (aligned with jobs:requeue). Age alone
 // does not prove the worker is dead — prefer waiting for Fail then Retry.
+// Ignored when WithRequeueTerminal is set.
 const DefaultRequeueMinAge = 5 * time.Minute
 
 // MinRequeueMinAge is the lowest WithRequeueMinAge value backends honor
@@ -105,34 +114,86 @@ const MinRequeueMinAge = time.Second
 type RequeueOption func(*requeueConfig)
 
 type requeueConfig struct {
-	MinAge time.Duration
+	MinAge   time.Duration
+	Terminal bool
+}
+
+// RequeueSettings is the resolved option set for backends.
+type RequeueSettings struct {
+	MinAge   time.Duration
+	Terminal bool
 }
 
 // WithRequeueMinAge sets how old a processing claim must be before reclaim.
-// Values <= 0 fall back to DefaultRequeueMinAge.
+// Values <= 0 fall back to DefaultRequeueMinAge. When WithRequeueTerminal is
+// also set, MinAge is ignored (no age check on terminal rows).
 func WithRequeueMinAge(d time.Duration) RequeueOption {
 	return func(c *requeueConfig) { c.MinAge = d }
 }
 
-// ApplyRequeueOptions resolves min-age for backends. Values <= 0 or below
-// MinRequeueMinAge fall back to DefaultRequeueMinAge.
-func ApplyRequeueOptions(opts []RequeueOption) time.Duration {
+// WithRequeueTerminal re-pends a failed/done/cancelled job while keeping
+// attempts, running OnRequeued / RequeueTx in the same transaction, setting
+// run_at=NOW(), and leaving last_error unchanged. Does not accept
+// pending/processing (use default reclaim for stale processing claims).
+//
+// API is ungated: any caller may pass this option for done/cancelled.
+// The jobs:requeue CLI treats production failed as exhausted (Fail only
+// marks failed when attempts>=max_retries) — operators use jobs:retry or
+// --terminal --force; bare --terminal is for anomalous non-exhausted failed.
+// --force also covers done/cancelled and is a no-op when not required.
+// Do not assume Queue.Requeue enforces that. Admin.Retry remains failed-only
+// with attempts=0 and no hooks.
+func WithRequeueTerminal() RequeueOption {
+	return func(c *requeueConfig) { c.Terminal = true }
+}
+
+// ResolveRequeueOptions resolves min-age and terminal mode for backends.
+// Terminal=true ignores MinAge (returned MinAge is still normalized for
+// callers that log it; backends must skip the age predicate).
+func ResolveRequeueOptions(opts []RequeueOption) RequeueSettings {
 	cfg := requeueConfig{MinAge: DefaultRequeueMinAge}
 	for _, o := range opts {
 		if o != nil {
 			o(&cfg)
 		}
 	}
-	if cfg.MinAge < MinRequeueMinAge {
-		return DefaultRequeueMinAge
+	minAge := cfg.MinAge
+	if minAge < MinRequeueMinAge {
+		minAge = DefaultRequeueMinAge
 	}
-	return cfg.MinAge
+	return RequeueSettings{MinAge: minAge, Terminal: cfg.Terminal}
+}
+
+// ApplyRequeueOptions resolves min-age for backends. Values <= 0 or below
+// MinRequeueMinAge fall back to DefaultRequeueMinAge.
+func ApplyRequeueOptions(opts []RequeueOption) time.Duration {
+	return ResolveRequeueOptions(opts).MinAge
+}
+
+// IsTerminalRequeueStatus reports whether status may be re-pended with
+// WithRequeueTerminal (API). CLI force rules use TerminalRequeueNeedsForce.
+func IsTerminalRequeueStatus(s Status) bool {
+	switch s {
+	case StatusFailed, StatusDone, StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// TerminalRequeueNeedsForce reports statuses the jobs:requeue CLI treats as
+// high-risk (done/cancelled resurrection). Failed never needs force for
+// status alone; exhausted attempts are a separate CLI check.
+func TerminalRequeueNeedsForce(s Status) bool {
+	return s == StatusDone || s == StatusCancelled
 }
 
 // RequeueBeforeCommit runs after reclaim predicates pass and before the
-// job becomes dequeueable (postgres: still processing under FOR UPDATE;
-// redis: status=reclaiming, off ready). OnRequeued fence release sees
-// attempt N. Return non-nil to abort — row must not land on ready/pending.
+// job becomes dequeueable (postgres: row locked under FOR UPDATE in its
+// prior status — processing for default reclaim, or failed/done/cancelled
+// for WithRequeueTerminal; redis: status=reclaiming, off ready).
+// OnRequeued fence release sees attempt N. Return non-nil to abort — row
+// must not land on ready/pending.
 //
 // Hooks must not open a second connection and UPDATE the same jobs row
 // (deadlocks the reclaim lock). On Postgres, use RequeueTx(ctx) /
@@ -168,12 +229,15 @@ type Queue interface {
 	// Returns ErrOutcomeNotApplied when no row matches.
 	Fail(ctx context.Context, id string, attempt int, jobErr error) error
 
-	// Requeue moves a processing job back to pending without resetting
-	// attempts (unlike Admin.Retry, which is failed→pending with
-	// attempts=0). attempt must match the live claim; the row must be
-	// older than the configured min-age (default DefaultRequeueMinAge).
-	// Returns ErrRequeueTooFresh / WrongAttempt / NotProcessing (or
-	// ErrRequeueConflict), or ErrRequeueUnsupported on brokers.
+	// Requeue moves a job back to pending without resetting attempts
+	// (unlike Admin.Retry, which is failed→pending with attempts=0 and
+	// no OnRequeued). Default: processing only; attempt must match; row
+	// older than min-age (DefaultRequeueMinAge). WithRequeueTerminal:
+	// failed/done/cancelled only (API ungated — CLI --force is separate);
+	// no min-age; same attempt CAS; run_at=NOW(); last_error unchanged;
+	// OnRequeued runs in the reclaim TX.
+	// Returns ErrRequeueNotFound / TooFresh / WrongAttempt / NotProcessing /
+	// NotTerminal / Conflict, or ErrRequeueUnsupported on brokers.
 	Requeue(ctx context.Context, id string, attempt int, opts ...RequeueOption) error
 }
 
