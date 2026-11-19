@@ -4,7 +4,7 @@ These scripts are the quality contract for Shopanda and for product sites.
 
 | Script | Purpose |
 | --- | --- |
-| `unit.sh` | `go mod verify`, `gofmt`, `go vet`, `go test ./...` |
+| `unit.sh` | `go mod verify`, `gofmt`, `go vet`, `go test ./...`, then `go test -race ./internal/application/cart/` |
 | `integration.sh` | DSN-gated integration suite |
 | `govuln.sh` | Fail-closed govulncheck + baseline |
 | `docs-policy.sh` | Product-doc links + promote fixture |

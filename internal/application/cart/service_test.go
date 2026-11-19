@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/hooks"
@@ -30,6 +32,7 @@ import (
 
 // stubCartRepo is an in-memory cart repository for tests.
 type stubCartRepo struct {
+	mu    sync.RWMutex
 	carts map[string]*domainCart.Cart
 }
 
@@ -38,6 +41,8 @@ func newStubCartRepo() *stubCartRepo {
 }
 
 func (r *stubCartRepo) FindByID(_ context.Context, id string) (*domainCart.Cart, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	c, ok := r.carts[id]
 	if !ok {
 		return nil, nil
@@ -49,6 +54,8 @@ func (r *stubCartRepo) FindByID(_ context.Context, id string) (*domainCart.Cart,
 }
 
 func (r *stubCartRepo) FindActiveByCustomerID(_ context.Context, customerID string) (*domainCart.Cart, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, c := range r.carts {
 		if c.CustomerID == customerID && c.IsActive() {
 			clone := *c
@@ -61,6 +68,8 @@ func (r *stubCartRepo) FindActiveByCustomerID(_ context.Context, customerID stri
 }
 
 func (r *stubCartRepo) Save(_ context.Context, c *domainCart.Cart) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	// Store a shallow copy so tests can verify independently.
 	clone := *c
 	clone.Items = make([]domainCart.Item, len(c.Items))
@@ -70,24 +79,22 @@ func (r *stubCartRepo) Save(_ context.Context, c *domainCart.Cart) error {
 }
 
 func (r *stubCartRepo) Delete(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.carts, id)
 	return nil
 }
 
 func (r *stubCartRepo) DeleteEmptyGuestIfUnchanged(_ context.Context, cartID string, expectedVersion int) (bool, error) {
-	c, err := r.FindByID(context.Background(), cartID)
-	if err != nil {
-		return false, err
-	}
-	if c == nil || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.carts[cartID]
+	if !ok || c.CustomerID != "" || c.ItemCount() > 0 || c.Version != expectedVersion {
 		return false, nil
 	}
-	if err := r.Delete(context.Background(), cartID); err != nil {
-		return false, err
-	}
+	delete(r.carts, cartID)
 	return true, nil
 }
-
 
 func (r *stubCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
 	return nil, nil
@@ -99,6 +106,7 @@ func (r *stubCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time
 
 // stubPriceRepo returns pre-set prices by variant+currency+store.
 type stubPriceRepo struct {
+	mu     sync.RWMutex
 	prices map[string]*pricing.Price // key: "variantID:currency:storeID"
 	writes int
 	reads  int
@@ -115,12 +123,17 @@ func (r *stubPriceRepo) set(variantID, currency string, amount int64) {
 func (r *stubPriceRepo) setWithStore(variantID, currency, storeID string, amount int64) {
 	key := variantID + ":" + currency + ":" + storeID
 	p, _ := pricing.NewPrice("price-"+key, variantID, storeID, shared.MustNewMoney(amount, currency))
+	r.mu.Lock()
 	r.prices[key] = &p
+	r.mu.Unlock()
 }
 
 func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
+	r.mu.Lock()
 	r.reads++
-	return r.prices[variantID+":"+currency+":"+storeID], nil
+	p := r.prices[variantID+":"+currency+":"+storeID]
+	r.mu.Unlock()
+	return p, nil
 }
 
 func (r *stubPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
@@ -136,7 +149,9 @@ func (r *stubPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Price, erro
 }
 
 func (r *stubPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error {
+	r.mu.Lock()
 	r.writes++
+	r.mu.Unlock()
 	return nil
 }
 
