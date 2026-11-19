@@ -267,6 +267,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Variant → product slug in hooks | `extapi.ClassifyProductSlug` / `FindVariants` — Match validate; Other skip; Unknown fail closed |
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
 | Read `queue.driver` (or search/cache/media) at Init | `Host.PlatformConfig` / `pluginsdk.RequireQueueDriver` — not `ConfigValue` |
+| Request id for log correlation | `pluginsdk.RequestIDFromContext(ctx)` — not `internal/platform/requestctx` |
 
 ---
 
