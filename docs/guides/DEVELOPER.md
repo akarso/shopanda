@@ -244,7 +244,8 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()`, `BootstrapDB()` — ports
   bound by the composition root (`(port, bool)`; declare with `Require(cap)`). `CapJobs` is
   bound on serve/worker/scheduler/jobs CLI when the queue implements Reader (Postgres);
-  broker queues leave it unbound. `CapCart` is
+  broker queues leave it unbound. `CapMedia` is satisfied by `BindMediaStorage` on the
+  same process set as media resolve. `CapCart` is
   serve-only; `CapCatalogSeed` is CLI-seed-only: the owning plugin's `RequiresDB: true`
   command auto-binds CatalogSeed (resolve in the handler, not `Init`). Raw DB stays behind
   `BootstrapDB` + `CapDB`.   Non-owning processes skip process-scoped caps via

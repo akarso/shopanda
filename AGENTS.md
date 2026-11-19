@@ -270,6 +270,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Request id for log correlation | `pluginsdk.RequestIDFromContext(ctx)` — not `internal/platform/requestctx` |
 | Human price → minor units | `extapi.ParseMinorUnits(s, exponent)` + `extapi.IsValidCurrency` (caller passes exponent) |
 | Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` — not `internal/domain/jobs` |
+| Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 
 ---
 

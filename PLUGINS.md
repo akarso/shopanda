@@ -127,6 +127,7 @@ Available today through `plugin.App`:
 | **Catalog reads** | `Host.Catalog()` | `FindVariant` / `FindVariants` / `FindProduct`; `ProductVisible` + `ProductSlug`; use `extapi.ClassifyProductSlug` in `cart.validate` (Match / Other / Unknown) |
 | **CartPort** (Needs `CapCart`) | `Host.Cart()` | `AddItem`, `Get`, `EnsureActive`, `EnsureStorefrontCart`, `DiscardEmptyGuestCart`, `DeleteLineExtension`, `UpsertLineExtension`; trusted plugin-only writes via `WithPluginWrite` on the call ctx (Host pins the plugin name) |
 | **JobsPort** (Needs `CapJobs`) | `Host.Jobs()` | `Get`, `CountsByStatus`, `Requeue` (+ `WithRequeueMinAge` / `WithRequeueTerminal`, `ErrRequeue*`, `JobStatus*`). Bound after `resolveAndBindJobQueue` when the queue implements `jobs.Reader` (Postgres). Broker queues leave CapJobs unbound. |
+| **MediaPort** (Needs `CapMedia`) | `Host.Media()` | `Name`/`Save`/`Delete`/`URL`; `AsReadableStorage` / `AsSignedURLStorage` when the backend supports them. Satisfied by `BindMediaStorage` (same processes as job queue bind). |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
