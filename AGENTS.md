@@ -268,6 +268,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Capability ports | `Needs()` + `Require(CapCart)`; ensure serve/CLI bind ports (Track E PR-1547) |
 | Read `queue.driver` (or search/cache/media) at Init | `Host.PlatformConfig` / `pluginsdk.RequireQueueDriver` — not `ConfigValue` |
 | Request id for log correlation | `pluginsdk.RequestIDFromContext(ctx)` — not `internal/platform/requestctx` |
+| Human price → minor units | `extapi.ParseMinorUnits(s, exponent)` + `extapi.IsValidCurrency` (caller passes exponent) |
 
 ---
 
