@@ -59,13 +59,20 @@ func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
 		t.Skip("SHOPANDA_TEST_DSN not set")
 	}
 	t.Setenv("DATABASE_URL", dsn)
+	// Empty media.storage still loads core/storage-local; give it a usable
+	// local root so Init does not fail on empty base_path (and hide under
+	// io.Discard). Dev mode allows empty sign_secret (ephemeral key).
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
 	cfg := &config.Config{}
 	cfg.Queue.Driver = "postgres"
+	cfg.Media.Local.BasePath = t.TempDir()
+	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
 	cfg.Plugins.WarehouseDemo.Enabled = true
 	cfg.Plugins.WarehouseDemo.WarehouseBaseURL = "http://127.0.0.1:9/warehouse"
-	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(io.Discard, "error"))
+	var logBuf bytes.Buffer
+	rt, err := newJobsRuntime(cfg, logger.NewWithWriter(&logBuf, "error"))
 	if err != nil {
-		t.Fatalf("newJobsRuntime with warehousedemo: %v", err)
+		t.Fatalf("newJobsRuntime with warehousedemo: %v\ninit logs:\n%s", err, logBuf.String())
 	}
 	defer rt.conn.Close()
 	if rt.queue == nil || rt.svc == nil {
