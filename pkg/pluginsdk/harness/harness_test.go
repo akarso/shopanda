@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -81,5 +82,63 @@ func TestAdaptInit_RecordingCartBound(t *testing.T) {
 	}
 	if !rec.called {
 		t.Fatal("expected recording cart AddItem")
+	}
+}
+
+type needsJobsPlugin struct{}
+
+func (needsJobsPlugin) Name() string { return "harness/needsjobs" }
+func (needsJobsPlugin) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapJobs}
+}
+func (p *needsJobsPlugin) Init(h pluginsdk.Host) error {
+	h.Require(pluginsdk.CapJobs)
+	if _, ok := h.Jobs(); !ok {
+		return fmt.Errorf("Jobs() unavailable during Init after CapJobs bind")
+	}
+	return nil
+}
+
+func TestAdaptInit_CapJobsBindsPort(t *testing.T) {
+	res, err := harness.AdaptInit(&needsJobsPlugin{}, harness.Options{
+		Satisfy: []pluginsdk.Capability{pluginsdk.CapJobs},
+	})
+	if err != nil {
+		t.Fatalf("AdaptInit: %v", err)
+	}
+	jp, ok := res.Host.Jobs()
+	if !ok || jp == nil {
+		t.Fatal("Host.Jobs() must be available after Satisfy CapJobs")
+	}
+	miss, err := jp.Get(context.Background(), "missing")
+	if err != nil || miss != nil {
+		t.Fatalf("stub Get miss = (%v, %v), want (nil, nil)", miss, err)
+	}
+}
+
+type needsMediaPlugin struct{}
+
+func (needsMediaPlugin) Name() string { return "harness/needsmedia" }
+func (needsMediaPlugin) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapMedia}
+}
+func (p *needsMediaPlugin) Init(h pluginsdk.Host) error {
+	h.Require(pluginsdk.CapMedia)
+	if _, ok := h.Media(); !ok {
+		return fmt.Errorf("Media() unavailable during Init after CapMedia bind")
+	}
+	return nil
+}
+
+func TestAdaptInit_CapMediaBindsPort(t *testing.T) {
+	res, err := harness.AdaptInit(&needsMediaPlugin{}, harness.Options{
+		Satisfy: []pluginsdk.Capability{pluginsdk.CapMedia},
+	})
+	if err != nil {
+		t.Fatalf("AdaptInit: %v", err)
+	}
+	mp, ok := res.Host.Media()
+	if !ok || mp == nil || mp.Name() == "" {
+		t.Fatal("Host.Media() must be available after Satisfy CapMedia")
 	}
 }

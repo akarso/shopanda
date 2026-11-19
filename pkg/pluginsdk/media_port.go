@@ -41,7 +41,9 @@ type SignedURLMediaStorage interface {
 
 // MediaPort is the Host-visible media storage surface for CapMedia plugins.
 // Optional Read / signed-URL capabilities are exposed via As* helpers so
-// plugins do not import internal/domain/media.
+// plugins do not import internal/domain/media. This is a thin wrap of the
+// bound backend — no key-prefix or content-type hardening; product wrappers
+// that reject paths / types must still do so themselves.
 type MediaPort interface {
 	Name() string
 	Save(path string, file io.Reader) error

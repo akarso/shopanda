@@ -79,6 +79,10 @@ func TestParseMinorUnits_Reject(t *testing.T) {
 		{"jpy_frac", "100,5", 0},
 		{"bad_group", "1,23.45", 2},
 		{"neg_exponent", "1", -1},
+		{"arabic_indic", "1.٤", 3},
+		{"fullwidth_digit", "８0,49", 2},
+		{"grouped_no_frac_eu", "1.234", 2},
+		{"grouped_no_frac_us", "1,234", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,5 +90,25 @@ func TestParseMinorUnits_Reject(t *testing.T) {
 				t.Fatalf("ParseMinorUnits(%q, %d): want error", tc.in, tc.exponent)
 			}
 		})
+	}
+}
+
+func TestParseMinorUnits_Overflow(t *testing.T) {
+	// 19 nines exceeds int64 when combined with exp 0.
+	if _, err := extapi.ParseMinorUnits("9999999999999999999", 0); err == nil {
+		t.Fatal("want overflow error")
+	}
+}
+
+func TestParseMinorUnits_KWDSingleSepIsDecimal(t *testing.T) {
+	// Documented policy: single separator + ≤exponent fraction digits ⇒ decimal
+	// ("1,234" at exp 3 is 1234 fils, not one thousand). Use both separators
+	// for thousands at exponent ≥ 3 ("1,234.567").
+	got, err := extapi.ParseMinorUnits("1,234", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1234 {
+		t.Fatalf("got %d, want 1234 fils (decimal, not grouping)", got)
 	}
 }

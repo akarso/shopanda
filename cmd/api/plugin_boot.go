@@ -20,8 +20,22 @@ func serveNeedsSkip() []plugin.Capability {
 
 func workerNeedsSkip() []plugin.Capability {
 	// CapCart is serve-only; CapCatalogSeed is CLI-seed-only.
-	// Scheduler, search reindex, and cache/jobs/extension-field CLIs share this list.
+	// Use after CapJobs / CapMedia are bound (worker, scheduler, search-reindex,
+	// jobs CLI, schedule CLI). CapJobs needs a Reader-backed queue; CapMedia
+	// needs BindMediaStorage.
 	return []plugin.Capability{plugin.CapCart, plugin.CapCatalogSeed}
+}
+
+func workerLiteNeedsSkip() []plugin.Capability {
+	// Same as workerNeedsSkip plus CapJobs / CapMedia for short-lived CLIs that
+	// never resolveAndBindJobQueue / resolveAndBindMediaStorage (cache,
+	// extension-field, discovery facet sync).
+	return []plugin.Capability{
+		plugin.CapCart,
+		plugin.CapCatalogSeed,
+		plugin.CapJobs,
+		plugin.CapMedia,
+	}
 }
 
 func assertServeNeedsMet(app *plugin.App) error {
@@ -31,8 +45,19 @@ func assertServeNeedsMet(app *plugin.App) error {
 	return nil
 }
 
+// assertWorkerNeedsMet checks Needs after CapJobs / CapMedia bind (bind then
+// assert — same order as serve's BindCartPort then assertServeNeedsMet).
 func assertWorkerNeedsMet(app *plugin.App) error {
 	if err := app.AssertNeedsMetExcept(workerNeedsSkip()...); err != nil {
+		return fmt.Errorf("plugin capabilities: %w", err)
+	}
+	return nil
+}
+
+// assertWorkerLiteNeedsMet is for CLIs that Init plugins but do not bind
+// CapJobs / CapMedia (cache / extension-field / discovery).
+func assertWorkerLiteNeedsMet(app *plugin.App) error {
+	if err := app.AssertNeedsMetExcept(workerLiteNeedsSkip()...); err != nil {
 		return fmt.Errorf("plugin capabilities: %w", err)
 	}
 	return nil
@@ -99,9 +124,9 @@ func bootServePlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootst
 	return nil
 }
 
-// bootWorkerPlugins binds product ports, InitAll, then assertWorkerNeedsMet
-// (same skip list scheduler / search reindex / non-seed CLIs use via
-// assertWorkerNeedsMet). Order matches production: assert then freeze.
+// bootWorkerPlugins binds product ports, InitAll, then assertWorkerLiteNeedsMet.
+// Skip-list coverage only — does not bind CapJobs / CapMedia (production worker
+// binds those before assertWorkerNeedsMet).
 func bootWorkerPlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Bootstrap) error {
 	if reg == nil || app == nil {
 		return fmt.Errorf("bootWorkerPlugins: registry and app are required")
@@ -114,7 +139,7 @@ func bootWorkerPlugins(reg *plugin.Registry, app *plugin.App, boot *plugin.Boots
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
-	if err := assertWorkerNeedsMet(app); err != nil {
+	if err := assertWorkerLiteNeedsMet(app); err != nil {
 		return err
 	}
 	freezePermissionRegistry(app)

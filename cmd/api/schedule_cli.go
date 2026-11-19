@@ -259,10 +259,6 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
-		return err
-	}
-	freezePermissionRegistry(pluginApp)
 
 	// resolveJobQueue (not postgres.NewJobQueue directly): if a
 	// Redis/RabbitMQ/Kafka/SQS core plugin is registered and configured
@@ -271,6 +267,7 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	// hardcoded Postgres queue here would enqueue into a table no worker
 	// is polling, and this command would report "triggered" for work
 	// that silently never runs.
+	// Bind CapJobs / CapMedia before assert (serve bind-then-assert order).
 	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		return err
@@ -278,6 +275,11 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
 		return err
 	}
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		return err
+	}
+	freezePermissionRegistry(pluginApp)
+
 	schedulerStore, err := postgres.NewSchedulerStore(conn)
 	if err != nil {
 		return fmt.Errorf("scheduler store: %w", err)

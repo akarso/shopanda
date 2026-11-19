@@ -72,6 +72,10 @@ func TestJobsPort_GetCountsRequeue(t *testing.T) {
 	if err != nil || got == nil || got.ID != "job-1" {
 		t.Fatalf("Get = (%v, %v)", got, err)
 	}
+	miss, err := port.Get(context.Background(), "missing-id")
+	if err != nil || miss != nil {
+		t.Fatalf("Get miss = (%v, %v), want (nil, nil)", miss, err)
+	}
 	counts, err := port.CountsByStatus(context.Background())
 	if err != nil || counts[pluginsdk.JobStatusFailed] != 3 {
 		t.Fatalf("CountsByStatus = (%v, %v)", counts, err)

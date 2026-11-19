@@ -51,6 +51,11 @@ func WithRequeueTerminal() RequeueOption {
 // JobsPort is the Host-visible jobs surface for plugins that declare CapJobs.
 // Get and CountsByStatus require a Reader-backed queue (Postgres). Requeue uses
 // the bound Queue. Does not expose Enqueue/Dequeue/Complete/Fail or List.
+//
+// Get returns (nil, nil) when the id is missing or not a usable job id
+// (including non-UUID strings on Postgres). Callers must nil-check before
+// dereferencing. Requeue is not scoped to the plugin — any CapJobs holder may
+// requeue any job id (ops-oriented; do not declare CapJobs casually).
 type JobsPort interface {
 	Get(ctx context.Context, id string) (*JobDetail, error)
 	CountsByStatus(ctx context.Context) (map[JobStatus]int, error)

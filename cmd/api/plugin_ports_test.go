@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -43,8 +44,8 @@ func (needsCatalogSeedSDKPlugin) Init(h pluginsdk.Host) error {
 	return nil
 }
 
-// TestNonServeBoot_SkipsCapCartAndCapCatalogSeed uses assertWorkerNeedsMet —
-// the same skip list as worker / scheduler / search reindex / non-seed CLIs.
+// TestNonServeBoot_SkipsCapCartAndCapCatalogSeed uses assertWorkerLiteNeedsMet —
+// the skip list for CLIs that never bind CapJobs / CapMedia.
 func TestNonServeBoot_SkipsCapCartAndCapCatalogSeed(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
@@ -61,8 +62,8 @@ func TestNonServeBoot_SkipsCapCartAndCapCatalogSeed(t *testing.T) {
 		t.Fatalf("InitAll summary = %+v, want no failures", summary)
 	}
 
-	if err := assertWorkerNeedsMet(app); err != nil {
-		t.Fatalf("assertWorkerNeedsMet: %v, want nil", err)
+	if err := assertWorkerLiteNeedsMet(app); err != nil {
+		t.Fatalf("assertWorkerLiteNeedsMet: %v, want nil", err)
 	}
 	if err := assertServeNeedsMet(app); err == nil {
 		t.Fatal("assertServeNeedsMet: expected CapCart unbound error")
@@ -73,6 +74,69 @@ func TestNonServeBoot_SkipsCapCartAndCapCatalogSeed(t *testing.T) {
 	if _, ok := app.CatalogSeedPort(); ok {
 		t.Fatal("bindProductPorts must not bind CapCatalogSeed")
 	}
+}
+
+type needsJobsSDKPlugin struct{}
+
+func (needsJobsSDKPlugin) Name() string { return "test/needsjobs" }
+func (needsJobsSDKPlugin) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapJobs}
+}
+func (needsJobsSDKPlugin) Init(h pluginsdk.Host) error {
+	h.Require(pluginsdk.CapJobs)
+	return nil
+}
+
+func TestWorkerAssert_CapJobsRequiresBindFirst(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+	reg.Register(pluginsdk.Adapt(needsJobsSDKPlugin{}))
+	app := &plugin.App{Logger: log}
+	if err := bindProductPorts(app, nil); err != nil {
+		t.Fatal(err)
+	}
+	if summary := reg.InitAll(app); summary.Failed != 0 {
+		t.Fatalf("InitAll: %+v", summary)
+	}
+	if err := assertWorkerNeedsMet(app); err == nil {
+		t.Fatal("assertWorkerNeedsMet must fail before CapJobs bind")
+	}
+	if err := assertWorkerLiteNeedsMet(app); err != nil {
+		t.Fatalf("lite assert should skip CapJobs: %v", err)
+	}
+	port, err := pluginsdk.NewJobsPort(stubJobsReaderForBoot{}, &stubJobsQueueForBoot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.BindJobsPort(port); err != nil {
+		t.Fatal(err)
+	}
+	if err := assertWorkerNeedsMet(app); err != nil {
+		t.Fatalf("assertWorkerNeedsMet after BindJobsPort: %v", err)
+	}
+}
+
+type stubJobsQueueForBoot struct{}
+
+func (stubJobsQueueForBoot) Enqueue(context.Context, jobs.Job) error        { return nil }
+func (stubJobsQueueForBoot) Dequeue(context.Context) (*jobs.Job, error)     { return nil, nil }
+func (stubJobsQueueForBoot) Complete(context.Context, string, int) error    { return nil }
+func (stubJobsQueueForBoot) Fail(context.Context, string, int, error) error { return nil }
+func (stubJobsQueueForBoot) Requeue(context.Context, string, int, ...jobs.RequeueOption) error {
+	return nil
+}
+
+type stubJobsReaderForBoot struct{}
+
+func (stubJobsReaderForBoot) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
+	return nil, nil
+}
+func (stubJobsReaderForBoot) Get(context.Context, string) (*jobs.Detail, error) { return nil, nil }
+func (stubJobsReaderForBoot) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+	return map[jobs.Status]int{}, nil
+}
+func (stubJobsReaderForBoot) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
+	return nil, nil
 }
 
 func TestBindCatalogSeedPort_NilBootFailsClosed(t *testing.T) {

@@ -123,17 +123,22 @@ func newJobsRuntime(cfg *config.Config, log logger.Logger) (*jobsCLIRuntime, err
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	freezePermissionRegistry(pluginApp)
 
 	bound, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+	// CapMedia: same resolve as scheduler so Need(CapMedia) plugins boot here too.
+	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	freezePermissionRegistry(pluginApp)
 
 	reader, okR := bound.(domainjobs.Reader)
 	admin, okA := bound.(domainjobs.Admin)

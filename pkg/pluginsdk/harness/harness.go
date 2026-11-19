@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -15,6 +16,12 @@ import (
 type Options struct {
 	// CartPort binds when CapCart is satisfied; omit for MarkCapabilitySatisfied only.
 	CartPort pluginsdk.CartPort
+	// JobsPort binds when CapJobs is satisfied; nil installs a stub so
+	// Host.Jobs() is non-nil (unlike CapCart mark-only).
+	JobsPort pluginsdk.JobsPort
+	// MediaStorage binds when CapMedia is satisfied; nil installs a stub so
+	// Host.Media() is non-nil.
+	MediaStorage media.Storage
 	// Satisfy lists capabilities to mark or bind before Init (typically CapCart).
 	Satisfy []pluginsdk.Capability
 	// DB sets App.Bootstrap.DB so Host.BootstrapDB() works when CapDB is
@@ -51,6 +58,22 @@ func AdaptInit(p pluginsdk.Plugin, opts Options) (Result, error) {
 				}
 			} else {
 				app.MarkCapabilitySatisfied(cap)
+			}
+		case pluginsdk.CapJobs:
+			port := opts.JobsPort
+			if port == nil {
+				port = harnessJobsStub{}
+			}
+			if err := app.BindJobsPort(port); err != nil {
+				return Result{}, err
+			}
+		case pluginsdk.CapMedia:
+			st := opts.MediaStorage
+			if st == nil {
+				st = harnessMediaStub{}
+			}
+			if err := app.BindMediaStorage(st); err != nil {
+				return Result{}, err
 			}
 		case pluginsdk.CapCatalog, pluginsdk.CapCatalogSeed, pluginsdk.CapOrders, pluginsdk.CapDB:
 			app.MarkCapabilitySatisfied(cap)

@@ -69,7 +69,7 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 	if err := plugin.InitSummaryError(summary); err != nil {
 		return err
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+	if err := assertWorkerLiteNeedsMet(pluginApp); err != nil {
 		return err
 	}
 	// Do not abort on unrelated plugin init failures; only the search provider is required.
