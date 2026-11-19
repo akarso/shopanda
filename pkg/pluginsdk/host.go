@@ -72,6 +72,9 @@ type Host interface {
 	CatalogSeed() (CatalogSeedPort, bool)
 	Orders() (OrderPort, bool)
 	Customers() (CustomerPort, bool)
+	// Jobs returns the jobs read/requeue port when CapJobs is declared and
+	// bound (Postgres Reader+Queue). Broker queues leave CapJobs unbound.
+	Jobs() (JobsPort, bool)
 
 	// IntegrationOrderStatusUpdater, IntegrationShipmentStatusUpdater, and
 	// IntegrationStockSyncer return the composition-root-bound integration
