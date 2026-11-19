@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 
@@ -16,6 +17,9 @@ type Options struct {
 	CartPort pluginsdk.CartPort
 	// Satisfy lists capabilities to mark or bind before Init (typically CapCart).
 	Satisfy []pluginsdk.Capability
+	// DB sets App.Bootstrap.DB so Host.BootstrapDB() works when CapDB is
+	// declared (e.g. from OpenIsolated). Nil leaves Bootstrap unset.
+	DB *sql.DB
 }
 
 // Result is the public surface from AdaptInit. It deliberately does not expose
@@ -34,6 +38,9 @@ func AdaptInit(p pluginsdk.Plugin, opts Options) (Result, error) {
 	app := &plugin.App{
 		Logger: log,
 		Bus:    event.NewBus(log),
+	}
+	if opts.DB != nil {
+		app.Bootstrap = &plugin.Bootstrap{DB: opts.DB}
 	}
 	for _, cap := range opts.Satisfy {
 		switch cap {

@@ -331,7 +331,10 @@ pitfalls).
 
 Reference implementations: [`plugins/example/`](../../plugins/example/) — pricing step,
 `order.created` listener, admin permission, CLI command; [`plugins/extref/`](../../plugins/extref/)
-— minimal SDK-only reference plugin + test harness.
+— minimal SDK-only reference plugin + test harness (`pkg/pluginsdk/harness.AdaptInit`).
+For Postgres plugin tests use `harness.OpenIsolated` (skips without `SHOPANDA_TEST_DSN`;
+pins `search_path`, applies core/plugin migrations, drops schema on cleanup) and pass
+`Options.DB` into `AdaptInit` when `Host.BootstrapDB()` is needed.
 
 Current behavior to keep in mind:
 
