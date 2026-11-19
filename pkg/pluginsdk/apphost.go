@@ -309,6 +309,17 @@ func (h *appHost) Jobs() (JobsPort, bool) {
 	return jp, ok
 }
 
+func (h *appHost) Media() (MediaPort, bool) {
+	if !h.declaredOrUnscoped(plugin.CapMedia) {
+		return nil, false
+	}
+	st, ok := h.app.BoundMediaStorage()
+	if !ok {
+		return nil, false
+	}
+	return newMediaPort(st), true
+}
+
 func (h *appHost) IntegrationOrderStatusUpdater() extapi.IntegrationOrderStatusUpdater {
 	if !h.declaredOrUnscoped(plugin.CapIntegrationOrder) {
 		return nil

@@ -18,6 +18,7 @@ const (
 	CapCustomers           Capability = "customers"
 	CapDB                  Capability = "db"
 	CapJobs                Capability = "jobs"
+	CapMedia               Capability = "media"
 	CapIntegrationOrder    Capability = "integration.order_status"
 	CapIntegrationShipment Capability = "integration.shipment_status"
 	CapIntegrationStock    Capability = "integration.stock"
