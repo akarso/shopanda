@@ -13,14 +13,15 @@ import (
 
 // PrivateDownloadsPrefix is the storage key prefix for downloadable grant
 // targets (PR-1077). Objects under this prefix must not get public
-// Cache-Control or public ACL on upload. Delivery uses signed URLs or
-// ReadableStorage — never permanent Storage.URL().
+// Cache-Control or public ACL on upload. Delivery uses SignedURLStorage
+// (preferred) or ReadableStorage for Readable-only backends — never
+// permanent Storage.URL().
 const PrivateDownloadsPrefix = "private/downloads/"
 
 // PrivateBlobsPrefix is the recommended key prefix for plugin-owned private
 // objects (customer uploads, generated artwork, etc.). Same delivery rules as
-// PrivateDownloadsPrefix: SignedURLStorage (or ReadableStorage stream), never
-// permanent Storage.URL().
+// PrivateDownloadsPrefix: SignedURLStorage preferred; ReadableStorage only
+// when the backend has no signed URLs — never permanent Storage.URL().
 const PrivateBlobsPrefix = "private/blobs/"
 
 // NormalizeStorageKey trims, strips leading ./, and path.Cleans a storage key
@@ -182,15 +183,21 @@ type Storage interface {
 	URL(path string) string
 }
 
-// ReadableStorage extends Storage with byte retrieval for admin-proxied
-// downloads and storefront grant delivery when signed URLs are unavailable
-// (local filesystem).
-// Implementations should return an error wrapping os.ErrNotExist when the object is absent.
+// ReadableStorage extends Storage with full-object byte retrieval for
+// callers that need the bytes in process (e.g. admin invoice PDF reload,
+// Readable-only backends, product wrappers). Storefront grant delivery on
+// localfs/S3 prefers SignedURLStorage (Head + signed GET); localfs implements
+// both. Implementations should return an error wrapping os.ErrNotExist when
+// the object is absent.
 type ReadableStorage interface {
 	Storage
 
-	// Read returns the stored object bytes at path.
-	Read(path string) ([]byte, error)
+	// Read returns the stored object bytes at path. ctx must be non-nil.
+	// Implementations must honour ctx cancellation between I/O (cooperative:
+	// a single blocking read may finish before the next check). Callers that
+	// see context.Canceled / DeadlineExceeded should treat the client as gone
+	// (no Internal 500 / error-level delivery logs).
+	Read(ctx context.Context, path string) ([]byte, error)
 }
 
 // Disposition selects Content-Disposition on a signed GET.
