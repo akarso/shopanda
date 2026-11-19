@@ -595,11 +595,8 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if bootInterrupted != nil {
 		return bootInterrupted
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
-		return err
-	}
-	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
+	// Bind CapJobs / CapMedia before assert (same bind-then-assert order as serve).
 	// Bind the plugin-registered queue when present (default core/postgres-queue).
 	// BindQueue rejects a different instance, so a second NewJobQueue cannot
 	// silently split cron/Enqueue from the worker's queue.
@@ -610,6 +607,10 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if _, err := resolveAndBindMediaStorage(pluginApp, cfg); err != nil {
 		return err
 	}
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		return err
+	}
+	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 	// PR-1030: the standalone scheduler process is the one that's actually
 	// running in production (RUNTIME_MODES.md), so it's the one that must
 	// write its registrations and read enable/disable overrides through
@@ -1083,10 +1084,6 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if bootInterrupted != nil {
 		return bootInterrupted
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
-		return err
-	}
-	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
 	// serve and worker are separate processes; if both enable metrics and
 	// this one is still on the unmodified default, move it to the
@@ -1111,11 +1108,17 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
+	// setupWorker binds CapJobs / CapMedia; assert after bind (serve order).
 	jobWorker, jobQueue, appCache, fpcObs, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		shutdownTracing()
 		return err
 	}
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		shutdownTracing()
+		return err
+	}
+	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
 	// PR-1049: wire the ERP stock syncer's batched reindex trigger now
 	// that jobQueue exists — wireIntegrationStockSyncerFromDB ran earlier,
@@ -1249,11 +1252,6 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
-		conn.Close()
-		return nil, nil, nil, err
-	}
-	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
 	jobQueue, err := resolveAndBindJobQueue(pluginApp, conn, cfg)
 	if err != nil {
@@ -1264,6 +1262,12 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		conn.Close()
 		return nil, nil, nil, err
 	}
+	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
+	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
+
 	runs, err = postgres.NewSearchIndexRunRepo(conn)
 	if err != nil {
 		conn.Close()

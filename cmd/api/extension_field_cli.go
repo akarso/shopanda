@@ -112,7 +112,7 @@ func defaultOpenExtensionFieldRetireRuntime(cfg *config.Config, log logger.Logge
 		conn.Close()
 		return nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize (refuse retire while boot is incomplete)", summary.Failed)
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+	if err := assertWorkerLiteNeedsMet(pluginApp); err != nil {
 		conn.Close()
 		return nil, err
 	}

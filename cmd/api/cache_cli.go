@@ -54,7 +54,7 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 		conn.Close()
 		return nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
-	if err := assertWorkerNeedsMet(pluginApp); err != nil {
+	if err := assertWorkerLiteNeedsMet(pluginApp); err != nil {
 		conn.Close()
 		return nil, nil, err
 	}

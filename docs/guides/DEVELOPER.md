@@ -241,17 +241,20 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `RegisterConfig` — admin-editable settings (string/int/bool) for this plugin
 - `Slots(registrant)`, `Hooks(registrant)` — storefront slots and hook registration
 - `RegisterField` / `RegisterFieldFor` — extension fields
-- `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()`, `BootstrapDB()` — ports
-  bound by the composition root (`(port, bool)`; declare with `Require(cap)`). `CapJobs` is
-  bound on serve/worker/scheduler/jobs CLI when the queue implements Reader (Postgres);
-  broker queues leave it unbound. `CapMedia` is satisfied by `BindMediaStorage` on the
-  same process set as media resolve. `CapCart` is
-  serve-only; `CapCatalogSeed` is CLI-seed-only: the owning plugin's `RequiresDB: true`
-  command auto-binds CatalogSeed (resolve in the handler, not `Init`). Raw DB stays behind
-  `BootstrapDB` + `CapDB`.   Non-owning processes skip process-scoped caps via
-  `assertServeNeedsMet` (after `BindCartPort`) /
-  `assertWorkerNeedsMet` / `assertPluginCLINeedsMet`
-  (`cmd/api/plugin_boot.go`)
+- `Cart()`, `Catalog()`, `CatalogSeed()`, `Orders()`, `Customers()`, `Jobs()`, `Media()`,
+  `BootstrapDB()` — ports bound by the composition root (`(port, bool)`; declare with
+  `Require(cap)`). **Bind then assert:** serve binds CapCart (and CapJobs/CapMedia via
+  `setupWorker` / media resolve) before `assertServeNeedsMet`. Worker, scheduler,
+  search-reindex, jobs CLI, and schedule CLI call `resolveAndBindJobQueue` +
+  `resolveAndBindMediaStorage` **before** `assertWorkerNeedsMet`. CapJobs needs a
+  Reader-backed queue (Postgres); broker queues leave it unbound. Cache /
+  extension-field / discovery CLIs use `assertWorkerLiteNeedsMet` (skip CapJobs +
+  CapMedia — they never bind those ports). Ports are usable after bind (handlers /
+  job workers), not during `Init` on production roots that assert before late bind
+  of CapCart on serve — CapJobs/CapMedia on worker-like roots are bound before assert
+  so `Host.Jobs()` / `Host.Media()` work once Init has finished and the root has
+  bound. `CapCart` is serve-only; `CapCatalogSeed` is CLI-seed-only. See
+  `cmd/api/plugin_boot.go` and EXTENSION_POINTS pitfalls.
 - `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own
   `plugins.<slug>.*` config (scoped Hosts cannot see core keys or other plugins)
 - `PlatformConfig` — allowlisted non-secret core driver switches (`queue.driver`,
@@ -325,9 +328,9 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 `main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, binds the service
 ports `Host` exposes (`bindProductPorts`; seed CLIs also `bindCatalogSeedPort`), runs
 `registry.InitAll(pluginApp)`, then process-kind assert helpers in `cmd/api/plugin_boot.go`:
-serve calls `assertServeNeedsMet` after `BindCartPort`; worker / scheduler / non-seed CLIs
-call `assertWorkerNeedsMet` after Init (`CapCart` / `CapCatalogSeed` — see EXTENSION_POINTS
-pitfalls).
+serve calls `assertServeNeedsMet` after `BindCartPort`; worker / scheduler / search-reindex /
+jobs / schedule CLI bind CapJobs+CapMedia then `assertWorkerNeedsMet`; cache /
+extension-field / discovery use `assertWorkerLiteNeedsMet` (see EXTENSION_POINTS).
 
 Reference implementations: [`plugins/example/`](../../plugins/example/) — pricing step,
 `order.created` listener, admin permission, CLI command; [`plugins/extref/`](../../plugins/extref/)

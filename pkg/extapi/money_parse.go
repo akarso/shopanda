@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode"
 )
 
 // IsValidCurrency reports whether code is a 3-letter uppercase ASCII ISO-like
@@ -16,9 +15,16 @@ func IsValidCurrency(code string) bool {
 
 // ParseMinorUnits parses a human decimal amount into minor units for the given
 // currency exponent (0 = JPY, 2 = EUR/USD, 3 = KWD). No rounding: a fraction
-// longer than exponent is rejected. Accepts "." / "," as decimal or thousands
-// grouping (e.g. "80,49", "1.234,56", "1,234.56"). Rejects empty input, spaces,
-// letters, signs, and a result of zero.
+// longer than exponent is rejected. Accepts only ASCII digits and "." / ","
+// (e.g. "80,49", "1.234,56", "1,234.56"). Rejects empty input, spaces, letters,
+// signs, non-ASCII digits, and a result of zero.
+//
+// Separator policy: when both "." and "," appear, the rightmost is the decimal
+// separator. A single separator with at most `exponent` digits after it is
+// always treated as decimal (so "1,234" with exponent 3 is 1234 fils, not one
+// thousand — for thousands at exponent ≥ 3 use both separators, e.g.
+// "1,234.567"). Grouped integers without a fraction ("1.234" / "1,234" at
+// exponent 2) are rejected unless exponent is 0 (JPY-style thousands).
 func ParseMinorUnits(s string, exponent int) (int64, error) {
 	if exponent < 0 {
 		return 0, fmt.Errorf("money: invalid currency exponent %d", exponent)
@@ -27,16 +33,10 @@ func ParseMinorUnits(s string, exponent int) (int64, error) {
 		return 0, errors.New("money: empty amount")
 	}
 	for _, r := range s {
-		if unicode.IsSpace(r) {
-			return 0, errors.New("money: amount must not contain spaces")
+		if r == '.' || r == ',' {
+			continue
 		}
-		if unicode.IsLetter(r) {
-			return 0, errors.New("money: amount must not contain letters")
-		}
-		if r == '-' || r == '+' {
-			return 0, errors.New("money: amount must not be signed")
-		}
-		if unicode.IsDigit(r) || r == '.' || r == ',' {
+		if r >= '0' && r <= '9' {
 			continue
 		}
 		return 0, fmt.Errorf("money: invalid amount character %q", r)
@@ -144,8 +144,9 @@ func splitAmount(s string, decSep rune) (intPart, fracPart string, err error) {
 		return "", "", errors.New("money: invalid separators in fraction")
 	}
 	if fracPart != "" {
-		for _, r := range fracPart {
-			if !unicode.IsDigit(r) {
+		for i := 0; i < len(fracPart); i++ {
+			c := fracPart[i]
+			if c < '0' || c > '9' {
 				return "", "", errors.New("money: invalid fraction")
 			}
 		}
