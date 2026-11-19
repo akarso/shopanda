@@ -21,6 +21,7 @@ import (
 )
 
 type memCartExtensionValueRepo struct {
+	mu     sync.RWMutex
 	values map[string]domainext.Value
 }
 
@@ -33,6 +34,8 @@ func newMemCartExtensionValueRepo() *memCartExtensionValueRepo {
 }
 
 func (m *memCartExtensionValueRepo) ListByTarget(_ context.Context, target domainext.Target) ([]domainext.Value, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]domainext.Value, 0)
 	for _, value := range m.values {
 		if value.TargetType == target.Type && value.TargetID == target.ID {
@@ -43,32 +46,38 @@ func (m *memCartExtensionValueRepo) ListByTarget(_ context.Context, target domai
 }
 
 func (m *memCartExtensionValueRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]domainext.Value, 0)
 	for _, targetID := range targetIDs {
-		stored, err := m.ListByTarget(context.Background(), domainext.Target{Type: targetType, ID: targetID})
-		if err != nil {
-			return nil, err
+		for _, value := range m.values {
+			if value.TargetType == targetType && value.TargetID == targetID {
+				out = append(out, value)
+			}
 		}
-		out = append(out, stored...)
 	}
 	return out, nil
 }
 
 func (m *memCartExtensionValueRepo) Upsert(_ context.Context, value domainext.Value) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.values[cartExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
 	return nil
 }
 
 func (m *memCartExtensionValueRepo) UpsertBatch(_ context.Context, values []domainext.Value) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, value := range values {
-		if err := m.Upsert(context.Background(), value); err != nil {
-			return err
-		}
+		m.values[cartExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
 	}
 	return nil
 }
 
 func (m *memCartExtensionValueRepo) UpsertBatchSelective(_ context.Context, values []domainext.Value, exclusiveFieldCodes map[string]struct{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, value := range values {
 		if _, ok := exclusiveFieldCodes[value.FieldCode]; !ok || value.Payload.StringValue == nil {
 			continue
@@ -82,10 +91,15 @@ func (m *memCartExtensionValueRepo) UpsertBatchSelective(_ context.Context, valu
 			}
 		}
 	}
-	return m.UpsertBatch(context.Background(), values)
+	for _, value := range values {
+		m.values[cartExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
+	}
+	return nil
 }
 
 func (m *memCartExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	key := cartExtKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {
 		return apperror.NotFound("extension value not found")
@@ -95,6 +109,8 @@ func (m *memCartExtensionValueRepo) Delete(_ context.Context, target domainext.T
 }
 
 func (m *memCartExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	prefix := strings.TrimSuffix(idPrefix, "%")
 	seen := make(map[string]struct{})
 	var out []string
@@ -121,6 +137,7 @@ type orphanExtensionPurge struct {
 }
 
 type trackingExtWriter struct {
+	mu              sync.Mutex
 	inner           *extensionapp.ValueService
 	failDeleteCount int
 	deleteErr       error
@@ -165,36 +182,53 @@ func (w *trackingExtWriter) Delete(ctx context.Context, target domainext.Target,
 }
 
 func (w *trackingExtWriter) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
+	w.mu.Lock()
 	w.deleted = append(w.deleted, target.ID)
+	var failErr error
 	if w.failDeleteCount > 0 {
 		w.failDeleteCount--
-		return w.deleteErr
+		failErr = w.deleteErr
 	}
-	if w.inner == nil {
+	inner := w.inner
+	w.mu.Unlock()
+	if failErr != nil {
+		return failErr
+	}
+	if inner == nil {
 		return nil
 	}
-	return w.inner.DeleteAllForTarget(ctx, target)
+	return inner.DeleteAllForTarget(ctx, target)
 }
 
 func (w *trackingExtWriter) DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error {
 	keep := append([]string(nil), keepVariantIDs...)
+	w.mu.Lock()
 	w.orphanPurges = append(w.orphanPurges, orphanExtensionPurge{cartID: cartID, keepVariantIDs: keep})
+	var failErr error
 	if w.failDeleteCount > 0 {
 		w.failDeleteCount--
-		return w.deleteErr
+		failErr = w.deleteErr
 	}
-	if w.inner == nil {
+	inner := w.inner
+	w.mu.Unlock()
+	if failErr != nil {
+		return failErr
+	}
+	if inner == nil {
 		return nil
 	}
-	return w.inner.DeleteOrphanCartItemExtensions(ctx, cartID, keepVariantIDs)
+	return inner.DeleteOrphanCartItemExtensions(ctx, cartID, keepVariantIDs)
 }
 
 func (w *trackingExtWriter) CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error {
+	w.mu.Lock()
 	w.copied++
-	if w.inner == nil {
+	inner := w.inner
+	w.mu.Unlock()
+	if inner == nil {
 		return nil
 	}
-	return w.inner.CopyTarget(ctx, from, to, updatedBy)
+	return inner.CopyTarget(ctx, from, to, updatedBy)
 }
 
 func (w *trackingExtWriter) ListByTarget(ctx context.Context, target domainext.Target) ([]domainext.Value, error) {
@@ -283,10 +317,16 @@ type failExistingSaveCartRepo struct {
 }
 
 func (r *failExistingSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.carts[c.ID]; exists {
 		return errors.New("disk full")
 	}
-	return r.stubCartRepo.Save(ctx, c)
+	clone := *c
+	clone.Items = make([]domainCart.Item, len(c.Items))
+	copy(clone.Items, c.Items)
+	r.carts[c.ID] = &clone
+	return nil
 }
 
 func TestService_DiscardEmptyGuestCart_PurgesOrphanExtensions(t *testing.T) {
@@ -473,6 +513,8 @@ type versionCartRepo struct {
 }
 
 func (r *versionCartRepo) Save(_ context.Context, c *domainCart.Cart) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	existing, ok := r.carts[c.ID]
 	if ok && existing.Version != c.Version {
 		return apperror.Conflict("cart was modified concurrently")
@@ -1098,14 +1140,19 @@ func TestService_ClaimGuestCart_ReplaceTargetFailKeepsSnapshotForRetryClaim(t *t
 
 // barrierSaveCartRepo, once armed, blocks merge Saves (MergedGuestID set)
 // until both callers have entered, then lets the first commit and returns a
-// version conflict for the second. Setup Saves pass through unblocked.
+// version conflict for the second. The loser waits until the winner's Save
+// has finished so FindByID sees MergedGuestID and ClaimGuestCart returns
+// success via the durable-merge short-circuit (no snapshot restore).
+// Setup Saves pass through unblocked.
 type barrierSaveCartRepo struct {
 	*versionCartRepo
-	entered chan struct{}
-	release chan struct{}
-	mu      sync.Mutex
-	armed   bool
-	merges  int
+	entered     chan struct{}
+	release     chan struct{}
+	winnerSaved chan struct{}
+	closeWinner sync.Once
+	mu          sync.Mutex
+	armed       bool
+	merges      int
 }
 
 func (r *barrierSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
@@ -1123,18 +1170,19 @@ func (r *barrierSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) erro
 	}
 	r.entered <- struct{}{}
 	<-r.release
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if n == 1 {
+		defer r.closeWinner.Do(func() { close(r.winnerSaved) })
 		return r.versionCartRepo.Save(ctx, c)
 	}
+	<-r.winnerSaved
 	return apperror.Conflict("cart was modified concurrently")
 }
 
 // TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions
 // covers: two overlapping merges both CopyTarget; one Save commits
-// MergedGuestID; the loser must not ReplaceTarget the pre-merge snapshot
-// back over the winner's guest extension values.
+// MergedGuestID; the loser's Save Conflict must take the durable-merge
+// short-circuit (both ClaimGuestCart succeed) and must not ReplaceTarget
+// the pre-merge snapshot back over the winner's guest extension values.
 func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *testing.T) {
 	reg := extensionapp.NewRegistry()
 	if err := reg.Register(domainext.FieldDef{
@@ -1151,6 +1199,7 @@ func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *te
 		versionCartRepo: base,
 		entered:         make(chan struct{}, 2),
 		release:         make(chan struct{}),
+		winnerSaved:     make(chan struct{}),
 	}
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
@@ -1183,25 +1232,43 @@ func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *te
 	carts.armed = true
 	carts.mu.Unlock()
 
+	type claimResult struct {
+		cart *domainCart.Cart
+		err  error
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	errs := make(chan error, 2)
+	results := make(chan claimResult, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
-			errs <- err
+			c, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
+			results <- claimResult{cart: c, err: err}
 		}()
 	}
 	<-carts.entered
 	<-carts.entered
 	close(carts.release)
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("ClaimGuestCart: %v", err)
+	close(results)
+
+	// Under winnerSaved, production maps the loser's Save Conflict to the
+	// MergedGuestID short-circuit → both calls succeed (no restore).
+	var got []*domainCart.Cart
+	for res := range results {
+		if res.err != nil {
+			t.Fatalf("ClaimGuestCart: %v (want both nil via durable-merge short-circuit)", res.err)
 		}
+		if res.cart == nil {
+			t.Fatal("ClaimGuestCart returned nil cart")
+		}
+		if res.cart.MergedGuestID != guestCart.ID {
+			t.Fatalf("MergedGuestID = %q, want %q", res.cart.MergedGuestID, guestCart.ID)
+		}
+		got = append(got, res.cart)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want 2", len(got))
 	}
 
 	stored, err := repo.ListByTarget(ctx, domainext.CartItemTarget(customerCart.ID, "var-1"))
@@ -1211,12 +1278,12 @@ func TestService_ClaimGuestCart_ConcurrentSaveConflictKeepsGuestExtensions(t *te
 	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "guest" {
 		t.Fatalf("after concurrent claim = %+v, want guest value", stored)
 	}
-	got, err := carts.FindByID(ctx, customerCart.ID)
+	persisted, err := carts.FindByID(ctx, customerCart.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || got.MergedGuestID != guestCart.ID {
-		t.Fatalf("MergedGuestID = %q, want %q", got.MergedGuestID, guestCart.ID)
+	if persisted == nil || persisted.MergedGuestID != guestCart.ID {
+		t.Fatalf("persisted MergedGuestID = %q, want %q", persisted.MergedGuestID, guestCart.ID)
 	}
 }
 
