@@ -30,6 +30,11 @@ go vet ./...
 echo "==> go test ./..."
 go test ./...
 
+# Concurrent ClaimGuestCart + extension fakes (PR-1581): catch map races that
+# can fatal the package without a --- FAIL line under plain go test.
+echo "==> go test -race ./internal/application/cart/"
+go test -race ./internal/application/cart/
+
 # Phase 17 portable-script / product-init regressions (present on Shopanda trees).
 # Do NOT auto-set SHOPANDA_PLATFORM here — product clones keep the promote fixture
 # and must be able to scaffold plugins without reserved-slugs covering them.
