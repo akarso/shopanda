@@ -83,7 +83,8 @@ var ErrRequeueTooFresh = errors.New("jobs: requeue claim too fresh")
 // ErrRequeueWrongAttempt means attempts did not match the live claim.
 var ErrRequeueWrongAttempt = errors.New("jobs: requeue wrong attempt")
 
-// ErrRequeueNotFound means no jobs row matched the id (FOR UPDATE miss).
+// ErrRequeueNotFound means the id is unknown or unusable for reclaim
+// (no matching row, or an adapter rejected the id before lookup).
 var ErrRequeueNotFound = errors.New("jobs: requeue job not found")
 
 // ErrRequeueNotProcessing means the row exists but is not status=processing
