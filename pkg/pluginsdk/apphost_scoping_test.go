@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -46,6 +47,46 @@ func TestAsHost_ConfigValue_Unscoped(t *testing.T) {
 	h := pluginsdk.AsHost(app)
 	if got := h.ConfigValue("database.password"); got != "super-secret" {
 		t.Fatalf("ConfigValue = %q, want super-secret (AsHost is unscoped)", got)
+	}
+}
+
+func TestAsHostFor_PlatformConfig_AllowlistedDrivers(t *testing.T) {
+	cfg := &config.Config{
+		Queue:    config.QueueConfig{Driver: "postgres"},
+		Database: config.DatabaseConfig{Password: "super-secret"},
+		Plugins: config.PluginsConfig{
+			Example: config.ExamplePluginConfig{Enabled: true},
+		},
+	}
+	app := &plugin.App{Config: cfg}
+	h := pluginsdk.AsHostFor(app, "example/demo")
+
+	if got := h.PlatformConfig("queue.driver"); got != "postgres" {
+		t.Fatalf("PlatformConfig(queue.driver) = %q, want postgres", got)
+	}
+	if got := h.ConfigValue("queue.driver"); got != "" {
+		t.Fatalf("ConfigValue(queue.driver) = %q, want \"\" (scoping unchanged)", got)
+	}
+	if got := h.PlatformConfig("database.password"); got != "" {
+		t.Fatalf("PlatformConfig leaked database.password: %q", got)
+	}
+	if got := h.PlatformConfig("plugins.example.enabled"); got != "" {
+		t.Fatalf("PlatformConfig must not open plugins.*: %q", got)
+	}
+}
+
+func TestRequireQueueDriver(t *testing.T) {
+	cfg := &config.Config{Queue: config.QueueConfig{Driver: "redis"}}
+	h := pluginsdk.AsHostFor(&plugin.App{Config: cfg}, "acme/demo")
+	if err := pluginsdk.RequireQueueDriver(h, "postgres"); err == nil || !strings.Contains(err.Error(), "queue.driver") {
+		t.Fatalf("err = %v, want queue.driver rejection", err)
+	}
+	if err := pluginsdk.RequireQueueDriver(h, "redis", "postgres"); err != nil {
+		t.Fatalf("RequireQueueDriver(redis): %v", err)
+	}
+	empty := pluginsdk.AsHostFor(&plugin.App{Config: &config.Config{}}, "acme/demo")
+	if err := pluginsdk.RequireQueueDriver(empty, "postgres"); err != nil {
+		t.Fatalf("empty driver defaults to postgres: %v", err)
 	}
 }
 
