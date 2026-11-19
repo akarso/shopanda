@@ -81,6 +81,53 @@ func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
 	}
 }
 
+// Operator path: jobs:requeue always Get's first. Non-UUID must yield the
+// friendly miss line, not SQLSTATE 22P02 from JobQueue.Get.
+func TestRunJobsRequeue_InvalidUUIDFriendlyNotFound(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "postgres"
+	cfg.Media.Local.BasePath = t.TempDir()
+	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
+	err := runJobsRequeue(io.Discard, cfg, logger.New("error"), []string{"missing-id"})
+	if err == nil {
+		t.Fatal("expected not found")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `no job with id "missing-id"`) {
+		t.Fatalf("err = %v, want friendly not-found", err)
+	}
+	if strings.Contains(msg, "22P02") || strings.Contains(msg, "invalid input syntax") {
+		t.Fatalf("err leaked SQL: %v", err)
+	}
+}
+
+func TestRunJobsShow_InvalidUUIDFriendlyNotFound(t *testing.T) {
+	dsn := os.Getenv("SHOPANDA_TEST_DSN")
+	if dsn == "" {
+		t.Skip("SHOPANDA_TEST_DSN not set")
+	}
+	t.Setenv("DATABASE_URL", dsn)
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "postgres"
+	err := runJobsShow(io.Discard, cfg, logger.New("error"), []string{"missing-id"})
+	if err == nil {
+		t.Fatal("expected not found")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `no job with id "missing-id"`) {
+		t.Fatalf("err = %v, want friendly not-found", err)
+	}
+	if strings.Contains(msg, "22P02") || strings.Contains(msg, "invalid input syntax") {
+		t.Fatalf("err leaked SQL: %v", err)
+	}
+}
+
 func TestRunJobsList_UnknownArgument(t *testing.T) {
 	err := runJobsList(io.Discard, &config.Config{}, logger.New("error"), []string{"--nope"})
 	if err == nil || !strings.Contains(err.Error(), "unknown argument") {
@@ -230,7 +277,7 @@ func TestFormatJobsRequeueError_Mapping(t *testing.T) {
 		err  error
 		want string
 	}{
-		{domainjobs.ErrRequeueNotFound, "disappeared"},
+		{domainjobs.ErrRequeueNotFound, "not found"},
 		{domainjobs.ErrRequeueConflict, "reclaim race"},
 		{domainjobs.ErrRequeueNotProcessing, "no longer processing"},
 		{domainjobs.ErrRequeueNotTerminal, "no longer terminal"},

@@ -13,7 +13,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -239,8 +238,12 @@ func (q *JobQueue) List(ctx context.Context, filter jobs.ListFilter) ([]jobs.Sum
 }
 
 // Get returns a single job's full detail. Returns (nil, nil) when no job
-// with that ID exists.
-func (q *JobQueue) Get(ctx context.Context, id string) (*jobs.Detail, error) {
+// with that ID exists, or when the id is not a UUID (jobs.id is uuid —
+// same as a miss so CLI/HTTP never surface SQLSTATE 22P02).
+func (q *JobQueue) Get(ctx context.Context, jobID string) (*jobs.Detail, error) {
+	if jobIDUnusable(jobID) {
+		return nil, nil
+	}
 	const query = `SELECT id, type, payload, status, attempts, max_retries, run_at, created_at, updated_at, last_error
 		FROM jobs WHERE id = $1`
 
@@ -249,12 +252,15 @@ func (q *JobQueue) Get(ctx context.Context, id string) (*jobs.Detail, error) {
 	var status string
 	var lastError sql.NullString
 
-	err := q.db.QueryRowContext(ctx, query, id).Scan(
+	err := q.db.QueryRowContext(ctx, query, jobID).Scan(
 		&d.ID, &d.Type, &payloadJSON, &status, &d.Attempts, &d.MaxRetries, &d.RunAt, &d.CreatedAt, &d.UpdatedAt, &lastError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
+		if isInvalidTextUUID(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("job_queue: get: %w", err)
 	}
 	d.Status = jobs.Status(status)
@@ -341,9 +347,8 @@ func (q *JobQueue) Requeue(ctx context.Context, id string, attempt int, opts ...
 // side effects that commit before this TX are not retried on COMMIT failure —
 // the reclaim returns the commit error and the row stays in its prior status.
 func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, jobID string, attempt int, before jobs.RequeueBeforeCommit, opts ...jobs.RequeueOption) error {
-	// jobs.id is uuid; a non-UUID must not surface as a raw 22P02 to
-	// operators (jobs:requeue <not-a-uuid>). Same sentinel as a miss.
-	if !id.IsUUID(jobID) {
+	// jobs.id is uuid; a non-UUID must not surface as a raw 22P02.
+	if jobIDUnusable(jobID) {
 		return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
 	}
 	settings := jobs.ResolveRequeueOptions(opts)
@@ -367,8 +372,7 @@ func (q *JobQueue) RequeueWithBeforeCommit(ctx context.Context, jobID string, at
 		return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
 	}
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+		if isInvalidTextUUID(err) {
 			return fmt.Errorf("job_queue: requeue %s: %w", jobID, jobs.ErrRequeueNotFound)
 		}
 		return fmt.Errorf("job_queue: requeue lock: %w", err)
@@ -464,20 +468,26 @@ func (q *JobQueue) Cancel(ctx context.Context, id string) error {
 // matches the expected fromStatus by the time the UPDATE runs (status
 // changed concurrently between the lookup and here), that race loses
 // cleanly as a conflict rather than silently applying to the wrong state.
-func (q *JobQueue) transitionStatus(ctx context.Context, id string, fromStatus jobs.Status, updateQuery string, conflictMessage func(current jobs.Status) string) error {
+func (q *JobQueue) transitionStatus(ctx context.Context, jobID string, fromStatus jobs.Status, updateQuery string, conflictMessage func(current jobs.Status) string) error {
+	if jobIDUnusable(jobID) {
+		return apperror.NotFound("job not found")
+	}
 	var current string
-	err := q.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = $1`, id).Scan(&current)
+	err := q.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&current)
 	if errors.Is(err, sql.ErrNoRows) {
 		return apperror.NotFound("job not found")
 	}
 	if err != nil {
+		if isInvalidTextUUID(err) {
+			return apperror.NotFound("job not found")
+		}
 		return fmt.Errorf("job_queue: transition lookup: %w", err)
 	}
 	if current != string(fromStatus) {
 		return apperror.Conflict(conflictMessage(jobs.Status(current)))
 	}
 
-	result, err := q.db.ExecContext(ctx, updateQuery, id)
+	result, err := q.db.ExecContext(ctx, updateQuery, jobID)
 	if err != nil {
 		return fmt.Errorf("job_queue: transition update: %w", err)
 	}

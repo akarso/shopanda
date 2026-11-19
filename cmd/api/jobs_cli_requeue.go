@@ -152,7 +152,7 @@ func formatJobsRequeueError(requeueErr error, minAge time.Duration) error {
 	case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
 		return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotFound):
-		return fmt.Errorf("jobs:requeue: job disappeared (deleted under TOCTOU): %w", requeueErr)
+		return fmt.Errorf("jobs:requeue: job not found (missing, unusable id, or deleted under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
 		return fmt.Errorf("jobs:requeue: status no longer processing (moved under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotTerminal):
