@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -81,22 +82,28 @@ func TestNewJobsRuntime_WarehousedemoReachesBind(t *testing.T) {
 	}
 }
 
-// Operator path: jobs:requeue always Get's first. Non-UUID must yield the
-// friendly miss line, not SQLSTATE 22P02 from JobQueue.Get.
-func TestRunJobsRequeue_InvalidUUIDFriendlyNotFound(t *testing.T) {
-	dsn := os.Getenv("SHOPANDA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SHOPANDA_TEST_DSN not set")
+// Operator path without DSN: inject Get that returns (nil, nil) for a bad id
+// (same miss shape as postgres.JobQueue.Get after UUID reject).
+func TestRunJobsRequeue_GetMissFriendlyNotFound(t *testing.T) {
+	parsed, err := parseJobsRequeueArgs([]string{"missing-id"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	t.Setenv("DATABASE_URL", dsn)
-	t.Setenv("SHOPANDA_DEV_MODE", "true")
-	cfg := &config.Config{}
-	cfg.Queue.Driver = "postgres"
-	cfg.Media.Local.BasePath = t.TempDir()
-	cfg.Media.Local.BaseURL = "http://127.0.0.1/media"
-	err := runJobsRequeue(io.Discard, cfg, logger.New("error"), []string{"missing-id"})
+	requeueCalled := false
+	err = runJobsRequeueWith(io.Discard, parsed, jobsRequeuePorts{
+		Get: func(context.Context, string) (*domainjobs.Detail, error) {
+			return nil, nil
+		},
+		Requeue: func(context.Context, string, int, ...domainjobs.RequeueOption) error {
+			requeueCalled = true
+			return nil
+		},
+	})
 	if err == nil {
 		t.Fatal("expected not found")
+	}
+	if requeueCalled {
+		t.Fatal("Requeue must not run when Get misses")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, `no job with id "missing-id"`) {
@@ -107,15 +114,10 @@ func TestRunJobsRequeue_InvalidUUIDFriendlyNotFound(t *testing.T) {
 	}
 }
 
-func TestRunJobsShow_InvalidUUIDFriendlyNotFound(t *testing.T) {
-	dsn := os.Getenv("SHOPANDA_TEST_DSN")
-	if dsn == "" {
-		t.Skip("SHOPANDA_TEST_DSN not set")
-	}
-	t.Setenv("DATABASE_URL", dsn)
-	cfg := &config.Config{}
-	cfg.Queue.Driver = "postgres"
-	err := runJobsShow(io.Discard, cfg, logger.New("error"), []string{"missing-id"})
+func TestRunJobsShow_GetMissFriendlyNotFound(t *testing.T) {
+	err := runJobsShowGet(io.Discard, "missing-id", false, func(context.Context, string) (*domainjobs.Detail, error) {
+		return nil, nil
+	})
 	if err == nil {
 		t.Fatal("expected not found")
 	}
@@ -277,7 +279,7 @@ func TestFormatJobsRequeueError_Mapping(t *testing.T) {
 		err  error
 		want string
 	}{
-		{domainjobs.ErrRequeueNotFound, "not found"},
+		{domainjobs.ErrRequeueNotFound, "disappeared"},
 		{domainjobs.ErrRequeueConflict, "reclaim race"},
 		{domainjobs.ErrRequeueNotProcessing, "no longer processing"},
 		{domainjobs.ErrRequeueNotTerminal, "no longer terminal"},
@@ -293,11 +295,11 @@ func TestFormatJobsRequeueError_Mapping(t *testing.T) {
 
 func TestJobsRequeueAuditDetails_ForceFlagAndRequired(t *testing.T) {
 	for _, tc := range []struct {
-		name                         string
-		status                       domainjobs.Status
-		attempts, maxRetries         int
-		forceFlag                    bool
-		wantRequired                 bool
+		name                 string
+		status               domainjobs.Status
+		attempts, maxRetries int
+		forceFlag            bool
+		wantRequired         bool
 	}{
 		{"non-exhausted failed + force", domainjobs.StatusFailed, 1, 5, true, false},
 		{"done + force", domainjobs.StatusDone, 1, 5, true, true},

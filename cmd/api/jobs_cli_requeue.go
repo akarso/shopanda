@@ -152,7 +152,9 @@ func formatJobsRequeueError(requeueErr error, minAge time.Duration) error {
 	case errors.Is(requeueErr, domainjobs.ErrRequeueWrongAttempt):
 		return fmt.Errorf("jobs:requeue: attempt mismatch (claim moved under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotFound):
-		return fmt.Errorf("jobs:requeue: job not found (missing, unusable id, or deleted under TOCTOU): %w", requeueErr)
+		// Get miss / early UUID reject use "no job with id"; this path is
+		// Requeue after a successful Get (TOCTOU delete) or a direct Queue call.
+		return fmt.Errorf("jobs:requeue: job disappeared (missing or deleted under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotProcessing):
 		return fmt.Errorf("jobs:requeue: status no longer processing (moved under TOCTOU): %w", requeueErr)
 	case errors.Is(requeueErr, domainjobs.ErrRequeueNotTerminal):

@@ -511,7 +511,7 @@ func TestJobQueue_Get_InvalidUUIDNoDB(t *testing.T) {
 	}
 }
 
-func TestJobQueue_Retry_InvalidUUIDNoDB(t *testing.T) {
+func TestJobQueue_RetryCancel_InvalidUUIDNoDB(t *testing.T) {
 	db, err := sql.Open("pgx", "postgres://invalid/invalid")
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
@@ -521,16 +521,27 @@ func TestJobQueue_Retry_InvalidUUIDNoDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJobQueue: %v", err)
 	}
-	err = q.Retry(context.Background(), "not-a-uuid")
-	if err == nil {
-		t.Fatal("expected not found")
-	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
-		t.Fatalf("err = %v, want not_found", err)
-	}
-	if strings.Contains(err.Error(), "22P02") || strings.Contains(err.Error(), "invalid input syntax") {
-		t.Fatalf("err leaked SQL: %v", err)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		fn   func(context.Context, string) error
+	}{
+		{"Retry", q.Retry},
+		{"Cancel", q.Cancel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.fn(ctx, "not-a-uuid")
+			if err == nil {
+				t.Fatal("expected not found")
+			}
+			var appErr *apperror.Error
+			if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+				t.Fatalf("err = %v, want not_found", err)
+			}
+			if strings.Contains(err.Error(), "22P02") || strings.Contains(err.Error(), "invalid input syntax") {
+				t.Fatalf("err leaked SQL: %v", err)
+			}
+		})
 	}
 }
 
