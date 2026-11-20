@@ -273,6 +273,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 | Isolated Postgres in plugin tests | `harness.OpenIsolated` (+ `AdaptInit` `Options.DB` for `BootstrapDB`) |
 | Drop `plugin.App` import | Host + `Adapt` / `NewHost`; sync via `SDK.Integration`; map in PLUGINS.md |
+| Seed CLI + non-DB sibling | `CLICommand.Needs: CapCatalogSeed` on seed only; other commands may omit DB |
 
 ---
 
