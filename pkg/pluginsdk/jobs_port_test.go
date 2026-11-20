@@ -27,9 +27,10 @@ func (q *stubJobsQueue) Requeue(_ context.Context, id string, attempt int, _ ...
 }
 
 type stubJobsReader struct {
-	detail *jobs.Detail
-	counts map[jobs.Status]int
-	byType map[string]map[jobs.Status]int
+	detail      *jobs.Detail
+	counts      map[jobs.Status]int
+	byType      map[string]map[jobs.Status]int
+	byTypeCalls []string // including empty — proves port did/didn't forward
 }
 
 func (r *stubJobsReader) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
@@ -45,10 +46,9 @@ func (r *stubJobsReader) CountsByStatus(context.Context) (map[jobs.Status]int, e
 	return r.counts, nil
 }
 func (r *stubJobsReader) CountsByType(_ context.Context, jobType string) (map[jobs.Status]int, error) {
-	// Mirror Postgres Reader: empty/whitespace fail closed (port also validates).
-	if strings.TrimSpace(jobType) == "" {
-		return nil, errEmptyJobType
-	}
+	// Deliberately accept empty/whitespace (like Service fakeReader) so port
+	// validation is the only fail-closed layer under test.
+	r.byTypeCalls = append(r.byTypeCalls, jobType)
 	if r.byType == nil {
 		return map[jobs.Status]int{}, nil
 	}
@@ -62,12 +62,6 @@ func (r *stubJobsReader) CountsByType(_ context.Context, jobType string) (map[jo
 	}
 	return out, nil
 }
-
-type emptyJobTypeError struct{}
-
-func (emptyJobTypeError) Error() string { return "job type required" }
-
-var errEmptyJobType = emptyJobTypeError{}
 
 func TestNewJobsPort_NilArgs(t *testing.T) {
 	q := &stubJobsQueue{}
@@ -118,6 +112,7 @@ func TestJobsPort_CountsByType_TwoTypes(t *testing.T) {
 	)
 	reader := &stubJobsReader{
 		byType: map[string]map[jobs.Status]int{
+			// Fixture omits zero statuses (Postgres Reader shape); port forwards.
 			typeA: {jobs.StatusPending: 2, jobs.StatusFailed: 1},
 			typeB: {jobs.StatusProcessing: 3},
 		},
@@ -134,7 +129,7 @@ func TestJobsPort_CountsByType_TwoTypes(t *testing.T) {
 		t.Fatalf("type A counts = %#v", a)
 	}
 	if _, ok := a[pluginsdk.JobStatusProcessing]; ok {
-		t.Fatalf("type A must omit zero processing: %#v", a)
+		t.Fatalf("fixture/port forward must not invent processing: %#v", a)
 	}
 	b, err := port.CountsByType(context.Background(), typeB)
 	if err != nil {
@@ -144,16 +139,28 @@ func TestJobsPort_CountsByType_TwoTypes(t *testing.T) {
 		t.Fatalf("type B counts = %#v", b)
 	}
 	if _, ok := b[pluginsdk.JobStatusPending]; ok {
-		t.Fatalf("type B must omit zero pending: %#v", b)
+		t.Fatalf("fixture/port forward must not invent pending: %#v", b)
 	}
 	empty, err := port.CountsByType(context.Background(), "integration.sync.acme.missing")
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("missing type = (%v, %v), want empty map", empty, err)
 	}
-	for _, typ := range []string{"", "   "} {
-		if _, err := port.CountsByType(context.Background(), typ); err == nil {
-			t.Fatalf("CountsByType(%q): want empty/whitespace error", typ)
+}
+
+func TestJobsPort_CountsByType_EmptyOrWhitespaceErrors(t *testing.T) {
+	reader := &stubJobsReader{}
+	port, err := pluginsdk.NewJobsPort(reader, &stubJobsQueue{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{"", "   ", "\t", " "} {
+		_, err := port.CountsByType(context.Background(), typ)
+		if err == nil || !strings.Contains(err.Error(), "pluginsdk: CountsByType") {
+			t.Fatalf("CountsByType(%q) = %v, want pluginsdk: CountsByType error", typ, err)
 		}
+	}
+	if len(reader.byTypeCalls) != 0 {
+		t.Fatalf("port must not call Reader for empty/whitespace: calls=%v", reader.byTypeCalls)
 	}
 }
 

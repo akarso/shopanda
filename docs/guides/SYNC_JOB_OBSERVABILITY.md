@@ -104,10 +104,12 @@ if !ok {
     return errJobsUnbound
 }
 counts, err := jp.CountsByType(ctx, "integration.sync.acme.webhook.ingest")
-// map[pluginsdk.JobStatus]int — pending / processing / failed / …; zero statuses omitted
-// Empty/whitespace jobType errors at the port. CountsByType is unscoped (any type string).
+// map[pluginsdk.JobStatus]int — pending / processing / failed / …
+// Empty/whitespace jobType errors at the port (before Reader). Zero statuses
+// omitted by Postgres Reader; port forwards. CountsByType is unscoped (any type).
 
-// Same empty-type rule on jobs.Reader / application/jobs.Service.CountsByType
+// application/jobs.Service.CountsByType also rejects empty/whitespace;
+// jobs.Reader / Postgres reject empty jobType the same way.
 ```
 
 Use this for plugin health/admin surfaces that report depth for **their** job
