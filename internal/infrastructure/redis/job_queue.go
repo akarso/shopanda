@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -132,7 +133,7 @@ return {status, tostring(redis_now_ms() - started)}
 // the id is on neither ready nor delayed. pending+membership is returned
 // to ready only when the claim stamp is older than min-age.
 // KEYS: processing_list, processing_set, meta, ready, job, delayed.
-// ARGV: id, min_age_ms, pending_blob (reclaiming repair; '' skips it).
+// ARGV: id, min_age_ms, pending_blob (reclaiming repair; ” skips it).
 const orphanCleanupLua = redisNowMsLua + `
 local meta = KEYS[3]
 local status = redis.call('HGET', meta, 'status')
@@ -555,13 +556,13 @@ func (s storedJob) toJob() jobs.Job {
 	}
 }
 
-func (q *JobQueue) jobKey(id string) string       { return q.prefix + "job:" + id }
-func (q *JobQueue) jobMetaKey(id string) string   { return q.prefix + "jobmeta:" + id }
-func (q *JobQueue) jobMetaPrefix() string         { return q.prefix + "jobmeta:" }
-func (q *JobQueue) readyKey() string              { return q.prefix + "ready" }
-func (q *JobQueue) processingKey() string         { return q.prefix + "processing" }
-func (q *JobQueue) processingSetKey() string      { return q.prefix + "processing_set" }
-func (q *JobQueue) delayedKey() string            { return q.prefix + "delayed" }
+func (q *JobQueue) jobKey(id string) string     { return q.prefix + "job:" + id }
+func (q *JobQueue) jobMetaKey(id string) string { return q.prefix + "jobmeta:" + id }
+func (q *JobQueue) jobMetaPrefix() string       { return q.prefix + "jobmeta:" }
+func (q *JobQueue) readyKey() string            { return q.prefix + "ready" }
+func (q *JobQueue) processingKey() string       { return q.prefix + "processing" }
+func (q *JobQueue) processingSetKey() string    { return q.prefix + "processing_set" }
+func (q *JobQueue) delayedKey() string          { return q.prefix + "delayed" }
 
 type claimMeta struct {
 	Status   jobs.Status
@@ -831,7 +832,9 @@ func (q *JobQueue) Enqueue(ctx context.Context, job jobs.Job) error {
 		return fmt.Errorf("job_queue: enqueue %q: %w", stored.ID, err)
 	}
 	if n != 1 {
-		return fmt.Errorf("job_queue: enqueue %q: already exists", stored.ID)
+		// Match Postgres JobQueue.Enqueue so pluginsdk.IsConflict / WithJobID
+		// idempotent resolve see the same Conflict code across drivers.
+		return apperror.Conflict("job already enqueued")
 	}
 	return nil
 }
@@ -1239,4 +1242,3 @@ func (q *JobQueue) reclaimAge(ctx context.Context, id string) (time.Duration, er
 }
 
 var _ jobs.RequeueHookable = (*JobQueue)(nil)
-

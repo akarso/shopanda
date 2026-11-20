@@ -4,11 +4,12 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
-// SyncJobOption configures optional sync job fields.
+// SyncJobOption configures optional sync job fields at Register* time.
 type SyncJobOption func(*extapi.SyncJob)
 
 // MaxRetries sets the queue retry limit for a sync job.
@@ -18,6 +19,35 @@ func MaxRetries(n int) SyncJobOption {
 			job.MaxRetries = n
 		}
 	}
+}
+
+// EnqueueOption configures SyncJobs.Enqueue (run-now).
+type EnqueueOption func(*enqueueConfig)
+
+type enqueueConfig struct {
+	opts []plugin.SyncEnqueueOption
+}
+
+// WithJobID sets the queue job id for idempotent enqueue (one job per entity).
+// Id must be a UUID (Postgres jobs.id / JobsPort). On Conflict, Enqueue
+// resolves via bound JobsPort: same sync type + pending/processing → success
+// (second payload discarded); terminal → Requeue(WithRequeueTerminal); wrong
+// type → hard error. Without JobsPort, Conflict is returned wrapped and
+// IsConflict remains true. Empty / non-UUID ids fail closed.
+func WithJobID(jobID string) EnqueueOption {
+	return func(c *enqueueConfig) {
+		c.opts = append(c.opts, plugin.WithJobID(jobID))
+	}
+}
+
+func applyEnqueueOptions(opts []EnqueueOption) []plugin.SyncEnqueueOption {
+	var cfg enqueueConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return cfg.opts
 }
 
 // SyncJobs registers outbound integration sync jobs for one integration slug.
@@ -76,8 +106,9 @@ func (sj *SyncJobs) RegisterManual(name string, handler extapi.SyncJobHandler, o
 
 // Enqueue queues a previously registered sync job for this slug ("run now").
 // Works for manual, cron, or event jobs; the envelope trigger is always "manual".
-func (sj *SyncJobs) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
-	return coreApp(sj.sdk.host).Integration(sj.slug).Enqueue(ctx, name, payload)
+// WithJobID makes enqueue idempotent when JobsPort is bound (see WithJobID).
+func (sj *SyncJobs) Enqueue(ctx context.Context, name string, payload map[string]interface{}, opts ...EnqueueOption) error {
+	return coreApp(sj.sdk.host).Integration(sj.slug).Enqueue(ctx, name, payload, applyEnqueueOptions(opts)...)
 }
 
 func (sj *SyncJobs) register(job extapi.SyncJob) error {
