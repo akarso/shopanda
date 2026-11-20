@@ -2,6 +2,7 @@ package pluginsdk
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/cli"
 )
@@ -23,9 +24,11 @@ type CLICommand struct {
 	// so Host ports (including CatalogSeed when this command/plugin needs it)
 	// can bind.
 	RequiresDB bool
-	// Needs lists capabilities required for this command only (e.g. CapCatalogSeed).
+	// Needs may list CapCatalogSeed for this command only. Unknown values are
+	// rejected at RegisterCommand (not a general per-command capability API).
 	// Plugin-level Needs() alone no longer blocks sibling RequiresDB:false
-	// commands. CapCatalogSeed here requires RequiresDB true.
+	// commands. CapCatalogSeed here requires RequiresDB true, and the plugin
+	// must also Need/Require CapCatalogSeed so Host.CatalogSeed() is allowed.
 	Needs []Capability
 	Run   func(ctx CLIContext, args []string) error
 }
@@ -41,11 +44,15 @@ type CLI struct {
 }
 
 // RegisterCommand registers cmd on the host app's CLI registry.
+// Panics if Needs contains a capability other than CapCatalogSeed.
 func (c *CLI) RegisterCommand(cmd CLICommand) {
 	needs := make([]string, 0, len(cmd.Needs))
 	for _, cap := range cmd.Needs {
 		if cap == "" {
 			continue
+		}
+		if cap != CapCatalogSeed {
+			panic(fmt.Sprintf("pluginsdk: CLICommand.Needs: unsupported %q (only CapCatalogSeed)", cap))
 		}
 		needs = append(needs, string(cap))
 	}

@@ -391,3 +391,165 @@ func TestRunPluginCLICommand_EmptyPluginOwnerFailsClosedWhenSeedNeeded(t *testin
 		t.Fatalf("ran=%v err=%v, want empty Plugin fail-closed", ran, err)
 	}
 }
+
+func TestRunPluginCLICommand_EmptyPluginOwnerFailsClosedOnCommandNeedsSeed(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+	app := &plugin.App{Logger: log, Config: &config.Config{}}
+	preparePermissionRegistry(app)
+	// No plugin-level CapCatalogSeed — command Needs alone must still fail closed.
+	reg.CLIRegistry().Register(cli.Command{
+		Name:        "ghost:cmd-seed",
+		Description: "Empty owner + command Needs CapCatalogSeed",
+		RequiresDB:  true,
+		Needs:       []string{string(plugin.CapCatalogSeed)},
+		Plugin:      "",
+		Run:         func(cli.Context, []string) error { return nil },
+	})
+	freezePermissionRegistry(app)
+
+	ran, err := runPluginCLICommandWithDeps(&config.Config{}, log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "ghost:cmd-seed", nil, stubPluginCLIDeps(t))
+	if !ran || err == nil || !strings.Contains(err.Error(), "empty Plugin owner") {
+		t.Fatalf("ran=%v err=%v, want empty Plugin fail-closed on command Needs", ran, err)
+	}
+}
+
+func TestRunPluginCLICommand_EmptyNeedsCompatBindsSiblingRequiresDB(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	// Fresh App per command — bindProductPorts is once-per-App.
+	seed := &seedPluginTwoRequiresDB{}
+	reg, app := initSeedCLIRuntime(t, seed)
+	ran, err := runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:seed-empty-needs", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !seed.seedSaw {
+		t.Fatalf("seed empty Needs: ran=%v err=%v saw=%v", ran, err, seed.seedSaw)
+	}
+
+	sib := &seedPluginTwoRequiresDB{}
+	reg2, app2 := initSeedCLIRuntime(t, sib)
+	ran, err = runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg2, App: app2}, nil
+		}, "test:other-db-empty-needs", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !sib.otherSaw {
+		t.Fatalf("sibling empty Needs: ran=%v err=%v saw=%v (compat still binds CatalogSeed)", ran, err, sib.otherSaw)
+	}
+}
+
+func TestRunPluginCLICommand_CommandNeedsSeedWithoutPluginDeclare_HostCatalogSeedFalse(t *testing.T) {
+	p := &cmdNeedsSeedNoDeclarePlugin{}
+	reg, app := initSeedCLIRuntime(t, p)
+
+	ran, err := runPluginCLICommandWithDeps(cfgEmpty(), logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:cmd-seed-nodeclare", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran {
+		t.Fatalf("ran=%v err=%v", ran, err)
+	}
+	if !p.ran || p.hostOK {
+		t.Fatalf("ran=%v hostOK=%v: command Needs CapCatalogSeed alone must not open Host.CatalogSeed", p.ran, p.hostOK)
+	}
+	if port, ok := app.CatalogSeedPort(); ok || port != nil {
+		t.Fatalf("CatalogSeedPort bound without plugin declare: (%v, %v)", port, ok)
+	}
+}
+
+func TestRunPluginCLICommand_UnknownCommandNeedFailsClosed(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+	app := &plugin.App{Logger: log, Config: &config.Config{}}
+	preparePermissionRegistry(app)
+	reg.CLIRegistry().Register(cli.Command{
+		Name:        "ghost:typo-need",
+		Description: "Unknown command Need",
+		RequiresDB:  true,
+		Needs:       []string{"catalog.seed.typo"},
+		Plugin:      "ghost/typo",
+		Run:         func(cli.Context, []string) error { return nil },
+	})
+	freezePermissionRegistry(app)
+
+	ran, err := runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "ghost:typo-need", nil, stubPluginCLIDeps(t))
+	if !ran || err == nil || !strings.Contains(err.Error(), "unsupported command Need") {
+		t.Fatalf("ran=%v err=%v, want unsupported command Need", ran, err)
+	}
+}
+
+// seedPluginTwoRequiresDB documents empty-Needs compat: every RequiresDB of a
+// CapCatalogSeed plugin still gets CatalogSeedPort when Needs is empty.
+type seedPluginTwoRequiresDB struct {
+	seedSaw  bool
+	otherSaw bool
+}
+
+func (p *seedPluginTwoRequiresDB) Name() string { return "test/seed-two-db" }
+
+func (p *seedPluginTwoRequiresDB) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapCatalogSeed}
+}
+
+func (p *seedPluginTwoRequiresDB) Init(h pluginsdk.Host) error {
+	h.Require(pluginsdk.CapCatalogSeed)
+	host := h
+	sdk := pluginsdk.NewHost(h, p.Name())
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:seed-empty-needs",
+		Description: "Seed with empty Needs (compat)",
+		RequiresDB:  true,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			if _, ok := host.CatalogSeed(); !ok {
+				return errCatalogSeedUnbound
+			}
+			p.seedSaw = true
+			return nil
+		},
+	})
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:other-db-empty-needs",
+		Description: "Sibling RequiresDB empty Needs still binds (compat)",
+		RequiresDB:  true,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			if _, ok := host.CatalogSeed(); !ok {
+				return errCatalogSeedUnbound
+			}
+			p.otherSaw = true
+			return nil
+		},
+	})
+	return nil
+}
+
+// cmdNeedsSeedNoDeclarePlugin lists CapCatalogSeed on the command only —
+// bind must not open the port; Host.CatalogSeed stays false.
+type cmdNeedsSeedNoDeclarePlugin struct {
+	ran    bool
+	hostOK bool
+}
+
+func (cmdNeedsSeedNoDeclarePlugin) Name() string { return "test/cmdseed-nodeclare" }
+
+func (p *cmdNeedsSeedNoDeclarePlugin) Init(h pluginsdk.Host) error {
+	host := h
+	sdk := pluginsdk.NewHost(h, "test/cmdseed-nodeclare")
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:cmd-seed-nodeclare",
+		Description: "Command Needs CapCatalogSeed without plugin Need",
+		RequiresDB:  true,
+		Needs:       []pluginsdk.Capability{pluginsdk.CapCatalogSeed},
+		Run: func(pluginsdk.CLIContext, []string) error {
+			p.ran = true
+			_, p.hostOK = host.CatalogSeed()
+			return nil
+		},
+	})
+	return nil
+}

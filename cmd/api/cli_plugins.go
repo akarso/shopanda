@@ -73,6 +73,9 @@ func runPluginCLICommandWithDeps(cfg *config.Config, log logger.Logger, registry
 		return false, nil
 	}
 
+	if err := validateCLICommandNeeds(cmd.Needs); err != nil {
+		return true, fmt.Errorf("plugin CLI: command %q: %w", name, err)
+	}
 	// Per-command CapCatalogSeed (CLICommand.Needs) requires RequiresDB so the
 	// root can bind CatalogSeedPort. Plugin-level Need(CapCatalogSeed) alone
 	// must not block sibling RequiresDB:false commands (e.g. metaldogs:eval).
@@ -117,6 +120,20 @@ func cliCommandNeedsCapability(cmd cli.Command, cap plugin.Capability) bool {
 	return false
 }
 
+// validateCLICommandNeeds rejects unknown command Needs. Only CapCatalogSeed
+// is supported on CLICommand.Needs / cli.Command.Needs (not a general Needs API).
+func validateCLICommandNeeds(needs []string) error {
+	for _, n := range needs {
+		if n == "" {
+			continue
+		}
+		if n != string(plugin.CapCatalogSeed) {
+			return fmt.Errorf("unsupported command Need %q (only CapCatalogSeed is supported)", n)
+		}
+	}
+	return nil
+}
+
 // bindPluginCLIPorts wires product ports on the Init App after DB open.
 // CapCatalogSeed is bound only when the running command's owning plugin
 // declared that Need — not for every RequiresDB command when a peer needs seed.
@@ -135,18 +152,26 @@ func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap, cmd cli
 	if boot == nil {
 		return fmt.Errorf("plugin CLI: bootstrap is required")
 	}
+	if err := validateCLICommandNeeds(cmd.Needs); err != nil {
+		return err
+	}
 	app.Bootstrap = boot
 	if err := bindProductPorts(app, boot); err != nil {
 		return err
 	}
 
-	// Bind CapCatalogSeed when this command asks for it, or (compat) when the
-	// owning plugin declared plugin-level Need(CapCatalogSeed) and the command
-	// did not list Needs at all — seed CLIs that only set RequiresDB keep working.
-	bindSeed := cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed)
-	if !bindSeed && cmd.Plugin != "" && len(cmd.Needs) == 0 &&
-		app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) {
-		bindSeed = true
+	// CapCatalogSeed bind requires the owning plugin to have declared the cap
+	// (Host.CatalogSeed gates on CapabilityDeclaredBy). Then:
+	// - command Needs includes CapCatalogSeed → bind
+	// - command Needs empty (compat) → bind for every RequiresDB of that plugin
+	// - command Needs non-empty without CapCatalogSeed → do not bind
+	bindSeed := false
+	if cmd.Plugin != "" && app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) {
+		if cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed) {
+			bindSeed = true
+		} else if len(cmd.Needs) == 0 {
+			bindSeed = true
+		}
 	}
 	if bindSeed {
 		if err := bindCatalogSeedPort(app, boot); err != nil {
