@@ -253,7 +253,10 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
   job workers), not during `Init` on production roots that assert before late bind
   of CapCart on serve — CapJobs/CapMedia on worker-like roots are bound before assert
   so `Host.Jobs()` / `Host.Media()` work once Init has finished and the root has
-  bound. `CapCart` is serve-only; `CapCatalogSeed` is CLI-seed-only. See
+  bound. `CapCart` is serve-only; `CapCatalogSeed` is CLI-seed-only (bind when
+  the plugin declared it and the command Needs seed or has empty Needs —
+  command-level CapCatalogSeed without `RequiresDB` fails closed; plugin-level
+  Need alone does not block sibling non-DB commands). See
   `cmd/api/plugin_boot.go` and EXTENSION_POINTS pitfalls.
 - `ConfigValue` / `ConfigBool` / `ConfigInt` / `ConfigInt64` — read this plugin's own
   `plugins.<slug>.*` config (scoped Hosts cannot see core keys or other plugins)
