@@ -34,6 +34,12 @@ handler also reinjects that payload `request_id` onto the handler context via
 _ = sdk.Integration("acme").Enqueue(r.Context(), "webhook.ingest", map[string]interface{}{
     "order_id": orderID,
 })
+
+// Idempotent one-job-per-entity: fixed queue id; duplicate → pluginsdk.IsConflict.
+err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, pluginsdk.WithJobID(entityJobID))
+if pluginsdk.IsConflict(err) {
+    // CapJobs: Host.Jobs().Get + Requeue to resume the existing job.
+}
 ```
 
 ### Event path (`RegisterOnEvent`)

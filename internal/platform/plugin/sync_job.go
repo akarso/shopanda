@@ -6,10 +6,41 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
+
+// SyncEnqueueOption configures Integration.Enqueue / enqueueSyncJob.
+type SyncEnqueueOption func(*syncEnqueueConfig)
+
+type syncEnqueueConfig struct {
+	jobID    string
+	jobIDSet bool
+}
+
+// WithJobID sets the queue job id for an idempotent enqueue (one job per entity).
+// Empty / whitespace-only ids fail closed at Enqueue time.
+func WithJobID(jobID string) SyncEnqueueOption {
+	return func(c *syncEnqueueConfig) {
+		c.jobIDSet = true
+		c.jobID = strings.TrimSpace(jobID)
+	}
+}
+
+func applySyncEnqueueOptions(opts []SyncEnqueueOption) (syncEnqueueConfig, error) {
+	var cfg syncEnqueueConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	if cfg.jobIDSet && cfg.jobID == "" {
+		return cfg, fmt.Errorf("plugin: enqueue sync job: WithJobID requires a non-empty id")
+	}
+	return cfg, nil
+}
 
 type SyncJobRegistration struct {
 	PluginSlug string
@@ -32,14 +63,16 @@ func (i *Integration) RegisterSyncJob(job extapi.SyncJob) error {
 // the resolved jobs.Queue after InitAll; Enqueue during Init fails with
 // ErrSyncJobQueueUnbound. Payload may be nil (stored as an empty object). The
 // job envelope trigger is always "manual" so handlers can distinguish on-demand
-// runs from cron/event. Cross-plugin enqueue (calling Integration with another
-// plugin's slug) is allowed, matching RegisterSyncJob; ownership checks are
-// out of scope.
-func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}) error {
+// runs from cron/event. Pass WithJobID for idempotent one-job-per-entity
+// enqueue; a duplicate id returns an apperror Conflict (not wrapped) so
+// pluginsdk.IsConflict / apperror.Is remain true. Cross-plugin enqueue
+// (calling Integration with another plugin's slug) is allowed, matching
+// RegisterSyncJob; ownership checks are out of scope.
+func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}, opts ...SyncEnqueueOption) error {
 	if i == nil || i.app == nil {
 		return fmt.Errorf("plugin: integration app not configured")
 	}
-	return i.app.enqueueSyncJob(ctx, i.slug, name, payload)
+	return i.app.enqueueSyncJob(ctx, i.slug, name, payload, opts...)
 }
 
 func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
@@ -92,13 +125,18 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 // NewSyncJobEnvelope builds the queue job for a sync registration.
 // trigger is stored in the envelope (cron / event / manual). payload is
 // shallow-copied so later caller mutations are not visible to the queue.
-func NewSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}) (jobs.Job, error) {
+// jobID empty → a new id is generated; non-empty → used as the queue job id.
+func NewSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}, jobID ...string) (jobs.Job, error) {
 	copied := shallowCopyStringMap(payload)
 	if copied == nil {
 		copied = map[string]interface{}{}
 	}
 	name := strings.TrimSpace(reg.Job.Name)
-	job, err := jobs.NewJob(id.New(), reg.JobType, map[string]interface{}{
+	idVal := id.New()
+	if len(jobID) > 0 && strings.TrimSpace(jobID[0]) != "" {
+		idVal = strings.TrimSpace(jobID[0])
+	}
+	job, err := jobs.NewJob(idVal, reg.JobType, map[string]interface{}{
 		"plugin":  reg.PluginSlug,
 		"name":    name,
 		"trigger": trigger,
@@ -150,9 +188,13 @@ func InjectRequestID(ctx context.Context, payload map[string]interface{}) map[st
 	return out
 }
 
-func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, payload map[string]interface{}) error {
+func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, payload map[string]interface{}, opts ...SyncEnqueueOption) error {
 	if a == nil {
 		return fmt.Errorf("plugin: app is nil")
+	}
+	cfg, err := applySyncEnqueueOptions(opts)
+	if err != nil {
+		return err
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -181,11 +223,20 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 		ctx = context.Background()
 	}
 	payload = InjectRequestID(ctx, payload)
-	job, err := NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload)
+	var job jobs.Job
+	if cfg.jobIDSet {
+		job, err = NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload, cfg.jobID)
+	} else {
+		job, err = NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload)
+	}
 	if err != nil {
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
 	if err := a.boundQueue.Enqueue(ctx, job); err != nil {
+		// Preserve Conflict for idempotent enqueue (IsConflict / apperror.Is).
+		if apperror.Is(err, apperror.CodeConflict) {
+			return err
+		}
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
 	if a.Logger != nil {

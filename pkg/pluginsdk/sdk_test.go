@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -21,9 +22,9 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
-func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error)                        { return nil, nil }
+func (q *memQueue) Complete(context.Context, string, int) error                       { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error                    { return nil }
 func (q *memQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error { return nil }
 
 func testApp() *plugin.App {
@@ -166,6 +167,100 @@ func TestSyncJobs_RegisterManualAndEnqueue(t *testing.T) {
 	inner, _ := got.Payload["payload"].(map[string]interface{})
 	if inner["k"] != 1 {
 		t.Fatalf("payload = %#v", inner)
+	}
+}
+
+// idempotentQueue stores by job id; duplicate Enqueue → Conflict; implements
+// Reader + Requeue for the MIG3b resume path via Host.Jobs().
+type idempotentQueue struct {
+	byID     map[string]jobs.Job
+	requeued []string
+}
+
+func (q *idempotentQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	if q.byID == nil {
+		q.byID = map[string]jobs.Job{}
+	}
+	if _, ok := q.byID[job.ID]; ok {
+		return apperror.Conflict("job already enqueued")
+	}
+	q.byID[job.ID] = job
+	return nil
+}
+func (q *idempotentQueue) Dequeue(context.Context) (*jobs.Job, error)     { return nil, nil }
+func (q *idempotentQueue) Complete(context.Context, string, int) error    { return nil }
+func (q *idempotentQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *idempotentQueue) Requeue(_ context.Context, id string, _ int, _ ...jobs.RequeueOption) error {
+	q.requeued = append(q.requeued, id)
+	return nil
+}
+func (q *idempotentQueue) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
+	return nil, nil
+}
+func (q *idempotentQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	job, ok := q.byID[id]
+	if !ok {
+		return nil, nil
+	}
+	return &jobs.Detail{
+		Summary: jobs.Summary{ID: job.ID, Type: job.Type, Status: job.Status, Attempts: job.Attempts},
+		Payload: job.Payload,
+	}, nil
+}
+func (q *idempotentQueue) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+	return nil, nil
+}
+func (q *idempotentQueue) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
+	return nil, nil
+}
+
+func TestSyncJobs_Enqueue_WithJobID_IsConflictThenJobsRequeue(t *testing.T) {
+	app := testApp()
+	app.Bootstrap = &plugin.Bootstrap{}
+	queue := &idempotentQueue{}
+	if err := app.BindQueue(queue); err != nil {
+		t.Fatal(err)
+	}
+	port, err := pluginsdk.NewJobsPort(queue, queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.BindJobsPort(port); err != nil {
+		t.Fatal(err)
+	}
+
+	sdk := pluginsdk.New(app, "acme/gen")
+	if err := sdk.Integration("acme").RegisterManual("gen.run", func(context.Context, extapi.SyncJobContext) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const jobID = "gen-entity-42"
+	ctx := context.Background()
+	if err := sdk.Integration("acme").Enqueue(ctx, "gen.run", map[string]interface{}{"n": 1}, pluginsdk.WithJobID(jobID)); err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	err = sdk.Integration("acme").Enqueue(ctx, "gen.run", map[string]interface{}{"n": 2}, pluginsdk.WithJobID(jobID))
+	if err == nil || !pluginsdk.IsConflict(err) {
+		t.Fatalf("second Enqueue err = %v, want IsConflict", err)
+	}
+
+	host := pluginsdk.AsHostFor(app, "acme/gen")
+	host.Require(pluginsdk.CapJobs)
+	jp, ok := host.Jobs()
+	if !ok || jp == nil {
+		t.Fatal("Host.Jobs required for resume path")
+	}
+	detail, err := jp.Get(ctx, jobID)
+	if err != nil || detail == nil || detail.ID != jobID {
+		t.Fatalf("Get = (%v, %v)", detail, err)
+	}
+	if err := jp.Requeue(ctx, jobID, detail.Attempts, pluginsdk.WithRequeueTerminal()); err != nil {
+		t.Fatalf("Requeue: %v", err)
+	}
+	if len(queue.requeued) != 1 || queue.requeued[0] != jobID {
+		t.Fatalf("requeued = %v", queue.requeued)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
@@ -16,9 +17,10 @@ import (
 )
 
 type memQueue struct {
-	mu       sync.Mutex
-	enqueued []jobs.Job
-	err      error
+	mu        sync.Mutex
+	enqueued  []jobs.Job
+	err       error
+	rejectDup bool // duplicate job.ID → apperror.Conflict (Postgres shape)
 }
 
 func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
@@ -27,12 +29,19 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	if q.err != nil {
 		return q.err
 	}
+	if q.rejectDup {
+		for _, existing := range q.enqueued {
+			if existing.ID == job.ID {
+				return apperror.Conflict("job already enqueued")
+			}
+		}
+	}
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
-func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (q *memQueue) Complete(context.Context, string, int) error     { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error)                        { return nil, nil }
+func (q *memQueue) Complete(context.Context, string, int) error                       { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error                    { return nil }
 func (q *memQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error { return nil }
 
 func (q *memQueue) snapshot() []jobs.Job {
@@ -338,6 +347,49 @@ func TestApp_Integration_Enqueue_NormalizesSlug(t *testing.T) {
 	}
 	if queue.snapshot()[0].Payload["plugin"] != "acme" {
 		t.Fatalf("plugin = %#v", queue.snapshot()[0].Payload["plugin"])
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_ConflictUnwrapped(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &memQueue{rejectDup: true}
+	_ = app.BindQueue(queue)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	const jobID = "entity-gen-1"
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 1}, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	got := queue.snapshot()
+	if len(got) != 1 || got[0].ID != jobID {
+		t.Fatalf("enqueued = %+v, want id %q", got, jobID)
+	}
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 2}, plugin.WithJobID(jobID))
+	if err == nil || !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("second Enqueue err = %v, want Conflict (unwrapped)", err)
+	}
+	if strings.Contains(err.Error(), "enqueue sync job") {
+		t.Fatalf("Conflict must not be wrapped: %v", err)
+	}
+	if len(queue.snapshot()) != 1 {
+		t.Fatalf("duplicate must not insert: %+v", queue.snapshot())
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_EmptyFailsClosed(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	_ = app.BindQueue(&memQueue{})
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID("  "))
+	if err == nil || !strings.Contains(err.Error(), "WithJobID") {
+		t.Fatalf("err = %v, want WithJobID fail-closed", err)
 	}
 }
 
