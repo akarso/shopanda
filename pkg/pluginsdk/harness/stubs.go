@@ -2,7 +2,9 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
@@ -18,7 +20,10 @@ func (harnessJobsStub) Get(context.Context, string) (*pluginsdk.JobDetail, error
 func (harnessJobsStub) CountsByStatus(context.Context) (map[pluginsdk.JobStatus]int, error) {
 	return map[pluginsdk.JobStatus]int{}, nil
 }
-func (harnessJobsStub) CountsByType(context.Context, string) (map[pluginsdk.JobStatus]int, error) {
+func (harnessJobsStub) CountsByType(_ context.Context, jobType string) (map[pluginsdk.JobStatus]int, error) {
+	if strings.TrimSpace(jobType) == "" {
+		return nil, fmt.Errorf("harness: CountsByType: empty job type")
+	}
 	return map[pluginsdk.JobStatus]int{}, nil
 }
 func (harnessJobsStub) Requeue(context.Context, string, int, ...pluginsdk.RequeueOption) error {

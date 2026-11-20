@@ -229,9 +229,11 @@ func (a *App) BindCustomerPort(port any) error {
 }
 
 // BindJobsPort wires the Host-visible jobs read/requeue port (Get,
-// CountsByStatus, Requeue). Satisfies CapJobs. Call after BindQueue when the
-// bound queue also implements jobs.Reader (Postgres). Broker queues without a
-// Reader leave CapJobs unbound.
+// CountsByStatus, CountsByType, Requeue). Satisfies CapJobs. Call after
+// BindQueue when the bound queue also implements jobs.Reader (Postgres).
+// Broker queues without a Reader leave CapJobs unbound. Port must be a
+// pluginsdk.JobsPort (or compatible); BindJobsPort takes any but Host.Jobs()
+// type-asserts — keep mocks in sync with the interface.
 func (a *App) BindJobsPort(port any) error {
 	if a == nil {
 		return fmt.Errorf("plugin: BindJobsPort: app is nil")

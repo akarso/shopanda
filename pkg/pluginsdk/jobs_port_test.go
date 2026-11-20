@@ -2,7 +2,7 @@ package pluginsdk_test
 
 import (
 	"context"
-	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,11 +27,9 @@ func (q *stubJobsQueue) Requeue(_ context.Context, id string, attempt int, _ ...
 }
 
 type stubJobsReader struct {
-	detail    *jobs.Detail
-	counts    map[jobs.Status]int
-	byType    map[string]map[jobs.Status]int
-	byTypeErr error
-	lastType  string
+	detail *jobs.Detail
+	counts map[jobs.Status]int
+	byType map[string]map[jobs.Status]int
 }
 
 func (r *stubJobsReader) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
@@ -47,9 +45,9 @@ func (r *stubJobsReader) CountsByStatus(context.Context) (map[jobs.Status]int, e
 	return r.counts, nil
 }
 func (r *stubJobsReader) CountsByType(_ context.Context, jobType string) (map[jobs.Status]int, error) {
-	r.lastType = jobType
-	if r.byTypeErr != nil {
-		return nil, r.byTypeErr
+	// Mirror Postgres Reader: empty/whitespace fail closed (port also validates).
+	if strings.TrimSpace(jobType) == "" {
+		return nil, errEmptyJobType
 	}
 	if r.byType == nil {
 		return map[jobs.Status]int{}, nil
@@ -64,6 +62,12 @@ func (r *stubJobsReader) CountsByType(_ context.Context, jobType string) (map[jo
 	}
 	return out, nil
 }
+
+type emptyJobTypeError struct{}
+
+func (emptyJobTypeError) Error() string { return "job type required" }
+
+var errEmptyJobType = emptyJobTypeError{}
 
 func TestNewJobsPort_NilArgs(t *testing.T) {
 	q := &stubJobsQueue{}
@@ -126,26 +130,30 @@ func TestJobsPort_CountsByType_TwoTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountsByType A: %v", err)
 	}
-	if a[pluginsdk.JobStatusPending] != 2 || a[pluginsdk.JobStatusFailed] != 1 || a[pluginsdk.JobStatusProcessing] != 0 {
+	if a[pluginsdk.JobStatusPending] != 2 || a[pluginsdk.JobStatusFailed] != 1 {
 		t.Fatalf("type A counts = %#v", a)
+	}
+	if _, ok := a[pluginsdk.JobStatusProcessing]; ok {
+		t.Fatalf("type A must omit zero processing: %#v", a)
 	}
 	b, err := port.CountsByType(context.Background(), typeB)
 	if err != nil {
 		t.Fatalf("CountsByType B: %v", err)
 	}
-	if b[pluginsdk.JobStatusProcessing] != 3 || b[pluginsdk.JobStatusPending] != 0 {
+	if b[pluginsdk.JobStatusProcessing] != 3 {
 		t.Fatalf("type B counts = %#v", b)
 	}
-	if a[pluginsdk.JobStatusPending] == b[pluginsdk.JobStatusPending] && a[pluginsdk.JobStatusProcessing] == b[pluginsdk.JobStatusProcessing] {
-		t.Fatal("counts must differ per type")
+	if _, ok := b[pluginsdk.JobStatusPending]; ok {
+		t.Fatalf("type B must omit zero pending: %#v", b)
 	}
 	empty, err := port.CountsByType(context.Background(), "integration.sync.acme.missing")
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("missing type = (%v, %v), want empty map", empty, err)
 	}
-	reader.byTypeErr = errors.New("empty type")
-	if _, err := port.CountsByType(context.Background(), ""); err == nil {
-		t.Fatal("empty jobType: want error from Reader")
+	for _, typ := range []string{"", "   "} {
+		if _, err := port.CountsByType(context.Background(), typ); err == nil {
+			t.Fatalf("CountsByType(%q): want empty/whitespace error", typ)
+		}
 	}
 }
 

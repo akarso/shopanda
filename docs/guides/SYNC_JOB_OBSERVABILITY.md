@@ -99,11 +99,15 @@ Postgres queue only (`jobs.Reader` / CapJobs `JobsPort`):
 
 ```go
 // Prefer pluginsdk (Need CapJobs + Host.Jobs):
-jp, _ := host.Jobs()
+jp, ok := host.Jobs()
+if !ok {
+    return errJobsUnbound
+}
 counts, err := jp.CountsByType(ctx, "integration.sync.acme.webhook.ingest")
 // map[pluginsdk.JobStatus]int — pending / processing / failed / …; zero statuses omitted
+// Empty/whitespace jobType errors at the port. CountsByType is unscoped (any type string).
 
-// Same semantics on jobs.Reader / application/jobs.Service.CountsByType
+// Same empty-type rule on jobs.Reader / application/jobs.Service.CountsByType
 ```
 
 Use this for plugin health/admin surfaces that report depth for **their** job
