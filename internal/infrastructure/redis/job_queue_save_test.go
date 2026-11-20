@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
@@ -243,8 +244,12 @@ func TestJobQueue_Enqueue_RejectsDuplicateID(t *testing.T) {
 	if err := q.Enqueue(ctx, job); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.Enqueue(ctx, job); err == nil {
+	err := q.Enqueue(ctx, job)
+	if err == nil {
 		t.Fatal("second Enqueue of same id must fail")
+	}
+	if !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("duplicate Enqueue err = %v, want Conflict (WithJobID / IsConflict)", err)
 	}
 }
 

@@ -29,9 +29,11 @@ type enqueueConfig struct {
 }
 
 // WithJobID sets the queue job id for idempotent enqueue (one job per entity).
-// A duplicate id returns an error for which IsConflict is true (Conflict is
-// not wrapped away). Resume with Host.Jobs().Get / Requeue when CapJobs is bound.
-// Empty / whitespace-only ids fail closed.
+// Id must be a UUID (Postgres jobs.id / JobsPort). On Conflict, Enqueue
+// resolves via bound JobsPort: same sync type + pending/processing → success
+// (second payload discarded); terminal → Requeue(WithRequeueTerminal); wrong
+// type → hard error. Without JobsPort, Conflict is returned wrapped and
+// IsConflict remains true. Empty / non-UUID ids fail closed.
 func WithJobID(jobID string) EnqueueOption {
 	return func(c *enqueueConfig) {
 		c.opts = append(c.opts, plugin.WithJobID(jobID))
@@ -104,8 +106,7 @@ func (sj *SyncJobs) RegisterManual(name string, handler extapi.SyncJobHandler, o
 
 // Enqueue queues a previously registered sync job for this slug ("run now").
 // Works for manual, cron, or event jobs; the envelope trigger is always "manual".
-// Use WithJobID for idempotent one-job-per-entity enqueue; duplicates return
-// IsConflict so callers can Get/Requeue the existing job via Host.Jobs().
+// WithJobID makes enqueue idempotent when JobsPort is bound (see WithJobID).
 func (sj *SyncJobs) Enqueue(ctx context.Context, name string, payload map[string]interface{}, opts ...EnqueueOption) error {
 	return coreApp(sj.sdk.host).Integration(sj.slug).Enqueue(ctx, name, payload, applyEnqueueOptions(opts)...)
 }

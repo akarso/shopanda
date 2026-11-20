@@ -35,10 +35,12 @@ _ = sdk.Integration("acme").Enqueue(r.Context(), "webhook.ingest", map[string]in
     "order_id": orderID,
 })
 
-// Idempotent one-job-per-entity: fixed queue id; duplicate → pluginsdk.IsConflict.
-err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, pluginsdk.WithJobID(entityJobID))
-if pluginsdk.IsConflict(err) {
-    // CapJobs: Host.Jobs().Get + Requeue to resume the existing job.
+// Idempotent one-job-per-entity (UUID job id). JobsPort must be bound.
+// On Conflict, Enqueue itself: same Type + pending/processing → nil (no-op);
+// terminal → Requeue(WithRequeueTerminal); wrong Type → error.
+// Second call's payload is discarded — use a new id to change inputs.
+if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, pluginsdk.WithJobID(entityUUID)); err != nil {
+    return err
 }
 ```
 

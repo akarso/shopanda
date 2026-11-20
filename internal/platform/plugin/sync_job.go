@@ -21,7 +21,8 @@ type syncEnqueueConfig struct {
 }
 
 // WithJobID sets the queue job id for an idempotent enqueue (one job per entity).
-// Empty / whitespace-only ids fail closed at Enqueue time.
+// Empty / whitespace-only / non-UUID ids fail closed at Enqueue time (Postgres
+// jobs.id is UUID; JobsPort.Get treats non-UUID as missing).
 func WithJobID(jobID string) SyncEnqueueOption {
 	return func(c *syncEnqueueConfig) {
 		c.jobIDSet = true
@@ -36,10 +37,24 @@ func applySyncEnqueueOptions(opts []SyncEnqueueOption) (syncEnqueueConfig, error
 			opt(&cfg)
 		}
 	}
-	if cfg.jobIDSet && cfg.jobID == "" {
-		return cfg, fmt.Errorf("plugin: enqueue sync job: WithJobID requires a non-empty id")
+	if !cfg.jobIDSet {
+		return cfg, nil
+	}
+	if cfg.jobID == "" {
+		return cfg, fmt.Errorf("plugin: enqueue sync job: WithJobID requires a non-empty UUID")
+	}
+	if !id.IsUUID(cfg.jobID) {
+		return cfg, fmt.Errorf("plugin: enqueue sync job: WithJobID %q is not a UUID", cfg.jobID)
 	}
 	return cfg, nil
+}
+
+// syncJobConflictPort is the JobsPort surface needed to resolve idempotent
+// WithJobID conflicts (type check + status-aware resume). Satisfied by
+// pluginsdk.JobsPort / Postgres Reader queues.
+type syncJobConflictPort interface {
+	Get(ctx context.Context, id string) (*jobs.Detail, error)
+	Requeue(ctx context.Context, id string, attempt int, opts ...jobs.RequeueOption) error
 }
 
 type SyncJobRegistration struct {
@@ -63,11 +78,16 @@ func (i *Integration) RegisterSyncJob(job extapi.SyncJob) error {
 // the resolved jobs.Queue after InitAll; Enqueue during Init fails with
 // ErrSyncJobQueueUnbound. Payload may be nil (stored as an empty object). The
 // job envelope trigger is always "manual" so handlers can distinguish on-demand
-// runs from cron/event. Pass WithJobID for idempotent one-job-per-entity
-// enqueue; a duplicate id returns an apperror Conflict (not wrapped) so
-// pluginsdk.IsConflict / apperror.Is remain true. Cross-plugin enqueue
-// (calling Integration with another plugin's slug) is allowed, matching
-// RegisterSyncJob; ownership checks are out of scope.
+// runs from cron/event.
+//
+// WithJobID: idempotent one-job-per-entity enqueue (UUID required). On
+// Conflict, Enqueue resolves via bound JobsPort (Compose BindJobsPort /
+// CapJobs): same sync Type + pending/processing/reclaiming → success
+// (no-op; second payload is discarded); terminal → Requeue with
+// WithRequeueTerminal; wrong Type → hard error. JobsPort is required to
+// resolve Conflict (Postgres Reader); without it Conflict is returned
+// wrapped so IsConflict remains true but resume is not guessed.
+// Cross-plugin enqueue is allowed, matching RegisterSyncJob.
 func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}, opts ...SyncEnqueueOption) error {
 	if i == nil || i.app == nil {
 		return fmt.Errorf("plugin: integration app not configured")
@@ -122,21 +142,20 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 	return nil
 }
 
-// NewSyncJobEnvelope builds the queue job for a sync registration.
-// trigger is stored in the envelope (cron / event / manual). payload is
-// shallow-copied so later caller mutations are not visible to the queue.
-// jobID empty → a new id is generated; non-empty → used as the queue job id.
-func NewSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}, jobID ...string) (jobs.Job, error) {
+// NewSyncJobEnvelope builds the queue job for a sync registration with a
+// generated id. trigger is stored in the envelope (cron / event / manual).
+// payload is shallow-copied so later caller mutations are not visible to the queue.
+func NewSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}) (jobs.Job, error) {
+	return newSyncJobEnvelope(reg, trigger, payload, id.New())
+}
+
+func newSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}, jobID string) (jobs.Job, error) {
 	copied := shallowCopyStringMap(payload)
 	if copied == nil {
 		copied = map[string]interface{}{}
 	}
 	name := strings.TrimSpace(reg.Job.Name)
-	idVal := id.New()
-	if len(jobID) > 0 && strings.TrimSpace(jobID[0]) != "" {
-		idVal = strings.TrimSpace(jobID[0])
-	}
-	job, err := jobs.NewJob(idVal, reg.JobType, map[string]interface{}{
+	job, err := jobs.NewJob(jobID, reg.JobType, map[string]interface{}{
 		"plugin":  reg.PluginSlug,
 		"name":    name,
 		"trigger": trigger,
@@ -225,7 +244,7 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 	payload = InjectRequestID(ctx, payload)
 	var job jobs.Job
 	if cfg.jobIDSet {
-		job, err = NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload, cfg.jobID)
+		job, err = newSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload, cfg.jobID)
 	} else {
 		job, err = NewSyncJobEnvelope(reg, extapi.SyncTriggerManual, payload)
 	}
@@ -233,9 +252,8 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
 	if err := a.boundQueue.Enqueue(ctx, job); err != nil {
-		// Preserve Conflict for idempotent enqueue (IsConflict / apperror.Is).
-		if apperror.Is(err, apperror.CodeConflict) {
-			return err
+		if cfg.jobIDSet && apperror.Is(err, apperror.CodeConflict) {
+			return a.resolveIdempotentEnqueueConflict(ctx, name, job.ID, job.Type, err)
 		}
 		return fmt.Errorf("plugin: enqueue sync job %q: %w", name, err)
 	}
@@ -251,6 +269,43 @@ func (a *App) enqueueSyncJob(ctx context.Context, pluginSlug, name string, paylo
 		a.Logger.Info("integration.sync_job.enqueued", fields)
 	}
 	return nil
+}
+
+// resolveIdempotentEnqueueConflict verifies the existing row matches the
+// intended sync job type and status-aware resumes. Second Enqueue payload is
+// never applied (Requeue does not rewrite payload).
+func (a *App) resolveIdempotentEnqueueConflict(ctx context.Context, name, jobID, expectedType string, conflict error) error {
+	raw, ok := a.JobsPort()
+	if !ok || raw == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict on job id %q (JobsPort required to verify type/status): %w", name, jobID, conflict)
+	}
+	port, ok := raw.(syncJobConflictPort)
+	if !ok || port == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict on job id %q (JobsPort does not support Get/Requeue): %w", name, jobID, conflict)
+	}
+	detail, err := port.Get(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict resolve Get %q: %w", name, jobID, err)
+	}
+	if detail == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict on job id %q but Get returned nil: %w", name, jobID, conflict)
+	}
+	if detail.Type != expectedType {
+		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has type %q, want %q (refusing to resume foreign job)",
+			name, jobID, detail.Type, expectedType)
+	}
+	switch detail.Status {
+	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusReclaiming:
+		// Already in flight or queued — idempotent success. Payload unchanged.
+		return nil
+	case jobs.StatusFailed, jobs.StatusDone, jobs.StatusCancelled:
+		if err := port.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal()); err != nil {
+			return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue %q: %w", name, jobID, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has unsupported status %q", name, jobID, detail.Status)
+	}
 }
 
 // SyncJobs returns a copy of registered sync jobs.

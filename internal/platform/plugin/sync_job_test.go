@@ -17,10 +17,9 @@ import (
 )
 
 type memQueue struct {
-	mu        sync.Mutex
-	enqueued  []jobs.Job
-	err       error
-	rejectDup bool // duplicate job.ID → apperror.Conflict (Postgres shape)
+	mu       sync.Mutex
+	enqueued []jobs.Job
+	err      error
 }
 
 func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
@@ -28,13 +27,6 @@ func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	defer q.mu.Unlock()
 	if q.err != nil {
 		return q.err
-	}
-	if q.rejectDup {
-		for _, existing := range q.enqueued {
-			if existing.ID == job.ID {
-				return apperror.Conflict("job already enqueued")
-			}
-		}
 	}
 	q.enqueued = append(q.enqueued, job)
 	return nil
@@ -350,36 +342,106 @@ func TestApp_Integration_Enqueue_NormalizesSlug(t *testing.T) {
 	}
 }
 
-func TestApp_Integration_Enqueue_WithJobID_ConflictUnwrapped(t *testing.T) {
+func TestApp_Integration_Enqueue_WithJobID_PendingConflictNoOp(t *testing.T) {
 	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
-	queue := &memQueue{rejectDup: true}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue}
+	if err := app.BindJobsPort(port); err != nil {
+		t.Fatal(err)
+	}
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee1"
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 1}, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 2}, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("pending Conflict must be idempotent success: %v", err)
+	}
+	if port.requeueN != 0 {
+		t.Fatalf("pending must not Requeue, got %d", port.requeueN)
+	}
+	if len(queue.byID) != 1 {
+		t.Fatalf("duplicate must not insert: %+v", queue.byID)
+	}
+	inner, _ := queue.byID[jobID].Payload["payload"].(map[string]interface{})
+	if inner["n"] != 1 {
+		t.Fatalf("second payload must not replace first: %#v", inner)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_TerminalRequeues(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee2"
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatal(err)
+	}
+	j := queue.byID[jobID]
+	j.Status = jobs.StatusFailed
+	j.Attempts = 3
+	queue.byID[jobID] = j
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("terminal Conflict must Requeue: %v", err)
+	}
+	if port.requeueN != 1 || port.lastRequeueID != jobID || port.lastAttempt != 3 {
+		t.Fatalf("requeue = (%d, %q, %d)", port.requeueN, port.lastRequeueID, port.lastAttempt)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongTypeFails(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	_ = app.BindJobsPort(&conflictJobsPort{q: queue})
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee3"
+	queue.byID[jobID] = jobs.Job{ID: jobID, Type: "integration.sync.other.job", Status: jobs.StatusPending}
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
+	if err == nil || !strings.Contains(err.Error(), "refusing to resume foreign job") {
+		t.Fatalf("err = %v, want foreign job refusal", err)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_ConflictWithoutJobsPort(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
 	_ = app.BindQueue(queue)
 	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
 		Name:    "gen.run",
 		Trigger: extapi.Manual(),
 		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
 	})
-	const jobID = "entity-gen-1"
-	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 1}, plugin.WithJobID(jobID)); err != nil {
-		t.Fatalf("first Enqueue: %v", err)
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee4"
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatal(err)
 	}
-	got := queue.snapshot()
-	if len(got) != 1 || got[0].ID != jobID {
-		t.Fatalf("enqueued = %+v, want id %q", got, jobID)
-	}
-	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 2}, plugin.WithJobID(jobID))
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
 	if err == nil || !apperror.Is(err, apperror.CodeConflict) {
-		t.Fatalf("second Enqueue err = %v, want Conflict (unwrapped)", err)
+		t.Fatalf("err = %v, want wrapped Conflict (IsConflict)", err)
 	}
-	if strings.Contains(err.Error(), "enqueue sync job") {
-		t.Fatalf("Conflict must not be wrapped: %v", err)
-	}
-	if len(queue.snapshot()) != 1 {
-		t.Fatalf("duplicate must not insert: %+v", queue.snapshot())
+	if !strings.Contains(err.Error(), "JobsPort required") {
+		t.Fatalf("err = %v, want JobsPort required", err)
 	}
 }
 
-func TestApp_Integration_Enqueue_WithJobID_EmptyFailsClosed(t *testing.T) {
+func TestApp_Integration_Enqueue_WithJobID_NonUUIDFailsClosed(t *testing.T) {
 	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
 	_ = app.BindQueue(&memQueue{})
 	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
@@ -387,10 +449,68 @@ func TestApp_Integration_Enqueue_WithJobID_EmptyFailsClosed(t *testing.T) {
 		Trigger: extapi.Manual(),
 		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
 	})
-	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID("  "))
-	if err == nil || !strings.Contains(err.Error(), "WithJobID") {
-		t.Fatalf("err = %v, want WithJobID fail-closed", err)
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID("entity-gen-1"))
+	if err == nil || !strings.Contains(err.Error(), "not a UUID") {
+		t.Fatalf("err = %v, want UUID fail-closed", err)
 	}
+	err = app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID("  "))
+	if err == nil || !strings.Contains(err.Error(), "WithJobID") {
+		t.Fatalf("err = %v, want empty WithJobID fail-closed", err)
+	}
+}
+
+// conflictQueue rejects duplicate ids with Conflict and stores jobs for Get.
+type conflictQueue struct {
+	mu   sync.Mutex
+	byID map[string]jobs.Job
+}
+
+func (q *conflictQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, ok := q.byID[job.ID]; ok {
+		return apperror.Conflict("job already enqueued")
+	}
+	if job.Status == "" {
+		job.Status = jobs.StatusPending
+	}
+	q.byID[job.ID] = job
+	return nil
+}
+func (q *conflictQueue) Dequeue(context.Context) (*jobs.Job, error)     { return nil, nil }
+func (q *conflictQueue) Complete(context.Context, string, int) error    { return nil }
+func (q *conflictQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *conflictQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error {
+	return nil
+}
+
+type conflictJobsPort struct {
+	q             *conflictQueue
+	requeueN      int
+	lastRequeueID string
+	lastAttempt   int
+}
+
+func (p *conflictJobsPort) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	p.q.mu.Lock()
+	defer p.q.mu.Unlock()
+	job, ok := p.q.byID[id]
+	if !ok {
+		return nil, nil
+	}
+	return &jobs.Detail{
+		Summary: jobs.Summary{ID: job.ID, Type: job.Type, Status: job.Status, Attempts: job.Attempts},
+		Payload: job.Payload,
+	}, nil
+}
+func (p *conflictJobsPort) Requeue(_ context.Context, id string, attempt int, _ ...jobs.RequeueOption) error {
+	p.requeueN++
+	p.lastRequeueID = id
+	p.lastAttempt = attempt
+	return nil
+}
+func (p *conflictJobsPort) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+	return nil, nil
 }
 
 func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {
