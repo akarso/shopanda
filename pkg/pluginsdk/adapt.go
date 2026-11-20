@@ -53,5 +53,5 @@ type migratingPluginBridge struct {
 }
 
 func (b *migratingPluginBridge) Migration() plugin.MigrationSpec {
-	return toInternalMigrationSpec(b.migrator.Migration())
+	return b.migrator.Migration()
 }
