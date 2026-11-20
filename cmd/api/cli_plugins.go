@@ -120,12 +120,13 @@ func cliCommandNeedsCapability(cmd cli.Command, cap plugin.Capability) bool {
 	return false
 }
 
-// validateCLICommandNeeds rejects unknown command Needs. Only CapCatalogSeed
-// is supported on CLICommand.Needs / cli.Command.Needs (not a general Needs API).
+// validateCLICommandNeeds rejects unknown or empty command Needs. Only
+// CapCatalogSeed is supported on CLICommand.Needs / cli.Command.Needs (not a
+// general Needs API). Empty strings must not disable empty-Needs compat.
 func validateCLICommandNeeds(needs []string) error {
 	for _, n := range needs {
 		if n == "" {
-			continue
+			return fmt.Errorf("empty command Need is not allowed")
 		}
 		if n != string(plugin.CapCatalogSeed) {
 			return fmt.Errorf("unsupported command Need %q (only CapCatalogSeed is supported)", n)
@@ -164,12 +165,11 @@ func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap, cmd cli
 	// (Host.CatalogSeed gates on CapabilityDeclaredBy). Then:
 	// - command Needs includes CapCatalogSeed → bind
 	// - command Needs empty (compat) → bind for every RequiresDB of that plugin
-	// - command Needs non-empty without CapCatalogSeed → do not bind
+	// Needs accepts only CapCatalogSeed (validated above); there is no Needs-based
+	// opt-out — keep non-seed siblings RequiresDB:false until one exists.
 	bindSeed := false
 	if cmd.Plugin != "" && app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) {
-		if cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed) {
-			bindSeed = true
-		} else if len(cmd.Needs) == 0 {
+		if cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed) || len(cmd.Needs) == 0 {
 			bindSeed = true
 		}
 	}

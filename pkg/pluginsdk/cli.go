@@ -24,11 +24,13 @@ type CLICommand struct {
 	// so Host ports (including CatalogSeed when this command/plugin needs it)
 	// can bind.
 	RequiresDB bool
-	// Needs may list CapCatalogSeed for this command only. Unknown values are
-	// rejected at RegisterCommand (not a general per-command capability API).
-	// Plugin-level Needs() alone no longer blocks sibling RequiresDB:false
-	// commands. CapCatalogSeed here requires RequiresDB true, and the plugin
-	// must also Need/Require CapCatalogSeed so Host.CatalogSeed() is allowed.
+	// Needs may list CapCatalogSeed for this command only. Unknown or empty
+	// values panic at RegisterCommand (not a general per-command capability
+	// API). Plugin-level Needs() alone no longer blocks sibling
+	// RequiresDB:false commands. CapCatalogSeed here requires RequiresDB true,
+	// and the plugin must also Need/Require CapCatalogSeed so Host.CatalogSeed()
+	// is allowed. Empty Needs on another RequiresDB of the same plugin still
+	// over-binds the write port (compat); keep non-seed siblings RequiresDB:false.
 	Needs []Capability
 	Run   func(ctx CLIContext, args []string) error
 }
@@ -44,12 +46,12 @@ type CLI struct {
 }
 
 // RegisterCommand registers cmd on the host app's CLI registry.
-// Panics if Needs contains a capability other than CapCatalogSeed.
+// Panics if Needs contains an empty capability or anything other than CapCatalogSeed.
 func (c *CLI) RegisterCommand(cmd CLICommand) {
 	needs := make([]string, 0, len(cmd.Needs))
 	for _, cap := range cmd.Needs {
 		if cap == "" {
-			continue
+			panic("pluginsdk: CLICommand.Needs: empty capability is not allowed")
 		}
 		if cap != CapCatalogSeed {
 			panic(fmt.Sprintf("pluginsdk: CLICommand.Needs: unsupported %q (only CapCatalogSeed)", cap))

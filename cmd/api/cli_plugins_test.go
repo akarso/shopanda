@@ -484,6 +484,101 @@ func TestRunPluginCLICommand_UnknownCommandNeedFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRunPluginCLICommand_EmptyStringNeedFailsClosed(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+	app := &plugin.App{Logger: log, Config: &config.Config{}}
+	preparePermissionRegistry(app)
+	app.RecordNeedsFor("ghost/empty-need", plugin.CapCatalogSeed)
+	reg.CLIRegistry().Register(cli.Command{
+		Name:        "ghost:empty-need",
+		Description: "Empty-string Needs must not disable compat silently",
+		RequiresDB:  true,
+		Needs:       []string{""},
+		Plugin:      "ghost/empty-need",
+		Run:         func(cli.Context, []string) error { return nil },
+	})
+	freezePermissionRegistry(app)
+
+	ran, err := runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "ghost:empty-need", nil, stubPluginCLIDeps(t))
+	if !ran || err == nil || !strings.Contains(err.Error(), "empty command Need") {
+		t.Fatalf("ran=%v err=%v, want empty command Need fail-closed", ran, err)
+	}
+}
+
+func TestRunPluginCLICommand_MixedNeedsSeedAndEmptySiblingRequiresDB(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	// Realistic shape: seed opts into Needs: CapCatalogSeed; sibling RequiresDB
+	// keeps empty Needs → compat still binds write port.
+	seed := &seedPluginMixedNeeds{}
+	reg, app := initSeedCLIRuntime(t, seed)
+	ran, err := runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:seed-explicit-needs", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !seed.seedSaw {
+		t.Fatalf("explicit Needs seed: ran=%v err=%v saw=%v", ran, err, seed.seedSaw)
+	}
+
+	sib := &seedPluginMixedNeeds{}
+	reg2, app2 := initSeedCLIRuntime(t, sib)
+	ran, err = runPluginCLICommandWithDeps(cfgEmpty(), log,
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg2, App: app2}, nil
+		}, "test:sib-db-empty-needs", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !sib.sibSaw {
+		t.Fatalf("sibling empty Needs: ran=%v err=%v saw=%v (compat over-bind)", ran, err, sib.sibSaw)
+	}
+}
+
+// seedPluginMixedNeeds: seed with explicit Needs CapCatalogSeed + sibling
+// RequiresDB with empty Needs (compat over-bind).
+type seedPluginMixedNeeds struct {
+	seedSaw bool
+	sibSaw  bool
+}
+
+func (p *seedPluginMixedNeeds) Name() string { return "test/seed-mixed-needs" }
+
+func (p *seedPluginMixedNeeds) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapCatalogSeed}
+}
+
+func (p *seedPluginMixedNeeds) Init(h pluginsdk.Host) error {
+	h.Require(pluginsdk.CapCatalogSeed)
+	host := h
+	sdk := pluginsdk.NewHost(h, p.Name())
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:seed-explicit-needs",
+		Description: "Seed with Needs CapCatalogSeed",
+		RequiresDB:  true,
+		Needs:       []pluginsdk.Capability{pluginsdk.CapCatalogSeed},
+		Run: func(pluginsdk.CLIContext, []string) error {
+			if _, ok := host.CatalogSeed(); !ok {
+				return errCatalogSeedUnbound
+			}
+			p.seedSaw = true
+			return nil
+		},
+	})
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:sib-db-empty-needs",
+		Description: "Sibling RequiresDB empty Needs still binds (compat)",
+		RequiresDB:  true,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			if _, ok := host.CatalogSeed(); !ok {
+				return errCatalogSeedUnbound
+			}
+			p.sibSaw = true
+			return nil
+		},
+	})
+	return nil
+}
+
 // seedPluginTwoRequiresDB documents empty-Needs compat: every RequiresDB of a
 // CapCatalogSeed plugin still gets CatalogSeedPort when Needs is empty.
 type seedPluginTwoRequiresDB struct {

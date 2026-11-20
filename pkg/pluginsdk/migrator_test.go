@@ -55,8 +55,38 @@ func TestCollectMigrations_PluginAppSDKMigrator(t *testing.T) {
 	}
 }
 
-// InitAllContext apply path must see pluginsdk.Migrator on a raw plugin.App
-// (same type-assert as CollectMigrations via the MigrationSpec alias).
+// Non-nil *sql.DB that cannot connect: InitAllContext must still type-assert
+// pluginsdk.Migrator (alias) and attempt apply. Silent skip (MigrateFailed=0 +
+// Initialized=1) would mean the alias broke on the apply path. Unit CI covers
+// this; the DSN test below is optional SQL success.
+func TestInitAllContext_PluginAppSDKMigratorTypeAsserted(t *testing.T) {
+	dbConn, err := sql.Open("pgx", "host=/dev/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dbConn.Close() })
+
+	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
+	reg.Register(sdkMigratorOnApp{
+		fsys: fstest.MapFS{
+			"migrations/001_noop.sql": &fstest.MapFile{Data: []byte("SELECT 1;")},
+		},
+	})
+	app := &plugin.App{
+		Logger:    logger.NewWithWriter(io.Discard, "error"),
+		Config:    &config.Config{},
+		Bootstrap: &plugin.Bootstrap{DB: dbConn},
+	}
+	summary := reg.InitAllContext(context.Background(), app)
+	if summary.MigrateFailed == 0 {
+		t.Fatalf("InitAllContext = %+v: expected MigrateFailed after type-assert + apply attempt; silent skip means SDK Migrator was not seen", summary)
+	}
+	if err := plugin.InitSummaryError(summary); err == nil {
+		t.Fatal("want InitSummaryError from failed apply after Migrator type-assert")
+	}
+}
+
+// Optional SQL apply (skipped without SHOPANDA_TEST_DSN; not in unit CI).
 func TestInitAllContext_PluginAppSDKMigratorApplies(t *testing.T) {
 	dsn := os.Getenv("SHOPANDA_TEST_DSN")
 	if dsn == "" {
