@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 type memQueue struct {
@@ -491,6 +492,8 @@ type conflictJobsPort struct {
 	lastAttempt   int
 }
 
+var _ pluginsdk.JobsPort = (*conflictJobsPort)(nil)
+
 func (p *conflictJobsPort) Get(_ context.Context, id string) (*jobs.Detail, error) {
 	p.q.mu.Lock()
 	defer p.q.mu.Unlock()
@@ -510,7 +513,13 @@ func (p *conflictJobsPort) Requeue(_ context.Context, id string, attempt int, _ 
 	return nil
 }
 func (p *conflictJobsPort) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
-	return nil, nil
+	return map[jobs.Status]int{}, nil
+}
+func (p *conflictJobsPort) CountsByType(_ context.Context, jobType string) (map[jobs.Status]int, error) {
+	if strings.TrimSpace(jobType) == "" {
+		return nil, errors.New("conflictJobsPort: empty job type")
+	}
+	return map[jobs.Status]int{}, nil
 }
 
 func TestApp_BindQueue_MustMatchRegisterQueue(t *testing.T) {

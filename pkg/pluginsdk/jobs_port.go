@@ -3,6 +3,7 @@ package pluginsdk
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -49,16 +50,22 @@ func WithRequeueTerminal() RequeueOption {
 }
 
 // JobsPort is the Host-visible jobs surface for plugins that declare CapJobs.
-// Get and CountsByStatus require a Reader-backed queue (Postgres). Requeue uses
-// the bound Queue. Does not expose Enqueue/Dequeue/Complete/Fail or List.
+// Get, CountsByStatus, and CountsByType require a Reader-backed queue
+// (Postgres). Requeue uses the bound Queue. Does not expose
+// Enqueue/Dequeue/Complete/Fail or List.
 //
 // Get returns (nil, nil) when the id is missing or not a usable job id
 // (including non-UUID strings on Postgres). Callers must nil-check before
-// dereferencing. Requeue is not scoped to the plugin — any CapJobs holder may
-// requeue any job id (ops-oriented; do not declare CapJobs casually).
+// dereferencing. CountsByType rejects empty/whitespace jobType at the port
+// (same as application/jobs.Service) before calling the Reader. Zero-count
+// statuses are omitted by Reader implementations (e.g. Postgres); the port
+// forwards the map and does not strip zeros. CountsByType and Requeue are not
+// scoped to the plugin — any CapJobs holder may count or requeue any job
+// type/id (ops-oriented; do not declare CapJobs casually).
 type JobsPort interface {
 	Get(ctx context.Context, id string) (*JobDetail, error)
 	CountsByStatus(ctx context.Context) (map[JobStatus]int, error)
+	CountsByType(ctx context.Context, jobType string) (map[JobStatus]int, error)
 	Requeue(ctx context.Context, id string, attempt int, opts ...RequeueOption) error
 }
 
@@ -85,6 +92,13 @@ func (p *jobsPort) Get(ctx context.Context, id string) (*JobDetail, error) {
 
 func (p *jobsPort) CountsByStatus(ctx context.Context) (map[JobStatus]int, error) {
 	return p.reader.CountsByStatus(ctx)
+}
+
+func (p *jobsPort) CountsByType(ctx context.Context, jobType string) (map[JobStatus]int, error) {
+	if strings.TrimSpace(jobType) == "" {
+		return nil, fmt.Errorf("pluginsdk: CountsByType: empty job type")
+	}
+	return p.reader.CountsByType(ctx, jobType)
 }
 
 func (p *jobsPort) Requeue(ctx context.Context, id string, attempt int, opts ...RequeueOption) error {
