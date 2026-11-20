@@ -21,6 +21,13 @@ type Command struct {
 	Name        string
 	Description string
 	RequiresDB  bool
+	// Needs may list CapCatalogSeed for this command only. Unknown or empty
+	// values fail closed at run (not a general per-command capability API).
+	// Distinct from plugin-level Needs(): CapCatalogSeed here implies RequiresDB
+	// and the owning plugin must also have declared CapCatalogSeed for
+	// Host.CatalogSeed to open. Empty Needs + plugin CapCatalogSeed still binds
+	// (compat over-bind; no Needs-based opt-out for other RequiresDB commands).
+	Needs []string
 	// Plugin is the registering plugin name (set by plugin.App.RegisterCommand
 	// from CurrentPluginName during Init). Empty for non-plugin registrations.
 	Plugin string

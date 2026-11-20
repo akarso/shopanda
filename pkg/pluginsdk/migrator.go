@@ -3,7 +3,6 @@ package pluginsdk
 import (
 	"context"
 	"database/sql"
-	"io/fs"
 
 	"github.com/akarso/shopanda/internal/platform/migrate"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -21,21 +20,18 @@ const DefaultMigrationLockWait = migrate.DefaultPluginLockWait
 
 // MigrationSpec is the SQL filesystem owned by a Migrator plugin. One spec
 // per plugin — basenames share the plugin:{name}: namespace.
-type MigrationSpec struct {
-	FS      fs.FS
-	Dir     string
-	Options MigrationFSOptions
-}
+//
+// Type alias of plugin.MigrationSpec so a plugin.App that implements only
+// pluginsdk.Migrator also satisfies plugin.Migrator (CollectMigrations /
+// InitAll apply without requiring pluginsdk.Adapt).
+type MigrationSpec = plugin.MigrationSpec
 
 // Migrator is an optional pluginsdk.Plugin interface. Implement it to declare
-// plugin-owned SQL without Init side effects. pluginsdk.Adapt forwards it to
-// the core plugin.Migrator contract so `app migrate` / InitAll pick it up.
+// plugin-owned SQL without Init side effects. Because MigrationSpec aliases
+// plugin.MigrationSpec, the same type also implements plugin.Migrator — both
+// Adapt bridges and legacy plugin.App registrations are collected.
 type Migrator interface {
 	Migration() MigrationSpec
-}
-
-func toInternalMigrationSpec(spec MigrationSpec) plugin.MigrationSpec {
-	return plugin.MigrationSpec{FS: spec.FS, Dir: spec.Dir, Options: spec.Options}
 }
 
 // ApplyMigrationFS applies spec's SQL against db (integration tests only —
