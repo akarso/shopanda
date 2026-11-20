@@ -34,6 +34,14 @@ handler also reinjects that payload `request_id` onto the handler context via
 _ = sdk.Integration("acme").Enqueue(r.Context(), "webhook.ingest", map[string]interface{}{
     "order_id": orderID,
 })
+
+// Idempotent one-job-per-entity (UUID job id). JobsPort must be bound.
+// On Conflict, Enqueue itself: same Type + pending/processing → nil (no-op);
+// terminal → Requeue(WithRequeueTerminal); wrong Type → error.
+// Second call's payload is discarded — use a new id to change inputs.
+if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, pluginsdk.WithJobID(entityUUID)); err != nil {
+    return err
+}
 ```
 
 ### Event path (`RegisterOnEvent`)
