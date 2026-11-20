@@ -2,7 +2,6 @@ package pluginsdk_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -153,14 +152,36 @@ func TestJobsPort_CountsByType_EmptyOrWhitespaceErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const want = "pluginsdk: CountsByType: empty job type"
 	for _, typ := range []string{"", "   ", "\t", " "} {
 		_, err := port.CountsByType(context.Background(), typ)
-		if err == nil || !strings.Contains(err.Error(), "pluginsdk: CountsByType") {
-			t.Fatalf("CountsByType(%q) = %v, want pluginsdk: CountsByType error", typ, err)
+		if err == nil || err.Error() != want {
+			t.Fatalf("CountsByType(%q) = %v, want %q", typ, err, want)
 		}
 	}
 	if len(reader.byTypeCalls) != 0 {
 		t.Fatalf("port must not call Reader for empty/whitespace: calls=%v", reader.byTypeCalls)
+	}
+}
+
+func TestJobsPort_CountsByType_ForwardsExplicitZero(t *testing.T) {
+	const jobType = "integration.sync.acme.gen.run"
+	reader := &stubJobsReader{
+		byType: map[string]map[jobs.Status]int{
+			jobType: {jobs.StatusPending: 0},
+		},
+	}
+	port, err := pluginsdk.NewJobsPort(reader, &stubJobsQueue{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := port.CountsByType(context.Background(), jobType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, ok := got[pluginsdk.JobStatusPending]
+	if !ok || n != 0 {
+		t.Fatalf("port must forward Reader zero: got %#v (ok=%v)", got, ok)
 	}
 }
 
