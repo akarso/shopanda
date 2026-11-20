@@ -21,6 +21,12 @@ type Command struct {
 	Name        string
 	Description string
 	RequiresDB  bool
+	// Needs lists composition-root capabilities this command requires when it
+	// runs (e.g. "catalog.seed"). Distinct from plugin-level Needs(): a plugin
+	// may Need CapCatalogSeed for its seed command while other commands omit
+	// it and run with RequiresDB false. CapCatalogSeed in Needs implies
+	// RequiresDB (enforced by runPluginCLICommand).
+	Needs []string
 	// Plugin is the registering plugin name (set by plugin.App.RegisterCommand
 	// from CurrentPluginName during Init). Empty for non-plugin registrations.
 	Plugin string

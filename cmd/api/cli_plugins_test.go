@@ -119,21 +119,59 @@ func (catalogSeedUnboundError) Error() string { return "catalog seed port unboun
 
 var errCatalogSeedUnbound = catalogSeedUnboundError{}
 
-type seedCLINoDBPlugin struct{}
+// seedPluginWithEval registers a CapCatalogSeed seed command and a sibling
+// RequiresDB:false command (Metal Dogs metaldogs:eval shape).
+type seedPluginWithEval struct {
+	seedSaw bool
+	evalSaw bool
+}
 
-func (seedCLINoDBPlugin) Name() string { return "test/seednodb" }
+func (p *seedPluginWithEval) Name() string { return "test/seed+eval" }
 
-func (seedCLINoDBPlugin) Needs() []pluginsdk.Capability {
+func (p *seedPluginWithEval) Needs() []pluginsdk.Capability {
 	return []pluginsdk.Capability{pluginsdk.CapCatalogSeed}
 }
 
-func (seedCLINoDBPlugin) Init(h pluginsdk.Host) error {
+func (p *seedPluginWithEval) Init(h pluginsdk.Host) error {
 	h.Require(pluginsdk.CapCatalogSeed)
-	sdk := pluginsdk.NewHost(h, "test/seednodb")
+	host := h
+	sdk := pluginsdk.NewHost(h, p.Name())
 	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
-		Name:        "test:seed-nodb",
-		Description: "Seed Need without RequiresDB — must fail closed",
+		Name:        "test:seed-write",
+		Description: "Seed with CapCatalogSeed",
+		RequiresDB:  true,
+		Needs:       []pluginsdk.Capability{pluginsdk.CapCatalogSeed},
+		Run: func(pluginsdk.CLIContext, []string) error {
+			if _, ok := host.CatalogSeed(); !ok {
+				return errCatalogSeedUnbound
+			}
+			p.seedSaw = true
+			return nil
+		},
+	})
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:eval-nodb",
+		Description: "Non-DB sibling must run despite plugin CapCatalogSeed",
 		RequiresDB:  false,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			p.evalSaw = true
+			return nil
+		},
+	})
+	return nil
+}
+
+type cmdNeedsSeedNoDBPlugin struct{}
+
+func (cmdNeedsSeedNoDBPlugin) Name() string { return "test/cmdseednodb" }
+
+func (cmdNeedsSeedNoDBPlugin) Init(h pluginsdk.Host) error {
+	sdk := pluginsdk.NewHost(h, "test/cmdseednodb")
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:cmd-seed-nodb",
+		Description: "Command Needs CapCatalogSeed without RequiresDB — fail closed",
+		RequiresDB:  false,
+		Needs:       []pluginsdk.Capability{pluginsdk.CapCatalogSeed},
 		Run:         func(pluginsdk.CLIContext, []string) error { return nil },
 	})
 	return nil
@@ -264,17 +302,38 @@ func TestRunPluginCLICommand_PeerRequiresDBDoesNotBindSeed(t *testing.T) {
 	}
 }
 
-func TestRunPluginCLICommand_SeedNeedWithoutRequiresDBFailsClosed(t *testing.T) {
-	reg, app := initSeedCLIRuntime(t, seedCLINoDBPlugin{})
+func TestRunPluginCLICommand_SeedPluginNonDBSiblingRuns(t *testing.T) {
+	p := &seedPluginWithEval{}
+	reg, app := initSeedCLIRuntime(t, p)
+	log := logger.NewWithWriter(io.Discard, "error")
+	rt := func() (*pluginCLIRuntime, error) {
+		return &pluginCLIRuntime{Registry: reg, App: app}, nil
+	}
 
-	ran, err := runPluginCLICommand(&config.Config{}, logger.NewWithWriter(io.Discard, "error"),
-		func() (*pluginCLIRuntime, error) {
-			return &pluginCLIRuntime{Registry: reg, App: app}, nil
-		}, "test:seed-nodb", nil)
-	if !ran || err == nil || !strings.Contains(err.Error(), "RequiresDB is false") {
-		t.Fatalf("ran=%v err=%v, want RequiresDB fail-closed", ran, err)
+	ran, err := runPluginCLICommand(cfgEmpty(), log, rt, "test:eval-nodb", nil)
+	if err != nil || !ran || !p.evalSaw {
+		t.Fatalf("eval: ran=%v err=%v saw=%v (plugin CapCatalogSeed must not block RequiresDB:false)", ran, err, p.evalSaw)
+	}
+
+	ran, err = runPluginCLICommandWithDeps(cfgEmpty(), log, rt, "test:seed-write", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !p.seedSaw {
+		t.Fatalf("seed: ran=%v err=%v saw=%v", ran, err, p.seedSaw)
 	}
 }
+
+func TestRunPluginCLICommand_CommandNeedsSeedWithoutRequiresDBFailsClosed(t *testing.T) {
+	reg, app := initSeedCLIRuntime(t, cmdNeedsSeedNoDBPlugin{})
+
+	ran, err := runPluginCLICommand(cfgEmpty(), logger.NewWithWriter(io.Discard, "error"),
+		func() (*pluginCLIRuntime, error) {
+			return &pluginCLIRuntime{Registry: reg, App: app}, nil
+		}, "test:cmd-seed-nodb", nil)
+	if !ran || err == nil || !strings.Contains(err.Error(), "RequiresDB is false") {
+		t.Fatalf("ran=%v err=%v, want command Needs CapCatalogSeed fail-closed", ran, err)
+	}
+}
+
+func cfgEmpty() *config.Config { return &config.Config{} }
 
 func TestRunPluginCLICommand_FailedIntegrationInitDoesNotBreakSeedAssert(t *testing.T) {
 	probe := &seedCLIProbePlugin{}

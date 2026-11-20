@@ -73,11 +73,11 @@ func runPluginCLICommandWithDeps(cfg *config.Config, log logger.Logger, registry
 		return false, nil
 	}
 
-	// Seed plugins that Need CapCatalogSeed must use RequiresDB so the root
-	// can bind CatalogSeedPort before Run.
-	if cmd.Plugin != "" && rt.App != nil &&
-		rt.App.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) && !cmd.RequiresDB {
-		return true, fmt.Errorf("plugin CLI: command %q (plugin %q) Needs CapCatalogSeed but RequiresDB is false", name, cmd.Plugin)
+	// Per-command CapCatalogSeed (CLICommand.Needs) requires RequiresDB so the
+	// root can bind CatalogSeedPort. Plugin-level Need(CapCatalogSeed) alone
+	// must not block sibling RequiresDB:false commands (e.g. metaldogs:eval).
+	if cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed) && !cmd.RequiresDB {
+		return true, fmt.Errorf("plugin CLI: command %q Needs CapCatalogSeed but RequiresDB is false", name)
 	}
 
 	ctx := cli.Context{
@@ -88,7 +88,8 @@ func runPluginCLICommandWithDeps(cfg *config.Config, log logger.Logger, registry
 	if cmd.RequiresDB {
 		// Any RequiresDB opens DB and binds product read ports. CapCatalogSeed
 		// bind is owner-scoped (see bindPluginCLIPortsFromBoot).
-		if cmd.Plugin == "" && rt.App != nil && rt.App.CapabilityNeeded(plugin.CapCatalogSeed) {
+		if cmd.Plugin == "" && rt.App != nil &&
+			(cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed) || rt.App.CapabilityNeeded(plugin.CapCatalogSeed)) {
 			return true, fmt.Errorf("plugin CLI: command %q RequiresDB but has empty Plugin owner while CapCatalogSeed is Needed", name)
 		}
 		if deps.OpenDB == nil || deps.Bind == nil {
@@ -104,6 +105,16 @@ func runPluginCLICommandWithDeps(cfg *config.Config, log logger.Logger, registry
 		}
 	}
 	return true, cmdRegistry.Run(name, ctx, args)
+}
+
+func cliCommandNeedsCapability(cmd cli.Command, cap plugin.Capability) bool {
+	want := string(cap)
+	for _, n := range cmd.Needs {
+		if n == want {
+			return true
+		}
+	}
+	return false
 }
 
 // bindPluginCLIPorts wires product ports on the Init App after DB open.
@@ -129,7 +140,14 @@ func bindPluginCLIPortsFromBoot(app *plugin.App, boot *plugin.Bootstrap, cmd cli
 		return err
 	}
 
-	bindSeed := cmd.Plugin != "" && app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin)
+	// Bind CapCatalogSeed when this command asks for it, or (compat) when the
+	// owning plugin declared plugin-level Need(CapCatalogSeed) and the command
+	// did not list Needs at all — seed CLIs that only set RequiresDB keep working.
+	bindSeed := cliCommandNeedsCapability(cmd, plugin.CapCatalogSeed)
+	if !bindSeed && cmd.Plugin != "" && len(cmd.Needs) == 0 &&
+		app.CapabilityDeclaredBy(plugin.CapCatalogSeed, cmd.Plugin) {
+		bindSeed = true
+	}
 	if bindSeed {
 		if err := bindCatalogSeedPort(app, boot); err != nil {
 			return err
