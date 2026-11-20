@@ -18,6 +18,9 @@ func (harnessJobsStub) Get(context.Context, string) (*pluginsdk.JobDetail, error
 func (harnessJobsStub) CountsByStatus(context.Context) (map[pluginsdk.JobStatus]int, error) {
 	return map[pluginsdk.JobStatus]int{}, nil
 }
+func (harnessJobsStub) CountsByType(context.Context, string) (map[pluginsdk.JobStatus]int, error) {
+	return map[pluginsdk.JobStatus]int{}, nil
+}
 func (harnessJobsStub) Requeue(context.Context, string, int, ...pluginsdk.RequeueOption) error {
 	return nil
 }

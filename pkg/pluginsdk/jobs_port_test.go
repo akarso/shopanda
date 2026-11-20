@@ -27,24 +27,42 @@ func (q *stubJobsQueue) Requeue(_ context.Context, id string, attempt int, _ ...
 }
 
 type stubJobsReader struct {
-	detail *jobs.Detail
-	counts map[jobs.Status]int
+	detail    *jobs.Detail
+	counts    map[jobs.Status]int
+	byType    map[string]map[jobs.Status]int
+	byTypeErr error
+	lastType  string
 }
 
-func (r stubJobsReader) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
+func (r *stubJobsReader) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
 	return nil, nil
 }
-func (r stubJobsReader) Get(_ context.Context, id string) (*jobs.Detail, error) {
+func (r *stubJobsReader) Get(_ context.Context, id string) (*jobs.Detail, error) {
 	if r.detail != nil && r.detail.ID == id {
 		return r.detail, nil
 	}
 	return nil, nil
 }
-func (r stubJobsReader) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
+func (r *stubJobsReader) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
 	return r.counts, nil
 }
-func (r stubJobsReader) CountsByType(context.Context, string) (map[jobs.Status]int, error) {
-	return nil, errors.New("unused")
+func (r *stubJobsReader) CountsByType(_ context.Context, jobType string) (map[jobs.Status]int, error) {
+	r.lastType = jobType
+	if r.byTypeErr != nil {
+		return nil, r.byTypeErr
+	}
+	if r.byType == nil {
+		return map[jobs.Status]int{}, nil
+	}
+	got, ok := r.byType[jobType]
+	if !ok {
+		return map[jobs.Status]int{}, nil
+	}
+	out := make(map[jobs.Status]int, len(got))
+	for k, v := range got {
+		out[k] = v
+	}
+	return out, nil
 }
 
 func TestNewJobsPort_NilArgs(t *testing.T) {
@@ -52,7 +70,7 @@ func TestNewJobsPort_NilArgs(t *testing.T) {
 	if _, err := pluginsdk.NewJobsPort(nil, q); err == nil {
 		t.Fatal("want error for nil reader")
 	}
-	if _, err := pluginsdk.NewJobsPort(stubJobsReader{}, nil); err == nil {
+	if _, err := pluginsdk.NewJobsPort(&stubJobsReader{}, nil); err == nil {
 		t.Fatal("want error for nil queue")
 	}
 }
@@ -60,7 +78,7 @@ func TestNewJobsPort_NilArgs(t *testing.T) {
 func TestJobsPort_GetCountsRequeue(t *testing.T) {
 	q := &stubJobsQueue{}
 	detail := &jobs.Detail{Summary: jobs.Summary{ID: "job-1", Status: jobs.StatusFailed, Attempts: 2}}
-	reader := stubJobsReader{
+	reader := &stubJobsReader{
 		detail: detail,
 		counts: map[jobs.Status]int{jobs.StatusFailed: 3},
 	}
@@ -89,13 +107,55 @@ func TestJobsPort_GetCountsRequeue(t *testing.T) {
 	_ = pluginsdk.WithRequeueMinAge(time.Minute)
 }
 
+func TestJobsPort_CountsByType_TwoTypes(t *testing.T) {
+	const (
+		typeA = "integration.sync.acme.gen.run"
+		typeB = "integration.sync.acme.prep.run"
+	)
+	reader := &stubJobsReader{
+		byType: map[string]map[jobs.Status]int{
+			typeA: {jobs.StatusPending: 2, jobs.StatusFailed: 1},
+			typeB: {jobs.StatusProcessing: 3},
+		},
+	}
+	port, err := pluginsdk.NewJobsPort(reader, &stubJobsQueue{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := port.CountsByType(context.Background(), typeA)
+	if err != nil {
+		t.Fatalf("CountsByType A: %v", err)
+	}
+	if a[pluginsdk.JobStatusPending] != 2 || a[pluginsdk.JobStatusFailed] != 1 || a[pluginsdk.JobStatusProcessing] != 0 {
+		t.Fatalf("type A counts = %#v", a)
+	}
+	b, err := port.CountsByType(context.Background(), typeB)
+	if err != nil {
+		t.Fatalf("CountsByType B: %v", err)
+	}
+	if b[pluginsdk.JobStatusProcessing] != 3 || b[pluginsdk.JobStatusPending] != 0 {
+		t.Fatalf("type B counts = %#v", b)
+	}
+	if a[pluginsdk.JobStatusPending] == b[pluginsdk.JobStatusPending] && a[pluginsdk.JobStatusProcessing] == b[pluginsdk.JobStatusProcessing] {
+		t.Fatal("counts must differ per type")
+	}
+	empty, err := port.CountsByType(context.Background(), "integration.sync.acme.missing")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("missing type = (%v, %v), want empty map", empty, err)
+	}
+	reader.byTypeErr = errors.New("empty type")
+	if _, err := port.CountsByType(context.Background(), ""); err == nil {
+		t.Fatal("empty jobType: want error from Reader")
+	}
+}
+
 func TestAssertNeedsMet_CapJobs(t *testing.T) {
 	app := &plugin.App{}
 	app.RecordNeeds(plugin.CapJobs)
 	if err := app.AssertNeedsMet(); err == nil {
 		t.Fatal("expected error for unbound CapJobs")
 	}
-	port, err := pluginsdk.NewJobsPort(stubJobsReader{}, &stubJobsQueue{})
+	port, err := pluginsdk.NewJobsPort(&stubJobsReader{}, &stubJobsQueue{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +169,7 @@ func TestAssertNeedsMet_CapJobs(t *testing.T) {
 
 func TestAsHostFor_Jobs_GatedByCap(t *testing.T) {
 	app := &plugin.App{}
-	port, err := pluginsdk.NewJobsPort(stubJobsReader{
+	port, err := pluginsdk.NewJobsPort(&stubJobsReader{
 		detail: &jobs.Detail{Summary: jobs.Summary{ID: "j1"}},
 	}, &stubJobsQueue{})
 	if err != nil {
@@ -133,5 +193,9 @@ func TestAsHostFor_Jobs_GatedByCap(t *testing.T) {
 	got, err := jp.Get(context.Background(), "j1")
 	if err != nil || got == nil || got.ID != "j1" {
 		t.Fatalf("Get via Host.Jobs = (%v, %v)", got, err)
+	}
+	_, err = jp.CountsByType(context.Background(), "integration.sync.acme.demo")
+	if err != nil {
+		t.Fatalf("CountsByType via Host.Jobs: %v", err)
 	}
 }

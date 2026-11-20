@@ -95,16 +95,19 @@ or the sentinel `unknown`. Never put job IDs or payload values in labels.
 
 ## Queue depth by type
 
-Postgres queue only (`jobs.Reader`):
+Postgres queue only (`jobs.Reader` / CapJobs `JobsPort`):
 
 ```go
-counts, err := reader.CountsByType(ctx, "integration.sync.acme.webhook.ingest")
-// map[jobs.Status]int — pending / processing / failed / …; zero statuses omitted
+// Prefer pluginsdk (Need CapJobs + Host.Jobs):
+jp, _ := host.Jobs()
+counts, err := jp.CountsByType(ctx, "integration.sync.acme.webhook.ingest")
+// map[pluginsdk.JobStatus]int — pending / processing / failed / …; zero statuses omitted
+
+// Same semantics on jobs.Reader / application/jobs.Service.CountsByType
 ```
 
-Also available via `application/jobs.Service.CountsByType`. Use this for plugin
-health/admin surfaces that report depth for **their** job types. Do not page
-`List` just to approximate depth.
+Use this for plugin health/admin surfaces that report depth for **their** job
+types. Do not page `List` just to approximate depth.
 
 Brokers that do not implement `jobs.Reader` have no depth API (same constraint
 as `jobs:list`). Adding `CountsByType` is a required method on `jobs.Reader`
