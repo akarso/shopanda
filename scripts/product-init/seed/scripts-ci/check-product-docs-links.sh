@@ -17,6 +17,7 @@ candidate_paths=(
   docs/README.md
   docs/COMMERCIAL.md
   docs/GOVULN_BASELINE.md
+  docs/PRODUCT_OWNED.md
   docs/guides
   docs/runbooks
   docs/diagrams

@@ -16,19 +16,59 @@ pass "seed + reserved-slugs in sync with live trees"
 
 # Documented product path: scaffold with promote fixture present and PLATFORM unset.
 # Must not fail sync-seed --check (platform reserved coverage is CI-env only).
+# Must not dirty upstream-owned root files (docs/PRODUCT_OWNED.md hook list).
 PROD_SLUG="zzprodcheck"
 rm -rf "${ROOT}/plugins/${PROD_SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${PROD_SLUG}.md"
+# Isolate product/ so the run creates a fresh overlay (cleanup after).
+PRODUCT_BAK=""
+if [[ -d "${ROOT}/product" ]]; then
+  PRODUCT_BAK="$(mktemp -d "${TMPDIR:-/tmp}/product-bak.XXXXXX")"
+  mv "${ROOT}/product" "${PRODUCT_BAK}/product"
+fi
+upstream_paths=(
+  Makefile
+  docker-compose.yml
+  .env.example
+  configs/config.example.yaml
+  .gitignore
+  scripts/ci/docs-policy.sh
+  scripts/product-init/reserved-slugs.txt
+  cmd/api/register_plugins.go
+)
+before_sums="$(mktemp)"
+after_sums="$(mktemp)"
+(
+  cd "${ROOT}"
+  sha256sum "${upstream_paths[@]}" >"${before_sums}"
+)
 (
   unset SHOPANDA_PLATFORM || true
   bash "${INIT}" --slug "${PROD_SLUG}" --name 'Prod Check' >/dev/null
   SHOPANDA_PLATFORM=0 bash "${SYNC}" --check
 )
+(
+  cd "${ROOT}"
+  sha256sum "${upstream_paths[@]}" >"${after_sums}"
+)
+if ! diff -u "${before_sums}" "${after_sums}" >/dev/null; then
+  echo "FAIL: product-init dirtyed upstream-owned root files:" >&2
+  diff -u "${before_sums}" "${after_sums}" >&2 || true
+  rm -f "${before_sums}" "${after_sums}"
+  exit 1
+fi
+rm -f "${before_sums}" "${after_sums}"
 [[ -d "${ROOT}/plugins/${PROD_SLUG}" ]] || fail "zzprodcheck missing after product-path scaffold"
+[[ -d "${ROOT}/product" ]] || fail "product/ overlay missing after product-init"
+[[ -f "${ROOT}/product/reserved-slugs.txt" ]] || fail "product/reserved-slugs.txt missing"
 rm -rf "${ROOT}/plugins/${PROD_SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${PROD_SLUG}.md"
-pass "product path: scaffold + sync-seed --check with PLATFORM unset (fixture may exist)"
-
+rm -rf "${ROOT}/product"
+if [[ -n "${PRODUCT_BAK}" ]]; then
+  mv "${PRODUCT_BAK}/product" "${ROOT}/product"
+  rm -rf "${PRODUCT_BAK}"
+fi
+pass "product path: scaffold + sync-seed --check; no upstream root dirty"
 # Missing --slug value
 if bash "${INIT}" --slug 2>/dev/null; then
   fail "expected error for --slug without value"
@@ -128,6 +168,9 @@ rm -rf "${ROOT}/plugins/${SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${SLUG}.md"
 rm -rf "${ROOT}/.product-init-backup"
 rm -rf "${ROOT}/.product-init-stage"
+# product-init seeds product/ when missing; do not leave it on upstream trees.
+rm -rf "${ROOT}/product"
 [[ ! -f "${ROOT}/PRODUCT_README.${SLUG}.md" ]] || fail "PRODUCT_README litter after cleanup"
+[[ ! -d "${ROOT}/product" ]] || fail "product/ litter after cleanup"
 
 echo "product-init_test OK"
