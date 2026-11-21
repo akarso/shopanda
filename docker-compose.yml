@@ -23,6 +23,9 @@
 # Local email testing:
 #   Set SHOPANDA_MAIL_SMTP_HOST=mailpit and SHOPANDA_MAIL_SMTP_PORT=1025 in .env
 #   docker compose --profile dev up -d    # Mailpit UI at http://localhost:8025
+#
+# Product forks: put product-only compose settings in docker-compose.override.yml
+# (Compose loads it automatically beside this file). See docs/PRODUCT_OWNED.md.
 # =============================================================================
 
 x-shopanda-common: &shopanda-common

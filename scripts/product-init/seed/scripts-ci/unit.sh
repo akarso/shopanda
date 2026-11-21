@@ -43,6 +43,7 @@ if [[ -f "${ROOT}/scripts/product-init/product-init_test.sh" ]]; then
   echo "==> phase17 script tests"
   bash "${ROOT}/scripts/product-init/product-init_test.sh"
   bash "${ROOT}/scripts/ci/docs-policy_test.sh"
+  bash "${ROOT}/scripts/ci/product-owned_test.sh"
 fi
 
 echo "unit OK"

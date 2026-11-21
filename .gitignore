@@ -46,3 +46,8 @@ shopanda
 # product-init --force-ci-samples backups + same-FS staging
 .product-init-backup/
 .product-init-stage/
+
+# Product ignore fragment (see docs/PRODUCT_OWNED.md). Sync with:
+#   bash scripts/ci/apply-product-gitignore.sh
+# >>> shopanda-product-gitignore
+# <<< shopanda-product-gitignore

@@ -13,6 +13,7 @@ These must stay complete on a clone of `main`. A default-branch checkout has to 
 | [diagrams/](diagrams/) | Current C4 (context → container → component → code) |
 | [COMMERCIAL.md](COMMERCIAL.md) | Open core vs paid B2B |
 | [GOVULN_BASELINE.md](GOVULN_BASELINE.md) | CI fail-closed vuln exceptions |
+| [PRODUCT_OWNED.md](PRODUCT_OWNED.md) | Product-owned vs upstream-hook path manifest |
 
 Do **not** nest living operator or CI artifacts under `docs/phase-*`.
 

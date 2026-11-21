@@ -31,6 +31,7 @@ product-init-test:
 
 phase17-scripts-test: product-init-test
 	bash scripts/ci/docs-policy_test.sh
+	bash scripts/ci/product-owned_test.sh
 
 # Product forks: put custom targets in Makefile.product (gitignored or
 # merge=ours). Missing file is a no-op. Keep product targets out of this file.
