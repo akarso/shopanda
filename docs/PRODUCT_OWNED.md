@@ -30,7 +30,7 @@ Tab-separated. Columns: `path`, `kind`, `expect`, `note`.
 | --- | --- |
 | `contains:SUB` | file must contain substring `SUB` |
 | `contains_all:A\|B` | file must contain each `|`-separated substring |
-| `gitignore_markers` | exactly one ordered `>>>` / `<<<` pair; if `.gitignore.product` exists, its non-marker lines must appear between the markers |
+| `gitignore_markers` | exactly one ordered `>>>` / `<<<` pair; lines between markers must equal `.gitignore.product` (or be empty if that file is absent) |
 | `exists` | file must exist |
 
 **owned** / **companion** rows use `-` for expect (existence optional).
@@ -54,7 +54,7 @@ PLUGINS.md	owned	-	product plugin index (optional merge=ours)
 .github/workflows/**	owned	-	live vendor CI if the product chooses any
 Makefile	hook	contains:-include Makefile.product	Make product include
 scripts/ci/docs-policy.sh	hook	contains_all:check-product-owned.sh|product/checks	runs product checks + owned check
-.gitignore	hook	gitignore_markers	markers + applied .gitignore.product lines
+.gitignore	hook	gitignore_markers	markers; between == .gitignore.product (or empty)
 scripts/product-init.sh	hook	contains:product/reserved-slugs.txt	reads product reserved overlay
 scripts/product-init/reserved-slugs.txt	hook	exists	upstream first-party reserved list
 ```

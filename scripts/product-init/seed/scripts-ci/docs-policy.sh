@@ -14,17 +14,18 @@ cd "${ROOT}"
 
 export SHOPANDA_PLATFORM="${SHOPANDA_PLATFORM:-0}"
 
-bash "${ROOT}/scripts/ci/check-product-docs-links.sh"
-
-# Manifest + hook expectations. Platform CI fail-closed if the doc is missing.
-# SHOPANDA_DOCS_POLICY_FAKE_TREE=1 is test-only (docs-policy_test empty trees).
-# Refused under CI when PRODUCT_OWNED.md is present (would mute a real checkout).
+# SHOPANDA_DOCS_POLICY_FAKE_TREE=1 is test-only (docs-policy_test). Always refuse
+# under CI / GITHUB_ACTIONS — the harness must unset those vars first.
 if [[ "${SHOPANDA_DOCS_POLICY_FAKE_TREE:-0}" == "1" ]]; then
-  if [[ (-n "${CI:-}" || -n "${GITHUB_ACTIONS:-}") && -f "${ROOT}/docs/PRODUCT_OWNED.md" ]]; then
-    echo "ERROR: SHOPANDA_DOCS_POLICY_FAKE_TREE is test-only; refuse under CI when docs/PRODUCT_OWNED.md exists" >&2
+  if [[ -n "${CI:-}" || -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "ERROR: SHOPANDA_DOCS_POLICY_FAKE_TREE is test-only; refuse when CI or GITHUB_ACTIONS is set" >&2
     exit 1
   fi
 fi
+
+bash "${ROOT}/scripts/ci/check-product-docs-links.sh"
+
+# Manifest + hook expectations. Platform CI fail-closed if the doc is missing.
 if [[ -f "${ROOT}/docs/PRODUCT_OWNED.md" ]]; then
   bash "${ROOT}/scripts/ci/check-product-owned.sh"
 elif [[ "${SHOPANDA_PLATFORM}" == "1" && "${SHOPANDA_DOCS_POLICY_FAKE_TREE:-0}" != "1" ]]; then

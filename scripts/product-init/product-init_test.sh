@@ -36,7 +36,26 @@ fi
 
 PRODUCT_BAK=""
 RESERVED_BAK=""
+CI_SAMPLES_BAK=""
+SCRIPTS_CI_BAK=""
+restore_ci_trees() {
+  if [[ -n "${CI_SAMPLES_BAK}" && -d "${CI_SAMPLES_BAK}" ]]; then
+    rm -rf "${ROOT}/ci-samples"
+    mkdir -p "${ROOT}/ci-samples"
+    cp -a "${CI_SAMPLES_BAK}/." "${ROOT}/ci-samples/"
+    rm -rf "${CI_SAMPLES_BAK}"
+    CI_SAMPLES_BAK=""
+  fi
+  if [[ -n "${SCRIPTS_CI_BAK}" && -d "${SCRIPTS_CI_BAK}" ]]; then
+    rm -rf "${ROOT}/scripts/ci"
+    mkdir -p "${ROOT}/scripts/ci"
+    cp -a "${SCRIPTS_CI_BAK}/." "${ROOT}/scripts/ci/"
+    rm -rf "${SCRIPTS_CI_BAK}"
+    SCRIPTS_CI_BAK=""
+  fi
+}
 restore_all() {
+  restore_ci_trees
   if [[ -n "${RESERVED_BAK}" && -f "${RESERVED_BAK}" ]]; then
     mv "${RESERVED_BAK}" "${RESERVED_FILE}"
     RESERVED_BAK=""
@@ -185,7 +204,12 @@ go test "./plugins/${SLUG}/" -count=1 >/dev/null \
 bash "${INIT}" --slug "${SLUG}" --name 'Acme Store' --force >/dev/null
 pass "scaffold + go test + README arity + --force on non-reserved"
 
-# --with-ci-samples when already in sync is OK (also creates backup of live trees)
+# --with-ci-samples mutates live trees — stash copies for EXIT restore first.
+CI_SAMPLES_BAK="$(mktemp -d "${TMPDIR:-/tmp}/ci-samples-bak.XXXXXX")"
+SCRIPTS_CI_BAK="$(mktemp -d "${TMPDIR:-/tmp}/scripts-ci-bak.XXXXXX")"
+cp -a "${ROOT}/ci-samples/." "${CI_SAMPLES_BAK}/"
+cp -a "${ROOT}/scripts/ci/." "${SCRIPTS_CI_BAK}/"
+
 bash "${INIT}" --slug "${SLUG}" --force --with-ci-samples >/dev/null
 [[ -f "${ROOT}/scripts/ci/unit.sh" ]] || fail "scripts/ci/unit.sh missing"
 [[ -f "${ROOT}/ci-samples/README.md" ]] || fail "ci-samples/README.md missing"
@@ -204,6 +228,9 @@ diff -rq "${ROOT}/ci-samples" "${ROOT}/scripts/product-init/seed/ci-samples" >/d
 [[ ! -f "${ROOT}/ci-samples/.orphan-live-only" ]] || fail "orphan live file survived restore"
 [[ -d "${ROOT}/.product-init-backup" ]] || fail "expected .product-init-backup after force"
 pass "--with-ci-samples refuses dirty trees; --force-ci-samples full replace + backup"
+
+# Put live ci-samples / scripts/ci back before continuing (also covered by EXIT).
+restore_ci_trees
 
 # Cleanup plugin litter + disposable product/ from happy-path init.
 rm -rf "${ROOT}/plugins/${SLUG}"

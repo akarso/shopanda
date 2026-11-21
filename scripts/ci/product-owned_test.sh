@@ -93,6 +93,29 @@ bash "${ROOT}/scripts/ci/apply-product-gitignore.sh" >/dev/null
 grep -q "product-owned-test-ignore" "${ROOT}/.gitignore" && fail "cleared fragment still present" || true
 pass "apply-product-gitignore idempotent apply + clear"
 
+# Stale lines between markers (not in fragment) fail check
+python3 - "${ROOT}/.gitignore" <<'PY'
+import sys
+path = sys.argv[1]
+start = "# >>> shopanda-product-gitignore"
+end = "# <<< shopanda-product-gitignore"
+lines = open(path, encoding="utf-8").read().splitlines()
+si, ei = lines.index(start), lines.index(end)
+lines = lines[: si + 1] + ["stale-between-line"] + lines[ei:]
+open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PY
+: >"${ROOT}/.gitignore.product"
+if bash "${ROOT}/scripts/ci/check-product-owned.sh" >/dev/null 2>&1; then
+  fail "expected check-product-owned to fail on stale between-marker lines"
+fi
+cp "${STASH}/gitignore" "${ROOT}/.gitignore"
+if [[ "${HAD_FRAG}" -eq 1 ]]; then
+  cp "${STASH}/gitignore.product" "${ROOT}/.gitignore.product"
+else
+  rm -f "${ROOT}/.gitignore.product"
+fi
+pass "check-product-owned fails on stale between-marker lines"
+
 # Pre-existing owned fragment must be unchanged after restore.
 restore_gitignore_files
 trap - EXIT

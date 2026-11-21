@@ -17,8 +17,32 @@ mkdir -p "${TMP}/scripts/ci"
 cp "${ROOT}/scripts/ci/check-product-docs-links.sh" "${TMP}/scripts/ci/"
 cp "${ROOT}/scripts/ci/docs-policy.sh" "${TMP}/scripts/ci/"
 
-# Fake trees omit PRODUCT_OWNED.md; opt out of the platform fail-closed for that doc.
+# Fake trees omit PRODUCT_OWNED.md; FAKE_TREE opts out of platform fail-closed.
+# Clear CI vars — FAKE_TREE is refused whenever CI/GITHUB_ACTIONS is set.
+unset CI GITHUB_ACTIONS || true
 export SHOPANDA_DOCS_POLICY_FAKE_TREE=1
+
+# Refuse FAKE_TREE under CI even on a stub tree (doc absent).
+(
+  cd "${TMP}"
+  if CI=true SHOPANDA_PLATFORM=1 SHOPANDA_DOCS_POLICY_FAKE_TREE=1 \
+    bash scripts/ci/docs-policy.sh >/dev/null 2>&1; then
+    exit 1
+  fi
+  exit 0
+) || fail "FAKE_TREE under CI must refuse"
+pass "FAKE_TREE refused when CI=true"
+
+# Refuse FAKE_TREE under CI on the real checkout too.
+(
+  cd "${ROOT}"
+  if CI=true GITHUB_ACTIONS=true SHOPANDA_DOCS_POLICY_FAKE_TREE=1 \
+    bash scripts/ci/docs-policy.sh >/dev/null 2>&1; then
+    exit 1
+  fi
+  exit 0
+) || fail "FAKE_TREE under CI must refuse on real tree"
+pass "FAKE_TREE refused under CI when PRODUCT_OWNED.md present"
 
 # Product mode: no roots, no promote fixture → skip OK
 (
