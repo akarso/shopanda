@@ -485,6 +485,34 @@ func TestApp_Integration_Enqueue_WithJobID_WrongAttemptThenInFlight(t *testing.T
 	if port.requeueCalls != 1 || port.requeueOK != 0 {
 		t.Fatalf("requeueCalls=%d requeueOK=%d, want 1 call / 0 ok (no second Requeue)", port.requeueCalls, port.requeueOK)
 	}
+	if got := queue.byID[jobID].Status; got != jobs.StatusPending {
+		t.Fatalf("Get after WrongAttempt must observe pending, got %q", got)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongAttemptThenForeignType(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueWrongThenForeign}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeea"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 2,
+	}
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
+	if err == nil || !strings.Contains(err.Error(), "refusing to resume foreign job") {
+		t.Fatalf("err = %v, want foreign job refusal after WrongAttempt reload", err)
+	}
+	if port.requeueCalls != 1 {
+		t.Fatalf("requeueCalls = %d, want 1 (no retry after type mismatch)", port.requeueCalls)
+	}
 }
 
 func TestApp_Integration_Enqueue_WithJobID_WrongAttemptRetryExhausted(t *testing.T) {
@@ -627,7 +655,8 @@ const (
 	conflictRequeueOK                conflictRequeueMode = iota
 	conflictRequeueRace                                  // terminal→pending once; later calls → NotTerminal
 	conflictRequeueStaleOnce                             // first call WrongAttempt + bump Attempts; second OK
-	conflictRequeueWrongThenInFlight                     // first call WrongAttempt + flip to pending (peer won)
+	conflictRequeueWrongThenInFlight                     // Requeue→WrongAttempt; Get after that observes pending (peer won)
+	conflictRequeueWrongThenForeign                      // Requeue→WrongAttempt; Get after that observes foreign Type
 	conflictRequeueAlwaysWrong                           // every call WrongAttempt (documents one-shot limit)
 	conflictRequeueNotTerminal                           // every call NotTerminal
 )
@@ -651,6 +680,18 @@ func (p *conflictJobsPort) Get(_ context.Context, id string) (*jobs.Detail, erro
 	if !ok {
 		return nil, nil
 	}
+	// Driver-faithful race: Requeue only returned WrongAttempt; the peer's
+	// change is visible on the subsequent Get.
+	if p.staleFired {
+		switch p.mode {
+		case conflictRequeueWrongThenInFlight:
+			job.Status = jobs.StatusPending
+			p.q.byID[id] = job
+		case conflictRequeueWrongThenForeign:
+			job.Type = "integration.sync.other.job"
+			p.q.byID[id] = job
+		}
+	}
 	return &jobs.Detail{
 		Summary: jobs.Summary{ID: job.ID, Type: job.Type, Status: job.Status, Attempts: job.Attempts},
 		Payload: job.Payload,
@@ -673,9 +714,10 @@ func (p *conflictJobsPort) Requeue(_ context.Context, id string, attempt int, _ 
 		job.Attempts = attempt + 1
 		p.q.byID[id] = job
 		return jobs.ErrRequeueWrongAttempt
-	case conflictRequeueWrongThenInFlight:
-		job.Status = jobs.StatusPending
-		p.q.byID[id] = job
+	case conflictRequeueWrongThenInFlight, conflictRequeueWrongThenForeign:
+		// Status/type stay as-is until Get (matches Postgres: WrongAttempt
+		// under FOR UPDATE does not mutate the row for the loser).
+		p.staleFired = true
 		return jobs.ErrRequeueWrongAttempt
 	case conflictRequeueStaleOnce:
 		if !p.staleFired {

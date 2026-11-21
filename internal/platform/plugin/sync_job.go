@@ -84,10 +84,11 @@ func (i *Integration) RegisterSyncJob(job extapi.SyncJob) error {
 // WithJobID: idempotent one-job-per-entity enqueue (UUID required). On
 // Conflict, Enqueue resolves via bound JobsPort (Compose BindJobsPort /
 // CapJobs): same sync Type + pending/processing/reclaiming → success
-// (no-op; second payload is discarded); terminal → Requeue with
-// WithRequeueTerminal; wrong Type → hard error. JobsPort is required to
-// resolve Conflict (Postgres Reader); without it Conflict is returned
-// wrapped so IsConflict remains true but resume is not guessed.
+// (no-op; second payload is discarded); terminal → Requeue(WithRequeueTerminal)
+// with one-shot race handling (NotTerminal = success; WrongAttempt → Get once
+// + retry, second WrongAttempt hard-fails); wrong Type → hard error. JobsPort
+// is required to resolve Conflict (Postgres Reader); without it Conflict is
+// returned wrapped so IsConflict remains true but resume is not guessed.
 // Cross-plugin enqueue is allowed, matching RegisterSyncJob.
 func (i *Integration) Enqueue(ctx context.Context, name string, payload map[string]interface{}, opts ...SyncEnqueueOption) error {
 	if i == nil || i.app == nil {
