@@ -7,7 +7,7 @@ Copy into your product repository (e.g. `docs/UPSTREAM_DEVIATIONS.md`).
 second allowlist. List here only:
 
 1. Paths that differ from the pinned Shopanda commit **and** are not covered by
-   an **owned** row / hook companion in that manifest, or
+   an **owned** / **companion** / **hook** row in that manifest, or
 2. Owned paths whose *reason* for differing needs a human note.
 
 Pinned Shopanda commit: `<sha>`
@@ -20,6 +20,7 @@ Pinned Shopanda commit: `<sha>`
 
 `scripts/ci/` and `ci-samples/` matching upstream are **not** deviations.
 Custom live workflows under `.github/workflows/` **are** (owned) — document them.
-Editing a **hook** file (Makefile, `docker-compose.yml`, `.gitignore`, …) for
-product behaviour is a process bug; move the change to the owned companion path.
-Env/config **companion** fragments are copy-paste only — not loader merges.
+Editing a **hook** file (Makefile, `.gitignore`, …) for product behaviour is a
+process bug; move the change to the owned path named in the manifest.
+**Companion** fragments (env/config examples) and Compose `override.yml` are
+convention / copy-paste — not loader merges and not CI-grepped hooks.

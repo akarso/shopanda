@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Regression tests for scripts/product-init.sh (Phase 17).
+#
+# Live product/ overlays stay stashed for the whole script. Disposable product/
+# trees are created and removed under that isolation; EXIT always restores bak.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -16,6 +19,14 @@ pass "seed + reserved-slugs in sync with live trees"
 
 HAD_PRODUCT=0
 [[ -d "${ROOT}/product" ]] && HAD_PRODUCT=1
+PRODUCT_SNAP=""
+if [[ "${HAD_PRODUCT}" -eq 1 ]]; then
+  PRODUCT_SNAP="$(mktemp)"
+  (
+    cd "${ROOT}/product"
+    find . -type f -print0 | sort -z | xargs -0 sha256sum
+  ) >"${PRODUCT_SNAP}"
+fi
 PLANTED_PRECIOUS=0
 mkdir -p "${ROOT}/product"
 if [[ ! -f "${ROOT}/product/precious" ]]; then
@@ -24,7 +35,12 @@ if [[ ! -f "${ROOT}/product/precious" ]]; then
 fi
 
 PRODUCT_BAK=""
-restore_product_overlay() {
+RESERVED_BAK=""
+restore_all() {
+  if [[ -n "${RESERVED_BAK}" && -f "${RESERVED_BAK}" ]]; then
+    mv "${RESERVED_BAK}" "${RESERVED_FILE}"
+    RESERVED_BAK=""
+  fi
   if [[ -n "${PRODUCT_BAK}" && -d "${PRODUCT_BAK}/product" ]]; then
     rm -rf "${ROOT}/product"
     mv "${PRODUCT_BAK}/product" "${ROOT}/product"
@@ -32,22 +48,20 @@ restore_product_overlay() {
     PRODUCT_BAK=""
   fi
 }
-stash_product_overlay() {
-  restore_product_overlay
-  if [[ -d "${ROOT}/product" ]]; then
-    PRODUCT_BAK="$(mktemp -d "${TMPDIR:-/tmp}/product-bak.XXXXXX")"
-    mv "${ROOT}/product" "${PRODUCT_BAK}/product"
-  fi
+trap restore_all EXIT
+
+# Stash for the entire remaining script — disposable overlays only on live path.
+PRODUCT_BAK="$(mktemp -d "${TMPDIR:-/tmp}/product-bak.XXXXXX")"
+mv "${ROOT}/product" "${PRODUCT_BAK}/product"
+
+drop_disposable_product() {
+  rm -rf "${ROOT}/product"
 }
-trap restore_product_overlay EXIT
 
 # Documented product path: scaffold with promote fixture present and PLATFORM unset.
-# Must not fail sync-seed --check (platform reserved coverage is CI-env only).
-# Must not dirty upstream-owned root files (docs/PRODUCT_OWNED.md hook list).
 PROD_SLUG="zzprodcheck"
 rm -rf "${ROOT}/plugins/${PROD_SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${PROD_SLUG}.md"
-stash_product_overlay
 upstream_paths=(
   Makefile
   docker-compose.yml
@@ -85,25 +99,17 @@ rm -f "${before_sums}" "${after_sums}"
 [[ -f "${ROOT}/product/reserved-slugs.txt" ]] || fail "product/reserved-slugs.txt missing"
 rm -rf "${ROOT}/plugins/${PROD_SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${PROD_SLUG}.md"
-# Drop the scaffold overlay, then restore the pre-existing / planted tree.
-rm -rf "${ROOT}/product"
-restore_product_overlay
-[[ -f "${ROOT}/product/precious" ]] || fail "product/precious missing after mid-test restore"
-pass "product path: scaffold + sync-seed --check; no upstream root dirty; overlay preserved"
+drop_disposable_product
+pass "product path: scaffold + sync-seed --check; no upstream root dirty"
 
-# Overlay reserved-slugs refuse (product/reserved-slugs.txt)
+# Overlay reserved-slugs refuse on a disposable product/ only.
 OVERLAY_SLUG="zzoverlayreserved"
 mkdir -p "${ROOT}/product"
-printf '%s\n' "${OVERLAY_SLUG}" >>"${ROOT}/product/reserved-slugs.txt"
+printf '%s\n' "# disposable" "${OVERLAY_SLUG}" >"${ROOT}/product/reserved-slugs.txt"
 if bash "${INIT}" --slug "${OVERLAY_SLUG}" --force 2>/dev/null; then
   fail "expected overlay reserved slug '${OVERLAY_SLUG}' to be refused"
 fi
-# Drop the line we appended (keep other overlay content).
-if [[ -f "${ROOT}/product/reserved-slugs.txt" ]]; then
-  grep -vxF "${OVERLAY_SLUG}" "${ROOT}/product/reserved-slugs.txt" >"${ROOT}/product/reserved-slugs.txt.tmp" \
-    || true
-  mv "${ROOT}/product/reserved-slugs.txt.tmp" "${ROOT}/product/reserved-slugs.txt"
-fi
+drop_disposable_product
 pass "product/reserved-slugs.txt refuses overlay slug"
 
 # Missing --slug value
@@ -130,7 +136,7 @@ if bash "${INIT}" --slug sitekit --force 2>/dev/null; then
 fi
 pass "reserved slugs refused"
 
-# CRLF reserved-slugs.txt still refuses reserved names
+# CRLF reserved-slugs.txt still refuses reserved names (trap restores file).
 RESERVED_BAK="$(mktemp)"
 cp "${RESERVED_FILE}" "${RESERVED_BAK}"
 python3 - "${RESERVED_FILE}" <<'PY'
@@ -140,10 +146,10 @@ data = open(path, "rb").read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
 open(path, "wb").write(data)
 PY
 if bash "${INIT}" --slug core --force 2>/dev/null; then
-  mv "${RESERVED_BAK}" "${RESERVED_FILE}"
   fail "expected reserved slug 'core' to be refused with CRLF reserved-slugs.txt"
 fi
 mv "${RESERVED_BAK}" "${RESERVED_FILE}"
+RESERVED_BAK=""
 pass "CRLF reserved-slugs still refuses core"
 
 # Unsafe --name must not wreck destination
@@ -192,7 +198,6 @@ echo 'orphan-only-on-live' >"${ROOT}/ci-samples/.orphan-live-only"
 if bash "${INIT}" --slug "${SLUG}" --force --with-ci-samples >/dev/null 2>&1; then
   fail "expected refuse when ci-samples dirty"
 fi
-# restore via force-ci-samples (backs up + full tree replace)
 bash "${INIT}" --slug "${SLUG}" --force --with-ci-samples --force-ci-samples >/dev/null
 diff -rq "${ROOT}/ci-samples" "${ROOT}/scripts/product-init/seed/ci-samples" >/dev/null \
   || fail "ci-samples not restored from seed after --force-ci-samples"
@@ -200,25 +205,39 @@ diff -rq "${ROOT}/ci-samples" "${ROOT}/scripts/product-init/seed/ci-samples" >/d
 [[ -d "${ROOT}/.product-init-backup" ]] || fail "expected .product-init-backup after force"
 pass "--with-ci-samples refuses dirty trees; --force-ci-samples full replace + backup"
 
-# Cleanup plugin litter only — never delete a pre-existing product/ overlay.
+# Cleanup plugin litter + disposable product/ from happy-path init.
 rm -rf "${ROOT}/plugins/${SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${SLUG}.md"
 rm -rf "${ROOT}/.product-init-backup"
 rm -rf "${ROOT}/.product-init-stage"
+drop_disposable_product
 [[ ! -f "${ROOT}/PRODUCT_README.${SLUG}.md" ]] || fail "PRODUCT_README litter after cleanup"
+[[ ! -d "${ROOT}/product" ]] || fail "disposable product/ still present before restore"
 
-[[ -f "${ROOT}/product/precious" ]] || fail "product/precious must survive full product-init_test"
-pass "pre-existing product/ overlay preserved through full test"
-
-# Remove only what this run planted; restore any stashed bak first.
-restore_product_overlay
+# Restore live overlay and assert preservation.
+restore_all
 trap - EXIT
-if [[ "${HAD_PRODUCT}" -eq 0 ]]; then
-  rm -rf "${ROOT}/product"
-else
+[[ -f "${ROOT}/product/precious" ]] || fail "product/precious must survive full product-init_test"
+if [[ "${HAD_PRODUCT}" -eq 1 ]]; then
   if [[ "${PLANTED_PRECIOUS}" -eq 1 ]]; then
     rm -f "${ROOT}/product/precious"
   fi
+  after_snap="$(mktemp)"
+  (
+    cd "${ROOT}/product"
+    find . -type f -print0 | sort -z | xargs -0 sha256sum
+  ) >"${after_snap}"
+  if ! diff -u "${PRODUCT_SNAP}" "${after_snap}" >/dev/null; then
+    echo "FAIL: pre-existing product/ overlay changed unexpectedly:" >&2
+    diff -u "${PRODUCT_SNAP}" "${after_snap}" >&2 || true
+    rm -f "${PRODUCT_SNAP}" "${after_snap}"
+    exit 1
+  fi
+  rm -f "${PRODUCT_SNAP}" "${after_snap}"
+  pass "pre-existing product/ overlay byte-identical after full test"
+else
+  rm -rf "${ROOT}/product"
+  pass "planted overlay removed; no live product/ left on upstream tree"
 fi
 
 echo "product-init_test OK"

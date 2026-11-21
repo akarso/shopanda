@@ -147,7 +147,7 @@ allowlist — read that manifest.
 | Extra CI checks | `product/checks/*.sh` (**owned**; sorted; same trust as `scripts/ci`) | `docs-policy.sh` (**hook**) |
 | Env examples | `.env.example.product` (**companion** — copy into `.env`; no loader merge) | leave `.env.example` alone |
 | Config examples | `configs/config.example.product.yaml` (**companion** — copy into `config.yaml`) | leave `configs/config.example.yaml` alone |
-| Compose | `docker-compose.override.yml` (**owned**) | `docker-compose.yml` (**hook**) |
+| Compose | `docker-compose.override.yml` (**owned**; Compose auto-loads by name) | leave `docker-compose.yml` alone (convention, not a CI hook) |
 | Extra reserved slugs | `product/reserved-slugs.txt` (**owned**) | `scripts/product-init/reserved-slugs.txt` (**hook**) |
 | Extra gitignores | `.gitignore.product` → `bash scripts/ci/apply-product-gitignore.sh` | `.gitignore` markers only (**hook**) |
 | Plugin registration | `cmd/api/register_products.go` (**owned**) | `register_plugins.go` |

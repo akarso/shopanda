@@ -30,17 +30,19 @@ Tab-separated. Columns: `path`, `kind`, `expect`, `note`.
 | --- | --- |
 | `contains:SUB` | file must contain substring `SUB` |
 | `contains_all:A\|B` | file must contain each `|`-separated substring |
-| `gitignore_markers` | exactly one ordered `>>>` / `<<<` shopanda-product-gitignore pair |
+| `gitignore_markers` | exactly one ordered `>>>` / `<<<` pair; if `.gitignore.product` exists, its non-marker lines must appear between the markers |
 | `exists` | file must exist |
 
 **owned** / **companion** rows use `-` for expect (existence optional).
+
+Compose: `docker-compose.override.yml` is **owned**. Upstream `docker-compose.yml` is not a CI hook — Compose auto-loads the override by filename convention (documented in that file). Same class as env/config companions: convention, not grepped machinery.
 
 ```
 # path	kind	expect	note
 cmd/api/register_products.go	owned	-	plugin registration
 Makefile.product	owned	-	Make targets; root Makefile -include
 product/	owned	-	overlay tree (checks, reserved-slugs, README)
-docker-compose.override.yml	owned	-	Compose auto-loads beside docker-compose.yml
+docker-compose.override.yml	owned	-	Compose auto-loads beside docker-compose.yml (convention)
 .gitignore.product	owned	-	fragment synced into .gitignore markers
 .env.example.product	companion	-	copy manually into .env (no loader merge)
 configs/config.example.product.yaml	companion	-	copy manually into config.yaml (no loader merge)
@@ -52,8 +54,7 @@ PLUGINS.md	owned	-	product plugin index (optional merge=ours)
 .github/workflows/**	owned	-	live vendor CI if the product chooses any
 Makefile	hook	contains:-include Makefile.product	Make product include
 scripts/ci/docs-policy.sh	hook	contains_all:check-product-owned.sh|product/checks	runs product checks + owned check
-.gitignore	hook	gitignore_markers	markers for .gitignore.product
-docker-compose.yml	hook	contains:docker-compose.override.yml	Compose loads override.yml
+.gitignore	hook	gitignore_markers	markers + applied .gitignore.product lines
 scripts/product-init.sh	hook	contains:product/reserved-slugs.txt	reads product reserved overlay
 scripts/product-init/reserved-slugs.txt	hook	exists	upstream first-party reserved list
 ```

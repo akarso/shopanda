@@ -79,6 +79,19 @@ def check_gitignore_markers(rel: str) -> None:
         )
     if starts[0] >= ends[0]:
         raise SystemExit(f"ERROR: {rel} start marker must appear before end marker")
+    frag_path = root / ".gitignore.product"
+    if not frag_path.is_file():
+        return
+    between = lines[starts[0] + 1 : ends[0]]
+    for raw in frag_path.read_text(encoding="utf-8").splitlines():
+        ln = raw.rstrip("\r")
+        if not ln or ln == start or ln == end:
+            continue
+        if ln not in between:
+            raise SystemExit(
+                f"ERROR: {rel} marked section missing line from .gitignore.product: {ln!r} "
+                f"(re-run: bash scripts/ci/apply-product-gitignore.sh)"
+            )
 
 for path, kind, expect, _note in rows:
     if kind in ("owned", "companion"):
