@@ -87,6 +87,25 @@ assert_fake_tree_refuse() {
 assert_fake_tree_refuse "FAKE_TREE refused when CI=true (would-succeed stub)" CI=true
 assert_fake_tree_refuse "FAKE_TREE refused when GITHUB_ACTIONS=true (CI unset)" GITHUB_ACTIONS=true
 
+# Belt-and-suspenders: real checkout (PRODUCT_OWNED present) also refuses under CI.
+err_real="$(mktemp)"
+if (
+  cd "${ROOT}"
+  env -u CI -u GITHUB_ACTIONS CI=true SHOPANDA_DOCS_POLICY_FAKE_TREE=1 \
+    bash scripts/ci/docs-policy.sh >/dev/null 2>"${err_real}"
+); then
+  rm -f "${err_real}"
+  fail "FAKE_TREE under CI on real tree: expected non-zero exit"
+fi
+if ! grep -q 'SHOPANDA_DOCS_POLICY_FAKE_TREE is test-only' "${err_real}"; then
+  echo "FAIL: real-tree FAKE+CI refuse missing refuse line:" >&2
+  cat "${err_real}" >&2
+  rm -f "${err_real}"
+  exit 1
+fi
+rm -f "${err_real}"
+pass "FAKE_TREE refused under CI on real checkout"
+
 # Same tree without FAKE_TREE and without PRODUCT_OWNED → fail closed
 (
   cd "${TMP}"

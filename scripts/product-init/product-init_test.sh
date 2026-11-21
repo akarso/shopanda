@@ -38,12 +38,21 @@ PRODUCT_BAK=""
 RESERVED_BAK=""
 CI_SAMPLES_BAK=""
 SCRIPTS_CI_BAK=""
-# Scaffold slugs touched by this script — cleaned on EXIT even mid-run abort.
-SCAFFOLD_SLUGS=(zzprodcheck zztestinit)
+# Scaffold slugs — append via track_scaffold_slug at each assignment (no drift).
+SCAFFOLD_SLUGS=()
+track_scaffold_slug() {
+  local slug="$1"
+  [[ -n "${slug}" ]] || return 0
+  local existing
+  for existing in "${SCAFFOLD_SLUGS[@]:-}"; do
+    [[ "${existing}" == "${slug}" ]] && return 0
+  done
+  SCAFFOLD_SLUGS+=("${slug}")
+}
 
 drop_scaffold_litter() {
   local slug
-  for slug in "${SCAFFOLD_SLUGS[@]}"; do
+  for slug in "${SCAFFOLD_SLUGS[@]:-}"; do
     rm -rf "${ROOT}/plugins/${slug}"
     rm -f "${ROOT}/PRODUCT_README.${slug}.md"
   done
@@ -96,6 +105,7 @@ drop_disposable_product() {
 
 # Documented product path: scaffold with promote fixture present and PLATFORM unset.
 PROD_SLUG="zzprodcheck"
+track_scaffold_slug "${PROD_SLUG}"
 rm -rf "${ROOT}/plugins/${PROD_SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${PROD_SLUG}.md"
 upstream_paths=(
@@ -140,6 +150,7 @@ pass "product path: scaffold + sync-seed --check; no upstream root dirty"
 
 # Overlay reserved-slugs refuse on a disposable product/ only.
 OVERLAY_SLUG="zzoverlayreserved"
+track_scaffold_slug "${OVERLAY_SLUG}"
 mkdir -p "${ROOT}/product"
 printf '%s\n' "# disposable" "${OVERLAY_SLUG}" >"${ROOT}/product/reserved-slugs.txt"
 if bash "${INIT}" --slug "${OVERLAY_SLUG}" --force 2>/dev/null; then
@@ -190,6 +201,7 @@ pass "CRLF reserved-slugs still refuses core"
 
 # Unsafe --name must not wreck destination
 SLUG="zztestinit"
+track_scaffold_slug "${SLUG}"
 rm -rf "${ROOT}/plugins/${SLUG}"
 rm -f "${ROOT}/PRODUCT_README.${SLUG}.md"
 if bash "${INIT}" --slug "${SLUG}" --name 'A/B' 2>/dev/null; then
