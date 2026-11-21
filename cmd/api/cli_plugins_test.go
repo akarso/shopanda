@@ -648,3 +648,76 @@ func (p *cmdNeedsSeedNoDeclarePlugin) Init(h pluginsdk.Host) error {
 	})
 	return nil
 }
+
+// jobsMediaCLIPlugin Requires CapJobs+CapMedia (Metal Dogs shape). Plugin CLI
+// never binds those ports — assert must skip them so commands still run.
+type jobsMediaCLIPlugin struct {
+	host     pluginsdk.Host
+	dbSaw    bool
+	nodbSaw  bool
+	jobsOnDB bool
+	jobsNoDB bool
+	mediaDB  bool
+	mediaNo  bool
+}
+
+func (p *jobsMediaCLIPlugin) Name() string { return "test/jobs-media-cli" }
+
+func (p *jobsMediaCLIPlugin) Needs() []pluginsdk.Capability {
+	return []pluginsdk.Capability{pluginsdk.CapJobs, pluginsdk.CapMedia}
+}
+
+func (p *jobsMediaCLIPlugin) Init(h pluginsdk.Host) error {
+	p.host = h
+	h.Require(pluginsdk.CapJobs)
+	h.Require(pluginsdk.CapMedia)
+	sdk := pluginsdk.NewHost(h, p.Name())
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:jobs-media-db",
+		Description: "RequiresDB with CapJobs+CapMedia declared",
+		RequiresDB:  true,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			_, p.jobsOnDB = p.host.Jobs()
+			_, p.mediaDB = p.host.Media()
+			p.dbSaw = true
+			return nil
+		},
+	})
+	sdk.CLI().RegisterCommand(pluginsdk.CLICommand{
+		Name:        "test:jobs-media-nodb",
+		Description: "Non-DB sibling with CapJobs+CapMedia declared",
+		RequiresDB:  false,
+		Run: func(pluginsdk.CLIContext, []string) error {
+			_, p.jobsNoDB = p.host.Jobs()
+			_, p.mediaNo = p.host.Media()
+			p.nodbSaw = true
+			return nil
+		},
+	})
+	return nil
+}
+
+func TestRunPluginCLICommand_CapJobsMediaSkipped(t *testing.T) {
+	p := &jobsMediaCLIPlugin{}
+	reg, app := initSeedCLIRuntime(t, p)
+	log := logger.NewWithWriter(io.Discard, "error")
+	rt := func() (*pluginCLIRuntime, error) {
+		return &pluginCLIRuntime{Registry: reg, App: app}, nil
+	}
+
+	ran, err := runPluginCLICommand(cfgEmpty(), log, rt, "test:jobs-media-nodb", nil)
+	if err != nil || !ran || !p.nodbSaw {
+		t.Fatalf("nodb: ran=%v err=%v saw=%v", ran, err, p.nodbSaw)
+	}
+	if p.jobsNoDB || p.mediaNo {
+		t.Fatalf("Host.Jobs/Media must be unbound on plugin CLI nodb (jobs=%v media=%v)", p.jobsNoDB, p.mediaNo)
+	}
+
+	ran, err = runPluginCLICommandWithDeps(cfgEmpty(), log, rt, "test:jobs-media-db", nil, stubPluginCLIDeps(t))
+	if err != nil || !ran || !p.dbSaw {
+		t.Fatalf("db: ran=%v err=%v saw=%v (CapJobs/CapMedia must be skipped in pluginCLINeedsSkip)", ran, err, p.dbSaw)
+	}
+	if p.jobsOnDB || p.mediaDB {
+		t.Fatalf("Host.Jobs/Media must be unbound on plugin CLI RequiresDB (jobs=%v media=%v)", p.jobsOnDB, p.mediaDB)
+	}
+}

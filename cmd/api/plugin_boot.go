@@ -78,10 +78,13 @@ func assertSeedCLINeedsMet(app *plugin.App) error {
 	return assertPluginCLINeedsMet(app, true)
 }
 
-// pluginCLINeedsSkip is CapCart + CapIntegration* always; CapCatalogSeed only
-// when the owning command did not bind CatalogSeedPort.
+// pluginCLINeedsSkip is CapCart + CapIntegration* always; CapJobs + CapMedia
+// always (plugin CLI never bindJobsPort / BindMediaStorage — Host.Jobs/Media
+// stay (nil, false)); CapCatalogSeed only when the owning command did not bind
+// CatalogSeedPort.
 func pluginCLINeedsSkip(bindSeed bool) []plugin.Capability {
 	skip := seedCLINeedsSkip()
+	skip = append(skip, plugin.CapJobs, plugin.CapMedia)
 	if !bindSeed {
 		skip = append(skip, plugin.CapCatalogSeed)
 	}
