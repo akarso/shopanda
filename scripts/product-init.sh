@@ -101,15 +101,27 @@ if [[ ! -f "${RESERVED_FILE}" ]]; then
   exit 1
 fi
 
-while IFS= read -r reserved || [[ -n "${reserved}" ]]; do
-  # Strip CR so CRLF checkouts (core.autocrlf) still match.
-  reserved="${reserved%$'\r'}"
-  [[ -z "${reserved}" || "${reserved}" == \#* ]] && continue
-  if [[ "${SLUG}" == "${reserved}" ]]; then
-    echo "ERROR: slug '${SLUG}' is a reserved first-party plugin name and cannot be overwritten by product-init" >&2
-    exit 1
-  fi
-done <"${RESERVED_FILE}"
+slug_is_reserved() {
+  local candidate="$1"
+  local file="$2"
+  [[ -f "${file}" ]] || return 1
+  local reserved
+  while IFS= read -r reserved || [[ -n "${reserved}" ]]; do
+    # Strip CR so CRLF checkouts (core.autocrlf) still match.
+    reserved="${reserved%$'\r'}"
+    [[ -z "${reserved}" || "${reserved}" == \#* ]] && continue
+    if [[ "${candidate}" == "${reserved}" ]]; then
+      return 0
+    fi
+  done <"${file}"
+  return 1
+}
+
+# Upstream first-party list + optional product overlay (product/reserved-slugs.txt).
+if slug_is_reserved "${SLUG}" "${RESERVED_FILE}" || slug_is_reserved "${SLUG}" "${ROOT}/product/reserved-slugs.txt"; then
+  echo "ERROR: slug '${SLUG}' is a reserved first-party plugin name and cannot be overwritten by product-init" >&2
+  exit 1
+fi
 
 PACKAGE="${SLUG}"
 PLUGIN_NAME="${SLUG}"
@@ -324,6 +336,30 @@ func registerProductPlugins(registry *plugin.Registry, cfg *config.Config) {
 }
 GO
   echo "    seeded ${REGISTER_PRODUCTS}"
+fi
+
+# Product overlay tree (owned paths — see docs/PRODUCT_OWNED.md). Never edits
+# upstream Makefile / compose / .env.example / config.example / .gitignore /
+# docs-policy beyond creating this tree and optional registration seed above.
+PRODUCT_OVERLAY="${ROOT}/product"
+if [[ ! -d "${PRODUCT_OVERLAY}" ]]; then
+  mkdir -p "${PRODUCT_OVERLAY}/checks"
+  cat >"${PRODUCT_OVERLAY}/README.md" <<'EOF'
+# Product overlay
+
+Product-owned files for this fork. Do not hang product behaviour on upstream
+root files — use the hooks in `docs/PRODUCT_OWNED.md` / `docs/guides/PRODUCT_SITES.md`.
+
+| Path | Purpose |
+| --- | --- |
+| `checks/*.sh` | Extra checks run by `scripts/ci/docs-policy.sh` |
+| `reserved-slugs.txt` | Extra slugs refused by `product-init` (plus upstream list) |
+EOF
+  cat >"${PRODUCT_OVERLAY}/reserved-slugs.txt" <<'EOF'
+# Extra reserved plugin slugs for this product (one per line).
+# Merged with scripts/product-init/reserved-slugs.txt by product-init.
+EOF
+  echo "    seeded ${PRODUCT_OVERLAY}/ (checks + reserved-slugs)"
 fi
 
 # Restore CI trees only after the plugin is in place.

@@ -4,6 +4,7 @@ checkoutdemo
 core
 example
 exportdemo
+extref
 importdemo
 integrationdemo
 maildemo

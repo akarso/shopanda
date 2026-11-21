@@ -134,28 +134,53 @@ Contract summary: [`PLUGIN_RUNTIME_CONTRACT.md`](PLUGIN_RUNTIME_CONTRACT.md).
 
 Do not assume a blank `docs/` tree is safe if you still run sample govuln/docs-policy jobs.
 
-## Product-owned root files (merge conflicts)
+## Product-owned convention
 
-Root files that every product customizes (`README.md`, `AGENTS.md`, `RUNBOOK.md`,
-`PLUGINS.md`, `.gitignore`, product CI workflows, and often `Makefile` overlays)
-conflict on every upstream bump. Prefer Git `merge=ours` for those paths so
-`git merge upstream/…` keeps the product copy without a manual resolve each time.
+One place for “where does product stuff go?” Canonical list:
+[`docs/PRODUCT_OWNED.md`](../PRODUCT_OWNED.md) (machine-readable manifest +
+`scripts/ci/check-product-owned.sh`). Deviation docs must not invent a second
+allowlist — read that manifest.
 
-Example `.gitattributes` in the **product** repo (not required upstream):
+| Need | Put it here | Upstream file |
+| --- | --- | --- |
+| Make targets | `Makefile.product` (**owned**) | `Makefile` (**hook**: `-include`) |
+| Extra CI checks | `product/checks/*.sh` (**owned**; sorted; same trust as `scripts/ci`) | `docs-policy.sh` (**hook**) |
+| Env examples | `.env.example.product` (**companion** — copy into `.env`; no loader merge) | leave `.env.example` alone |
+| Config examples | `configs/config.example.product.yaml` (**companion** — copy into `config.yaml`) | leave `configs/config.example.yaml` alone |
+| Compose | `docker-compose.override.yml` (**owned**; Compose auto-loads by name) | leave `docker-compose.yml` alone (convention, not a CI hook) |
+| Extra reserved slugs | `product/reserved-slugs.txt` (**owned**) | `scripts/product-init/reserved-slugs.txt` (**hook**) |
+| Extra gitignores | `.gitignore.product` → `bash scripts/ci/apply-product-gitignore.sh` | `.gitignore` markers only (**hook**) |
+| Plugin registration | `cmd/api/register_products.go` (**owned**) | `register_plugins.go` |
+| Plugin code | `plugins/<slug>/` | — |
+
+`product-init` scaffolds `plugins/<slug>/`, optional `PRODUCT_README.<slug>.md`,
+seeds `product/` when missing, and seeds `register_products.go` only if absent.
+It must not dirty upstream-owned roots (asserted in `product-init_test.sh`).
+
+### merge=ours (product repo)
+
+Example `.gitattributes` in the **product** repo (not required upstream) — keep
+in sync with the **owned** / **companion** rows in `docs/PRODUCT_OWNED.md`:
 
 ```gitattributes
 README.md merge=ours
 AGENTS.md merge=ours
 RUNBOOK.md merge=ours
 PLUGINS.md merge=ours
-.gitignore merge=ours
+PRODUCT_README.* merge=ours
 Makefile.product merge=ours
 cmd/api/register_products.go merge=ours
+product/** merge=ours
+docker-compose.override.yml merge=ours
+.gitignore.product merge=ours
+.env.example.product merge=ours
+configs/config.example.product.yaml merge=ours
 .github/workflows/** merge=ours
 ```
 
-Tune the list to match your deviations doc. Engine/core paths should **not** use
-`merge=ours` — take upstream there.
+Do **not** put `.gitignore` on `merge=ours` — keep upstream markers and re-run
+`bash scripts/ci/apply-product-gitignore.sh` after bumps. Engine/core paths and
+**hook** rows take upstream.
 
 ### Makefile.product
 

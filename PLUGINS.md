@@ -233,6 +233,11 @@ For a separate product repository (own `origin`, Shopanda as fetch-only `upstrea
 bash scripts/product-init.sh --slug myproduct
 ```
 
+Product behaviour outside `plugins/<slug>/` belongs on **owned** paths or named
+hooks — not ad hoc edits of upstream roots. Canonical list:
+[PRODUCT_OWNED.md](docs/PRODUCT_OWNED.md) (convention in
+[PRODUCT_SITES.md — Product-owned convention](docs/guides/PRODUCT_SITES.md#product-owned-convention)).
+
 Reference scaffold output (unregistered): [`plugins/sitekit/`](plugins/sitekit/). Job types remain `integration.sync.{slug}.{name}` only — see [PLUGIN_RUNTIME_CONTRACT.md](docs/guides/PLUGIN_RUNTIME_CONTRACT.md).
 
 ## Add an external plugin
