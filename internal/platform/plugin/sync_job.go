@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -294,17 +295,73 @@ func (a *App) resolveIdempotentEnqueueConflict(ctx context.Context, name, jobID,
 		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has type %q, want %q (refusing to resume foreign job)",
 			name, jobID, detail.Type, expectedType)
 	}
-	switch detail.Status {
-	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusReclaiming:
-		// Already in flight or queued — idempotent success. Payload unchanged.
+	kind := classifySyncJobConflictStatus(detail.Status)
+	switch kind {
+	case syncJobConflictInFlight:
+		// Already queued / in flight / reclaiming — idempotent success. Payload unchanged.
 		return nil
-	case jobs.StatusFailed, jobs.StatusDone, jobs.StatusCancelled:
-		if err := port.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal()); err != nil {
-			return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue %q: %w", name, jobID, err)
-		}
-		return nil
+	case syncJobConflictTerminal:
+		return a.requeueTerminalSyncJob(ctx, port, name, jobID, expectedType, detail)
 	default:
 		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has unsupported status %q", name, jobID, detail.Status)
+	}
+}
+
+type syncJobConflictStatusKind int
+
+const (
+	syncJobConflictUnknown syncJobConflictStatusKind = iota
+	syncJobConflictInFlight
+	syncJobConflictTerminal
+)
+
+func classifySyncJobConflictStatus(status jobs.Status) syncJobConflictStatusKind {
+	switch status {
+	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusReclaiming:
+		return syncJobConflictInFlight
+	case jobs.StatusFailed, jobs.StatusDone, jobs.StatusCancelled:
+		return syncJobConflictTerminal
+	default:
+		return syncJobConflictUnknown
+	}
+}
+
+// requeueTerminalSyncJob resumes a terminal job. One-shot race handling (best-effort):
+// ErrRequeueNotTerminal → success (peer already requeued; known drivers only);
+// ErrRequeueWrongAttempt → Get once, re-check type, retry Requeue if still terminal,
+// or success if now in-flight. A second WrongAttempt is returned as a hard error —
+// callers under heavy N-way contention may still see "conflict requeue retry".
+func (a *App) requeueTerminalSyncJob(ctx context.Context, port syncJobConflictPort, name, jobID, expectedType string, detail *jobs.Detail) error {
+	err := port.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal())
+	if err == nil || errors.Is(err, jobs.ErrRequeueNotTerminal) {
+		return nil
+	}
+	if !errors.Is(err, jobs.ErrRequeueWrongAttempt) {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue %q: %w", name, jobID, err)
+	}
+	live, getErr := port.Get(ctx, jobID)
+	if getErr != nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue reload %q: %w", name, jobID, getErr)
+	}
+	if live == nil {
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue %q: job missing after WrongAttempt", name, jobID)
+	}
+	if live.Type != expectedType {
+		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has type %q, want %q (refusing to resume foreign job)",
+			name, jobID, live.Type, expectedType)
+	}
+	kind := classifySyncJobConflictStatus(live.Status)
+	switch kind {
+	case syncJobConflictInFlight:
+		return nil
+	case syncJobConflictTerminal:
+		err = port.Requeue(ctx, jobID, live.Attempts, jobs.WithRequeueTerminal())
+		if err == nil || errors.Is(err, jobs.ErrRequeueNotTerminal) {
+			return nil
+		}
+		return fmt.Errorf("plugin: enqueue sync job %q: conflict requeue retry %q: %w", name, jobID, err)
+	default:
+		return fmt.Errorf("plugin: enqueue sync job %q: job id %q has unsupported status %q after WrongAttempt", name, jobID, live.Status)
 	}
 }
 
