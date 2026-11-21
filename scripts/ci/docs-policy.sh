@@ -16,20 +16,26 @@ export SHOPANDA_PLATFORM="${SHOPANDA_PLATFORM:-0}"
 
 bash "${ROOT}/scripts/ci/check-product-docs-links.sh"
 
-# Manifest + hook markers (present on Shopanda / product forks that keep the doc).
-# Fake trees in docs-policy_test omit docs/PRODUCT_OWNED.md and skip this step.
+# Manifest + hook expectations. Platform CI fail-closed if the doc is missing.
+# Fake trees in docs-policy_test set SHOPANDA_DOCS_POLICY_FAKE_TREE=1 to skip.
 if [[ -f "${ROOT}/docs/PRODUCT_OWNED.md" ]]; then
   bash "${ROOT}/scripts/ci/check-product-owned.sh"
+elif [[ "${SHOPANDA_PLATFORM}" == "1" && "${SHOPANDA_DOCS_POLICY_FAKE_TREE:-0}" != "1" ]]; then
+  echo "ERROR: docs/PRODUCT_OWNED.md missing (required when SHOPANDA_PLATFORM=1)" >&2
+  exit 1
+else
+  echo "NOTE: docs/PRODUCT_OWNED.md absent — skipping product-owned check."
 fi
 
-# Product-owned CI checks (optional). One script per file under product/checks/.
+# Product-owned CI checks (optional). Sorted; same trust as scripts/ci/*.
+# See docs/PRODUCT_OWNED.md / PRODUCT_SITES.md.
 if [[ -d "${ROOT}/product/checks" ]]; then
-  shopt -s nullglob
-  for check in "${ROOT}/product/checks/"*.sh; do
+  mapfile -t product_checks < <(find "${ROOT}/product/checks" -maxdepth 1 -type f -name '*.sh' | sort)
+  for check in "${product_checks[@]:-}"; do
+    [[ -n "${check}" ]] || continue
     echo "==> product check: ${check#"${ROOT}/"}"
     bash "${check}"
   done
-  shopt -u nullglob
 fi
 
 if [[ -f "${ROOT}/scripts/promote-dev-to-main_test.sh" ]]; then

@@ -1,8 +1,9 @@
 # =============================================================================
 # Shopanda — Configuration Reference
 # =============================================================================
-# Product forks: put product-only examples in configs/config.example.product.yaml
-# (do not edit this upstream file). See docs/PRODUCT_OWNED.md.
+# Product forks: optional sibling configs/config.example.product.yaml (copy into
+# config.yaml manually; no loader merge). Do not edit this upstream file for
+# product keys. See docs/PRODUCT_OWNED.md.
 #
 # This is a fully annotated example. Copy to configs/config.yaml and adjust.
 #

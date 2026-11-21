@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate docs/PRODUCT_OWNED.md manifest + upstream hook markers (Phase 17).
+# Validate docs/PRODUCT_OWNED.md manifest + hook expectations (Phase 17).
 #
 # Usage:
 #   bash scripts/ci/check-product-owned.sh
@@ -14,12 +14,17 @@ if [[ ! -f "${MANIFEST}" ]]; then
   exit 1
 fi
 
-# Extract the first fenced block after "Manifest (machine-readable)".
-mapfile -t LINES < <(python3 - "${MANIFEST}" <<'PY'
+python3 - "${ROOT}" "${MANIFEST}" <<'PY'
+import pathlib
 import sys
-text = open(sys.argv[1], encoding="utf-8").read().splitlines()
+
+root = pathlib.Path(sys.argv[1])
+manifest = pathlib.Path(sys.argv[2])
+text = manifest.read_text(encoding="utf-8").splitlines()
+
 in_section = False
 in_fence = False
+rows = []
 for line in text:
     if not in_section:
         if "Manifest (machine-readable)" in line:
@@ -31,61 +36,83 @@ for line in text:
         continue
     if line.strip().startswith("```"):
         break
-    print(line)
+    raw = line.rstrip("\r")
+    if not raw or raw.lstrip().startswith("#"):
+        continue
+    if "\t" not in raw:
+        raise SystemExit(
+            f"ERROR: PRODUCT_OWNED row must be tab-separated (got {raw!r})"
+        )
+    parts = raw.split("\t")
+    if len(parts) < 4:
+        raise SystemExit(
+            f"ERROR: PRODUCT_OWNED row needs path, kind, expect, note (got {raw!r})"
+        )
+    path, kind, expect, note = parts[0], parts[1], parts[2], "\t".join(parts[3:])
+    rows.append((path, kind, expect, note))
+
+owned = sum(1 for _, k, _, _ in rows if k == "owned")
+hook = sum(1 for _, k, _, _ in rows if k == "hook")
+companion = sum(1 for _, k, _, _ in rows if k == "companion")
+if owned < 1 or hook < 1:
+    raise SystemExit(
+        f"ERROR: PRODUCT_OWNED must list owned and hook rows "
+        f"(owned={owned} hook={hook} companion={companion})"
+    )
+
+def require_file(rel: str) -> pathlib.Path:
+    p = root / rel
+    if not p.is_file():
+        raise SystemExit(f"ERROR: hook file missing: {rel}")
+    return p
+
+def check_gitignore_markers(rel: str) -> None:
+    start = "# >>> shopanda-product-gitignore"
+    end = "# <<< shopanda-product-gitignore"
+    lines = require_file(rel).read_text(encoding="utf-8").splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln == start]
+    ends = [i for i, ln in enumerate(lines) if ln == end]
+    if len(starts) != 1 or len(ends) != 1:
+        raise SystemExit(
+            f"ERROR: {rel} must have exactly one ordered marker pair "
+            f"(start={len(starts)} end={len(ends)})"
+        )
+    if starts[0] >= ends[0]:
+        raise SystemExit(f"ERROR: {rel} start marker must appear before end marker")
+
+for path, kind, expect, _note in rows:
+    if kind in ("owned", "companion"):
+        if expect != "-":
+            raise SystemExit(
+                f"ERROR: {path}: owned/companion expect must be '-' (got {expect!r})"
+            )
+        continue
+    if kind != "hook":
+        raise SystemExit(f"ERROR: unknown kind {kind!r} for {path}")
+
+    if expect == "exists":
+        require_file(path)
+        continue
+    if expect == "gitignore_markers":
+        check_gitignore_markers(path)
+        continue
+    if expect.startswith("contains:"):
+        needle = expect[len("contains:") :]
+        body = require_file(path).read_text(encoding="utf-8")
+        if needle not in body:
+            raise SystemExit(f"ERROR: {path} missing required substring {needle!r}")
+        continue
+    if expect.startswith("contains_all:"):
+        body = require_file(path).read_text(encoding="utf-8")
+        for needle in expect[len("contains_all:") :].split("|"):
+            if not needle:
+                raise SystemExit(f"ERROR: empty contains_all needle for {path}")
+            if needle not in body:
+                raise SystemExit(
+                    f"ERROR: {path} missing required substring {needle!r}"
+                )
+        continue
+    raise SystemExit(f"ERROR: unknown expect {expect!r} for hook {path}")
+
+print(f"product-owned manifest OK (owned={owned} hook={hook} companion={companion})")
 PY
-)
-
-owned=0
-hook=0
-while IFS= read -r line || [[ -n "${line}" ]]; do
-  line="${line%$'\r'}"
-  [[ -z "${line}" || "${line}" == \#* ]] && continue
-  # path<TAB>kind<TAB>note  (tabs preferred; also accept 2+ spaces)
-  if [[ "${line}" == *$'\t'* ]]; then
-    path="${line%%$'\t'*}"
-    rest="${line#*$'\t'}"
-    kind="${rest%%$'\t'*}"
-  else
-    path="$(awk '{print $1}' <<<"${line}")"
-    kind="$(awk '{print $2}' <<<"${line}")"
-  fi
-  case "${kind}" in
-    owned) owned=$((owned + 1)) ;;
-    hook) hook=$((hook + 1)) ;;
-    *)
-      echo "ERROR: PRODUCT_OWNED manifest unknown kind ${kind@Q} for ${path@Q}" >&2
-      exit 1
-      ;;
-  esac
-done < <(printf '%s\n' "${LINES[@]}")
-
-if [[ "${owned}" -lt 1 || "${hook}" -lt 1 ]]; then
-  echo "ERROR: PRODUCT_OWNED manifest must list owned and hook rows (owned=${owned} hook=${hook})" >&2
-  exit 1
-fi
-
-require_contains() {
-  local file="$1"
-  local needle="$2"
-  local label="$3"
-  if [[ ! -f "${file}" ]]; then
-    echo "ERROR: hook file missing: ${file}" >&2
-    exit 1
-  fi
-  if ! grep -qF -- "${needle}" "${file}"; then
-    echo "ERROR: ${file} missing ${label} marker: ${needle}" >&2
-    exit 1
-  fi
-}
-
-require_contains "Makefile" "-include Makefile.product" "Make product include"
-require_contains "scripts/ci/docs-policy.sh" "check-product-owned.sh" "docs-policy product-owned check"
-require_contains "scripts/ci/docs-policy.sh" "product/checks" "docs-policy product checks dir"
-require_contains ".gitignore" ">>> shopanda-product-gitignore" "gitignore product fragment start"
-require_contains ".gitignore" "<<< shopanda-product-gitignore" "gitignore product fragment end"
-require_contains ".env.example" ".env.example.product" "env product fragment pointer"
-require_contains "configs/config.example.yaml" "config.example.product.yaml" "config product fragment pointer"
-require_contains "docker-compose.yml" "docker-compose.override.yml" "compose override pointer"
-require_contains "scripts/product-init.sh" "product/reserved-slugs.txt" "product-init reserved overlay"
-
-echo "product-owned manifest OK (owned=${owned} hook=${hook})"

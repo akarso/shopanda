@@ -20,5 +20,6 @@ Pinned Shopanda commit: `<sha>`
 
 `scripts/ci/` and `ci-samples/` matching upstream are **not** deviations.
 Custom live workflows under `.github/workflows/` **are** (owned) — document them.
-Editing a **hook** file (Makefile, `docker-compose.yml`, `.env.example`, …) for
-product behaviour is a process bug; move the change to the companion owned path.
+Editing a **hook** file (Makefile, `docker-compose.yml`, `.gitignore`, …) for
+product behaviour is a process bug; move the change to the owned companion path.
+Env/config **companion** fragments are copy-paste only — not loader merges.

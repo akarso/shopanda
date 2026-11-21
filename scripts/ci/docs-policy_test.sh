@@ -17,6 +17,9 @@ mkdir -p "${TMP}/scripts/ci"
 cp "${ROOT}/scripts/ci/check-product-docs-links.sh" "${TMP}/scripts/ci/"
 cp "${ROOT}/scripts/ci/docs-policy.sh" "${TMP}/scripts/ci/"
 
+# Fake trees omit PRODUCT_OWNED.md; opt out of the platform fail-closed for that doc.
+export SHOPANDA_DOCS_POLICY_FAKE_TREE=1
+
 # Product mode: no roots, no promote fixture → skip OK
 (
   cd "${TMP}"
@@ -47,13 +50,25 @@ chmod +x "${TMP}/scripts/promote-dev-to-main_test.sh"
 ) || fail "platform mode should fail with zero product-doc roots"
 pass "platform mode fail-closed with zero roots"
 
-# Platform mode: one root + promote → OK
+# Platform mode: one root + promote → OK (FAKE_TREE still set)
 echo '# hi' >"${TMP}/README.md"
 (
   cd "${TMP}"
   SHOPANDA_PLATFORM=1 bash scripts/ci/docs-policy.sh >/dev/null
 ) || fail "platform mode should succeed with README + promote"
 pass "platform mode OK with README + promote"
+
+# Same tree without FAKE_TREE and without PRODUCT_OWNED → fail closed
+(
+  cd "${TMP}"
+  unset SHOPANDA_DOCS_POLICY_FAKE_TREE || true
+  if SHOPANDA_PLATFORM=1 bash scripts/ci/docs-policy.sh >/dev/null 2>&1; then
+    exit 1
+  fi
+  exit 0
+) || fail "platform mode should fail without PRODUCT_OWNED.md"
+pass "platform mode fail-closed without PRODUCT_OWNED.md"
+export SHOPANDA_DOCS_POLICY_FAKE_TREE=1
 
 # docs/runbooks is a product-doc root: phase-* relative links must fail
 mkdir -p "${TMP}/docs/runbooks"
