@@ -38,6 +38,22 @@ PRODUCT_BAK=""
 RESERVED_BAK=""
 CI_SAMPLES_BAK=""
 SCRIPTS_CI_BAK=""
+# Scaffold slugs touched by this script — cleaned on EXIT even mid-run abort.
+SCAFFOLD_SLUGS=(zzprodcheck zztestinit)
+
+drop_scaffold_litter() {
+  local slug
+  for slug in "${SCAFFOLD_SLUGS[@]}"; do
+    rm -rf "${ROOT}/plugins/${slug}"
+    rm -f "${ROOT}/PRODUCT_README.${slug}.md"
+  done
+  rm -rf "${ROOT}/.product-init-backup" "${ROOT}/.product-init-stage"
+  # Disposable product/ only when live overlay is still stashed.
+  if [[ -n "${PRODUCT_BAK}" && -d "${PRODUCT_BAK}/product" ]]; then
+    rm -rf "${ROOT}/product"
+  fi
+}
+
 restore_ci_trees() {
   if [[ -n "${CI_SAMPLES_BAK}" && -d "${CI_SAMPLES_BAK}" ]]; then
     rm -rf "${ROOT}/ci-samples"
@@ -55,6 +71,7 @@ restore_ci_trees() {
   fi
 }
 restore_all() {
+  drop_scaffold_litter
   restore_ci_trees
   if [[ -n "${RESERVED_BAK}" && -f "${RESERVED_BAK}" ]]; then
     mv "${RESERVED_BAK}" "${RESERVED_FILE}"
@@ -225,6 +242,8 @@ fi
 bash "${INIT}" --slug "${SLUG}" --force --with-ci-samples --force-ci-samples >/dev/null
 diff -rq "${ROOT}/ci-samples" "${ROOT}/scripts/product-init/seed/ci-samples" >/dev/null \
   || fail "ci-samples not restored from seed after --force-ci-samples"
+diff -rq "${ROOT}/scripts/ci" "${ROOT}/scripts/product-init/seed/scripts-ci" >/dev/null \
+  || fail "scripts/ci not restored from seed after --force-ci-samples"
 [[ ! -f "${ROOT}/ci-samples/.orphan-live-only" ]] || fail "orphan live file survived restore"
 [[ -d "${ROOT}/.product-init-backup" ]] || fail "expected .product-init-backup after force"
 pass "--with-ci-samples refuses dirty trees; --force-ci-samples full replace + backup"
