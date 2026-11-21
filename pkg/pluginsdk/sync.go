@@ -30,10 +30,12 @@ type enqueueConfig struct {
 
 // WithJobID sets the queue job id for idempotent enqueue (one job per entity).
 // Id must be a UUID (Postgres jobs.id / JobsPort). On Conflict, Enqueue
-// resolves via bound JobsPort: same sync type + pending/processing → success
-// (second payload discarded); terminal → Requeue(WithRequeueTerminal); wrong
-// type → hard error. Without JobsPort, Conflict is returned wrapped and
-// IsConflict remains true. Empty / non-UUID ids fail closed.
+// resolves via bound JobsPort: same sync type + pending/processing/reclaiming
+// → success (second payload discarded); terminal → Requeue(WithRequeueTerminal)
+// with one-shot race handling (NotTerminal = success; WrongAttempt → Get once
+// + retry, second WrongAttempt hard-fails); wrong type → hard error. Without
+// JobsPort, Conflict is returned wrapped and IsConflict remains true. Empty /
+// non-UUID ids fail closed.
 func WithJobID(jobID string) EnqueueOption {
 	return func(c *enqueueConfig) {
 		c.opts = append(c.opts, plugin.WithJobID(jobID))

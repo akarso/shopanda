@@ -363,8 +363,8 @@ func TestApp_Integration_Enqueue_WithJobID_PendingConflictNoOp(t *testing.T) {
 	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", map[string]interface{}{"n": 2}, plugin.WithJobID(jobID)); err != nil {
 		t.Fatalf("pending Conflict must be idempotent success: %v", err)
 	}
-	if port.requeueN != 0 {
-		t.Fatalf("pending must not Requeue, got %d", port.requeueN)
+	if port.requeueCalls != 0 {
+		t.Fatalf("pending must not Requeue, got %d", port.requeueCalls)
 	}
 	if len(queue.byID) != 1 {
 		t.Fatalf("duplicate must not insert: %+v", queue.byID)
@@ -397,8 +397,170 @@ func TestApp_Integration_Enqueue_WithJobID_TerminalRequeues(t *testing.T) {
 	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
 		t.Fatalf("terminal Conflict must Requeue: %v", err)
 	}
-	if port.requeueN != 1 || port.lastRequeueID != jobID || port.lastAttempt != 3 {
-		t.Fatalf("requeue = (%d, %q, %d)", port.requeueN, port.lastRequeueID, port.lastAttempt)
+	if port.requeueCalls != 1 || port.lastRequeueID != jobID || port.lastAttempt != 3 {
+		t.Fatalf("requeue = (%d, %q, %d)", port.requeueCalls, port.lastRequeueID, port.lastAttempt)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_ConcurrentTerminalBothSucceed(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueRace}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee5"
+	const jobType = "integration.sync.acme.gen.run"
+	queue.byID[jobID] = jobs.Job{ID: jobID, Type: jobType, Status: jobs.StatusFailed, Attempts: 2}
+
+	const n = 2
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Enqueue: %v", err)
+		}
+	}
+	if port.requeueOK != 1 {
+		t.Fatalf("requeueOK = %d, want exactly one successful terminal requeue", port.requeueOK)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongAttemptRetries(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueStaleOnce}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee6"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 5,
+	}
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("WrongAttempt reload+retry: %v", err)
+	}
+	if port.requeueCalls != 2 || port.requeueOK != 1 {
+		t.Fatalf("requeueCalls=%d requeueOK=%d, want 2 calls / 1 ok", port.requeueCalls, port.requeueOK)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongAttemptThenInFlight(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueWrongThenInFlight}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee7"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 2,
+	}
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("WrongAttempt then in-flight: %v", err)
+	}
+	if port.requeueCalls != 1 || port.requeueOK != 0 {
+		t.Fatalf("requeueCalls=%d requeueOK=%d, want 1 call / 0 ok (no second Requeue)", port.requeueCalls, port.requeueOK)
+	}
+	if got := queue.byID[jobID].Status; got != jobs.StatusPending {
+		t.Fatalf("Get after WrongAttempt must observe pending, got %q", got)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongAttemptThenForeignType(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueWrongThenForeign}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeea"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 2,
+	}
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
+	if err == nil || !strings.Contains(err.Error(), "refusing to resume foreign job") {
+		t.Fatalf("err = %v, want foreign job refusal after WrongAttempt reload", err)
+	}
+	if port.requeueCalls != 1 {
+		t.Fatalf("requeueCalls = %d, want 1 (no retry after type mismatch)", port.requeueCalls)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_WrongAttemptRetryExhausted(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueAlwaysWrong}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee8"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 1,
+	}
+	err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID))
+	if err == nil || !strings.Contains(err.Error(), "conflict requeue retry") {
+		t.Fatalf("err = %v, want one-shot limit (conflict requeue retry)", err)
+	}
+	if port.requeueCalls != 2 {
+		t.Fatalf("requeueCalls = %d, want 2 (initial + one retry)", port.requeueCalls)
+	}
+}
+
+func TestApp_Integration_Enqueue_WithJobID_NotTerminalAloneSucceeds(t *testing.T) {
+	app := &plugin.App{Bootstrap: &plugin.Bootstrap{}}
+	queue := &conflictQueue{byID: map[string]jobs.Job{}}
+	_ = app.BindQueue(queue)
+	port := &conflictJobsPort{q: queue, mode: conflictRequeueNotTerminal}
+	_ = app.BindJobsPort(port)
+	_ = app.Integration("acme").RegisterSyncJob(extapi.SyncJob{
+		Name:    "gen.run",
+		Trigger: extapi.Manual(),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+	})
+	jobID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee9"
+	queue.byID[jobID] = jobs.Job{
+		ID: jobID, Type: "integration.sync.acme.gen.run",
+		Status: jobs.StatusFailed, Attempts: 0,
+	}
+	if err := app.Integration("acme").Enqueue(context.Background(), "gen.run", nil, plugin.WithJobID(jobID)); err != nil {
+		t.Fatalf("NotTerminal alone: %v", err)
+	}
+	if port.requeueCalls != 1 || port.requeueOK != 0 {
+		t.Fatalf("requeueCalls=%d requeueOK=%d, want 1 call / 0 ok", port.requeueCalls, port.requeueOK)
 	}
 }
 
@@ -485,11 +647,28 @@ func (q *conflictQueue) Requeue(context.Context, string, int, ...jobs.RequeueOpt
 	return nil
 }
 
+// conflictRequeueMode selects a single Requeue behaviour for conflictJobsPort.
+// Modes are mutually exclusive — set exactly one via the mode field.
+type conflictRequeueMode int
+
+const (
+	conflictRequeueOK                conflictRequeueMode = iota
+	conflictRequeueRace                                  // terminal→pending once; later calls → NotTerminal
+	conflictRequeueStaleOnce                             // first call WrongAttempt + bump Attempts; second OK
+	conflictRequeueWrongThenInFlight                     // Requeue→WrongAttempt; Get after that observes pending (peer won)
+	conflictRequeueWrongThenForeign                      // Requeue→WrongAttempt; Get after that observes foreign Type
+	conflictRequeueAlwaysWrong                           // every call WrongAttempt (documents one-shot limit)
+	conflictRequeueNotTerminal                           // every call NotTerminal
+)
+
 type conflictJobsPort struct {
 	q             *conflictQueue
-	requeueN      int
+	mode          conflictRequeueMode
+	requeueCalls  int
+	requeueOK     int
 	lastRequeueID string
 	lastAttempt   int
+	staleFired    bool
 }
 
 var _ pluginsdk.JobsPort = (*conflictJobsPort)(nil)
@@ -501,16 +680,71 @@ func (p *conflictJobsPort) Get(_ context.Context, id string) (*jobs.Detail, erro
 	if !ok {
 		return nil, nil
 	}
+	// Driver-faithful race: Requeue only returned WrongAttempt; the peer's
+	// change is visible on the subsequent Get.
+	if p.staleFired {
+		switch p.mode {
+		case conflictRequeueWrongThenInFlight:
+			job.Status = jobs.StatusPending
+			p.q.byID[id] = job
+		case conflictRequeueWrongThenForeign:
+			job.Type = "integration.sync.other.job"
+			p.q.byID[id] = job
+		}
+	}
 	return &jobs.Detail{
 		Summary: jobs.Summary{ID: job.ID, Type: job.Type, Status: job.Status, Attempts: job.Attempts},
 		Payload: job.Payload,
 	}, nil
 }
 func (p *conflictJobsPort) Requeue(_ context.Context, id string, attempt int, _ ...jobs.RequeueOption) error {
-	p.requeueN++
+	p.q.mu.Lock()
+	defer p.q.mu.Unlock()
+	p.requeueCalls++
 	p.lastRequeueID = id
 	p.lastAttempt = attempt
-	return nil
+	job, ok := p.q.byID[id]
+	if !ok {
+		return jobs.ErrRequeueNotFound
+	}
+	switch p.mode {
+	case conflictRequeueNotTerminal:
+		return jobs.ErrRequeueNotTerminal
+	case conflictRequeueAlwaysWrong:
+		job.Attempts = attempt + 1
+		p.q.byID[id] = job
+		return jobs.ErrRequeueWrongAttempt
+	case conflictRequeueWrongThenInFlight, conflictRequeueWrongThenForeign:
+		// Status/type stay as-is until Get (matches Postgres: WrongAttempt
+		// under FOR UPDATE does not mutate the row for the loser).
+		p.staleFired = true
+		return jobs.ErrRequeueWrongAttempt
+	case conflictRequeueStaleOnce:
+		if !p.staleFired {
+			p.staleFired = true
+			job.Attempts = attempt + 1
+			p.q.byID[id] = job
+			return jobs.ErrRequeueWrongAttempt
+		}
+		p.requeueOK++
+		return nil
+	case conflictRequeueRace:
+		switch job.Status {
+		case jobs.StatusFailed, jobs.StatusDone, jobs.StatusCancelled:
+			if attempt != job.Attempts {
+				return jobs.ErrRequeueWrongAttempt
+			}
+			job.Status = jobs.StatusPending
+			p.q.byID[id] = job
+			p.requeueOK++
+			return nil
+		default:
+			return jobs.ErrRequeueNotTerminal
+		}
+	default: // conflictRequeueOK
+		p.requeueOK++
+		return nil
+	}
 }
 func (p *conflictJobsPort) CountsByStatus(context.Context) (map[jobs.Status]int, error) {
 	return map[jobs.Status]int{}, nil
