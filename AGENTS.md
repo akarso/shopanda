@@ -269,8 +269,8 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Read `queue.driver` (or search/cache/media) at Init | `Host.PlatformConfig` / `pluginsdk.RequireQueueDriver` — not `ConfigValue` |
 | Request id for log correlation | `pluginsdk.RequestIDFromContext(ctx)` — not `internal/platform/requestctx` |
 | Human price → minor units | `extapi.ParseMinorUnits(s, exponent)` + `extapi.IsValidCurrency` (caller passes exponent) |
-| Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` — not `internal/domain/jobs` |
-| Idempotent sync enqueue | `SyncJobs.Enqueue(…, pluginsdk.WithJobID(uuid))` with `JobsPort` bound; Enqueue resolves Conflict (pending=no-op, terminal=Requeue, wrong type=error). Second payload discarded. |
+| Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` (`Get`, `CountsByStatus`, `CountsByType`, `Requeue`) — not `internal/domain/jobs` / `BoundQueue`. Plugin CLI skips CapJobs/CapMedia assert (ports stay unbound there). |
+| Idempotent sync enqueue | `SyncJobs.Enqueue(…, pluginsdk.WithJobID(uuid))` with `JobsPort` bound; Enqueue resolves Conflict (pending=no-op, terminal=Requeue with one WrongAttempt retry / NotTerminal=success, second WrongAttempt hard-fails, wrong type=error). Second payload discarded. |
 | Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 | Isolated Postgres in plugin tests | `harness.OpenIsolated` (+ `AdaptInit` `Options.DB` for `BootstrapDB`) |
 | Drop `plugin.App` import | Host + `Adapt` / `NewHost`; sync via `SDK.Integration`; map in PLUGINS.md |
