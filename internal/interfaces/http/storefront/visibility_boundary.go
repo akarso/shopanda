@@ -86,6 +86,7 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "GET", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "checkout step shows cart lines"},
 		{Method: "POST", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "payment form post; purchasability gated at confirm"},
 		{Method: "GET", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "confirm page GET (POST is the StartCheckout gate)"},
+		{Method: "GET", Path: "/checkout/payment/return", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: outOfScope, Note: "Stripe SCA/3DS return — neutral page, not a discovery surface"},
 
 		// GraphQL catalog reads (plugins/core/graphql — PR-1082). Method "GQL"
 		// marks plugin-registered operations; Path is the root field name.

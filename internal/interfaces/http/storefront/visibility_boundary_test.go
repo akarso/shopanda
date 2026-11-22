@@ -53,6 +53,7 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 		{Method: "GET", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
 		{Method: "POST", Path: "/checkout/payment", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
 		{Method: "GET", Path: "/checkout/confirm", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
+		{Method: "GET", Path: "/checkout/payment/return", Surface: catalog.VisibilitySurfacePurchasable, EnforceIn: "out-of-scope"},
 		{Method: "GQL", Path: "product", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1082"},
 		{Method: "GQL", Path: "productBySlug", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1082"},
 		{Method: "GQL", Path: "products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1082"},
