@@ -168,8 +168,9 @@ func validPluginClientCode(code string) bool {
 }
 
 // WithDetails sets an optional details payload and returns e.
-// Nested maps and slices are deep-copied so later mutation by the caller
-// cannot race the response encoder.
+// Nested map[string]interface{} and []interface{} values are deep-copied so
+// later mutation by the caller cannot race the response encoder. Typed maps
+// or slices (e.g. map[string]string) are not cloned — pass JSON-shaped trees.
 func (e *Error) WithDetails(details map[string]interface{}) *Error {
 	if e == nil {
 		return nil

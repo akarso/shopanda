@@ -2,6 +2,9 @@ package storefront_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -220,6 +223,18 @@ const storefrontCheckoutFlashTestSecret = "checkout-flash-test-secret"
 
 func withCheckoutFlash(h *storefront.StorefrontHandler) *storefront.StorefrontHandler {
 	return h.WithCheckoutFlashSecret(storefrontCheckoutFlashTestSecret).WithPublicBaseURL("https://shop.test")
+}
+
+func signCheckoutFlashCookie(t *testing.T, payload map[string]interface{}) string {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := base64.RawURLEncoding.EncodeToString(raw)
+	mac := hmac.New(sha256.New, []byte("storefront-checkout-flash:"+storefrontCheckoutFlashTestSecret))
+	_, _ = mac.Write([]byte(body))
+	return body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // followCheckoutConfirmPRG follows POST /checkout/confirm → 303 → GET with the
@@ -702,6 +717,191 @@ func TestStorefrontHandler_CheckoutConfirm_MissingPublishableKey_ShopperSafe(t *
 	}
 	if strings.Contains(body, "data-client-secret=") {
 		t.Fatalf("must not embed client_secret without publishable key: %s", body)
+	}
+	cleared := false
+	for _, c := range confirmRec.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" && (c.MaxAge < 0 || c.Value == "") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("misconfig must clear confirm flash cookie (no client_secret left in jar)")
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_MissingPublicBaseURL_Misconfig(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, pendingStripeProviderStub{})
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(variants, cartSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).
+		WithCheckoutFlashSecret(storefrontCheckoutFlashTestSecret).
+		WithStripePublishableKey("pk_test_ssr_confirm")
+		// deliberately no WithPublicBaseURL
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"stripe"},
+	}
+	confirmPost := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmPost, confirmReq)
+	confirmRec := followCheckoutConfirmPRG(t, router, confirmPost, currentCart.ID)
+	if !strings.Contains(confirmRec.Body.String(), "stripe-misconfigured") {
+		t.Fatalf("expected misconfig without public_base_url: %s", confirmRec.Body.String())
+	}
+	for _, c := range confirmRec.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" && c.Value != "" && c.MaxAge >= 0 {
+			t.Fatalf("misconfig must clear flash, got %+v", c)
+		}
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_ForgedFlashRedirects(t *testing.T) {
+	engine := createTestTheme(t)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()))
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/checkout/confirm", nil)
+	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_placed", Value: " forgery.notvalid"})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/checkout/address" {
+		t.Fatalf("forged flash: status=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_ExpiredFlashRedirects(t *testing.T) {
+	engine := createTestTheme(t)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), newStorefrontSearchMock()))
+	router := newStorefrontRouter(h)
+
+	value := signCheckoutFlashCookie(t, map[string]interface{}{
+		"order_id":     "ord-expired",
+		"continue_url": "/products",
+		"exp":          time.Now().UTC().Add(-time.Minute).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/checkout/confirm", nil)
+	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_placed", Value: value})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/checkout/address" {
+		t.Fatalf("expired flash: status=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_FlashSecureUnderTLS(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(variants, cartSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc))
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"manual"},
+	}
+	confirmPost := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.TLS = &tls.ConnectionState{}
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmPost, confirmReq)
+	if confirmPost.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d; body: %s", confirmPost.Code, confirmPost.Body.String())
+	}
+	var flash *http.Cookie
+	for _, c := range confirmPost.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" {
+			flash = c
+			break
+		}
+	}
+	if flash == nil {
+		t.Fatal("expected flash cookie on place-order redirect")
+	}
+	if !flash.Secure {
+		t.Fatalf("flash Secure = false, want true under TLS")
 	}
 }
 

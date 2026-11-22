@@ -64,6 +64,8 @@ func WithClientCode(code string) ErrorOption {
 }
 
 // WithDetails attaches a structured details payload (e.g. failing lines, retryable).
+// Nested values must use map[string]interface{} / []interface{} trees — only those
+// shapes are deep-copied; typed maps/slices stay aliased to the caller.
 func WithDetails(details map[string]interface{}) ErrorOption {
 	return func(e *apperror.Error) {
 		_ = e.WithDetails(details)

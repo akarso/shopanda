@@ -418,9 +418,9 @@ func (h *StorefrontHandler) setConfirmFlash(w http.ResponseWriter, r *http.Reque
 	if len(h.checkoutFlashSecret) == 0 {
 		return fmt.Errorf("checkout flash secret is not configured")
 	}
-	if flash.ExpiresAt == 0 {
-		flash.ExpiresAt = time.Now().UTC().Add(15 * time.Minute).Unix()
-	}
+	// Always refresh exp with MaxAge so remint does not leave a long-lived
+	// cookie that fails closed on an older payload exp.
+	flash.ExpiresAt = time.Now().UTC().Add(15 * time.Minute).Unix()
 	raw, err := json.Marshal(flash)
 	if err != nil {
 		return err
@@ -522,16 +522,26 @@ func (h *StorefrontHandler) serveCheckoutConfirmGet(w http.ResponseWriter, r *ht
 	}
 	page.StripePending = flash.StripePending
 	if flash.StripePending {
-		h.applyStripeConfirmFields(&page, flash.OrderID, flash.StripeClientSecret)
-		// Keep a reminted flash so refresh can retry card entry; still HMAC + Secure.
-		_ = h.setConfirmFlash(w, r, flash)
+		if h.applyStripeConfirmFields(&page, flash.OrderID, flash.StripeClientSecret) {
+			// Remint so refresh can retry card entry; keep HMAC + Secure + fresh exp.
+			if err := h.setConfirmFlash(w, r, flash); err != nil {
+				h.log.Error("storefront.checkout.confirm_flash_remint_failed", err, map[string]interface{}{
+					"order_id": flash.OrderID,
+				})
+				h.clearConfirmFlash(w, r)
+			}
+		} else {
+			// Misconfig: do not keep client_secret in the jar.
+			h.clearConfirmFlash(w, r)
+		}
 	} else {
 		h.clearConfirmFlash(w, r)
 	}
 	h.renderCheckoutSensitive(w, "checkout_confirm", page, http.StatusOK)
 }
 
-func (h *StorefrontHandler) applyStripeConfirmFields(page *StorefrontCheckoutPageData, orderID, clientSecret string) {
+// applyStripeConfirmFields returns true when Stripe.js can be mounted.
+func (h *StorefrontHandler) applyStripeConfirmFields(page *StorefrontCheckoutPageData, orderID, clientSecret string) bool {
 	pk := strings.TrimSpace(h.stripePublishableKey)
 	secret := strings.TrimSpace(clientSecret)
 	base := strings.TrimSpace(h.publicBaseURL)
@@ -541,12 +551,12 @@ func (h *StorefrontHandler) applyStripeConfirmFields(page *StorefrontCheckoutPag
 		page.StripePublishableKey = ""
 		page.AllowStripeCSP = false
 		h.log.Warn("storefront.checkout.stripe_confirm_unavailable", map[string]interface{}{
-			"order_id":               orderID,
-			"missing_publishable":    pk == "",
-			"missing_client_secret":  secret == "",
+			"order_id":                orderID,
+			"missing_publishable":     pk == "",
+			"missing_client_secret":   secret == "",
 			"missing_public_base_url": base == "",
 		})
-		return
+		return false
 	}
 	page.StripePublishableKey = pk
 	page.StripeClientSecret = secret
@@ -556,6 +566,7 @@ func (h *StorefrontHandler) applyStripeConfirmFields(page *StorefrontCheckoutPag
 		ret += "?order_id=" + url.QueryEscape(orderID)
 	}
 	page.StripeReturnURL = ret
+	return true
 }
 
 func (h *StorefrontHandler) renderCheckoutSensitive(w http.ResponseWriter, name string, data StorefrontCheckoutPageData, status int) {
