@@ -3,6 +3,7 @@ package apperror
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Code represents a category of application error.
@@ -15,6 +16,7 @@ const (
 	CodeUnauthorized Code = "unauthorized"
 	CodeForbidden    Code = "forbidden"
 	CodeRateLimited  Code = "rate_limited"
+	CodeUnavailable  Code = "unavailable"
 	CodeInternal     Code = "internal"
 
 	CodeForbiddenPrivateField    Code = "forbidden_private_field"
@@ -30,6 +32,12 @@ type Error struct {
 	Code    Code
 	Message string
 	Err     error
+	// ClientCode is an optional stable code for API clients (e.g. plugin.design_unavailable).
+	// When set, JSONError uses it as the response error.code while StatusFromCode still
+	// keys off Code (validation stays 422, unavailable stays 503).
+	ClientCode string
+	// Details is an optional structured payload (e.g. failing cart lines, retryable).
+	Details map[string]interface{}
 }
 
 func (e *Error) Error() string {
@@ -113,9 +121,32 @@ func RateLimited(message string) *Error {
 	return New(CodeRateLimited, message)
 }
 
+// Unavailable creates an unavailable error (HTTP 503).
+func Unavailable(message string) *Error {
+	return New(CodeUnavailable, message)
+}
+
 // Internal creates an internal error.
 func Internal(message string) *Error {
 	return New(CodeInternal, message)
+}
+
+// WithClientCode sets a stable client-facing code (plugin-owned) and returns e.
+func (e *Error) WithClientCode(code string) *Error {
+	if e == nil {
+		return nil
+	}
+	e.ClientCode = strings.TrimSpace(code)
+	return e
+}
+
+// WithDetails sets an optional details payload and returns e.
+func (e *Error) WithDetails(details map[string]interface{}) *Error {
+	if e == nil {
+		return nil
+	}
+	e.Details = details
+	return e
 }
 
 // Is checks whether err (or any wrapped error) is an *Error with the given code.

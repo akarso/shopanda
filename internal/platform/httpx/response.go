@@ -16,8 +16,9 @@ type Response struct {
 
 // ErrorBody represents the error portion of an API response.
 type ErrorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string                 `json:"code"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
 }
 
 // JSON writes a JSON response with the given status code and data.
@@ -43,14 +44,22 @@ func JSONError(w http.ResponseWriter, err error) {
 	msg := "internal server error"
 	status := http.StatusInternalServerError
 
+	var details map[string]interface{}
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {
 		status = StatusFromCode(appErr.Code)
 		code = string(appErr.Code)
 		msg = appErr.Message
+		if appErr.ClientCode != "" {
+			code = appErr.ClientCode
+		}
+		details = appErr.Details
+		// Mask unknown / internal 500s; deliberate unavailable (503) and
+		// other mapped statuses keep their code/message/details.
 		if status == http.StatusInternalServerError {
 			code = string(apperror.CodeInternal)
 			msg = "internal server error"
+			details = nil
 		}
 	}
 
@@ -58,6 +67,7 @@ func JSONError(w http.ResponseWriter, err error) {
 		Error: &ErrorBody{
 			Code:    code,
 			Message: msg,
+			Details: details,
 		},
 	})
 	if marshalErr != nil {
@@ -90,6 +100,8 @@ func StatusFromCode(code apperror.Code) int {
 		return http.StatusUnprocessableEntity
 	case apperror.CodeRateLimited:
 		return http.StatusTooManyRequests
+	case apperror.CodeUnavailable:
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

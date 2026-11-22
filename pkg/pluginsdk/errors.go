@@ -33,3 +33,8 @@ func IsValidation(err error) bool {
 	var ve *domainext.ValidationError
 	return errors.As(err, &ve)
 }
+
+// IsUnavailable reports an unavailable (503) application error.
+func IsUnavailable(err error) bool {
+	return apperror.Is(err, apperror.CodeUnavailable)
+}
