@@ -88,3 +88,24 @@ func TestStatusFromCode_Unavailable(t *testing.T) {
 		t.Fatalf("got %d", got)
 	}
 }
+
+func TestJSONError_UnmarshalableDetailsKeepsStatus(t *testing.T) {
+	err := apperror.Validation("bad details").
+		WithClientCode("plugin.bad_details").
+		WithDetails(map[string]interface{}{"ch": make(chan int)})
+	rec := httptest.NewRecorder()
+	httpx.JSONError(rec, err)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (not upgraded to 500)", rec.Code)
+	}
+	var body httpx.Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error == nil || body.Error.Code != "plugin.bad_details" {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if body.Error.Details != nil {
+		t.Fatalf("details should be dropped, got %#v", body.Error.Details)
+	}
+}

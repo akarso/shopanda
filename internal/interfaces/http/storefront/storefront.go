@@ -67,9 +67,12 @@ type StorefrontHandler struct {
 	addresses           customer.AddressRepository
 	consents            legal.ConsentRepository
 	security            *storefrontAccountSecurityVerifier
-	shipping            []shipping.Provider
-	payments            *payment.ProviderRegistry
-	legalConfig         legal.ConfigGetter
+	shipping               []shipping.Provider
+	payments               *payment.ProviderRegistry
+	stripePublishableKey   string
+	publicBaseURL          string
+	checkoutFlashSecret    []byte
+	legalConfig            legal.ConfigGetter
 	menus               cms.MenuRepository
 	menuResolver        *cmsApp.MenuResolver
 	pages               cms.PageRepository
@@ -425,6 +428,32 @@ func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, 
 	return h
 }
 
+// WithStripePublishableKey sets the Stripe.js publishable key for SSR checkout
+// confirmation (payment.stripe.publishable_key / SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY).
+func (h *StorefrontHandler) WithStripePublishableKey(key string) *StorefrontHandler {
+	h.stripePublishableKey = strings.TrimSpace(key)
+	return h
+}
+
+// WithPublicBaseURL sets the absolute public origin used for Stripe return_url
+// (server.public_base_url). Never derived from request Host / X-Forwarded-Proto.
+func (h *StorefrontHandler) WithPublicBaseURL(base string) *StorefrontHandler {
+	h.publicBaseURL = strings.TrimRight(strings.TrimSpace(base), "/")
+	return h
+}
+
+// WithCheckoutFlashSecret sets the HMAC key for the post-checkout confirm flash
+// cookie (typically the JWT signing secret).
+func (h *StorefrontHandler) WithCheckoutFlashSecret(secret string) *StorefrontHandler {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		h.checkoutFlashSecret = nil
+		return h
+	}
+	h.checkoutFlashSecret = []byte("storefront-checkout-flash:" + secret)
+	return h
+}
+
 // WithAccount enables storefront account pages using the auth service,
 // order repository, and account deletion service.
 func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders order.OrderRepository, account AccountDeleter) *StorefrontHandler {
@@ -623,7 +652,7 @@ func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data 
 
 func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string, data interface{}, status int) {
 	if layout, ok := storefrontLayoutFromData(data); ok && layout.CSPEnabled && layout.CSPNonce != "" {
-		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce))
+		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce, storefrontAllowsStripeCSP(data)))
 	}
 	var buf bytes.Buffer
 	if err := h.theme().Render(&buf, name, data); err != nil {
@@ -633,6 +662,17 @@ func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
+}
+
+func storefrontAllowsStripeCSP(data interface{}) bool {
+	switch d := data.(type) {
+	case StorefrontCheckoutPageData:
+		return d.AllowStripeCSP
+	case *StorefrontCheckoutPageData:
+		return d != nil && d.AllowStripeCSP
+	default:
+		return false
+	}
 }
 
 func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {

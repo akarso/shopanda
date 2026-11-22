@@ -54,9 +54,9 @@ func AdminStoreScope(r *http.Request) string {
 // helpers below (plugin-owned client code, structured details).
 type ErrorOption func(*apperror.Error)
 
-// WithClientCode sets a stable client-facing code (e.g. plugin.design_unavailable).
-// JSONError uses it as error.code; HTTP status still follows the error class
-// (validation → 422, unavailable → 503).
+// WithClientCode sets a stable client-facing code (must be plugin.<slug>).
+// Invalid codes are ignored. JSONError uses it as error.code; HTTP status still
+// follows the error class (validation → 422, unavailable → 503).
 func WithClientCode(code string) ErrorOption {
 	return func(e *apperror.Error) {
 		_ = e.WithClientCode(code)
@@ -64,6 +64,8 @@ func WithClientCode(code string) ErrorOption {
 }
 
 // WithDetails attaches a structured details payload (e.g. failing lines, retryable).
+// Nested values must use map[string]interface{} / []interface{} trees — only those
+// shapes are deep-copied; typed maps/slices stay aliased to the caller.
 func WithDetails(details map[string]interface{}) ErrorOption {
 	return func(e *apperror.Error) {
 		_ = e.WithDetails(details)

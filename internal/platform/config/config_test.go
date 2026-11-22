@@ -2431,6 +2431,25 @@ payment:
 	}
 }
 
+func TestStripeConfig_PublishableKeyFromEnv(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+payment:
+  stripe:
+    enabled: true
+    secret_key: "sk_test_x"
+    webhook_secret: "whsec_x"
+`)
+	t.Setenv("SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY", "pk_test_from_env")
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := cfg.Payment.Stripe.PublishableKey; got != "pk_test_from_env" {
+		t.Fatalf("PublishableKey = %q", got)
+	}
+}
+
 func TestStripeConfig_DisabledSkipsSecretValidation(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "") // payment.stripe.enabled defaults false

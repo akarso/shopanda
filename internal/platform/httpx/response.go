@@ -70,6 +70,14 @@ func JSONError(w http.ResponseWriter, err error) {
 			Details: details,
 		},
 	})
+	if marshalErr != nil && details != nil {
+		// Unmarshalable details must not upgrade a deliberate 422/503 into a
+		// masked 500 — drop details and retry once.
+		details = nil
+		body, marshalErr = json.Marshal(Response{
+			Error: &ErrorBody{Code: code, Message: msg},
+		})
+	}
 	if marshalErr != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

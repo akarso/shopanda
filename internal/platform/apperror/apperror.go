@@ -131,22 +131,85 @@ func Internal(message string) *Error {
 	return New(CodeInternal, message)
 }
 
-// WithClientCode sets a stable client-facing code (plugin-owned) and returns e.
+// WithClientCode sets a stable plugin-owned client-facing code and returns e.
+// Codes must be "plugin." plus a non-empty slug (letters, digits, `_`, `-`, `.`).
+// Invalid values are ignored so callers cannot override platform codes like
+// "unauthorized" or "internal" on a 422/503 response.
 func (e *Error) WithClientCode(code string) *Error {
 	if e == nil {
 		return nil
 	}
-	e.ClientCode = strings.TrimSpace(code)
+	code = strings.TrimSpace(code)
+	if !validPluginClientCode(code) {
+		return e
+	}
+	e.ClientCode = code
 	return e
 }
 
+func validPluginClientCode(code string) bool {
+	const prefix = "plugin."
+	if !strings.HasPrefix(code, prefix) {
+		return false
+	}
+	slug := code[len(prefix):]
+	if slug == "" {
+		return false
+	}
+	for _, r := range slug {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_' || r == '-' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // WithDetails sets an optional details payload and returns e.
+// Nested map[string]interface{} and []interface{} values are deep-copied so
+// later mutation by the caller cannot race the response encoder. Typed maps
+// or slices (e.g. map[string]string) are not cloned — pass JSON-shaped trees.
 func (e *Error) WithDetails(details map[string]interface{}) *Error {
 	if e == nil {
 		return nil
 	}
-	e.Details = details
+	if details == nil {
+		e.Details = nil
+		return e
+	}
+	e.Details = cloneDetailsMap(details)
 	return e
+}
+
+func cloneDetailsMap(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = cloneDetailsValue(v)
+	}
+	return out
+}
+
+func cloneDetailsValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		if t == nil {
+			return map[string]interface{}(nil)
+		}
+		return cloneDetailsMap(t)
+	case []interface{}:
+		if t == nil {
+			return []interface{}(nil)
+		}
+		out := make([]interface{}, len(t))
+		for i, vv := range t {
+			out[i] = cloneDetailsValue(vv)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // Is checks whether err (or any wrapped error) is an *Error with the given code.
