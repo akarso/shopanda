@@ -631,7 +631,7 @@ func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data 
 
 func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string, data interface{}, status int) {
 	if layout, ok := storefrontLayoutFromData(data); ok && layout.CSPEnabled && layout.CSPNonce != "" {
-		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce, h.stripePublishableKey != ""))
+		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce, storefrontAllowsStripeCSP(data)))
 	}
 	var buf bytes.Buffer
 	if err := h.theme().Render(&buf, name, data); err != nil {
@@ -641,6 +641,17 @@ func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
+}
+
+func storefrontAllowsStripeCSP(data interface{}) bool {
+	switch d := data.(type) {
+	case StorefrontCheckoutPageData:
+		return d.AllowStripeCSP
+	case *StorefrontCheckoutPageData:
+		return d != nil && d.AllowStripeCSP
+	default:
+		return false
+	}
 }
 
 func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {

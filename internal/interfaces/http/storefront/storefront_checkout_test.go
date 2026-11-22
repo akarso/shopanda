@@ -30,6 +30,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -213,6 +214,35 @@ func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistr
 		reg.Register(p)
 	}
 	return reg
+}
+
+// followCheckoutConfirmPRG follows POST /checkout/confirm → 303 → GET with the
+// placed-order flash cookie so tests assert the rendered confirm page.
+func followCheckoutConfirmPRG(t *testing.T, router http.Handler, postRec *httptest.ResponseRecorder, cartID string, extraCookies ...*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	if postRec.Code != http.StatusSeeOther {
+		t.Fatalf("confirm POST status = %d, want 303; body: %s", postRec.Code, postRec.Body.String())
+	}
+	loc := postRec.Header().Get("Location")
+	if loc != "/checkout/confirm" {
+		t.Fatalf("confirm Location = %q, want /checkout/confirm", loc)
+	}
+	getRec := httptest.NewRecorder()
+	getReq := httptest.NewRequest("GET", loc, nil)
+	getReq.Host = "shop.test"
+	if cartID != "" {
+		getReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: cartID})
+	}
+	for _, c := range extraCookies {
+		if c != nil {
+			getReq.AddCookie(c)
+		}
+	}
+	for _, c := range postRec.Result().Cookies() {
+		getReq.AddCookie(c)
+	}
+	router.ServeHTTP(getRec, getReq)
+	return getRec
 }
 
 type pendingStripeProviderStub struct{}
@@ -455,14 +485,15 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 		"shipping_method": {"flat_rate"},
 		"payment_method":  {"manual"},
 	}
-	confirmRec := httptest.NewRecorder()
+	confirmPost := httptest.NewRecorder()
 	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
 	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	confirmReq.AddCookie(csrfCookie)
 	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
-	router.ServeHTTP(confirmRec, confirmReq)
+	router.ServeHTTP(confirmPost, confirmReq)
+	confirmRec := followCheckoutConfirmPRG(t, router, confirmPost, currentCart.ID)
 	if confirmRec.Code != http.StatusOK {
-		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+		t.Fatalf("confirm GET status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
 	}
 	if orders.saved == nil {
 		t.Fatal("expected checkout to save an order")
@@ -517,6 +548,9 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 	if addressRec.Code != http.StatusOK {
 		t.Fatalf("address status = %d; body: %s", addressRec.Code, addressRec.Body.String())
 	}
+	if addrCSP := addressRec.Header().Get("Content-Security-Policy"); strings.Contains(addrCSP, "js.stripe.com") {
+		t.Fatalf("address CSP must not include Stripe: %q", addrCSP)
+	}
 	var csrfCookie *http.Cookie
 	for _, cookie := range addressRec.Result().Cookies() {
 		if cookie.Name == "shopanda_csrf" {
@@ -540,15 +574,16 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 		"shipping_method": {"flat_rate"},
 		"payment_method":  {"stripe"},
 	}
-	confirmRec := httptest.NewRecorder()
+	confirmPost := httptest.NewRecorder()
 	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
 	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	confirmReq.AddCookie(csrfCookie)
 	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
-	router.ServeHTTP(confirmRec, confirmReq)
+	router.ServeHTTP(confirmPost, confirmReq)
+	confirmRec := followCheckoutConfirmPRG(t, router, confirmPost, currentCart.ID)
 
 	if confirmRec.Code != http.StatusOK {
-		t.Fatalf("confirm status = %d, want 200; body: %s", confirmRec.Code, confirmRec.Body.String())
+		t.Fatalf("confirm GET status = %d, want 200; body: %s", confirmRec.Code, confirmRec.Body.String())
 	}
 	if orders.saved == nil {
 		t.Fatal("expected checkout to save an order")
@@ -563,8 +598,14 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 	if !strings.Contains(body, `data-publishable-key="pk_test_ssr_confirm"`) {
 		t.Fatalf("missing publishable key in confirm HTML: %s", body)
 	}
+	if !strings.Contains(body, `data-return-url="http://shop.test/checkout/payment/return?order_id=`) {
+		t.Fatalf("missing return_url with order_id: %s", body)
+	}
 	if !strings.Contains(body, "https://js.stripe.com/v3/") {
 		t.Fatalf("missing Stripe.js script: %s", body)
+	}
+	if cc := confirmRec.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("Cache-Control = %q, want private, no-store", cc)
 	}
 	csp := confirmRec.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "https://js.stripe.com") {
@@ -572,6 +613,173 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 	}
 	if !strings.Contains(csp, "frame-src") {
 		t.Fatalf("CSP missing frame-src for Stripe Elements: %q", csp)
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_MissingPublishableKey_ShopperSafe(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, pendingStripeProviderStub{})
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(variants, cartSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("expected CSRF cookie")
+	}
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"stripe"},
+	}
+	confirmPost := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmPost, confirmReq)
+	confirmRec := followCheckoutConfirmPRG(t, router, confirmPost, currentCart.ID)
+	body := confirmRec.Body.String()
+	if !strings.Contains(body, "stripe-misconfigured") {
+		t.Fatalf("expected shopper-safe misconfig copy: %s", body)
+	}
+	if strings.Contains(body, "SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY") || strings.Contains(body, "client_secret") {
+		t.Fatalf("leaked ops instructions to shopper: %s", body)
+	}
+	if strings.Contains(body, "data-client-secret=") {
+		t.Fatalf("must not embed client_secret without publishable key: %s", body)
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_UnavailableReturns503(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	log := logger.NewWithWriter(io.Discard, "error")
+	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{failingCheckoutStep{err: apperror.Unavailable("cart port down")}}, event.NewBus(log), log)
+	checkoutSvc := checkoutApp.NewService(carts, workflow, log)
+	shippingProvider := flatrate.NewProvider(shared.MustNewMoney(500, "EUR"))
+	payRegistry := testPaymentRegistry(manualpay.NewProvider())
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(variants, cartSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"manual"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cart port down") {
+		t.Fatalf("expected unavailable message pass-through: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Sorry, something went wrong") {
+		t.Fatalf("503 must not use generic 500 mask: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_RedirectStatus(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-1&redirect_status=succeeded", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Order #ord-1") {
+		t.Fatalf("missing order id: %s", body)
+	}
+	if !strings.Contains(body, "Payment confirmed") {
+		t.Fatalf("missing success notice: %s", body)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "js.stripe.com") {
+		t.Fatalf("return page must not widen Stripe CSP: %q", csp)
 	}
 }
 
@@ -658,14 +866,15 @@ func TestStorefrontHandler_CheckoutFlow_DigitalOnly_SkipsShipping(t *testing.T) 
 		"country":        {"DE"},
 		"payment_method": {"manual"},
 	}
-	confirmRec := httptest.NewRecorder()
+	confirmPost := httptest.NewRecorder()
 	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
 	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	confirmReq.AddCookie(csrfCookie)
 	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
-	router.ServeHTTP(confirmRec, confirmReq)
+	router.ServeHTTP(confirmPost, confirmReq)
+	confirmRec := followCheckoutConfirmPRG(t, router, confirmPost, currentCart.ID)
 	if confirmRec.Code != http.StatusOK {
-		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+		t.Fatalf("confirm GET status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
 	}
 	if orders.saved == nil {
 		t.Fatal("expected digital checkout to save an order")
@@ -867,13 +1076,23 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 		"shipping_method": {"flat_rate"},
 		"payment_method":  {"manual"},
 	}
-	confirmRec := httptest.NewRecorder()
+	confirmPost := httptest.NewRecorder()
 	confirmReq := storefrontCustomerRequest(httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode())), out.CustomerID)
 	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	confirmReq.AddCookie(csrfCookie)
-	router.ServeHTTP(confirmRec, confirmReq)
+	router.ServeHTTP(confirmPost, confirmReq)
+	getRec := httptest.NewRecorder()
+	if confirmPost.Code != http.StatusSeeOther {
+		t.Fatalf("confirm POST status = %d, want 303; body: %s", confirmPost.Code, confirmPost.Body.String())
+	}
+	getReq := storefrontCustomerRequest(httptest.NewRequest("GET", confirmPost.Header().Get("Location"), nil), out.CustomerID)
+	for _, c := range confirmPost.Result().Cookies() {
+		getReq.AddCookie(c)
+	}
+	router.ServeHTTP(getRec, getReq)
+	confirmRec := getRec
 	if confirmRec.Code != http.StatusOK {
-		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+		t.Fatalf("confirm GET status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
 	}
 	if orders.saved == nil {
 		t.Fatal("expected checkout to save an order")

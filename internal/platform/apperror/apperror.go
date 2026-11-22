@@ -131,21 +131,58 @@ func Internal(message string) *Error {
 	return New(CodeInternal, message)
 }
 
-// WithClientCode sets a stable client-facing code (plugin-owned) and returns e.
+// WithClientCode sets a stable plugin-owned client-facing code and returns e.
+// Codes must be "plugin." plus a non-empty slug (letters, digits, `_`, `-`, `.`).
+// Invalid values are ignored so callers cannot override platform codes like
+// "unauthorized" or "internal" on a 422/503 response.
 func (e *Error) WithClientCode(code string) *Error {
 	if e == nil {
 		return nil
 	}
-	e.ClientCode = strings.TrimSpace(code)
+	code = strings.TrimSpace(code)
+	if !validPluginClientCode(code) {
+		return e
+	}
+	e.ClientCode = code
 	return e
 }
 
+func validPluginClientCode(code string) bool {
+	const prefix = "plugin."
+	if !strings.HasPrefix(code, prefix) {
+		return false
+	}
+	slug := code[len(prefix):]
+	if slug == "" {
+		return false
+	}
+	for _, r := range slug {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_' || r == '-' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // WithDetails sets an optional details payload and returns e.
+// The map is shallow-copied so later mutation by the caller cannot race the
+// response encoder.
 func (e *Error) WithDetails(details map[string]interface{}) *Error {
 	if e == nil {
 		return nil
 	}
-	e.Details = details
+	if details == nil {
+		e.Details = nil
+		return e
+	}
+	cp := make(map[string]interface{}, len(details))
+	for k, v := range details {
+		cp[k] = v
+	}
+	e.Details = cp
 	return e
 }
 

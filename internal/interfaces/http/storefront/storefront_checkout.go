@@ -2,6 +2,8 @@ package storefront
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,28 +70,31 @@ type StorefrontCheckoutConfirmation struct {
 }
 
 type StorefrontCheckoutPageData struct {
-	Layout                 StorefrontLayoutData
-	Theme                  theme.Theme
-	Progress               []StorefrontCheckoutProgressStep
-	Items                  []StorefrontCartItem
-	Summary                StorefrontCartSummary
-	Address                StorefrontCheckoutAddress
-	ContactEmail           string
-	Countries              []StorefrontCheckoutOption
-	Rates                  []StorefrontCheckoutRate
-	SelectedRate           *StorefrontCheckoutRate
-	Payment                StorefrontCheckoutPayment
-	PaymentMethods         []StorefrontCheckoutPayment
-	Confirmation           *StorefrontCheckoutConfirmation
-	CSRFToken              string
-	ErrorMessage           string
-	StripePending          bool
-	StripeClientSecret     string
-	StripePublishableKey   string
-	NeedsShipping          bool
-	PrimaryAction          string
-	SecondaryURL           string
-	SecondaryLabel         string
+	Layout               StorefrontLayoutData
+	Theme                theme.Theme
+	Progress             []StorefrontCheckoutProgressStep
+	Items                []StorefrontCartItem
+	Summary              StorefrontCartSummary
+	Address              StorefrontCheckoutAddress
+	ContactEmail         string
+	Countries            []StorefrontCheckoutOption
+	Rates                []StorefrontCheckoutRate
+	SelectedRate         *StorefrontCheckoutRate
+	Payment              StorefrontCheckoutPayment
+	PaymentMethods       []StorefrontCheckoutPayment
+	Confirmation         *StorefrontCheckoutConfirmation
+	CSRFToken            string
+	ErrorMessage         string
+	StripePending        bool
+	StripeMisconfigured  bool
+	StripeClientSecret   string
+	StripePublishableKey string
+	StripeReturnURL      string
+	AllowStripeCSP       bool
+	NeedsShipping        bool
+	PrimaryAction        string
+	SecondaryURL         string
+	SecondaryLabel       string
 }
 
 type storefrontCheckoutResumeState struct {
@@ -245,7 +250,7 @@ func (h *StorefrontHandler) CheckoutPayment() http.HandlerFunc {
 func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			http.Redirect(w, r, "/checkout/address", http.StatusSeeOther)
+			h.serveCheckoutConfirmGet(w, r)
 			return
 		}
 		if !h.hasTemplate("checkout_confirm") {
@@ -330,30 +335,202 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_payment", page, storefrontCheckoutErrorStatus(err))
 			return
 		}
-		page.Progress = storefrontCheckoutProgress("confirm", needsShipping)
-		page.Confirmation = &StorefrontCheckoutConfirmation{
-			OrderID:     cctx.Order.ID,
-			Status:      string(cctx.Order.Status()),
-			TotalText:   storefrontCheckoutDisplayTotal(cctx, storefrontSelectedRateCostText(selectedRate)),
-			Notice:      storefrontCheckoutConfirmationNotice(payment.PaymentMethod(paymentMethod)),
-			ContinueURL: "/products",
+		flash := storefrontConfirmFlash{
+			OrderID:       cctx.Order.ID,
+			Status:        string(cctx.Order.Status()),
+			TotalText:     storefrontCheckoutDisplayTotal(cctx, storefrontSelectedRateCostText(selectedRate)),
+			Notice:        storefrontCheckoutConfirmationNotice(payment.PaymentMethod(paymentMethod)),
+			ContinueURL:   "/products",
+			NeedsShipping: needsShipping,
+			StripePending: paymentMethod == string(payment.MethodStripe),
 		}
 		if customerID == "" {
-			page.Confirmation.GuestEmail = cctx.Order.ContactEmail
+			flash.GuestEmail = cctx.Order.ContactEmail
 		} else {
-			page.Confirmation.ViewOrderURL = "/account/orders/" + cctx.Order.ID
+			flash.ViewOrderURL = "/account/orders/" + cctx.Order.ID
 		}
-		page.StripePending = paymentMethod == string(payment.MethodStripe)
-		if page.StripePending {
+		if flash.StripePending {
 			if cs, ok := cctx.GetMeta("client_secret"); ok {
 				if s, ok := cs.(string); ok {
-					page.StripeClientSecret = strings.TrimSpace(s)
+					flash.StripeClientSecret = strings.TrimSpace(s)
 				}
 			}
-			page.StripePublishableKey = h.stripePublishableKey
 		}
-		h.renderPage(w, "checkout_confirm", page)
+		if err := storefrontSetConfirmFlash(w, flash); err != nil {
+			h.log.Error("storefront.checkout.confirm_flash_failed", err, map[string]interface{}{
+				"order_id": flash.OrderID,
+			})
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/checkout/confirm", http.StatusSeeOther)
 	}
+}
+
+// CheckoutPaymentReturn handles Stripe redirect returns after SCA / 3DS.
+// It never places an order — only renders success / pending / failure UI.
+func (h *StorefrontHandler) CheckoutPaymentReturn() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !h.hasTemplate("checkout_confirm") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		orderID := strings.TrimSpace(r.URL.Query().Get("order_id"))
+		redirectStatus := strings.TrimSpace(r.URL.Query().Get("redirect_status"))
+		page := h.emptyCheckoutConfirmPage(r)
+		page.Confirmation = &StorefrontCheckoutConfirmation{
+			OrderID:     orderID,
+			ContinueURL: "/products",
+		}
+		if customerID := storefrontCustomerID(r); customerID != "" && orderID != "" {
+			page.Confirmation.ViewOrderURL = "/account/orders/" + orderID
+		}
+		switch redirectStatus {
+		case "succeeded":
+			page.Confirmation.Notice = "Payment confirmed. Thank you — your order is being processed."
+		case "failed", "canceled":
+			page.Confirmation.Notice = "Payment was not completed. Your order is still unpaid; you can contact the shop for help."
+			page.ErrorMessage = "Card confirmation did not succeed."
+		default:
+			page.Confirmation.Notice = "Payment is still processing. You will receive a confirmation when it completes."
+		}
+		h.renderCheckoutSensitive(w, "checkout_confirm", page, http.StatusOK)
+	}
+}
+
+const storefrontConfirmFlashCookie = "shopanda_checkout_placed"
+
+type storefrontConfirmFlash struct {
+	OrderID            string `json:"order_id"`
+	Status             string `json:"status"`
+	TotalText          string `json:"total_text"`
+	Notice             string `json:"notice"`
+	GuestEmail         string `json:"guest_email,omitempty"`
+	ViewOrderURL       string `json:"view_order_url,omitempty"`
+	ContinueURL        string `json:"continue_url"`
+	NeedsShipping      bool   `json:"needs_shipping"`
+	StripePending      bool   `json:"stripe_pending"`
+	StripeClientSecret string `json:"stripe_client_secret,omitempty"`
+}
+
+func storefrontSetConfirmFlash(w http.ResponseWriter, flash storefrontConfirmFlash) error {
+	raw, err := json.Marshal(flash)
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     storefrontConfirmFlashCookie,
+		Value:    base64.RawURLEncoding.EncodeToString(raw),
+		Path:     "/checkout",
+		MaxAge:   int((15 * time.Minute).Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   false,
+	})
+	return nil
+}
+
+func storefrontReadConfirmFlash(r *http.Request) (storefrontConfirmFlash, bool) {
+	c, err := r.Cookie(storefrontConfirmFlashCookie)
+	if err != nil || strings.TrimSpace(c.Value) == "" {
+		return storefrontConfirmFlash{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+	if err != nil {
+		return storefrontConfirmFlash{}, false
+	}
+	var flash storefrontConfirmFlash
+	if err := json.Unmarshal(raw, &flash); err != nil {
+		return storefrontConfirmFlash{}, false
+	}
+	if strings.TrimSpace(flash.OrderID) == "" {
+		return storefrontConfirmFlash{}, false
+	}
+	return flash, true
+}
+
+func (h *StorefrontHandler) emptyCheckoutConfirmPage(r *http.Request) StorefrontCheckoutPageData {
+	return StorefrontCheckoutPageData{
+		Layout:         h.layoutDataBestEffort(r),
+		Theme:          h.themeMeta(),
+		Progress:       storefrontCheckoutProgress("confirm", false),
+		CSRFToken:      httpshared.CSRFToken(r),
+		SecondaryURL:   "/products",
+		SecondaryLabel: "Continue Shopping",
+	}
+}
+
+func (h *StorefrontHandler) serveCheckoutConfirmGet(w http.ResponseWriter, r *http.Request) {
+	if !h.hasTemplate("checkout_confirm") {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	flash, ok := storefrontReadConfirmFlash(r)
+	if !ok {
+		http.Redirect(w, r, "/checkout/address", http.StatusSeeOther)
+		return
+	}
+	page := h.emptyCheckoutConfirmPage(r)
+	page.Progress = storefrontCheckoutProgress("confirm", flash.NeedsShipping)
+	page.Confirmation = &StorefrontCheckoutConfirmation{
+		OrderID:      flash.OrderID,
+		Status:       flash.Status,
+		TotalText:    flash.TotalText,
+		Notice:       flash.Notice,
+		ViewOrderURL: flash.ViewOrderURL,
+		ContinueURL:  flash.ContinueURL,
+		GuestEmail:   flash.GuestEmail,
+	}
+	page.StripePending = flash.StripePending
+	if flash.StripePending {
+		h.applyStripeConfirmFields(r, &page, flash.OrderID, flash.StripeClientSecret)
+	}
+	h.renderCheckoutSensitive(w, "checkout_confirm", page, http.StatusOK)
+}
+
+func (h *StorefrontHandler) applyStripeConfirmFields(r *http.Request, page *StorefrontCheckoutPageData, orderID, clientSecret string) {
+	pk := strings.TrimSpace(h.stripePublishableKey)
+	secret := strings.TrimSpace(clientSecret)
+	if pk == "" || secret == "" {
+		page.StripeMisconfigured = true
+		page.StripeClientSecret = ""
+		page.StripePublishableKey = ""
+		page.AllowStripeCSP = false
+		h.log.Warn("storefront.checkout.stripe_confirm_unavailable", map[string]interface{}{
+			"order_id":            orderID,
+			"missing_publishable": pk == "",
+			"missing_client_secret": secret == "",
+		})
+		return
+	}
+	page.StripePublishableKey = pk
+	page.StripeClientSecret = secret
+	page.AllowStripeCSP = true
+	ret := url.URL{Path: "/checkout/payment/return"}
+	q := url.Values{}
+	if orderID != "" {
+		q.Set("order_id", orderID)
+	}
+	ret.RawQuery = q.Encode()
+	// Absolute return_url is required by Stripe; build from the request host.
+	scheme := "https"
+	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		scheme = "http"
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		host = "localhost"
+	}
+	page.StripeReturnURL = scheme + "://" + host + ret.String()
+}
+
+func (h *StorefrontHandler) renderCheckoutSensitive(w http.ResponseWriter, name string, data StorefrontCheckoutPageData, status int) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	h.renderPageStatus(w, name, data, status)
 }
 
 func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r *http.Request) (*cart.Cart, StorefrontCheckoutPageData, bool) {
@@ -833,7 +1010,8 @@ func storefrontCheckoutErrorMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	if storefrontCheckoutErrorStatus(err) >= http.StatusInternalServerError {
+	// Mask only true 500s; deliberate unavailable (503) keeps Message.
+	if storefrontCheckoutErrorStatus(err) == http.StatusInternalServerError {
 		return "Sorry, something went wrong. Please try again later."
 	}
 	return customerErrorText(err)
@@ -860,6 +1038,8 @@ func storefrontCheckoutErrorStatus(err error) int {
 		return http.StatusNotFound
 	case apperror.Is(err, apperror.CodeForbidden):
 		return http.StatusForbidden
+	case apperror.Is(err, apperror.CodeUnavailable):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

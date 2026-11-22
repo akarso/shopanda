@@ -187,7 +187,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section>{{ if and .StripePending .StripeClientSecret .StripePublishableKey }}<h1>Complete Payment</h1><div id="stripe-payment" data-publishable-key="{{ .StripePublishableKey }}" data-client-secret="{{ .StripeClientSecret }}"><div id="payment-element"></div></div><script src="https://js.stripe.com/v3/"></script>{{ else }}<h1>Order Placed</h1>{{ end }}{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ if .Confirmation.GuestEmail }}<p id="guest-confirmation-email">Confirmation will be sent to {{ .Confirmation.GuestEmail }}</p>{{ end }}{{ if .Confirmation.ViewOrderURL }}<a id="view-order" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>{{ end }}{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section>{{ if and .StripePending .StripeClientSecret .StripePublishableKey }}<h1>Complete Payment</h1><div id="stripe-payment" data-publishable-key="{{ .StripePublishableKey }}" data-client-secret="{{ .StripeClientSecret }}" data-return-url="{{ .StripeReturnURL }}"><div id="payment-element"></div></div><script src="https://js.stripe.com/v3/"></script>{{ else if .StripeMisconfigured }}<h1>Order Placed</h1><p id="stripe-misconfigured">Card payment cannot be completed on this page right now.</p>{{ else }}<h1>Order Placed</h1>{{ end }}{{ if .ErrorMessage }}<p id="checkout-error">{{ .ErrorMessage }}</p>{{ end }}{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ if .Confirmation.GuestEmail }}<p id="guest-confirmation-email">Confirmation will be sent to {{ .Confirmation.GuestEmail }}</p>{{ end }}{{ if .Confirmation.ViewOrderURL }}<a id="view-order" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>{{ end }}{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "checkout_confirm.html"), []byte(checkoutConfirm), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +328,7 @@ func newStorefrontRouter(h *storefront.StorefrontHandler) http.Handler {
 	router.HandleFunc("POST /checkout/payment", h.CheckoutPayment())
 	router.HandleFunc("GET /checkout/confirm", h.CheckoutConfirm())
 	router.HandleFunc("POST /checkout/confirm", h.CheckoutConfirm())
+	router.HandleFunc("GET /checkout/payment/return", h.CheckoutPaymentReturn())
 	router.HandleFunc("GET /categories", h.Categories())
 	router.HandleFunc("GET /categories/{slug}", h.Category())
 	router.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
