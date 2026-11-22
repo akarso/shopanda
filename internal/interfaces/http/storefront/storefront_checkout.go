@@ -68,26 +68,28 @@ type StorefrontCheckoutConfirmation struct {
 }
 
 type StorefrontCheckoutPageData struct {
-	Layout         StorefrontLayoutData
-	Theme          theme.Theme
-	Progress       []StorefrontCheckoutProgressStep
-	Items          []StorefrontCartItem
-	Summary        StorefrontCartSummary
-	Address        StorefrontCheckoutAddress
-	ContactEmail   string
-	Countries      []StorefrontCheckoutOption
-	Rates          []StorefrontCheckoutRate
-	SelectedRate   *StorefrontCheckoutRate
-	Payment        StorefrontCheckoutPayment
-	PaymentMethods []StorefrontCheckoutPayment
-	Confirmation   *StorefrontCheckoutConfirmation
-	CSRFToken      string
-	ErrorMessage   string
-	StripePending  bool
-	NeedsShipping  bool
-	PrimaryAction  string
-	SecondaryURL   string
-	SecondaryLabel string
+	Layout                 StorefrontLayoutData
+	Theme                  theme.Theme
+	Progress               []StorefrontCheckoutProgressStep
+	Items                  []StorefrontCartItem
+	Summary                StorefrontCartSummary
+	Address                StorefrontCheckoutAddress
+	ContactEmail           string
+	Countries              []StorefrontCheckoutOption
+	Rates                  []StorefrontCheckoutRate
+	SelectedRate           *StorefrontCheckoutRate
+	Payment                StorefrontCheckoutPayment
+	PaymentMethods         []StorefrontCheckoutPayment
+	Confirmation           *StorefrontCheckoutConfirmation
+	CSRFToken              string
+	ErrorMessage           string
+	StripePending          bool
+	StripeClientSecret     string
+	StripePublishableKey   string
+	NeedsShipping          bool
+	PrimaryAction          string
+	SecondaryURL           string
+	SecondaryLabel         string
 }
 
 type storefrontCheckoutResumeState struct {
@@ -342,6 +344,14 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			page.Confirmation.ViewOrderURL = "/account/orders/" + cctx.Order.ID
 		}
 		page.StripePending = paymentMethod == string(payment.MethodStripe)
+		if page.StripePending {
+			if cs, ok := cctx.GetMeta("client_secret"); ok {
+				if s, ok := cs.(string); ok {
+					page.StripeClientSecret = strings.TrimSpace(s)
+				}
+			}
+			page.StripePublishableKey = h.stripePublishableKey
+		}
 		h.renderPage(w, "checkout_confirm", page)
 	}
 }
@@ -792,8 +802,8 @@ func storefrontCheckoutPaymentView(provider payment.Provider) StorefrontCheckout
 		view.Label = "Stripe"
 		view.IsStripe = true
 		view.Instructions = []string{
-			"Stripe creates a payment intent during order placement.",
-			"Card confirmation continues with Stripe after the order has been created.",
+			"Stripe creates a payment intent when you place the order.",
+			"Enter your card on the next page to confirm payment with Stripe.",
 		}
 	default:
 		view.IsManual = true

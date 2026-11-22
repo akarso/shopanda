@@ -215,7 +215,23 @@ func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistr
 	return reg
 }
 
+type pendingStripeProviderStub struct{}
+
+func (pendingStripeProviderStub) Method() payment.PaymentMethod { return payment.MethodStripe }
+
+func (pendingStripeProviderStub) Initiate(_ context.Context, _ *payment.Payment) (payment.ProviderResult, error) {
+	return payment.ProviderResult{
+		ProviderRef:  "pi_test_ssr_abc",
+		Pending:      true,
+		ClientSecret: "pi_test_ssr_abc_secret_xyz",
+	}, nil
+}
+
 func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, products catalog.ProductRepository, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub, *storefrontCheckoutShipmentRepoStub) {
+	return newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, manualpay.NewProvider())
+}
+
+func newStorefrontCheckoutServiceWithProviders(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, products catalog.ProductRepository, variants catalog.VariantRepository, providers ...payment.Provider) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub, *storefrontCheckoutShipmentRepoStub) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	bus := event.NewBus(log)
 	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStepLegacy(prices), pricing.NewFinalizeStep())
@@ -225,7 +241,7 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 	shippingProvider := flatrate.NewProvider(shared.MustNewMoney(500, "EUR"))
 	shippingReg := shipping.NewProviderRegistry()
 	shippingReg.Register(shippingProvider)
-	payRegistry := testPaymentRegistry(manualpay.NewProvider())
+	payRegistry := testPaymentRegistry(providers...)
 	if products == nil {
 		products = &mockStorefrontRepo{}
 	}
@@ -463,6 +479,99 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	}
 	if strings.Contains(confirmBody, `id="view-order"`) {
 		t.Fatalf("guest confirmation should not link to an account order page: %s", confirmBody)
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, pendingStripeProviderStub{})
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(variants, cartSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).
+		WithStripePublishableKey("pk_test_ssr_confirm").
+		WithCSPEnabled(true)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	if addressRec.Code != http.StatusOK {
+		t.Fatalf("address status = %d; body: %s", addressRec.Code, addressRec.Body.String())
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("expected checkout CSRF cookie")
+	}
+
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"stripe"},
+	}
+	confirmRec := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmRec, confirmReq)
+
+	if confirmRec.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d, want 200; body: %s", confirmRec.Code, confirmRec.Body.String())
+	}
+	if orders.saved == nil {
+		t.Fatal("expected checkout to save an order")
+	}
+	body := confirmRec.Body.String()
+	if !strings.Contains(body, "Complete Payment") {
+		t.Fatalf("missing Complete Payment heading: %s", body)
+	}
+	if !strings.Contains(body, `data-client-secret="pi_test_ssr_abc_secret_xyz"`) {
+		t.Fatalf("missing client_secret in confirm HTML: %s", body)
+	}
+	if !strings.Contains(body, `data-publishable-key="pk_test_ssr_confirm"`) {
+		t.Fatalf("missing publishable key in confirm HTML: %s", body)
+	}
+	if !strings.Contains(body, "https://js.stripe.com/v3/") {
+		t.Fatalf("missing Stripe.js script: %s", body)
+	}
+	csp := confirmRec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "https://js.stripe.com") {
+		t.Fatalf("CSP missing js.stripe.com: %q", csp)
+	}
+	if !strings.Contains(csp, "frame-src") {
+		t.Fatalf("CSP missing frame-src for Stripe Elements: %q", csp)
 	}
 }
 

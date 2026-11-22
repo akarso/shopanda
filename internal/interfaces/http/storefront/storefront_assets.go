@@ -94,6 +94,12 @@ func storefrontLayoutFromData(data interface{}) (StorefrontLayoutData, bool) {
 	return layout, ok
 }
 
-func storefrontCSPHeader(nonce string) string {
-	return fmt.Sprintf("script-src 'self' 'nonce-%s'; object-src 'none'; base-uri 'self'", nonce)
+func storefrontCSPHeader(nonce string, allowStripe bool) string {
+	scriptSrc := fmt.Sprintf("'self' 'nonce-%s'", nonce)
+	extras := ""
+	if allowStripe {
+		scriptSrc += " https://js.stripe.com"
+		extras = "; frame-src https://js.stripe.com https://hooks.stripe.com"
+	}
+	return fmt.Sprintf("script-src %s; object-src 'none'; base-uri 'self'%s", scriptSrc, extras)
 }

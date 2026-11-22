@@ -187,7 +187,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section><h1>Order Placed</h1>{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ if .Confirmation.GuestEmail }}<p id="guest-confirmation-email">Confirmation will be sent to {{ .Confirmation.GuestEmail }}</p>{{ end }}{{ if .Confirmation.ViewOrderURL }}<a id="view-order" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>{{ end }}{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section>{{ if and .StripePending .StripeClientSecret .StripePublishableKey }}<h1>Complete Payment</h1><div id="stripe-payment" data-publishable-key="{{ .StripePublishableKey }}" data-client-secret="{{ .StripeClientSecret }}"><div id="payment-element"></div></div><script src="https://js.stripe.com/v3/"></script>{{ else }}<h1>Order Placed</h1>{{ end }}{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ if .Confirmation.GuestEmail }}<p id="guest-confirmation-email">Confirmation will be sent to {{ .Confirmation.GuestEmail }}</p>{{ end }}{{ if .Confirmation.ViewOrderURL }}<a id="view-order" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>{{ end }}{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "checkout_confirm.html"), []byte(checkoutConfirm), 0644); err != nil {
 		t.Fatal(err)
 	}

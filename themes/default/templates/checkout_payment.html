@@ -58,25 +58,6 @@
                         <span class="eyebrow">Payment Method</span>
                         <h2>{{ .Payment.Label }}</h2>
                     </div>
-                    {{ if and .Payment.IsStripe .Payment.Instructions }}
-                    <div class="payment-card-preview" aria-label="Stripe card placeholder">
-                        <p class="muted-note payment-card-preview__caption">Placeholder only. Card entry happens on Stripe after order creation.</p>
-                        <label>
-                            <span>Card Number</span>
-                            <input value="4242 4242 4242 4242" disabled>
-                        </label>
-                        <div class="payment-card-preview__row">
-                            <label>
-                                <span>Expiry</span>
-                                <input value="12 / 34" disabled>
-                            </label>
-                            <label>
-                                <span>CVC</span>
-                                <input value="123" disabled>
-                            </label>
-                        </div>
-                    </div>
-                    {{ end }}
                     <ul class="checkout-payment-card__notes">
                         {{ range .Payment.Instructions }}
                         <li>{{ . }}</li>

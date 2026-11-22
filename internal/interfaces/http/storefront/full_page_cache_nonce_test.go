@@ -12,7 +12,7 @@ func TestApplyCSPNonceRotation_HTMLEscapedPlus(t *testing.T) {
 	next := "mno+pqr/stu"
 	html := `<meta name="csp-nonce" content="` + cspNonceHTMLForm(old) + `">` +
 		`<script nonce="` + cspNonceHTMLForm(old) + `" src="/x.js"></script>`
-	csp := storefrontCSPHeader(old)
+	csp := storefrontCSPHeader(old, false)
 
 	gotHTML, gotCSP := applyCSPNonceRotation(html, csp, old, next)
 
@@ -25,8 +25,8 @@ func TestApplyCSPNonceRotation_HTMLEscapedPlus(t *testing.T) {
 	if strings.Contains(gotHTML, next) {
 		t.Fatalf("HTML must not embed raw new nonce with +: %s", gotHTML)
 	}
-	if gotCSP != storefrontCSPHeader(next) {
-		t.Fatalf("CSP = %q, want %q", gotCSP, storefrontCSPHeader(next))
+	if gotCSP != storefrontCSPHeader(next, false) {
+		t.Fatalf("CSP = %q, want %q", gotCSP, storefrontCSPHeader(next, false))
 	}
 }
 
@@ -36,7 +36,7 @@ func TestRotateStoredCSPNonce_FixedPlusNonce(t *testing.T) {
 
 	entry := cacheapp.PageEntry{
 		HTML:  `<meta content="` + cspNonceHTMLForm(old) + `"><script nonce="` + cspNonceHTMLForm(old) + `"></script>`,
-		CSP:   storefrontCSPHeader(old),
+		CSP:   storefrontCSPHeader(old, false),
 		Nonce: old,
 	}
 	html, csp, ok := rotateStoredCSPNonce(entry, func() string { return next })
@@ -49,7 +49,7 @@ func TestRotateStoredCSPNonce_FixedPlusNonce(t *testing.T) {
 	if !strings.Contains(html, cspNonceHTMLForm(next)) {
 		t.Fatalf("HTML missing escaped rotated nonce: %q", html)
 	}
-	if csp != storefrontCSPHeader(next) {
+	if csp != storefrontCSPHeader(next, false) {
 		t.Fatalf("CSP = %q, want header with raw rotated nonce", csp)
 	}
 }

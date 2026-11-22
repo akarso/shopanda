@@ -5,12 +5,68 @@
     <div class="page-intro checkout-confirmation">
         {{ if .Confirmation }}
         <span class="eyebrow">Checkout</span>
+        {{ if and .StripePending .StripeClientSecret .StripePublishableKey }}
+        <h1>Complete Payment</h1>
+        {{ else }}
         <h1>Order Placed</h1>
+        {{ end }}
         <p>Order #{{ .Confirmation.OrderID }}</p>
         <p>{{ .Confirmation.TotalText }}</p>
         <p>{{ .Confirmation.Notice }}</p>
-        {{ if .StripePending }}
-        <p class="muted-note">Stripe confirmation happens after the payment intent is created by the checkout workflow.</p>
+        {{ if and .StripePending .StripeClientSecret .StripePublishableKey }}
+        <div id="stripe-payment" class="checkout-stripe" data-publishable-key="{{ .StripePublishableKey }}" data-client-secret="{{ .StripeClientSecret }}">
+            <form id="stripe-payment-form" class="checkout-form">
+                <div id="payment-element"></div>
+                <p id="stripe-payment-error" class="checkout-form__error" role="alert" hidden></p>
+                <div class="checkout-actions">
+                    <button type="submit" id="stripe-submit">Pay now</button>
+                </div>
+            </form>
+            <p id="stripe-payment-success" class="muted-note" hidden>Payment confirmed. Your order will update when Stripe notifies the shop.</p>
+        </div>
+        <script src="https://js.stripe.com/v3/"{{ if .Layout.CSPEnabled }} nonce="{{ .Layout.CSPNonce }}"{{ end }}></script>
+        <script{{ if .Layout.CSPEnabled }} nonce="{{ .Layout.CSPNonce }}"{{ end }}>
+        (function () {
+            var root = document.getElementById("stripe-payment");
+            if (!root || typeof Stripe === "undefined") { return; }
+            var pk = root.getAttribute("data-publishable-key");
+            var clientSecret = root.getAttribute("data-client-secret");
+            if (!pk || !clientSecret) { return; }
+            var stripe = Stripe(pk);
+            var elements = stripe.elements({ clientSecret: clientSecret });
+            var paymentElement = elements.create("payment");
+            paymentElement.mount("#payment-element");
+            var form = document.getElementById("stripe-payment-form");
+            var errEl = document.getElementById("stripe-payment-error");
+            var okEl = document.getElementById("stripe-payment-success");
+            var submitBtn = document.getElementById("stripe-submit");
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
+                if (submitBtn) { submitBtn.disabled = true; }
+                stripe.confirmPayment({
+                    elements: elements,
+                    redirect: "if_required",
+                    confirmParams: {
+                        return_url: window.location.origin + "/products"
+                    }
+                }).then(function (result) {
+                    if (result.error) {
+                        if (errEl) {
+                            errEl.textContent = result.error.message || "Payment could not be confirmed.";
+                            errEl.hidden = false;
+                        }
+                        if (submitBtn) { submitBtn.disabled = false; }
+                        return;
+                    }
+                    if (form) { form.hidden = true; }
+                    if (okEl) { okEl.hidden = false; }
+                });
+            });
+        })();
+        </script>
+        {{ else if .StripePending }}
+        <p class="muted-note">Stripe confirmation requires a publishable key and client secret. Set <code>SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY</code> and complete payment from a client that received <code>payment.client_secret</code>.</p>
         {{ end }}
         {{ if .Confirmation.GuestEmail }}
         <p class="muted-note">A confirmation email will be sent to <strong>{{ .Confirmation.GuestEmail }}</strong>. Keep it — you can use that email address later to claim this order from a customer account.</p>

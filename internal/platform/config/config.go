@@ -718,9 +718,10 @@ type PaymentConfig struct {
 
 // StripeConfig holds Stripe-specific settings.
 type StripeConfig struct {
-	Enabled       bool   `yaml:"enabled"`
-	SecretKey     string `yaml:"secret_key"`
-	WebhookSecret string `yaml:"webhook_secret"`
+	Enabled        bool   `yaml:"enabled"`
+	SecretKey      string `yaml:"secret_key"`
+	PublishableKey string `yaml:"publishable_key"`
+	WebhookSecret  string `yaml:"webhook_secret"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -1355,6 +1356,9 @@ func applyEnv(cfg *Config) error {
 	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_SECRET_KEY"); v != "" {
 		cfg.Payment.Stripe.SecretKey = v
 	}
+	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY"); v != "" {
+		cfg.Payment.Stripe.PublishableKey = v
+	}
 	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET"); v != "" {
 		cfg.Payment.Stripe.WebhookSecret = v
 	}
@@ -1607,6 +1611,7 @@ func flattenWith(cfg *Config, redact func(string) string) map[string]string {
 	m["dev.embed_scheduler"] = strconv.FormatBool(cfg.Dev.EmbedScheduler)
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)
+	m["payment.stripe.publishable_key"] = cfg.Payment.Stripe.PublishableKey
 	for k, v := range cfg.Webhooks.Secrets {
 		m["webhooks.secrets."+k] = redact(v)
 	}

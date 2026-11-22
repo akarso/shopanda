@@ -67,9 +67,10 @@ type StorefrontHandler struct {
 	addresses           customer.AddressRepository
 	consents            legal.ConsentRepository
 	security            *storefrontAccountSecurityVerifier
-	shipping            []shipping.Provider
-	payments            *payment.ProviderRegistry
-	legalConfig         legal.ConfigGetter
+	shipping               []shipping.Provider
+	payments               *payment.ProviderRegistry
+	stripePublishableKey   string
+	legalConfig            legal.ConfigGetter
 	menus               cms.MenuRepository
 	menuResolver        *cmsApp.MenuResolver
 	pages               cms.PageRepository
@@ -425,6 +426,13 @@ func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, 
 	return h
 }
 
+// WithStripePublishableKey sets the Stripe.js publishable key for SSR checkout
+// confirmation (payment.stripe.publishable_key / SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY).
+func (h *StorefrontHandler) WithStripePublishableKey(key string) *StorefrontHandler {
+	h.stripePublishableKey = strings.TrimSpace(key)
+	return h
+}
+
 // WithAccount enables storefront account pages using the auth service,
 // order repository, and account deletion service.
 func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders order.OrderRepository, account AccountDeleter) *StorefrontHandler {
@@ -623,7 +631,7 @@ func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data 
 
 func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string, data interface{}, status int) {
 	if layout, ok := storefrontLayoutFromData(data); ok && layout.CSPEnabled && layout.CSPNonce != "" {
-		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce))
+		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce, h.stripePublishableKey != ""))
 	}
 	var buf bytes.Buffer
 	if err := h.theme().Render(&buf, name, data); err != nil {
