@@ -920,3 +920,114 @@ func TestCheckoutHandler_StartCheckout_ExplodeValidationReleasesReservations(t *
 		t.Fatalf("reserved = %v released = %v, want the one reservation released", reservations.reserved, reservations.released)
 	}
 }
+
+// refuseCheckoutStep fails StartCheckout with a plugin-owned code + line details
+// (or unavailable) so JSONError surfaces them on POST /api/v1/checkout.
+type refuseCheckoutStep struct {
+	err error
+}
+
+func (s refuseCheckoutStep) Name() string { return "refuse_plugin" }
+func (s refuseCheckoutStep) Execute(_ context.Context, _ *checkoutApp.Context) error {
+	return s.err
+}
+
+func checkoutMuxWithLeadingStep(step checkoutApp.Step) (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubCheckoutPriceRepo, *http.ServeMux) {
+	carts := newStubCheckoutCartRepo()
+	variants := newStubCheckoutVariantRepo()
+	prices := newStubCheckoutPriceRepo()
+	log := checkoutTestLogger()
+	bus := event.NewBus(log)
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		pricing.NewFinalizeStep(),
+	)
+	steps := []checkoutApp.Step{
+		step,
+		checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock()),
+		checkoutApp.NewRecalculatePricingStep(pipeline),
+		checkoutApp.NewReserveInventoryStep(&stubCheckoutReservationRepo{}, &mockStorefrontRepo{}, variants, cartApp.EmptyBundleComponents()),
+		checkoutApp.NewCreateOrderStep(&stubCheckoutOrderRepo{}, variants, nil, nil, &mockStorefrontRepo{}, cartApp.EmptyBundleComponents(), prices),
+	}
+	svc := checkoutApp.NewService(carts, checkoutApp.NewWorkflow(steps, bus, log), log)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/checkout", storefront.NewCheckoutHandler(svc, nil).StartCheckout())
+	return carts, variants, prices, mux
+}
+
+func TestCheckoutHandler_StartCheckout_PluginValidationDetails(t *testing.T) {
+	refuse := refuseCheckoutStep{
+		err: apperror.Validation("design no longer sold").
+			WithClientCode("plugin.design_unavailable").
+			WithDetails(map[string]interface{}{
+				"lines": []interface{}{
+					map[string]interface{}{"variant_id": "var-1", "reason": "sold_out"},
+					map[string]interface{}{"variant_id": "var-2", "reason": "sold_out"},
+				},
+				"retryable": false,
+			}),
+	}
+	carts, variants, prices, mux := checkoutMuxWithLeadingStep(refuse)
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	errBody, ok := resp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("error body = %#v", resp["error"])
+	}
+	if errBody["code"] != "plugin.design_unavailable" {
+		t.Fatalf("code = %v, want plugin.design_unavailable", errBody["code"])
+	}
+	if errBody["message"] != "design no longer sold" {
+		t.Fatalf("message = %v", errBody["message"])
+	}
+	details, ok := errBody["details"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("details = %#v", errBody["details"])
+	}
+	lines, ok := details["lines"].([]interface{})
+	if !ok || len(lines) != 2 {
+		t.Fatalf("details.lines = %#v, want 2 entries", details["lines"])
+	}
+	if details["retryable"] != false {
+		t.Fatalf("retryable = %#v", details["retryable"])
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_PluginUnavailable503(t *testing.T) {
+	refuse := refuseCheckoutStep{
+		err: apperror.Unavailable("cart port down").WithClientCode("plugin.cart_unavailable"),
+	}
+	carts, variants, prices, mux := checkoutMuxWithLeadingStep(refuse)
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	errBody, ok := resp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("error body = %#v", resp["error"])
+	}
+	if errBody["code"] != "plugin.cart_unavailable" {
+		t.Fatalf("code = %v, want plugin.cart_unavailable", errBody["code"])
+	}
+	if errBody["message"] != "cart port down" {
+		t.Fatalf("message = %v", errBody["message"])
+	}
+}
