@@ -445,6 +445,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithCart(rt.repos.variantRepo, rt.cartService).
 			WithExtensions(extensionApp.AsValueAPI(rt.extensionValueService)).
 			WithCheckout(rt.shippingReg.Providers(), rt.payRegistry, rt.checkoutService).
+			WithPublicBaseURL(cfg.Server.PublicBaseURL).
+			WithCheckoutFlashSecret(rt.jwtSecretStr).
 			WithAccount(rt.authService, rt.repos.orderRepo, rt.accountService).
 			WithTrustedProxies(cfg.RateLimit.TrustedProxies...).
 			WithReturns(rt.returnService).

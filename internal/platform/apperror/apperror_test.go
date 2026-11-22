@@ -95,11 +95,22 @@ func TestWithClientCode_RequiresPluginPrefix(t *testing.T) {
 	}
 }
 
-func TestWithDetails_ShallowCopy(t *testing.T) {
-	src := map[string]interface{}{"retryable": true}
+func TestWithDetails_DeepCopy(t *testing.T) {
+	nested := map[string]interface{}{"reason": "sold_out"}
+	src := map[string]interface{}{
+		"retryable": true,
+		"lines":     []interface{}{nested},
+	}
 	err := apperror.Validation("x").WithDetails(src)
 	src["retryable"] = false
+	nested["reason"] = "mutated"
+	src["lines"].([]interface{})[0] = map[string]interface{}{"reason": "mutated"}
 	if err.Details["retryable"] != true {
 		t.Fatalf("details mutated via caller map: %#v", err.Details)
+	}
+	lines := err.Details["lines"].([]interface{})
+	got := lines[0].(map[string]interface{})["reason"]
+	if got != "sold_out" {
+		t.Fatalf("nested details mutated: %#v", err.Details["lines"])
 	}
 }

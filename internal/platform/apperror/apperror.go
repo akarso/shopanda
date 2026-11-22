@@ -168,8 +168,8 @@ func validPluginClientCode(code string) bool {
 }
 
 // WithDetails sets an optional details payload and returns e.
-// The map is shallow-copied so later mutation by the caller cannot race the
-// response encoder.
+// Nested maps and slices are deep-copied so later mutation by the caller
+// cannot race the response encoder.
 func (e *Error) WithDetails(details map[string]interface{}) *Error {
 	if e == nil {
 		return nil
@@ -178,12 +178,37 @@ func (e *Error) WithDetails(details map[string]interface{}) *Error {
 		e.Details = nil
 		return e
 	}
-	cp := make(map[string]interface{}, len(details))
-	for k, v := range details {
-		cp[k] = v
-	}
-	e.Details = cp
+	e.Details = cloneDetailsMap(details)
 	return e
+}
+
+func cloneDetailsMap(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = cloneDetailsValue(v)
+	}
+	return out
+}
+
+func cloneDetailsValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		if t == nil {
+			return map[string]interface{}(nil)
+		}
+		return cloneDetailsMap(t)
+	case []interface{}:
+		if t == nil {
+			return []interface{}(nil)
+		}
+		out := make([]interface{}, len(t))
+		for i, vv := range t {
+			out[i] = cloneDetailsValue(vv)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // Is checks whether err (or any wrapped error) is an *Error with the given code.

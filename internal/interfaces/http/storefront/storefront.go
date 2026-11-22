@@ -70,6 +70,8 @@ type StorefrontHandler struct {
 	shipping               []shipping.Provider
 	payments               *payment.ProviderRegistry
 	stripePublishableKey   string
+	publicBaseURL          string
+	checkoutFlashSecret    []byte
 	legalConfig            legal.ConfigGetter
 	menus               cms.MenuRepository
 	menuResolver        *cmsApp.MenuResolver
@@ -430,6 +432,25 @@ func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, 
 // confirmation (payment.stripe.publishable_key / SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY).
 func (h *StorefrontHandler) WithStripePublishableKey(key string) *StorefrontHandler {
 	h.stripePublishableKey = strings.TrimSpace(key)
+	return h
+}
+
+// WithPublicBaseURL sets the absolute public origin used for Stripe return_url
+// (server.public_base_url). Never derived from request Host / X-Forwarded-Proto.
+func (h *StorefrontHandler) WithPublicBaseURL(base string) *StorefrontHandler {
+	h.publicBaseURL = strings.TrimRight(strings.TrimSpace(base), "/")
+	return h
+}
+
+// WithCheckoutFlashSecret sets the HMAC key for the post-checkout confirm flash
+// cookie (typically the JWT signing secret).
+func (h *StorefrontHandler) WithCheckoutFlashSecret(secret string) *StorefrontHandler {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		h.checkoutFlashSecret = nil
+		return h
+	}
+	h.checkoutFlashSecret = []byte("storefront-checkout-flash:" + secret)
 	return h
 }
 

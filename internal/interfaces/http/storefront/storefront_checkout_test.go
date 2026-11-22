@@ -216,6 +216,12 @@ func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistr
 	return reg
 }
 
+const storefrontCheckoutFlashTestSecret = "checkout-flash-test-secret"
+
+func withCheckoutFlash(h *storefront.StorefrontHandler) *storefront.StorefrontHandler {
+	return h.WithCheckoutFlashSecret(storefrontCheckoutFlashTestSecret).WithPublicBaseURL("https://shop.test")
+}
+
 // followCheckoutConfirmPRG follows POST /checkout/confirm → 303 → GET with the
 // placed-order flash cookie so tests assert the rendered confirm page.
 func followCheckoutConfirmPRG(t *testing.T, router http.Handler, postRec *httptest.ResponseRecorder, cartID string, extraCookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -394,7 +400,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
-	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc))
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
@@ -526,11 +532,11 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, pendingStripeProviderStub{})
-	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
 		WithCart(variants, cartSvc).
 		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).
 		WithStripePublishableKey("pk_test_ssr_confirm").
-		WithCSPEnabled(true)
+		WithCSPEnabled(true))
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
@@ -598,8 +604,21 @@ func TestStorefrontHandler_CheckoutConfirm_GuestStripeRendersStripeJS(t *testing
 	if !strings.Contains(body, `data-publishable-key="pk_test_ssr_confirm"`) {
 		t.Fatalf("missing publishable key in confirm HTML: %s", body)
 	}
-	if !strings.Contains(body, `data-return-url="http://shop.test/checkout/payment/return?order_id=`) {
+	if !strings.Contains(body, `data-return-url="https://shop.test/checkout/payment/return?order_id=`) {
 		t.Fatalf("missing return_url with order_id: %s", body)
+	}
+	var flashCookie *http.Cookie
+	for _, c := range confirmRec.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" {
+			flashCookie = c
+			break
+		}
+	}
+	if flashCookie == nil {
+		t.Fatal("expected reminted flash cookie for Stripe pending confirm")
+	}
+	if !strings.Contains(flashCookie.Value, ".") {
+		t.Fatalf("flash cookie must be HMAC-signed payload.sig, got %q", flashCookie.Value)
 	}
 	if !strings.Contains(body, "https://js.stripe.com/v3/") {
 		t.Fatalf("missing Stripe.js script: %s", body)
@@ -629,9 +648,9 @@ func TestStorefrontHandler_CheckoutConfirm_MissingPublishableKey_ShopperSafe(t *
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutServiceWithProviders(carts, prices, products, variants, pendingStripeProviderStub{})
-	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
 		WithCart(variants, cartSvc).
-		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc))
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
@@ -755,11 +774,11 @@ func TestStorefrontHandler_CheckoutConfirm_UnavailableReturns503(t *testing.T) {
 	}
 }
 
-func TestStorefrontHandler_CheckoutPaymentReturn_RedirectStatus(t *testing.T) {
+func TestStorefrontHandler_CheckoutPaymentReturn_NeutralCopy(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()))
 	router := newStorefrontRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -771,8 +790,11 @@ func TestStorefrontHandler_CheckoutPaymentReturn_RedirectStatus(t *testing.T) {
 	if !strings.Contains(body, "Order #ord-1") {
 		t.Fatalf("missing order id: %s", body)
 	}
-	if !strings.Contains(body, "Payment confirmed") {
-		t.Fatalf("missing success notice: %s", body)
+	if !strings.Contains(body, "Checking payment status") {
+		t.Fatalf("expected neutral notice, got: %s", body)
+	}
+	if strings.Contains(body, "Payment confirmed") {
+		t.Fatalf("must not trust redirect_status=succeeded for paid copy: %s", body)
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "private, no-store" {
 		t.Fatalf("Cache-Control = %q", cc)
@@ -796,7 +818,7 @@ func TestStorefrontHandler_CheckoutFlow_DigitalOnly_SkipsShipping(t *testing.T) 
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	checkoutSvc, shippingProvider, payRegistry, orders, shipments := newStorefrontCheckoutService(carts, prices, products, variants)
-	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc))
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
@@ -991,7 +1013,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
-	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute))
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
