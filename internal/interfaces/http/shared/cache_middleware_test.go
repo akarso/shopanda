@@ -27,6 +27,18 @@ func TestCacheControlMiddleware_CacheableGET(t *testing.T) {
 	}
 }
 
+func TestCacheControlMiddleware_CheckoutHTMLNoStore(t *testing.T) {
+	mw := shared.CacheControlMiddleware([]string{"/checkout"})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/checkout/confirm", nil))
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
 func TestCacheControlMiddleware_NoCachePrefixGET(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts", "/api/v1/checkout"}
 	mw := shared.CacheControlMiddleware(noCachePrefixes)

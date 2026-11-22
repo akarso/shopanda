@@ -50,9 +50,46 @@ func AdminStoreScope(r *http.Request) string {
 	return explicit
 }
 
+// ErrorOption mutates an application error before it is returned from the
+// helpers below (plugin-owned client code, structured details).
+type ErrorOption func(*apperror.Error)
+
+// WithClientCode sets a stable client-facing code (must be plugin.<slug>).
+// Invalid codes are ignored. JSONError uses it as error.code; HTTP status still
+// follows the error class (validation → 422, unavailable → 503).
+func WithClientCode(code string) ErrorOption {
+	return func(e *apperror.Error) {
+		_ = e.WithClientCode(code)
+	}
+}
+
+// WithDetails attaches a structured details payload (e.g. failing lines, retryable).
+// Nested values must use map[string]interface{} / []interface{} trees — only those
+// shapes are deep-copied; typed maps/slices stay aliased to the caller.
+func WithDetails(details map[string]interface{}) ErrorOption {
+	return func(e *apperror.Error) {
+		_ = e.WithDetails(details)
+	}
+}
+
+func applyErrorOptions(e *apperror.Error, opts []ErrorOption) error {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(e)
+		}
+	}
+	return e
+}
+
 // ValidationError creates a validation (422) error renderable via JSONError.
-func ValidationError(message string) error {
-	return apperror.Validation(message)
+func ValidationError(message string, opts ...ErrorOption) error {
+	return applyErrorOptions(apperror.Validation(message), opts)
+}
+
+// UnavailableError creates an unavailable (503) error renderable via JSONError.
+// Use for deliberate dependency failures (cart port down); unknown 500s stay masked.
+func UnavailableError(message string, opts ...ErrorOption) error {
+	return applyErrorOptions(apperror.Unavailable(message), opts)
 }
 
 // NotFoundError creates a not_found (404) error renderable via JSONError.

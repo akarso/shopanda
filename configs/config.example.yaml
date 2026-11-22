@@ -343,6 +343,18 @@ cdn:
   # When set, asset URLs use this as base instead of local paths.
   # base_url: "https://cdn.example.com"
 
+# --- Payments -----------------------------------------------------------------
+# Stripe is a core plugin (plugins/core/stripe). Secrets stay in env, not YAML.
+# payment:
+#   stripe:
+#     enabled: false
+#     # Env: SHOPANDA_PAYMENT_STRIPE_SECRET_KEY (required when enabled)
+#     # secret_key: ""
+#     # Env: SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY (SSR confirm / Stripe.js)
+#     # publishable_key: "pk_test_..."
+#     # Env: SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET (required when enabled)
+#     # webhook_secret: ""
+
 # --- Webhooks -----------------------------------------------------------------
 webhooks:
   # Per-provider secrets for signature verification.

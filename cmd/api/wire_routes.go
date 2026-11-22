@@ -54,6 +54,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		"/setup",
 		"/fragments",
 		"/storefront",
+		"/checkout",
 		"/api/v1/setup",
 		"/api/v1/carts",
 		"/api/v1/checkout",
@@ -444,6 +445,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithCart(rt.repos.variantRepo, rt.cartService).
 			WithExtensions(extensionApp.AsValueAPI(rt.extensionValueService)).
 			WithCheckout(rt.shippingReg.Providers(), rt.payRegistry, rt.checkoutService).
+			WithPublicBaseURL(cfg.Server.PublicBaseURL).
+			WithCheckoutFlashSecret(rt.jwtSecretStr).
 			WithAccount(rt.authService, rt.repos.orderRepo, rt.accountService).
 			WithTrustedProxies(cfg.RateLimit.TrustedProxies...).
 			WithReturns(rt.returnService).
@@ -452,6 +455,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithLayeredNavAttributes(rt.attributeStore).
 			WithAdvancedSearchAttributes(rt.attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
+		if cfg.Payment.Stripe.Enabled {
+			sfHandler = sfHandler.WithStripePublishableKey(cfg.Payment.Stripe.PublishableKey)
+		}
 		sfHandler = attachStorefrontClaimAPI(sfHandler, rt, cfg)
 		if cfg.Cache.FullPage.Enabled && rt.appCache != nil {
 			ttl, err := time.ParseDuration(cfg.Cache.FullPage.TTL)
@@ -541,6 +547,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		router.HandleFunc("POST /checkout/payment", sfHandler.CheckoutPayment())
 		router.HandleFunc("GET /checkout/confirm", sfHandler.CheckoutConfirm())
 		router.HandleFunc("POST /checkout/confirm", sfHandler.CheckoutConfirm())
+		router.HandleFunc("GET /checkout/payment/return", sfHandler.CheckoutPaymentReturn())
 		router.HandleFunc("GET /fragments/cart-count", sfHandler.CartCountFragment())
 		router.HandleFunc("GET /fragments/mini-cart", sfHandler.MiniCartFragment())
 		router.HandleFunc("GET /fragments/csrf", sfHandler.CSRFFragment())

@@ -5,12 +5,82 @@
     <div class="page-intro checkout-confirmation">
         {{ if .Confirmation }}
         <span class="eyebrow">Checkout</span>
+        {{ if and .StripePending .StripeClientSecret .StripePublishableKey }}
+        <h1>Complete Payment</h1>
+        {{ else }}
         <h1>Order Placed</h1>
-        <p>Order #{{ .Confirmation.OrderID }}</p>
-        <p>{{ .Confirmation.TotalText }}</p>
+        {{ end }}
+        {{ if .Confirmation.OrderID }}<p>Order #{{ .Confirmation.OrderID }}</p>{{ end }}
+        {{ if .Confirmation.TotalText }}<p>{{ .Confirmation.TotalText }}</p>{{ end }}
         <p>{{ .Confirmation.Notice }}</p>
-        {{ if .StripePending }}
-        <p class="muted-note">Stripe confirmation happens after the payment intent is created by the checkout workflow.</p>
+        {{ if .ErrorMessage }}
+        <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
+        {{ end }}
+        {{ if and .StripePending .StripeClientSecret .StripePublishableKey }}
+        <div id="stripe-payment" class="checkout-stripe"
+             data-publishable-key="{{ .StripePublishableKey }}"
+             data-client-secret="{{ .StripeClientSecret }}"
+             data-return-url="{{ .StripeReturnURL }}">
+            <form id="stripe-payment-form" class="checkout-form">
+                <div id="payment-element"></div>
+                <p id="stripe-payment-error" class="checkout-form__error" role="alert" hidden></p>
+                <div class="checkout-actions">
+                    <button type="submit" id="stripe-submit" disabled>Pay now</button>
+                </div>
+            </form>
+            <p id="stripe-payment-success" class="muted-note" hidden>Payment confirmed. You can continue shopping — a confirmation email will follow when the payment is recorded.</p>
+        </div>
+        <script src="https://js.stripe.com/v3/"{{ if .Layout.CSPEnabled }} nonce="{{ .Layout.CSPNonce }}"{{ end }}></script>
+        <script{{ if .Layout.CSPEnabled }} nonce="{{ .Layout.CSPNonce }}"{{ end }}>
+        (function () {
+            var root = document.getElementById("stripe-payment");
+            if (!root || typeof Stripe === "undefined") { return; }
+            var pk = root.getAttribute("data-publishable-key");
+            var clientSecret = root.getAttribute("data-client-secret");
+            var returnURL = root.getAttribute("data-return-url");
+            if (!pk || !clientSecret || !returnURL) { return; }
+            var stripe = Stripe(pk);
+            var elements = stripe.elements({ clientSecret: clientSecret });
+            var paymentElement = elements.create("payment");
+            var form = document.getElementById("stripe-payment-form");
+            var errEl = document.getElementById("stripe-payment-error");
+            var okEl = document.getElementById("stripe-payment-success");
+            var submitBtn = document.getElementById("stripe-submit");
+            var submitting = false;
+            paymentElement.mount("#payment-element");
+            paymentElement.on("ready", function () {
+                if (submitBtn && !submitting) { submitBtn.disabled = false; }
+            });
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                if (submitting) { return; }
+                submitting = true;
+                if (errEl) { errEl.hidden = true; errEl.textContent = ""; }
+                if (submitBtn) { submitBtn.disabled = true; }
+                stripe.confirmPayment({
+                    elements: elements,
+                    redirect: "if_required",
+                    confirmParams: { return_url: returnURL }
+                }).then(function (result) {
+                    if (result.error) {
+                        submitting = false;
+                        if (errEl) {
+                            errEl.textContent = result.error.message || "Payment could not be confirmed.";
+                            errEl.hidden = false;
+                        }
+                        if (submitBtn) { submitBtn.disabled = false; }
+                        return;
+                    }
+                    if (form) { form.hidden = true; }
+                    if (okEl) { okEl.hidden = false; }
+                });
+            });
+        })();
+        </script>
+        {{ else if .StripeMisconfigured }}
+        <p class="muted-note">Card payment cannot be completed on this page right now. Your order is reserved — contact the shop or try again later.</p>
+        {{ else if .StripePending }}
+        <p class="muted-note">Card payment cannot be completed on this page right now. Your order is reserved — contact the shop or try again later.</p>
         {{ end }}
         {{ if .Confirmation.GuestEmail }}
         <p class="muted-note">A confirmation email will be sent to <strong>{{ .Confirmation.GuestEmail }}</strong>. Keep it — you can use that email address later to claim this order from a customer account.</p>

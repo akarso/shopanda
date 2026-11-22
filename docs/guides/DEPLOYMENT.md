@@ -237,6 +237,15 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | --- | --- | --- | --- |
 | `SHOPANDA_CDN_BASE_URL` | No | empty | Optional CDN base URL for asset delivery |
 
+### Payments (Stripe)
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_PAYMENT_STRIPE_ENABLED` | No | `false` | Enable the Stripe core plugin |
+| `SHOPANDA_PAYMENT_STRIPE_SECRET_KEY` | When enabled | empty | Stripe secret key (`sk_…`) |
+| `SHOPANDA_PAYMENT_STRIPE_PUBLISHABLE_KEY` | For SSR card confirm | empty | Stripe publishable key (`pk_…`) for Stripe.js on `/checkout/confirm` |
+| `SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET` | When enabled | empty | Stripe webhook signing secret (`whsec_…`) |
+
 ### Webhooks
 
 | Variable | Required | Default | Purpose |
