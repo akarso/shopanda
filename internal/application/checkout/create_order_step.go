@@ -247,7 +247,6 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 
 	cctx.Order = &o
 	cctx.SetMeta("created_order_id", o.ID)
-	s.publishOrderCreated(ctx, &o)
 
 	if s.extensions != nil {
 		updatedBy := strings.TrimSpace(cctx.CustomerID)
@@ -273,6 +272,11 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 			}
 		}
 	}
+
+	// Publish after the cart→order extension snapshot so OnAsync / RegisterOnEvent
+	// handlers see order_item extension rows. Delivery is still at-least-once
+	// after commit; a handler error cannot roll the order back.
+	s.publishOrderCreated(ctx, &o)
 
 	return nil
 }

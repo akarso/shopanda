@@ -9,7 +9,10 @@ import (
 	"github.com/akarso/shopanda/internal/application/checkout"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	domainorder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/pluginwrite"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
@@ -217,5 +220,60 @@ func TestCreateOrderStep_SnapshotsCartItemExtensions(t *testing.T) {
 	}
 	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "Ship fast" {
 		t.Fatalf("order extensions = %+v", stored)
+	}
+}
+
+func TestCreateOrderStep_PublishesOrderCreatedAfterExtensionSnapshot(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.design",
+		Label:       "Design",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newMemSnapshotValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	bus := event.NewBus(logger.New("error"))
+	var sawExtAtPublish bool
+	bus.On(domainorder.EventOrderCreated, func(_ context.Context, evt event.Event) error {
+		data := evt.Data.(domainorder.OrderCreatedData)
+		orderTarget := domainext.OrderItemTarget(data.OrderID, "v1")
+		stored, err := extRepo.ListByTarget(context.Background(), orderTarget)
+		if err != nil {
+			t.Fatalf("ListByTarget in handler: %v", err)
+		}
+		sawExtAtPublish = len(stored) == 1 && stored[0].Payload.StringValue != nil && *stored[0].Payload.StringValue == "d1"
+		return nil
+	})
+
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, values, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	cartTarget := domainext.CartItemTarget(cctx.Cart.ID, "v1")
+	seed := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design")
+	if _, err := values.UpsertBatch(seed, cartTarget, []domainext.ValueInput{
+		{FieldCode: "acme.design", Value: "d1"},
+	}, "plugin:acme", false); err != nil {
+		t.Fatalf("UpsertBatch: %v", err)
+	}
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !sawExtAtPublish {
+		t.Fatal("order.created fired before order_item extension snapshot was visible")
 	}
 }

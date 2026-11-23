@@ -651,7 +651,7 @@ Semantics:
 Examples already shipped in the codebase:
 
 - catalog: `catalog.product.created`, `catalog.product.updated`, `catalog.variant.created`, `catalog.variant.updated`
-- orders: `order.created` (checkout after save), `order.paid` (payment settle / admin paid), `order.failed` (checkout unpaid compensation / `payment.failed` when pending→failed). `order.confirmed` and `order.cancelled` are defined for webhooks but not published yet; admin/integration `ApplyStatus` still only publishes `order.paid`
+- orders: `order.created` (checkout after save **and** cart→order extension snapshot; at-least-once after commit — handlers must be idempotent), `order.paid` (payment settle / admin paid), `order.failed` (checkout unpaid compensation / `payment.failed` when pending→failed). `order.confirmed` and `order.cancelled` are defined for webhooks but not published yet; admin/integration `ApplyStatus` still only publishes `order.paid`
 - payments: `payment.created`, `payment.completed`, `payment.failed`, `payment.refunded`
 - media: `asset.uploaded`, `asset.deleted`
 - customers: `customer.created`, `customer.deleted`, `customer.password_reset.requested`
