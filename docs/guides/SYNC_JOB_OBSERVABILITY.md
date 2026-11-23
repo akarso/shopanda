@@ -61,12 +61,14 @@ Correlation still works:
    when Meta does not already set one (`PublishAsync` takes `ctx` for this —
    Publish's local stamped copy is not visible to fallback callers).
 2. Async dispatch copies that Meta value onto the handler context.
-3. `RegisterSyncJobEventTriggers` also copies Meta into the inner sync payload
-   before `InjectRequestID` / `NewSyncJobEnvelope`.
+3. `RegisterSyncJobEventTriggers` flattens the event data, runs `EventJobID`
+   (if any) on that map **without** `request_id`, builds the envelope, then
+   writes `request_id` onto the stored payload (ctx + Meta).
 
 So HTTP → `Publish(ctx, …)` (or Publish-fail → `PublishAsync(ctx, …)`) →
 OnAsync enqueue yields `request_id` on the queued envelope without plugins
-reading the Publish context directly.
+reading the Publish context directly. JSON numbers in the flattened payload
+are `float64` after a queue round-trip.
 
 Cron triggers use a timeout/`Background` context and typically have no
 `request_id` (expected).

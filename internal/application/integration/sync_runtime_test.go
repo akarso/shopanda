@@ -50,8 +50,8 @@ func (q *memQueue) Dequeue(context.Context) (*jobs.Job, error) {
 	job.Attempts++
 	return &job, nil
 }
-func (q *memQueue) Complete(context.Context, string, int) error    { return nil }
-func (q *memQueue) Fail(context.Context, string, int, error) error { return nil }
+func (q *memQueue) Complete(context.Context, string, int) error                       { return nil }
+func (q *memQueue) Fail(context.Context, string, int, error) error                    { return nil }
 func (q *memQueue) Requeue(context.Context, string, int, ...jobs.RequeueOption) error { return nil }
 
 func (q *memQueue) len() int {
@@ -147,6 +147,8 @@ func TestRegisterSyncJobEventTriggers_EventJobIDFromOrderCreatedData(t *testing.
 		Bootstrap: &plugin.Bootstrap{},
 	}
 	var sawOrderID string
+	var sawRequestID bool
+	var sawItemCount interface{}
 	fixedNS := id.New()
 	job := extapi.SyncJob{
 		Name:    "snap.order",
@@ -154,6 +156,8 @@ func TestRegisterSyncJobEventTriggers_EventJobIDFromOrderCreatedData(t *testing.
 		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
 		EventJobID: func(payload map[string]interface{}) string {
 			sawOrderID, _ = payload["order_id"].(string)
+			_, sawRequestID = payload["request_id"]
+			sawItemCount = payload["item_count"]
 			if sawOrderID == "" {
 				return ""
 			}
@@ -167,7 +171,8 @@ func TestRegisterSyncJobEventTriggers_EventJobIDFromOrderCreatedData(t *testing.
 	if err := integrationApp.RegisterSyncJobEventTriggers(app, bus, queue, log); err != nil {
 		t.Fatalf("RegisterSyncJobEventTriggers: %v", err)
 	}
-	if err := bus.Publish(context.Background(), event.Event{
+	publishCtx := requestctx.WithRequestID(context.Background(), "req-typed-1")
+	if err := bus.Publish(publishCtx, event.Event{
 		Name: domainorder.EventOrderCreated,
 		Data: domainorder.OrderCreatedData{OrderID: "ord-typed-1", Currency: "EUR", ItemCount: 2},
 	}); err != nil {
@@ -183,12 +188,22 @@ func TestRegisterSyncJobEventTriggers_EventJobIDFromOrderCreatedData(t *testing.
 	if sawOrderID != "ord-typed-1" {
 		t.Fatalf("EventJobID saw order_id=%q, want ord-typed-1", sawOrderID)
 	}
+	if sawRequestID {
+		t.Fatal("EventJobID payload must not include request_id yet")
+	}
+	// JSON round-trip of typed structs yields float64 for numbers.
+	if _, ok := sawItemCount.(float64); !ok {
+		t.Fatalf("item_count type = %T (%v), want float64", sawItemCount, sawItemCount)
+	}
 	if queue.first().ID != fixedNS {
 		t.Fatalf("job id = %q, want derived %q", queue.first().ID, fixedNS)
 	}
 	payload, _ := queue.first().Payload["payload"].(map[string]interface{})
 	if payload["order_id"] != "ord-typed-1" {
 		t.Fatalf("stored payload = %#v", payload)
+	}
+	if payload["request_id"] != "req-typed-1" {
+		t.Fatalf("stored request_id = %#v", payload["request_id"])
 	}
 }
 

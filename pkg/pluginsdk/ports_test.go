@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -441,6 +442,115 @@ func TestOrdersPort_UnattributedKeepsPublicPluginOnly(t *testing.T) {
 	if err != nil || lines[0].Extensions["acme.design"] != "x" {
 		t.Fatalf("unattributed Lines = %+v err=%v", lines, err)
 	}
+}
+
+func TestOrdersPort_Lines_OwnerSeesPrivatePluginOnlyViaValueService(t *testing.T) {
+	item, err := domainorder.NewItem("v1", "SKU", "Name", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := domainorder.NewOrder("o1", "c1", "", "EUR", []domainorder.Item{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(domainext.FieldDef{
+		Code:        "acme.secret",
+		Label:       "Secret",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+		Visibility:  domainext.VisibilityPrivate,
+		Access:      domainext.Access{PluginOnlyWrite: true},
+	}, "acme"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	repo := &orderExtMemRepo{values: map[string]domainext.Value{}}
+	svc := extensionapp.NewValueService(reg, repo)
+	secret := "s3cret"
+	target := domainext.OrderItemTarget("o1", "v1")
+	repo.values[string(target.Type)+":"+target.ID+":acme.secret"] = domainext.Value{
+		FieldCode:  "acme.secret",
+		TargetType: target.Type,
+		TargetID:   target.ID,
+		Payload:    domainext.ValuePayload{StringValue: &secret},
+	}
+
+	port := pluginsdk.NewOrdersPort(stubOrders{byID: map[string]*domainorder.Order{o.ID: &o}})
+	pluginsdk.AttachOrderLineExtensions(port, svc)
+	hostApp := &plugin.App{}
+	if err := hostApp.BindOrdersPort(port); err != nil {
+		t.Fatalf("BindOrdersPort: %v", err)
+	}
+	hostApp.RecordNeedsFor("acme", plugin.CapOrders)
+	scoped, ok := pluginsdk.AsHostFor(hostApp, "acme").Orders()
+	if !ok {
+		t.Fatal("Orders() false")
+	}
+	lines, err := scoped.Lines(context.Background(), "o1")
+	if err != nil || lines[0].Extensions["acme.secret"] != "s3cret" {
+		t.Fatalf("owner Lines = %+v err=%v", lines, err)
+	}
+	// Unattributed / other plugin must not see private plugin-only.
+	openLines, err := port.Lines(context.Background(), "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := openLines[0].Extensions["acme.secret"]; ok {
+		t.Fatalf("unattributed saw private plugin-only: %+v", openLines[0].Extensions)
+	}
+}
+
+type orderExtMemRepo struct {
+	values map[string]domainext.Value
+}
+
+func (m *orderExtMemRepo) ListByTarget(_ context.Context, target domainext.Target) ([]domainext.Value, error) {
+	var out []domainext.Value
+	for _, v := range m.values {
+		if v.TargetType == target.Type && v.TargetID == target.ID {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+func (m *orderExtMemRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	want := map[string]struct{}{}
+	for _, id := range targetIDs {
+		want[id] = struct{}{}
+	}
+	var out []domainext.Value
+	for _, v := range m.values {
+		if v.TargetType != targetType {
+			continue
+		}
+		if _, ok := want[v.TargetID]; ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+func (m *orderExtMemRepo) Upsert(_ context.Context, value domainext.Value) error {
+	m.values[string(value.TargetType)+":"+value.TargetID+":"+value.FieldCode] = value
+	return nil
+}
+func (m *orderExtMemRepo) UpsertBatch(ctx context.Context, values []domainext.Value) error {
+	for _, v := range values {
+		if err := m.Upsert(ctx, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (m *orderExtMemRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, _ map[string]struct{}) error {
+	return m.UpsertBatch(ctx, values)
+}
+func (m *orderExtMemRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
+	delete(m.values, string(target.Type)+":"+target.ID+":"+fieldCode)
+	return nil
+}
+func (m *orderExtMemRepo) ListTargetIDsByTypeAndIDPrefix(context.Context, domainext.TargetType, string) ([]string, error) {
+	return nil, nil
 }
 
 func TestCatalogSeedPort_EnsureProductValidation(t *testing.T) {

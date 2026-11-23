@@ -285,6 +285,25 @@ func (snapshotFailExt) SnapshotCartItemToOrderItem(context.Context, string, stri
 	return fmt.Errorf("snapshot boom")
 }
 
+type snapshotFailOnceExt struct {
+	inner interface {
+		SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error
+	}
+	failVariant string
+	calls       map[string]int
+}
+
+func (p *snapshotFailOnceExt) SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error {
+	if p.calls == nil {
+		p.calls = map[string]int{}
+	}
+	p.calls[variantID]++
+	if variantID == p.failVariant && p.calls[variantID] == 1 {
+		return fmt.Errorf("snapshot boom %s", variantID)
+	}
+	return p.inner.SnapshotCartItemToOrderItem(ctx, cartID, orderID, variantID, updatedBy)
+}
+
 func TestCreateOrderStep_SnapshotFailureStillPublishesOrderCreated(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
@@ -309,5 +328,124 @@ func TestCreateOrderStep_SnapshotFailureStillPublishesOrderCreated(t *testing.T)
 	}
 	if _, ok := cctx.GetMeta("created_order_id"); !ok {
 		t.Fatal("expected created_order_id after save")
+	}
+	// Snapshot error fails the step (workflow will compensate → order.failed
+	// after order.created; shopper retry creates a new order). Flag stays
+	// unset so same-context re-entry can resume snapshots.
+	if raw, ok := cctx.GetMeta("order_created_published"); ok && raw == true {
+		t.Fatal("order_created_published must stay unset after snapshot failure")
+	}
+}
+
+func TestCreateOrderStep_PublishFailureReturnsErrorAndResumePublishesOnce(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	bus := event.NewBus(logger.New("error"))
+	var publishes int
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		publishes++
+		if publishes == 1 {
+			return fmt.Errorf("sync handler boom")
+		}
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "publish order.created") {
+		t.Fatalf("Execute err = %v, want publish error", err)
+	}
+	if publishes != 1 {
+		t.Fatalf("publishes = %d, want 1", publishes)
+	}
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("resume Execute: %v", err)
+	}
+	if publishes != 2 {
+		t.Fatalf("publishes after resume = %d, want 2", publishes)
+	}
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("idempotent Execute: %v", err)
+	}
+	if publishes != 2 {
+		t.Fatalf("publishes after idempotent = %d, want 2", publishes)
+	}
+}
+
+func TestCreateOrderStep_SnapshotPartialFailureResumesRemainingVariant(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newMemSnapshotValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+	probe := &snapshotFailOnceExt{inner: values, failVariant: "v2"}
+
+	bus := event.NewBus(logger.New("error"))
+	var publishes int
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		publishes++
+		return nil
+	})
+
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, probe, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
+
+	for _, vid := range []string{"v1", "v2"} {
+		cartTarget := domainext.CartItemTarget(cctx.Cart.ID, vid)
+		if _, err := values.UpsertBatch(context.Background(), cartTarget, []domainext.ValueInput{
+			{FieldCode: "acme.gift.message", Value: "msg-" + vid},
+		}, "cust-1", false); err != nil {
+			t.Fatalf("UpsertBatch %s: %v", vid, err)
+		}
+	}
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "snapshot boom v2") {
+		t.Fatalf("Execute err = %v, want snapshot boom v2", err)
+	}
+	if publishes != 1 {
+		t.Fatalf("publishes = %d, want 1 after partial snapshot", publishes)
+	}
+	orderID := cctx.Order.ID
+	storedV1, err := extRepo.ListByTarget(context.Background(), domainext.OrderItemTarget(orderID, "v1"))
+	if err != nil || len(storedV1) != 1 {
+		t.Fatalf("v1 after first pass = %+v err=%v", storedV1, err)
+	}
+	storedV2, err := extRepo.ListByTarget(context.Background(), domainext.OrderItemTarget(orderID, "v2"))
+	if err != nil {
+		t.Fatalf("ListByTarget v2: %v", err)
+	}
+	if len(storedV2) != 0 {
+		t.Fatalf("v2 should be missing after first pass, got %+v", storedV2)
+	}
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("resume Execute: %v", err)
+	}
+	if publishes != 1 {
+		t.Fatalf("publishes after resume = %d, want 1 (no republish)", publishes)
+	}
+	storedV2, err = extRepo.ListByTarget(context.Background(), domainext.OrderItemTarget(orderID, "v2"))
+	if err != nil || len(storedV2) != 1 || storedV2[0].Payload.StringValue == nil || *storedV2[0].Payload.StringValue != "msg-v2" {
+		t.Fatalf("v2 after resume = %+v err=%v", storedV2, err)
 	}
 }
