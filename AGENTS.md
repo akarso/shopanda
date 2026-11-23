@@ -274,6 +274,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` (`Get`, `CountsByStatus`, `CountsByType`, `Requeue`) — not `internal/domain/jobs` / `BoundQueue`. Plugin CLI skips CapJobs/CapMedia assert (ports stay unbound there). |
 | Idempotent sync enqueue | `SyncJobs.Enqueue(…, pluginsdk.WithJobID(uuid))` with `JobsPort` bound; Enqueue resolves Conflict (pending=no-op, terminal=Requeue with one WrongAttempt retry / NotTerminal=success, second WrongAttempt hard-fails, wrong type=error). Second payload discarded. |
 | Order lines + extensions | `Need(CapOrders)` + `Host.Orders()`: `FindByID`, `Lines(ctx, orderID)` (line key `(order_id, variant_id)`; Extensions = public + owned PluginOnlyWrite), `ListCreatedSince(ctx, since, afterID, limit)` for reconciliation. |
+| `order.created` handlers | Published after cart→order extension snapshot. Delivery is at-least-once after commit — handlers must be idempotent; a handler error cannot roll the order back. Prefer `RegisterOnEvent` + durable jobs over long `OnAsync` bodies. |
 | Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 | Isolated Postgres in plugin tests | `harness.OpenIsolated` (+ `AdaptInit` `Options.DB` for `BootstrapDB`) |
 | Drop `plugin.App` import | Host + `Adapt` / `NewHost`; sync via `SDK.Integration`; map in PLUGINS.md |
