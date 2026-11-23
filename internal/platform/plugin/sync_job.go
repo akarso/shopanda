@@ -124,14 +124,23 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 		if strings.TrimSpace(job.Trigger.CronSpec) == "" {
 			return fmt.Errorf("plugin: sync job %q: cron spec required", name)
 		}
+		if job.EventJobID != nil || job.EventJobIDSet {
+			return fmt.Errorf("plugin: sync job %q: EventJobID is only valid for event triggers", name)
+		}
 	case extapi.SyncTriggerEvent:
 		eventName := strings.TrimSpace(job.Trigger.EventName)
 		if eventName == "" {
 			return fmt.Errorf("plugin: sync job %q: event name required", name)
 		}
 		reg.Job.Trigger.EventName = eventName
+		if job.EventJobIDSet && job.EventJobID == nil {
+			return fmt.Errorf("plugin: sync job %q: WithEventJobID requires a non-nil func", name)
+		}
 	case extapi.SyncTriggerManual:
 		// On-demand only; no cron/event fields.
+		if job.EventJobID != nil || job.EventJobIDSet {
+			return fmt.Errorf("plugin: sync job %q: EventJobID is only valid for event triggers", name)
+		}
 	default:
 		return fmt.Errorf("plugin: sync job %q: unsupported trigger kind %q", name, job.Trigger.Kind)
 	}
@@ -149,6 +158,26 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 // payload is shallow-copied so later caller mutations are not visible to the queue.
 func NewSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}) (jobs.Job, error) {
 	return newSyncJobEnvelope(reg, trigger, payload, id.New())
+}
+
+// NewSyncJobEnvelopeWithID builds the queue job with a caller-chosen id
+// (UUID required). Used by event triggers with EventJobID and by WithJobID.
+func NewSyncJobEnvelopeWithID(reg SyncJobRegistration, trigger string, payload map[string]interface{}, jobID string) (jobs.Job, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return jobs.Job{}, fmt.Errorf("plugin: sync job envelope: job id requires a non-empty UUID")
+	}
+	if !id.IsUUID(jobID) {
+		return jobs.Job{}, fmt.Errorf("plugin: sync job envelope: job id %q is not a UUID", jobID)
+	}
+	return newSyncJobEnvelope(reg, trigger, payload, jobID)
+}
+
+// ResolveEnqueueConflict resumes an idempotent enqueue after a Conflict
+// (same rules as WithJobID). Used by the event-trigger path when EventJobID
+// is set. Without JobsPort, Conflict is returned wrapped.
+func (a *App) ResolveEnqueueConflict(ctx context.Context, name, jobID, expectedType string, conflict error) error {
+	return a.resolveIdempotentEnqueueConflict(ctx, name, jobID, expectedType, conflict)
 }
 
 func newSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[string]interface{}, jobID string) (jobs.Job, error) {
@@ -172,7 +201,8 @@ func newSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[str
 	return job, nil
 }
 
-func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
+// ShallowCopyStringMap copies a string-keyed map (nil → nil).
+func ShallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 	if in == nil {
 		return nil
 	}
@@ -181,6 +211,10 @@ func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
+	return ShallowCopyStringMap(in)
 }
 
 // InjectRequestID shallow-copies payload and, when ctx carries a request ID

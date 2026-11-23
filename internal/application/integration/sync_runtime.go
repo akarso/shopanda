@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -43,20 +45,11 @@ func RegisterSyncJobEventTriggers(app *plugin.App, bus *event.Bus, queue jobs.Qu
 		eventName := reg.Job.Trigger.EventName
 		jobReg := reg
 		bus.OnAsync(eventName, func(ctx context.Context, evt event.Event) error {
+			// Flatten typed domain payloads (e.g. order.OrderCreatedData) to a
+			// public JSON-tag map before EventJobID / enqueue — same shape the
+			// queue round-trip would produce, with order_id at the top level.
 			payload := eventPayload(evt.Data)
-			if rid := evt.Meta["request_id"]; rid != "" {
-				// Shallow-copy before mutate so request_id is not written
-				// back into evt.Data (shared map from typed Publish callers).
-				copied := make(map[string]interface{}, len(payload)+1)
-				for k, v := range payload {
-					copied[k] = v
-				}
-				if existing, ok := copied["request_id"].(string); !ok || existing == "" {
-					copied["request_id"] = rid
-				}
-				payload = copied
-			}
-			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, payload, log)
+			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, payload, log, app, evt.Meta["request_id"])
 		})
 		if log != nil {
 			log.Info("integration.sync_job.event_registered", map[string]interface{}{
@@ -85,7 +78,7 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 		sched.Register(jobReg.JobType, spec, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerCron, nil, log); err != nil && log != nil {
+			if err := enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerCron, nil, log, nil, ""); err != nil && log != nil {
 				log.Error("integration.sync_job.cron_enqueue", err, map[string]interface{}{
 					"job_type": jobReg.JobType,
 				})
@@ -101,13 +94,36 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 	return nil
 }
 
-func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger) error {
-	payload = plugin.InjectRequestID(ctx, payload)
-	job, err := plugin.NewSyncJobEnvelope(reg, trigger, payload)
+func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger, app *plugin.App, metaRequestID string) error {
+	// EventJobID sees the stable public payload before request_id is injected
+	// so a callback that hashes the whole map still dedupes across requests.
+	var (
+		job     jobs.Job
+		err     error
+		fixedID bool
+	)
+	if trigger == extapi.SyncTriggerEvent && reg.Job.EventJobID != nil {
+		derived := strings.TrimSpace(reg.Job.EventJobID(payload))
+		job, err = plugin.NewSyncJobEnvelopeWithID(reg, trigger, payload, derived)
+		fixedID = true
+	} else {
+		job, err = plugin.NewSyncJobEnvelope(reg, trigger, payload)
+	}
 	if err != nil {
 		return err
 	}
+	// Inject request_id into the stored envelope payload after id derivation.
+	enriched := plugin.InjectRequestID(ctx, payload)
+	if metaRequestID != "" {
+		if existing, ok := enriched["request_id"].(string); !ok || existing == "" {
+			enriched["request_id"] = metaRequestID
+		}
+	}
+	job.Payload["payload"] = enriched
 	if err := queue.Enqueue(ctx, job); err != nil {
+		if fixedID && app != nil && apperror.Is(err, apperror.CodeConflict) {
+			return app.ResolveEnqueueConflict(ctx, reg.Job.Name, job.ID, job.Type, err)
+		}
 		return err
 	}
 	if log != nil {
@@ -116,7 +132,7 @@ func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobReg
 			"job_type": job.Type,
 			"trigger":  trigger,
 		}
-		if rid, _ := payload["request_id"].(string); rid != "" {
+		if rid, _ := enriched["request_id"].(string); rid != "" {
 			fields["request_id"] = rid
 		}
 		log.Info("integration.sync_job.enqueued", fields)
@@ -192,12 +208,25 @@ func requestIDFromMaps(envelope, inner map[string]interface{}) string {
 	return ""
 }
 
+// eventPayload returns a public JSON-object map for sync enqueue / EventJobID.
+// Typed structs with json tags (order.OrderCreatedData, …) are flattened via
+// a JSON round-trip so callbacks see order_id at the top level — the same
+// shape handlers get after a queue JSON round-trip. Maps are shallow-copied.
+// Non-object values stay under "data" as a last resort.
 func eventPayload(data interface{}) map[string]interface{} {
 	if data == nil {
 		return map[string]interface{}{}
 	}
 	if payload, ok := data.(map[string]interface{}); ok {
-		return payload
+		return plugin.ShallowCopyStringMap(payload)
 	}
-	return map[string]interface{}{"data": data}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return map[string]interface{}{"data": data}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]interface{}{"data": data}
+	}
+	return out
 }

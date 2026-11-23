@@ -282,12 +282,11 @@ func TestPlugin_OrderCreated_EnqueuesEventSyncJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, _ := envelope["payload"].(map[string]interface{})
-	data, _ := payload["data"].(map[string]interface{})
-	if data["order_id"] != "ord-1" {
-		t.Fatalf("data after JSON round-trip = %#v, want order_id=ord-1", data)
+	if payload["order_id"] != "ord-1" {
+		t.Fatalf("payload after JSON round-trip = %#v, want order_id=ord-1", payload)
 	}
-	if data["item_count"] != float64(2) {
-		t.Fatalf("item_count = %#v, want 2", data["item_count"])
+	if payload["item_count"] != float64(2) {
+		t.Fatalf("item_count = %#v, want 2", payload["item_count"])
 	}
 }
 

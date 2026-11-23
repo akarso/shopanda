@@ -21,6 +21,20 @@ func MaxRetries(n int) SyncJobOption {
 	}
 }
 
+// WithEventJobID derives the queue job id from the event payload for
+// RegisterOnEvent jobs (UUID required). The callback receives the flattened
+// public map (e.g. order_id from order.created) before request_id is injected.
+// Job ids are global per queue — derive from job purpose + entity (e.g. UUID
+// v5 over job type + order_id), not a raw order UUID shared by multiple jobs.
+// Two deliveries with the same derived id resolve like WithJobID when JobsPort
+// is bound. Cron/manual registrations and a nil fn are rejected.
+func WithEventJobID(fn func(payload map[string]interface{}) string) SyncJobOption {
+	return func(job *extapi.SyncJob) {
+		job.EventJobIDSet = true
+		job.EventJobID = fn
+	}
+}
+
 // EnqueueOption configures SyncJobs.Enqueue (run-now).
 type EnqueueOption func(*enqueueConfig)
 

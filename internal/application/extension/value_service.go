@@ -50,6 +50,15 @@ func (s *ValueService) FieldOwner(code string) string {
 	return s.registry.Owner(code)
 }
 
+// IsPrivate reports whether code is registered with VisibilityPrivate.
+func (s *ValueService) IsPrivate(code string) bool {
+	if s == nil || s.registry == nil {
+		return false
+	}
+	field, ok := s.registry.Get(code)
+	return ok && field.Visibility == domainext.VisibilityPrivate
+}
+
 // NewValueService creates a ValueService.
 func NewValueService(registry *Registry, repo domainext.ValueRepository) *ValueService {
 	if registry == nil {
@@ -152,32 +161,47 @@ func (s *ValueService) ListByCartItems(ctx context.Context, cartID string, varia
 
 // ListByOrderItems returns public stored values grouped by variant ID for an order.
 func (s *ValueService) ListByOrderItems(ctx context.Context, orderID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error) {
-	orderID = strings.TrimSpace(orderID)
-	if orderID == "" || len(variantIDs) == 0 {
-		return map[string][]domainext.Value{}, nil
+	batch, err := s.ListByOrderItemsBatch(ctx, map[string][]string{orderID: variantIDs}, includePrivate)
+	if err != nil {
+		return nil, err
 	}
+	if out := batch[strings.TrimSpace(orderID)]; out != nil {
+		return out, nil
+	}
+	return map[string][]domainext.Value{}, nil
+}
 
-	targetIDs := make([]string, 0, len(variantIDs))
-	variantByTargetID := make(map[string]string, len(variantIDs))
-	for _, variantID := range variantIDs {
-		variantID = strings.TrimSpace(variantID)
-		if variantID == "" {
+// ListByOrderItemsBatch returns values keyed by orderID then variantID.
+// One ListByTargets round-trip for the whole page.
+func (s *ValueService) ListByOrderItemsBatch(ctx context.Context, byOrder map[string][]string, includePrivate bool) (map[string]map[string][]domainext.Value, error) {
+	if len(byOrder) == 0 {
+		return map[string]map[string][]domainext.Value{}, nil
+	}
+	targetIDs := make([]string, 0)
+	orderVariantByTarget := make(map[string][2]string)
+	for orderID, variantIDs := range byOrder {
+		orderID = strings.TrimSpace(orderID)
+		if orderID == "" {
 			continue
 		}
-		targetID := domainext.OrderItemTargetID(orderID, variantID)
-		targetIDs = append(targetIDs, targetID)
-		variantByTargetID[targetID] = variantID
+		for _, variantID := range variantIDs {
+			variantID = strings.TrimSpace(variantID)
+			if variantID == "" {
+				continue
+			}
+			targetID := domainext.OrderItemTargetID(orderID, variantID)
+			targetIDs = append(targetIDs, targetID)
+			orderVariantByTarget[targetID] = [2]string{orderID, variantID}
+		}
 	}
 	if len(targetIDs) == 0 {
-		return map[string][]domainext.Value{}, nil
+		return map[string]map[string][]domainext.Value{}, nil
 	}
-
 	stored, err := s.repo.ListByTargets(ctx, domainext.TargetOrderItem, targetIDs)
 	if err != nil {
 		return nil, err
 	}
-
-	out := make(map[string][]domainext.Value, len(variantByTargetID))
+	out := make(map[string]map[string][]domainext.Value)
 	for _, value := range stored {
 		field, ok := s.registry.Get(value.FieldCode)
 		if !ok {
@@ -186,11 +210,15 @@ func (s *ValueService) ListByOrderItems(ctx context.Context, orderID string, var
 		if field.Visibility == domainext.VisibilityPrivate && !includePrivate {
 			continue
 		}
-		variantID := variantByTargetID[value.TargetID]
-		if variantID == "" {
+		pair, ok := orderVariantByTarget[value.TargetID]
+		if !ok {
 			continue
 		}
-		out[variantID] = append(out[variantID], value)
+		orderID, variantID := pair[0], pair[1]
+		if out[orderID] == nil {
+			out[orderID] = make(map[string][]domainext.Value)
+		}
+		out[orderID][variantID] = append(out[orderID][variantID], value)
 	}
 	return out, nil
 }
