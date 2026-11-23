@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -718,5 +719,56 @@ func TestOrderRepo_TaxSnapshotPersistsZeroTax(t *testing.T) {
 	}
 	if !taxAmount.Valid || taxAmount.Int64 != 0 {
 		t.Fatalf("tax_amount = %v, want 0", taxAmount)
+	}
+}
+
+func TestOrderRepo_ListCreatedSince(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	var ids []string
+	for i := 0; i < 3; i++ {
+		o := mustNewOrder(t, "cust-list", "EUR")
+		if err := repo.Save(ctx, &o); err != nil {
+			t.Fatalf("Save %d: %v", i, err)
+		}
+		ids = append(ids, o.ID)
+	}
+	since := time.Now().Add(-time.Hour)
+	page1, err := repo.ListCreatedSince(ctx, since, "", 2)
+	if err != nil {
+		t.Fatalf("ListCreatedSince: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 len = %d, want 2", len(page1))
+	}
+	if len(page1[0].Items()) != 0 {
+		t.Fatal("ListCreatedSince must not load items")
+	}
+	page2, err := repo.ListCreatedSince(ctx, since, page1[1].ID, 10)
+	if err != nil {
+		t.Fatalf("ListCreatedSince page2: %v", err)
+	}
+	if len(page2) != 1 {
+		t.Fatalf("page2 len = %d, want 1", len(page2))
+	}
+	seen := map[string]bool{page1[0].ID: true, page1[1].ID: true, page2[0].ID: true}
+	for _, id := range ids {
+		if !seen[id] {
+			t.Fatalf("missing order %s in pages", id)
+		}
+	}
+	if _, err := repo.ListCreatedSince(ctx, since, id.New(), 10); err == nil {
+		t.Fatal("expected unknown after_id error")
 	}
 }

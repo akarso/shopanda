@@ -127,6 +127,10 @@ func (r *returnHTTPOrderRepo) LinkToCustomerByContactEmail(context.Context, stri
 func (r *returnHTTPOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *returnHTTPOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 type returnHTTPStockRepo struct {
 	qty map[string]int

@@ -144,6 +144,10 @@ func (r *memOrderRepo) LinkToCustomerByContactEmail(context.Context, string, str
 func (r *memOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *memOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 type memStockRepo struct {
 	qty      map[string]int

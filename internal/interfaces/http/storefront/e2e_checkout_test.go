@@ -184,6 +184,10 @@ func (r *e2eOrderRepo) LinkToCustomerByContactEmail(context.Context, string, str
 func (r *e2eOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *e2eOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 func e2eLogger() logger.Logger {
 	return logger.NewWithWriter(io.Discard, "error")

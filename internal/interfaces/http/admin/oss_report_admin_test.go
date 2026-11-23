@@ -52,6 +52,10 @@ func (m *ossReportOrderRepo) LinkToCustomerByContactEmail(context.Context, strin
 func (m *ossReportOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Time) ([]order.TaxSnapshotRow, error) {
 	return m.rows, nil
 }
+func (m *ossReportOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 type stubOssReportConfig map[string]interface{}
 

@@ -273,6 +273,7 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | SSR Stripe SCA / 3DS return | `return_url` from `server.public_base_url` + `/checkout/payment/return?order_id=…` (never Host/XFP). POST confirm is HMAC flash PRG (`Secure` via `IsRequestSecure`); return page copy stays neutral until webhook. Misconfig → shopper-safe copy + server log. |
 | Job get / counts / requeue | `Need(CapJobs)` + `Host.Jobs()` (`Get`, `CountsByStatus`, `CountsByType`, `Requeue`) — not `internal/domain/jobs` / `BoundQueue`. Plugin CLI skips CapJobs/CapMedia assert (ports stay unbound there). |
 | Idempotent sync enqueue | `SyncJobs.Enqueue(…, pluginsdk.WithJobID(uuid))` with `JobsPort` bound; Enqueue resolves Conflict (pending=no-op, terminal=Requeue with one WrongAttempt retry / NotTerminal=success, second WrongAttempt hard-fails, wrong type=error). Second payload discarded. |
+| Order lines + extensions | `Need(CapOrders)` + `Host.Orders()`: `FindByID`, `Lines(ctx, orderID)` (line key `(order_id, variant_id)`; Extensions = public + owned PluginOnlyWrite), `ListCreatedSince(ctx, since, afterID, limit)` for reconciliation. |
 | Media storage wrap/serve | `Need(CapMedia)` + `Host.Media()` — not `internal/domain/media` |
 | Isolated Postgres in plugin tests | `harness.OpenIsolated` (+ `AdaptInit` `Options.DB` for `BootstrapDB`) |
 | Drop `plugin.App` import | Host + `Adapt` / `NewHost`; sync via `SDK.Integration`; map in PLUGINS.md |

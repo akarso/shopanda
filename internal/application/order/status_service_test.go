@@ -60,6 +60,10 @@ func (s *statusRepoStub) LinkToCustomerByContactEmail(context.Context, string, s
 func (s *statusRepoStub) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (s *statusRepoStub) ListCreatedSince(context.Context, time.Time, string, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+
 
 func testOrder(t *testing.T) domainOrder.Order {
 	t.Helper()

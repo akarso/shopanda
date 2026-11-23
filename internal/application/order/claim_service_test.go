@@ -123,6 +123,10 @@ func (r *mockOrderRepository) LinkToCustomerByContactEmail(ctx context.Context, 
 func (r *mockOrderRepository) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *mockOrderRepository) ListCreatedSince(context.Context, time.Time, string, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+
 
 func mustNewTestGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {
 	t.Helper()

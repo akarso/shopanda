@@ -271,6 +271,67 @@ func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string)
 	return orders, nil
 }
 
+// ListCreatedSince returns orders with CreatedAt >= since, oldest first.
+// Items are not loaded. afterID continues after that order; unknown afterID
+// fails closed. limit <= 0 fails closed; limit > 100 is capped at 100.
+func (r *OrderRepo) ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]order.Order, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("order_repo: list created since: limit must be > 0")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	afterID = strings.TrimSpace(afterID)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if afterID == "" {
+		const q = `SELECT ` + orderSelectColumns + `
+			FROM orders
+			WHERE created_at >= $1
+			ORDER BY created_at ASC, id ASC
+			LIMIT $2`
+		rows, err = r.db.QueryContext(ctx, q, since, limit)
+	} else {
+		var afterCreated time.Time
+		err = r.db.QueryRowContext(ctx, `SELECT created_at FROM orders WHERE id = $1`, afterID).Scan(&afterCreated)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("order_repo: list created since: after_id %q not found", afterID)
+		}
+		if err != nil {
+			if mapped := invalidUUIDError(err, "invalid order id"); mapped != nil {
+				return nil, mapped
+			}
+			return nil, fmt.Errorf("order_repo: list created since: lookup after_id: %w", err)
+		}
+		const q = `SELECT ` + orderSelectColumns + `
+			FROM orders
+			WHERE created_at >= $1
+			  AND (created_at > $2 OR (created_at = $2 AND id > $3))
+			ORDER BY created_at ASC, id ASC
+			LIMIT $4`
+		rows, err = r.db.QueryContext(ctx, q, since, afterCreated, afterID, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("order_repo: list created since: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []order.Order
+	for rows.Next() {
+		o, err := r.hydrateOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: list created since scan: %w", err)
+		}
+		orders = append(orders, *o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: list created since rows: %w", err)
+	}
+	return orders, nil
+}
+
 // List returns a page of orders, newest first.
 func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order, error) {
 	if offset < 0 {
