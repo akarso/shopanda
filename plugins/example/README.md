@@ -48,6 +48,6 @@ app plugins report
 - Register extensions in `Init` via `plugin.App` / `pluginsdk` — do not modify core domain packages
 - Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, permissions, and sync jobs
 - Event → durable work: `RegisterOnEvent`. Run-now: `Enqueue` after boot. Keep any custom `OnAsync` body tiny; a failed bus enqueue is not retried by the event bus (durability starts once the queue accepts the job).
-- After dequeue, event payloads are JSON maps (`payload["data"].(map[string]interface{})`), not domain structs — typed asserts only work on in-memory test queues.
+- After dequeue, event payloads are flattened JSON maps (`payload["order_id"]`, …), not domain structs. JSON numbers decode as `float64` — assert with a numeric helper, not `.(int)`. Legacy `payload["data"]` envelopes still work in this plugin's reader as a fallback.
 
 See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../PLUGINS.md)

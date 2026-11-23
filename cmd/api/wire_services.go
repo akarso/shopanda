@@ -315,6 +315,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.WarnUnownedPluginOnlyFields()
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)
 	extensionValueService := extensionApp.NewValueService(extensionRegistry, repos.extensionValueRepo)
+	if ordersPort, ok := pluginApp.OrdersPort(); ok {
+		// Same Attach as runWorker (attachOrderLineExtensions); serve already
+		// loaded fields above so we only wire the value reader here.
+		pluginsdk.AttachOrderLineExtensions(ordersPort, extensionValueService)
+	}
 	if err := plugin.LoadPersisted(context.Background(), repos.configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return nil, fmt.Errorf("load plugin config: %w", err)
 	}

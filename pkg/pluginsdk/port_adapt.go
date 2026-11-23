@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	domaincart "github.com/akarso/shopanda/internal/domain/cart"
@@ -922,13 +924,70 @@ func cloneStringAnyMap(in map[string]any) (map[string]interface{}, error) {
 	return out, nil
 }
 
+// OrderLineExtensionReader supplies order_item extension values for
+// OrderPort.Lines. Satisfied by *extension.ValueService; attach after the
+// composition root builds the value service (OrdersPort binds earlier).
+type OrderLineExtensionReader interface {
+	ListByOrderItems(ctx context.Context, orderID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error)
+	ListByOrderItemsBatch(ctx context.Context, byOrder map[string][]string, includePrivate bool) (map[string]map[string][]domainext.Value, error)
+	IsPluginOnlyWrite(code string) bool
+	IsPrivate(code string) bool
+	FieldOwner(code string) string
+}
+
 // NewOrdersPort adapts an order repository to OrderPort.
 func NewOrdersPort(orders domainorder.OrderRepository) OrderPort {
 	return &ordersPort{orders: orders}
 }
 
+// AttachOrderLineExtensions wires extension reads onto a previously bound
+// OrdersPort. No-op when port is not the SDK adapter or reader is nil.
+// Visible to ports returned from Host.Orders() before or after Attach
+// (withOwner keeps a parent pointer and reads ext under the parent lock).
+func AttachOrderLineExtensions(port any, reader OrderLineExtensionReader) {
+	op, ok := port.(*ordersPort)
+	if !ok || op == nil || reader == nil {
+		return
+	}
+	root := op.root()
+	root.mu.Lock()
+	root.ext = reader
+	root.mu.Unlock()
+}
+
 type ordersPort struct {
 	orders domainorder.OrderRepository
+	ext    OrderLineExtensionReader
+	owner  string
+	mu     sync.RWMutex
+	parent *ordersPort // attributed views read ext from the root port
+}
+
+func (p *ordersPort) root() *ordersPort {
+	if p == nil {
+		return nil
+	}
+	if p.parent != nil {
+		return p.parent
+	}
+	return p
+}
+
+func (p *ordersPort) withOwner(pluginName string) *ordersPort {
+	if p == nil {
+		return nil
+	}
+	return &ordersPort{orders: p.orders, owner: pluginName, parent: p.root()}
+}
+
+func (p *ordersPort) extensionReader() OrderLineExtensionReader {
+	root := p.root()
+	if root == nil {
+		return nil
+	}
+	root.mu.RLock()
+	defer root.mu.RUnlock()
+	return root.ext
 }
 
 // FindByID returns an OrderView with ContactEmail blanked: the default
@@ -948,12 +1007,165 @@ func (p *ordersPort) FindByID(ctx context.Context, id string) (*extapi.OrderView
 	if o == nil {
 		return nil, nil
 	}
+	return orderViewFromDomain(o), nil
+}
+
+// Lines returns order lines for orderID. Missing orders return (nil, nil).
+// Prefer LinesForOrders after ListCreatedSince to avoid N+1 FindByID calls.
+func (p *ordersPort) Lines(ctx context.Context, orderID string) ([]extapi.OrderLineView, error) {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return nil, fmt.Errorf("pluginsdk: orders port: lines: empty order id")
+	}
+	byOrder, err := p.LinesForOrders(ctx, []string{orderID})
+	if err != nil {
+		return nil, err
+	}
+	lines, ok := byOrder[orderID]
+	if !ok {
+		return nil, nil
+	}
+	return lines, nil
+}
+
+// LinesForOrders returns lines for each found order id (missing ids omitted).
+// One FindByIDs plus one extension batch when a reader is attached.
+func (p *ordersPort) LinesForOrders(ctx context.Context, orderIDs []string) (map[string][]extapi.OrderLineView, error) {
+	if p == nil || p.orders == nil {
+		return nil, fmt.Errorf("pluginsdk: orders port: not configured")
+	}
+	cleaned := make([]string, 0, len(orderIDs))
+	seen := make(map[string]struct{}, len(orderIDs))
+	for _, id := range orderIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return map[string][]extapi.OrderLineView{}, nil
+	}
+	byID, err := p.orders.FindByIDs(ctx, cleaned)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]extapi.OrderLineView, len(byID))
+	variantsByOrder := make(map[string][]string, len(byID))
+	for id, o := range byID {
+		if o == nil {
+			continue
+		}
+		items := o.Items()
+		lines := make([]extapi.OrderLineView, len(items))
+		vids := make([]string, 0, len(items))
+		for i, item := range items {
+			lines[i] = extapi.OrderLineView{
+				VariantID:  item.VariantID,
+				SKU:        item.SKU,
+				Name:       item.Name,
+				Quantity:   item.Quantity,
+				Extensions: map[string]interface{}{},
+			}
+			vids = append(vids, item.VariantID)
+		}
+		out[id] = lines
+		variantsByOrder[id] = vids
+	}
+	ext := p.extensionReader()
+	if ext == nil || len(variantsByOrder) == 0 {
+		return out, nil
+	}
+	includePrivate := p.owner != ""
+	byOrderExt, err := ext.ListByOrderItemsBatch(ctx, variantsByOrder, includePrivate)
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: orders port: lines extensions: %w", err)
+	}
+	for orderID, lines := range out {
+		indexByVariant := make(map[string]int, len(lines))
+		for i := range lines {
+			indexByVariant[lines[i].VariantID] = i
+		}
+		for variantID, values := range byOrderExt[orderID] {
+			i, ok := indexByVariant[variantID]
+			if !ok {
+				continue
+			}
+			for _, v := range values {
+				if !p.keepOrderExtension(ext, v.FieldCode) {
+					continue
+				}
+				lines[i].Extensions[v.FieldCode] = orderExtPayloadPrimary(v.Payload)
+			}
+		}
+		out[orderID] = lines
+	}
+	return out, nil
+}
+
+func (p *ordersPort) keepOrderExtension(ext OrderLineExtensionReader, code string) bool {
+	if ext.IsPluginOnlyWrite(code) {
+		if p.owner == "" {
+			// Unattributed Host: Cart parity — keep non-private plugin-only.
+			return !ext.IsPrivate(code)
+		}
+		owner := ext.FieldOwner(code)
+		return owner != "" && owner == p.owner
+	}
+	return !ext.IsPrivate(code)
+}
+
+// ListCreatedSince returns OrderViews created at or after since (ASC keyset).
+func (p *ordersPort) ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]extapi.OrderView, error) {
+	if p == nil || p.orders == nil {
+		return nil, fmt.Errorf("pluginsdk: orders port: not configured")
+	}
+	orders, err := p.orders.ListCreatedSince(ctx, since, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]extapi.OrderView, 0, len(orders))
+	for i := range orders {
+		out = append(out, *orderViewFromDomain(&orders[i]))
+	}
+	return out, nil
+}
+
+func orderViewFromDomain(o *domainorder.Order) *extapi.OrderView {
+	if o == nil {
+		return nil
+	}
 	return &extapi.OrderView{
 		ID:         o.ID,
 		CustomerID: o.CustomerID,
 		Status:     string(o.Status()),
 		Currency:   o.Currency,
-	}, nil
+		CreatedAt:  o.CreatedAt,
+	}
+}
+
+func orderExtPayloadPrimary(p domainext.ValuePayload) interface{} {
+	if p.StringValue != nil {
+		return *p.StringValue
+	}
+	if p.IntValue != nil {
+		return *p.IntValue
+	}
+	if p.BoolValue != nil {
+		return *p.BoolValue
+	}
+	if len(p.JSONValue) > 0 {
+		var out interface{}
+		if err := json.Unmarshal(p.JSONValue, &out); err == nil {
+			return out
+		}
+		return string(p.JSONValue)
+	}
+	return nil
 }
 
 // NewCustomerPort adapts a customer repository to CustomerPort.

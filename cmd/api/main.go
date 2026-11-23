@@ -1085,6 +1085,13 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		return bootInterrupted
 	}
 
+	// CapOrders sync handlers need order_item extension values — same Attach
+	// as wireServeRuntime. Without this, Lines returns empty Extensions on
+	// the dedicated worker while serve's embedded worker sees real values.
+	if err := attachOrderLineExtensions(context.Background(), conn, pluginApp, log); err != nil {
+		return err
+	}
+
 	// serve and worker are separate processes; if both enable metrics and
 	// this one is still on the unmodified default, move it to the
 	// documented worker port so they don't collide on the same host.

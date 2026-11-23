@@ -46,6 +46,15 @@ if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, plugi
 
 ### Event path (`RegisterOnEvent`)
 
+Idempotent job id (optional): `RegisterOnEvent(…, pluginsdk.WithEventJobID(func(payload) uuid))`.
+The callback sees a flattened public map (`order_id` at the top level for
+`order.created`) **before** `request_id` is injected. That flatten already
+decodes JSON numbers as `float64` (same shape as a later queue round-trip),
+so `EventJobID` must tolerate `float64` for numeric fields. Job ids are
+global per queue — derive from job purpose + entity (e.g. UUID v5 over job
+type + `order_id`), not a raw order UUID shared by multiple listeners.
+Conflict resolves like `WithJobID` when `JobsPort` is bound.
+
 `event.Bus.OnAsync` handlers intentionally receive the **shutdown context**, not
 the Publish request context (so request cancel does not abort side effects).
 Correlation still works:
@@ -54,8 +63,9 @@ Correlation still works:
    when Meta does not already set one (`PublishAsync` takes `ctx` for this —
    Publish's local stamped copy is not visible to fallback callers).
 2. Async dispatch copies that Meta value onto the handler context.
-3. `RegisterSyncJobEventTriggers` also copies Meta into the inner sync payload
-   before `InjectRequestID` / `NewSyncJobEnvelope`.
+3. `RegisterSyncJobEventTriggers` flattens the event data, runs `EventJobID`
+   (if any) on that map **without** `request_id`, builds the envelope, then
+   writes `request_id` onto the stored payload (ctx + Meta).
 
 So HTTP → `Publish(ctx, …)` (or Publish-fail → `PublishAsync(ctx, …)`) →
 OnAsync enqueue yields `request_id` on the queued envelope without plugins

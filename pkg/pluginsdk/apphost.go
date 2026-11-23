@@ -282,7 +282,20 @@ func (h *appHost) Orders() (OrderPort, bool) {
 		return nil, false
 	}
 	cp, ok := p.(OrderPort)
-	return cp, ok
+	if !ok {
+		return nil, false
+	}
+	// Attributed Hosts get an owner-scoped *ordersPort so Lines filters
+	// PluginOnlyWrite extensions to this plugin. Other concrete OrderPort
+	// values cannot apply owner filtering — fail closed.
+	if h.pluginName != "" {
+		base, ok := cp.(*ordersPort)
+		if !ok {
+			return nil, false
+		}
+		return base.withOwner(h.pluginName), true
+	}
+	return cp, true
 }
 
 func (h *appHost) Customers() (CustomerPort, bool) {

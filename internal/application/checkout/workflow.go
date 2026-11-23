@@ -291,6 +291,22 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 		}
 
 		stepErr := w.runStep(ctx, step, cctx)
+		// create_order can leave created_order_id set with snapshot/publish
+		// incomplete. Checkout calls Workflow.Execute once, so retry that
+		// step once here before EventCheckoutFailed / compensate — otherwise
+		// a bare step.Execute resume never runs on the HTTP path.
+		if stepErr != nil && createOrderNeedsResume(step, cctx) && !isContextError(stepErr) {
+			w.log.Info("checkout.create_order.resume", map[string]interface{}{
+				"cart_id":  cctx.CartID,
+				"order_id": createdOrderIDMeta(cctx),
+			})
+			cctx.Trace = append(cctx.Trace, TraceEntry{
+				Step:   step.Name(),
+				Status: "error",
+				Err:    stepErr.Error(),
+			})
+			stepErr = w.runStep(ctx, step, cctx)
+		}
 		if stepErr != nil {
 			cctx.Trace = append(cctx.Trace, TraceEntry{
 				Step:   step.Name(),
@@ -526,6 +542,16 @@ func paymentBlocksCompensation(py *payment.Payment) bool {
 		return true
 	}
 	return py.Status() == payment.StatusPending && strings.TrimSpace(py.ProviderRef) != ""
+}
+
+// createOrderNeedsResume is true when create_order saved an order but has
+// not finished cart→order snapshot + order.created publish. A second
+// runStep resumes finishCreatedOrder; compensate runs only if that fails.
+func createOrderNeedsResume(step Step, cctx *Context) bool {
+	if step == nil || cctx == nil || step.Name() != "create_order" {
+		return false
+	}
+	return createdOrderIDMeta(cctx) != "" && !orderCreatedPublished(cctx)
 }
 
 // Steps returns the number of registered steps.

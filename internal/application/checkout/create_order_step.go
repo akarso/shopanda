@@ -169,10 +169,12 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 	if cctx == nil {
 		return fmt.Errorf("create_order: checkout context must not be nil")
 	}
-	if v, ok := cctx.GetMeta("created_order_id"); ok {
-		if _, isStr := v.(string); isStr && v.(string) != "" {
-			return nil // idempotent
+	if id := createdOrderIDMeta(cctx); id != "" {
+		if orderCreatedPublished(cctx) {
+			return nil // idempotent: snapshot + publish already finished
 		}
+		// Half-finished create (snapshot/publish failed after Save): resume.
+		return s.finishCreatedOrder(ctx, cctx, id)
 	}
 
 	if cctx.Cart == nil {
@@ -246,48 +248,154 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 	}
 
 	cctx.Order = &o
+	// Set before snapshot/publish so a later failure still keeps reservations
+	// (order already committed). finishCreatedOrder resumes when this is set
+	// but order_created_published is not.
 	cctx.SetMeta("created_order_id", o.ID)
-	s.publishOrderCreated(ctx, &o)
 
-	if s.extensions != nil {
-		updatedBy := strings.TrimSpace(cctx.CustomerID)
-		if updatedBy == "" {
-			updatedBy = "system"
+	return s.finishCreatedOrder(ctx, cctx, o.ID)
+}
+
+// orderCreatedPublishedMeta is set only when every cart→order snapshot and
+// publishOrderCreated both succeeded. Execute short-circuits only then.
+const orderCreatedPublishedMeta = "order_created_published"
+
+// orderCreatedEmittedMeta means order.created was published at least once on
+// this context. Resume skips a second publish (at-least-once already
+// satisfied) but still finishes remaining snapshots.
+const orderCreatedEmittedMeta = "order_created_emitted"
+
+func createdOrderIDMeta(cctx *Context) string {
+	if cctx == nil {
+		return ""
+	}
+	raw, ok := cctx.GetMeta("created_order_id")
+	if !ok {
+		return ""
+	}
+	id, _ := raw.(string)
+	return strings.TrimSpace(id)
+}
+
+func orderCreatedPublished(cctx *Context) bool {
+	return metaBool(cctx, orderCreatedPublishedMeta)
+}
+
+func orderCreatedEmitted(cctx *Context) bool {
+	return metaBool(cctx, orderCreatedEmittedMeta)
+}
+
+func metaBool(cctx *Context, key string) bool {
+	if cctx == nil {
+		return false
+	}
+	raw, ok := cctx.GetMeta(key)
+	if !ok {
+		return false
+	}
+	done, _ := raw.(bool)
+	return done
+}
+
+// finishCreatedOrder runs the cart→order extension snapshot then publishes
+// order.created. Publish uses a detached timeout so a canceled request
+// context cannot skip OnAsync (webhooks / RegisterOnEvent).
+//
+// Snapshot failure still attempts publish so listeners are not left with
+// order.failed and no preceding order.created. The snapshot error is
+// returned afterward. Workflow.Execute retries create_order once when
+// created_order_id is set and order_created_published is not; only if that
+// resume still fails does compensation mark the pending order failed and
+// emit order.failed (shopper retry then creates a new order).
+// Same-context re-entry (order_created_published unset) resumes remaining
+// snapshots without republishing when order_created_emitted is set.
+//
+// Publish failure always returns an error (joined with any snapshot error)
+// and leaves both flags unset so the workflow resume (or a second Execute)
+// retries publish.
+func (s *CreateOrderStep) finishCreatedOrder(ctx context.Context, cctx *Context, orderID string) error {
+	if s == nil || cctx == nil {
+		return fmt.Errorf("create_order: finish: nil step or context")
+	}
+	o := cctx.Order
+	if o == nil || strings.TrimSpace(o.ID) != orderID {
+		loaded, err := s.orders.FindByID(ctx, orderID)
+		if err != nil {
+			return fmt.Errorf("create_order: finish reload: %w", err)
 		}
-		// Order already committed — snapshot even if the request ctx is canceled.
-		// An exploded cart parent has no order line with that variant id.
-		// Skip it so the snapshot is not an orphan pointing at a line that
-		// was never written. Other cart lines still snapshot.
-		snapCtx, snapCancel := detachedTimeout(ctx, compensateTimeout)
-		defer snapCancel()
-		orderVariants := make(map[string]struct{}, len(items))
-		for _, item := range items {
-			orderVariants[item.VariantID] = struct{}{}
+		if loaded == nil {
+			return fmt.Errorf("create_order: finish: order %s not found", orderID)
 		}
-		for _, ci := range cctx.Cart.Items {
-			if _, onOrder := orderVariants[ci.VariantID]; !onOrder {
-				continue
-			}
-			if err := s.extensions.SnapshotCartItemToOrderItem(snapCtx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
-				return fmt.Errorf("create_order: snapshot extensions for variant %s: %w", ci.VariantID, err)
-			}
-		}
+		o = loaded
+		cctx.Order = o
 	}
 
+	snapErr := s.snapshotCartExtensions(ctx, cctx, o)
+
+	if !orderCreatedEmitted(cctx) {
+		pubCtx, pubCancel := detachedTimeout(ctx, compensateTimeout)
+		defer pubCancel()
+		if err := s.publishOrderCreated(pubCtx, o); err != nil {
+			if s.log != nil {
+				s.log.Error("create_order.publish_order_created_failed", err, map[string]interface{}{
+					"order_id": o.ID,
+				})
+			}
+			pubErr := fmt.Errorf("create_order: publish order.created: %w", err)
+			if snapErr != nil {
+				return errors.Join(snapErr, pubErr)
+			}
+			return pubErr
+		}
+		cctx.SetMeta(orderCreatedEmittedMeta, true)
+	}
+
+	if snapErr != nil {
+		// Emitted but incomplete — leave order_created_published unset so
+		// re-entry can finish remaining variant snapshots.
+		return snapErr
+	}
+	cctx.SetMeta(orderCreatedPublishedMeta, true)
 	return nil
 }
 
-func (s *CreateOrderStep) publishOrderCreated(ctx context.Context, o *order.Order) {
+func (s *CreateOrderStep) snapshotCartExtensions(ctx context.Context, cctx *Context, o *order.Order) error {
+	if s == nil || s.extensions == nil || cctx == nil || o == nil {
+		return nil
+	}
+	if cctx.Cart == nil {
+		// Fail closed on resume: treating a missing cart as "nothing to
+		// snapshot" would set order_created_published with no copies.
+		return fmt.Errorf("create_order: finish: cart missing; cannot complete extension snapshot")
+	}
+	updatedBy := strings.TrimSpace(cctx.CustomerID)
+	if updatedBy == "" {
+		updatedBy = "system"
+	}
+	snapCtx, snapCancel := detachedTimeout(ctx, compensateTimeout)
+	defer snapCancel()
+	orderVariants := make(map[string]struct{}, len(o.Items()))
+	for _, item := range o.Items() {
+		orderVariants[item.VariantID] = struct{}{}
+	}
+	var snapErr error
+	for _, ci := range cctx.Cart.Items {
+		if _, onOrder := orderVariants[ci.VariantID]; !onOrder {
+			continue
+		}
+		if err := s.extensions.SnapshotCartItemToOrderItem(snapCtx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
+			snapErr = errors.Join(snapErr, fmt.Errorf("create_order: snapshot extensions for variant %s: %w", ci.VariantID, err))
+			// Keep going so later variants still snapshot in this pass.
+		}
+	}
+	return snapErr
+}
+
+func (s *CreateOrderStep) publishOrderCreated(ctx context.Context, o *order.Order) error {
 	if s == nil || s.bus == nil || o == nil {
-		return
+		return nil
 	}
-	if err := orderapp.PublishCreated(ctx, s.bus, "checkout.create_order", o); err != nil && s.log != nil {
-		// Order already committed — do not fail the step. Idempotent re-entry
-		// skips publish to avoid duplicate jobs on later checkout retries.
-		s.log.Error("create_order.publish_order_created_failed", err, map[string]interface{}{
-			"order_id": o.ID,
-		})
-	}
+	return orderapp.PublishCreated(ctx, s.bus, "checkout.create_order", o)
 }
 
 func (s *CreateOrderStep) persistOrder(ctx context.Context, cctx *Context, o *order.Order, appliedCredit *shared.Money) error {

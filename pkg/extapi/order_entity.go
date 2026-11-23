@@ -1,5 +1,7 @@
 package extapi
 
+import "time"
+
 // OrderView is a minimal order read model for plugin integrations.
 //
 // ContactEmail is intentionally omitted: pluginsdk.OrderPort (the default
@@ -13,4 +15,18 @@ type OrderView struct {
 	CustomerID string
 	Status     string
 	Currency   string
+	CreatedAt  time.Time
+}
+
+// OrderLineView is one order line for OrderPort.Lines.
+// Line identity is (order_id, variant_id) — order items have no separate id.
+// Extensions maps field code → value and includes public (non-private) fields
+// plus PluginOnlyWrite fields owned by the calling plugin; other plugins'
+// plugin-only fields are omitted (same rule as CartView).
+type OrderLineView struct {
+	VariantID  string
+	SKU        string
+	Name       string
+	Quantity   int
+	Extensions map[string]interface{}
 }

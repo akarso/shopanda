@@ -43,11 +43,15 @@ func orderCreatedSyncHandler(log pluginsdk.Logger) extapi.SyncJobHandler {
 	}
 }
 
-// orderCreatedFields reads eventPayload's {"data": …} after a real queue
-// JSON round-trip (map[string]interface{}).
+// orderCreatedFields reads a flattened order.created payload (order_id at the
+// top level after eventPayload JSON round-trip). Falls back to legacy
+// {"data": …} envelopes.
 func orderCreatedFields(payload map[string]interface{}) (orderID string, itemCount int, ok bool) {
 	if payload == nil {
 		return "", 0, false
+	}
+	if id, _ := payload["order_id"].(string); id != "" {
+		return id, jsonInt(payload["item_count"]), true
 	}
 	raw, exists := payload["data"]
 	if !exists {
