@@ -449,3 +449,177 @@ func TestCreateOrderStep_SnapshotPartialFailureResumesRemainingVariant(t *testin
 		t.Fatalf("v2 after resume = %+v err=%v", storedV2, err)
 	}
 }
+
+func TestWorkflow_CreateOrderPublishFailureResumesOnce(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	bus := event.NewBus(logger.New("error"))
+	var publishes int
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		publishes++
+		if publishes == 1 {
+			return fmt.Errorf("sync handler boom")
+		}
+		return nil
+	})
+	var failed bool
+	bus.On(domainorder.EventOrderFailed, func(context.Context, event.Event) error {
+		failed = true
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	next := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step, next}, bus, logger.New("error")).
+		WithUnpaidOrderCompensation(orderRepo, nil, nil, nil)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	if err := wf.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Workflow.Execute: %v", err)
+	}
+	if publishes != 2 {
+		t.Fatalf("publishes = %d, want 2 (fail then resume)", publishes)
+	}
+	if failed {
+		t.Fatal("order.failed must not fire when resume publish succeeds")
+	}
+	if cctx.Order == nil || cctx.Order.Status() != domainorder.OrderStatusPending {
+		t.Fatalf("order status = %v, want pending after successful resume", cctx.Order)
+	}
+	raw, ok := cctx.GetMeta("order_created_published")
+	if !ok || raw != true {
+		t.Fatal("order_created_published must be set after workflow resume")
+	}
+}
+
+func TestWorkflow_CreateOrderPartialSnapshotResumesRemainingVariant(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newMemSnapshotValueRepo()
+	values := extensionapp.NewValueService(reg, extRepo)
+	probe := &snapshotFailOnceExt{inner: values, failVariant: "v2"}
+
+	bus := event.NewBus(logger.New("error"))
+	var publishes int
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		publishes++
+		return nil
+	})
+	var failed bool
+	bus.On(domainorder.EventOrderFailed, func(context.Context, event.Event) error {
+		failed = true
+		return nil
+	})
+
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, probe, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	next := &mockStep{name: "select_shipping", fn: func(*checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step, next}, bus, logger.New("error")).
+		WithUnpaidOrderCompensation(orderRepo, nil, nil, nil)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
+
+	for _, vid := range []string{"v1", "v2"} {
+		cartTarget := domainext.CartItemTarget(cctx.Cart.ID, vid)
+		if _, err := values.UpsertBatch(context.Background(), cartTarget, []domainext.ValueInput{
+			{FieldCode: "acme.gift.message", Value: "msg-" + vid},
+		}, "cust-1", false); err != nil {
+			t.Fatalf("UpsertBatch %s: %v", vid, err)
+		}
+	}
+
+	if err := wf.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Workflow.Execute: %v", err)
+	}
+	if publishes != 1 {
+		t.Fatalf("publishes = %d, want 1 (no republish on resume)", publishes)
+	}
+	if failed {
+		t.Fatal("order.failed must not fire when resume snapshot succeeds")
+	}
+	orderID := cctx.Order.ID
+	storedV2, err := extRepo.ListByTarget(context.Background(), domainext.OrderItemTarget(orderID, "v2"))
+	if err != nil || len(storedV2) != 1 || storedV2[0].Payload.StringValue == nil || *storedV2[0].Payload.StringValue != "msg-v2" {
+		t.Fatalf("v2 after workflow resume = %+v err=%v", storedV2, err)
+	}
+}
+
+func TestWorkflow_CreateOrderResumeStillFailsCompensates(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	bus := event.NewBus(logger.New("error"))
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		return fmt.Errorf("sync handler always down")
+	})
+	var failed bool
+	bus.On(domainorder.EventOrderFailed, func(context.Context, event.Event) error {
+		failed = true
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, logger.New("error")).
+		WithUnpaidOrderCompensation(orderRepo, nil, nil, nil)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	err := wf.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "publish order.created") {
+		t.Fatalf("Workflow.Execute err = %v, want publish error", err)
+	}
+	if !failed {
+		t.Fatal("expected order.failed after resume still fails")
+	}
+	if cctx.Order == nil || cctx.Order.Status() != domainorder.OrderStatusFailed {
+		t.Fatalf("order status = %v, want failed", cctx.Order)
+	}
+}
+
+func TestCreateOrderStep_ResumeFailsClosedWhenCartMissing(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	bus := event.NewBus(logger.New("error"))
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, snapshotFailExt{}, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "snapshot boom") {
+		t.Fatalf("first Execute err = %v, want snapshot boom", err)
+	}
+	cctx.Cart = nil
+	err = step.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "cart missing") {
+		t.Fatalf("resume err = %v, want cart missing", err)
+	}
+	if raw, ok := cctx.GetMeta("order_created_published"); ok && raw == true {
+		t.Fatal("order_created_published must stay unset when cart is missing")
+	}
+}

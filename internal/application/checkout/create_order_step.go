@@ -303,13 +303,16 @@ func metaBool(cctx *Context, key string) bool {
 //
 // Snapshot failure still attempts publish so listeners are not left with
 // order.failed and no preceding order.created. The snapshot error is
-// returned afterward and fails the workflow: compensation marks the pending
-// order failed and emits order.failed; a shopper retry creates a new order.
+// returned afterward. Workflow.Execute retries create_order once when
+// created_order_id is set and order_created_published is not; only if that
+// resume still fails does compensation mark the pending order failed and
+// emit order.failed (shopper retry then creates a new order).
 // Same-context re-entry (order_created_published unset) resumes remaining
 // snapshots without republishing when order_created_emitted is set.
 //
 // Publish failure always returns an error (joined with any snapshot error)
-// and leaves both flags unset so a second Execute retries publish.
+// and leaves both flags unset so the workflow resume (or a second Execute)
+// retries publish.
 func (s *CreateOrderStep) finishCreatedOrder(ctx context.Context, cctx *Context, orderID string) error {
 	if s == nil || cctx == nil {
 		return fmt.Errorf("create_order: finish: nil step or context")
@@ -357,8 +360,13 @@ func (s *CreateOrderStep) finishCreatedOrder(ctx context.Context, cctx *Context,
 }
 
 func (s *CreateOrderStep) snapshotCartExtensions(ctx context.Context, cctx *Context, o *order.Order) error {
-	if s == nil || s.extensions == nil || cctx == nil || cctx.Cart == nil || o == nil {
+	if s == nil || s.extensions == nil || cctx == nil || o == nil {
 		return nil
+	}
+	if cctx.Cart == nil {
+		// Fail closed on resume: treating a missing cart as "nothing to
+		// snapshot" would set order_created_published with no copies.
+		return fmt.Errorf("create_order: finish: cart missing; cannot complete extension snapshot")
 	}
 	updatedBy := strings.TrimSpace(cctx.CustomerID)
 	if updatedBy == "" {

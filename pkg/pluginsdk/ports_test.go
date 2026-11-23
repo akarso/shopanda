@@ -499,6 +499,20 @@ func TestOrdersPort_Lines_OwnerSeesPrivatePluginOnlyViaValueService(t *testing.T
 	if _, ok := openLines[0].Extensions["acme.secret"]; ok {
 		t.Fatalf("unattributed saw private plugin-only: %+v", openLines[0].Extensions)
 	}
+	// Second plugin also gets includePrivate=true (owner set) but must still
+	// filter foreign private plugin-only via keepOrderExtension.
+	hostApp.RecordNeedsFor("other", plugin.CapOrders)
+	otherScoped, ok := pluginsdk.AsHostFor(hostApp, "other").Orders()
+	if !ok {
+		t.Fatal("other Orders() false")
+	}
+	otherLines, err := otherScoped.Lines(context.Background(), "o1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := otherLines[0].Extensions["acme.secret"]; ok {
+		t.Fatalf("other plugin with includePrivate saw private plugin-only: %+v", otherLines[0].Extensions)
+	}
 }
 
 type orderExtMemRepo struct {

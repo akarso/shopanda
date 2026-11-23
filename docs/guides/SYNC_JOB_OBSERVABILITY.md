@@ -48,10 +48,12 @@ if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, plugi
 
 Idempotent job id (optional): `RegisterOnEvent(…, pluginsdk.WithEventJobID(func(payload) uuid))`.
 The callback sees a flattened public map (`order_id` at the top level for
-`order.created`) **before** `request_id` is injected. Job ids are global per
-queue — derive from job purpose + entity (e.g. UUID v5 over job type +
-`order_id`), not a raw order UUID shared by multiple listeners. Conflict
-resolves like `WithJobID` when `JobsPort` is bound.
+`order.created`) **before** `request_id` is injected. That flatten already
+decodes JSON numbers as `float64` (same shape as a later queue round-trip),
+so `EventJobID` must tolerate `float64` for numeric fields. Job ids are
+global per queue — derive from job purpose + entity (e.g. UUID v5 over job
+type + `order_id`), not a raw order UUID shared by multiple listeners.
+Conflict resolves like `WithJobID` when `JobsPort` is bound.
 
 `event.Bus.OnAsync` handlers intentionally receive the **shutdown context**, not
 the Publish request context (so request cancel does not abort side effects).
@@ -67,8 +69,7 @@ Correlation still works:
 
 So HTTP → `Publish(ctx, …)` (or Publish-fail → `PublishAsync(ctx, …)`) →
 OnAsync enqueue yields `request_id` on the queued envelope without plugins
-reading the Publish context directly. JSON numbers in the flattened payload
-are `float64` after a queue round-trip.
+reading the Publish context directly.
 
 Cron triggers use a timeout/`Background` context and typically have no
 `request_id` (expected).
