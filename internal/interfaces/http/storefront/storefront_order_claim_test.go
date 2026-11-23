@@ -111,6 +111,10 @@ func (r *storefrontOrderClaimRepoStub) LinkToCustomerByContactEmail(_ context.Co
 func (r *storefrontOrderClaimRepoStub) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *storefrontOrderClaimRepoStub) ListCreatedSince(context.Context, time.Time, string, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+
 
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string

@@ -3,6 +3,7 @@ package pluginsdk
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/akarso/shopanda/pkg/extapi"
 )
@@ -174,9 +175,18 @@ type CatalogSeedPort interface {
 	SetStock(ctx context.Context, variantID string, qty int) error
 }
 
-// OrderPort provides minimal order reads.
+// OrderPort provides order reads for plugins that declare CapOrders.
+//
+// Lines returns each order line keyed by (orderID, VariantID) — items have no
+// separate id. Extension values are public fields plus PluginOnlyWrite fields
+// owned by the calling plugin (Host from AsHostFor / Adapt); without an
+// extension reader attached at the composition root, Extensions is empty.
+// ListCreatedSince is for reconciliation (CreatedAt >= since, keyset via
+// afterID); CreatedAt is included on each OrderView for cursor display.
 type OrderPort interface {
 	FindByID(ctx context.Context, id string) (*extapi.OrderView, error)
+	Lines(ctx context.Context, orderID string) ([]extapi.OrderLineView, error)
+	ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]extapi.OrderView, error)
 }
 
 // CustomerPort provides minimal customer reads.

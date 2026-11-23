@@ -224,6 +224,10 @@ func (r *stubCheckoutOrderRepo) LinkToCustomerByContactEmail(_ context.Context, 
 func (r *stubCheckoutOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *stubCheckoutOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 // stubCheckoutPriceRepo ─────────────────────────────────────────────────
 

@@ -116,6 +116,10 @@ func (r *storefrontCheckoutOrderRepoStub) LinkToCustomerByContactEmail(_ context
 func (r *storefrontCheckoutOrderRepoStub) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *storefrontCheckoutOrderRepoStub) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 type storefrontCheckoutShipmentRepoStub struct {
 	created *shipping.Shipment

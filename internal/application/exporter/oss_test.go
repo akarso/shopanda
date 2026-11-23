@@ -51,6 +51,9 @@ func (s *stubOssOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Tim
 	}
 	return s.rows, nil
 }
+func (s *stubOssOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
 
 func TestOssExport_DetailRows(t *testing.T) {
 	created := time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)

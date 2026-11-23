@@ -96,6 +96,10 @@ func (r *stubOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ str
 func (r *stubOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *stubOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 // ── helpers ─────────────────────────────────────────────────────────────
 

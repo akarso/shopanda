@@ -84,6 +84,10 @@ func (r *invoiceHTTPOrderRepo) LinkToCustomerByContactEmail(context.Context, str
 func (r *invoiceHTTPOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *invoiceHTTPOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 type stubInvoicePDFRenderer struct {
 	data []byte

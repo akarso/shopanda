@@ -27,6 +27,13 @@ type OrderRepository interface {
 	// List returns a page of orders, newest first.
 	List(ctx context.Context, offset, limit int) ([]Order, error)
 
+	// ListCreatedSince returns orders with CreatedAt >= since, ordered by
+	// (created_at ASC, id ASC), for reconciliation sweeps. afterID continues
+	// after that order within the same window (empty starts at since). Items
+	// are not loaded. limit is capped at 100; values <= 0 fail closed.
+	// Unknown afterID fails closed.
+	ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]Order, error)
+
 	// Save persists an order and its items (insert-only; orders are immutable
 	// except for status transitions via UpdateStatus).
 	Save(ctx context.Context, order *Order) error

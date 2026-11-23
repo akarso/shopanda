@@ -142,6 +142,10 @@ func (r *mockOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ str
 func (r *mockOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Time) ([]order.TaxSnapshotRow, error) {
 	return nil, nil
 }
+func (r *mockOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
+	return nil, nil
+}
+
 
 // ============================================================
 // Helpers
