@@ -46,6 +46,9 @@ if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, plugi
 
 ### Event path (`RegisterOnEvent`)
 
+Idempotent job id (optional): `RegisterOnEvent(…, pluginsdk.WithEventJobID(func(payload) uuid))`.
+Conflict resolves like `WithJobID` when `JobsPort` is bound.
+
 `event.Bus.OnAsync` handlers intentionally receive the **shutdown context**, not
 the Publish request context (so request cancel does not abort side effects).
 Correlation still works:
