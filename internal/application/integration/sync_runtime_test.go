@@ -12,7 +12,9 @@ import (
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/requestctx"
@@ -27,6 +29,11 @@ type memQueue struct {
 func (q *memQueue) Enqueue(_ context.Context, job jobs.Job) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	for _, existing := range q.enqueued {
+		if existing.ID == job.ID {
+			return apperror.New(apperror.CodeConflict, "job id already enqueued")
+		}
+	}
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
@@ -127,6 +134,80 @@ func TestRegisterSyncJobEventTriggers_EnqueuesOnPublish(t *testing.T) {
 	if payload["order_id"] != "ord-1" {
 		t.Fatalf("payload = %#v", payload)
 	}
+}
+
+func TestRegisterSyncJobEventTriggers_EventJobIDIdempotent(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	queue := &memQueue{}
+	app := &plugin.App{
+		Logger:    log,
+		Bus:       bus,
+		Bootstrap: &plugin.Bootstrap{},
+	}
+	fixedID := id.New()
+	job := extapi.SyncJob{
+		Name:    "export.order",
+		Trigger: extapi.OnEvent("order.created"),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+		EventJobID: func(payload map[string]interface{}) string {
+			return fixedID
+		},
+	}
+	if err := app.Integration("acme").RegisterSyncJob(job); err != nil {
+		t.Fatalf("RegisterSyncJob: %v", err)
+	}
+	// JobsPort required for Conflict resolve — bind a pending detail getter.
+	if err := app.BindJobsPort(&eventJobConflictPort{
+		detail: &jobs.Detail{Summary: jobs.Summary{
+			ID: fixedID, Type: "integration.sync.acme.export.order", Status: jobs.StatusPending,
+		}},
+	}); err != nil {
+		t.Fatalf("BindJobsPort: %v", err)
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(app, bus, queue, log); err != nil {
+		t.Fatalf("RegisterSyncJobEventTriggers: %v", err)
+	}
+
+	waitEnqueued := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if queue.len() >= n {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatalf("enqueued = %d, want >= %d", queue.len(), n)
+	}
+
+	evt := event.Event{Name: "order.created", Data: map[string]interface{}{"order_id": "ord-1"}}
+	if err := bus.Publish(context.Background(), evt); err != nil {
+		t.Fatalf("Publish 1: %v", err)
+	}
+	waitEnqueued(1)
+	if queue.first().ID != fixedID {
+		t.Fatalf("job id = %q, want %q", queue.first().ID, fixedID)
+	}
+	// Second delivery: Conflict → ResolveEnqueueConflict → pending no-op.
+	if err := bus.Publish(context.Background(), evt); err != nil {
+		t.Fatalf("Publish 2: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if queue.len() != 1 {
+		t.Fatalf("enqueued after duplicate = %d, want 1", queue.len())
+	}
+}
+
+type eventJobConflictPort struct {
+	detail *jobs.Detail
+}
+
+func (p *eventJobConflictPort) Get(context.Context, string) (*jobs.Detail, error) {
+	return p.detail, nil
+}
+func (p *eventJobConflictPort) Requeue(context.Context, string, int, ...jobs.RequeueOption) error {
+	return nil
 }
 
 func TestRegisterSyncJobEventTriggers_PropagatesRequestIDFromPublish(t *testing.T) {

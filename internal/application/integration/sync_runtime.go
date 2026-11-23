@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -56,7 +57,7 @@ func RegisterSyncJobEventTriggers(app *plugin.App, bus *event.Bus, queue jobs.Qu
 				}
 				payload = copied
 			}
-			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, payload, log)
+			return enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerEvent, payload, log, app)
 		})
 		if log != nil {
 			log.Info("integration.sync_job.event_registered", map[string]interface{}{
@@ -85,7 +86,7 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 		sched.Register(jobReg.JobType, spec, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerCron, nil, log); err != nil && log != nil {
+			if err := enqueueSyncJob(ctx, queue, jobReg, extapi.SyncTriggerCron, nil, log, nil); err != nil && log != nil {
 				log.Error("integration.sync_job.cron_enqueue", err, map[string]interface{}{
 					"job_type": jobReg.JobType,
 				})
@@ -101,13 +102,27 @@ func RegisterSyncJobCronTriggers(app *plugin.App, queue jobs.Queue, sched schedu
 	return nil
 }
 
-func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger) error {
+func enqueueSyncJob(ctx context.Context, queue jobs.Queue, reg plugin.SyncJobRegistration, trigger string, payload map[string]interface{}, log logger.Logger, app *plugin.App) error {
 	payload = plugin.InjectRequestID(ctx, payload)
-	job, err := plugin.NewSyncJobEnvelope(reg, trigger, payload)
+	var (
+		job    jobs.Job
+		err    error
+		fixedID bool
+	)
+	if trigger == extapi.SyncTriggerEvent && reg.Job.EventJobID != nil {
+		derived := strings.TrimSpace(reg.Job.EventJobID(payload))
+		job, err = plugin.NewSyncJobEnvelopeWithID(reg, trigger, payload, derived)
+		fixedID = true
+	} else {
+		job, err = plugin.NewSyncJobEnvelope(reg, trigger, payload)
+	}
 	if err != nil {
 		return err
 	}
 	if err := queue.Enqueue(ctx, job); err != nil {
+		if fixedID && app != nil && apperror.Is(err, apperror.CodeConflict) {
+			return app.ResolveEnqueueConflict(ctx, reg.Job.Name, job.ID, job.Type, err)
+		}
 		return err
 	}
 	if log != nil {

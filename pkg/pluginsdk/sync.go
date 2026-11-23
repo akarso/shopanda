@@ -21,6 +21,16 @@ func MaxRetries(n int) SyncJobOption {
 	}
 }
 
+// WithEventJobID derives the queue job id from the event payload for
+// RegisterOnEvent jobs (UUID required). Two deliveries of the same event with
+// the same derived id resolve like WithJobID when JobsPort is bound. Cron and
+// manual registrations reject this option.
+func WithEventJobID(fn func(payload map[string]interface{}) string) SyncJobOption {
+	return func(job *extapi.SyncJob) {
+		job.EventJobID = fn
+	}
+}
+
 // EnqueueOption configures SyncJobs.Enqueue (run-now).
 type EnqueueOption func(*enqueueConfig)
 
