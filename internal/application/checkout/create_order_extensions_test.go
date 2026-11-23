@@ -2,6 +2,7 @@ package checkout_test
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -275,5 +276,38 @@ func TestCreateOrderStep_PublishesOrderCreatedAfterExtensionSnapshot(t *testing.
 	}
 	if !sawExtAtPublish {
 		t.Fatal("order.created fired before order_item extension snapshot was visible")
+	}
+}
+
+type snapshotFailExt struct{}
+
+func (snapshotFailExt) SnapshotCartItemToOrderItem(context.Context, string, string, string, string) error {
+	return fmt.Errorf("snapshot boom")
+}
+
+func TestCreateOrderStep_SnapshotFailureStillPublishesOrderCreated(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	bus := event.NewBus(logger.New("error"))
+	var published bool
+	bus.On(domainorder.EventOrderCreated, func(context.Context, event.Event) error {
+		published = true
+		return nil
+	})
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, snapshotFailExt{}, idleProducts(), idleComponents(), idlePrices()).
+		WithStockEventPublishing(bus, logger.New("error"))
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+	err := step.Execute(context.Background(), cctx)
+	if err == nil || !strings.Contains(err.Error(), "snapshot boom") {
+		t.Fatalf("Execute err = %v, want snapshot boom", err)
+	}
+	if !published {
+		t.Fatal("expected order.created even when snapshot fails")
+	}
+	if _, ok := cctx.GetMeta("created_order_id"); !ok {
+		t.Fatal("expected created_order_id after save")
 	}
 }

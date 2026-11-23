@@ -47,7 +47,11 @@ if err := sdk.Integration("acme").Enqueue(r.Context(), "gen.run", payload, plugi
 ### Event path (`RegisterOnEvent`)
 
 Idempotent job id (optional): `RegisterOnEvent(…, pluginsdk.WithEventJobID(func(payload) uuid))`.
-Conflict resolves like `WithJobID` when `JobsPort` is bound.
+The callback sees a flattened public map (`order_id` at the top level for
+`order.created`) **before** `request_id` is injected. Job ids are global per
+queue — derive from job purpose + entity (e.g. UUID v5 over job type +
+`order_id`), not a raw order UUID shared by multiple listeners. Conflict
+resolves like `WithJobID` when `JobsPort` is bound.
 
 `event.Bus.OnAsync` handlers intentionally receive the **shutdown context**, not
 the Publish request context (so request cancel does not abort side effects).

@@ -53,6 +53,9 @@ type SyncJob struct {
 	// enqueue closed. Enables one-job-per-entity without a dispatcher Enqueue.
 	// Ignored for cron/manual triggers (registration fails if set).
 	EventJobID func(payload map[string]interface{}) string
+	// EventJobIDSet is true when WithEventJobID was applied (even with a nil
+	// func). Distinguishes "unset → random id" from "WithEventJobID(nil)".
+	EventJobIDSet bool
 }
 
 // OnEvent returns an event trigger for RegisterSyncJob.

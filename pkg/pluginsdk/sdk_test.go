@@ -156,6 +156,14 @@ func TestSyncJobs_WithEventJobID(t *testing.T) {
 	})); err == nil {
 		t.Fatal("expected EventJobID rejected on cron")
 	}
+	if err := sdk.Integration("acme").RegisterManual("run.now", handler, pluginsdk.WithEventJobID(func(map[string]interface{}) string {
+		return "550e8400-e29b-41d4-a716-446655440000"
+	})); err == nil {
+		t.Fatal("expected EventJobID rejected on manual")
+	}
+	if err := sdk.Integration("acme").RegisterOnEvent("bad", "order.created", handler, pluginsdk.WithEventJobID(nil)); err == nil {
+		t.Fatal("expected WithEventJobID(nil) rejected")
+	}
 }
 
 func TestSyncJobs_RegisterManualAndEnqueue(t *testing.T) {

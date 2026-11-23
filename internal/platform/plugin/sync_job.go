@@ -124,7 +124,7 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 		if strings.TrimSpace(job.Trigger.CronSpec) == "" {
 			return fmt.Errorf("plugin: sync job %q: cron spec required", name)
 		}
-		if job.EventJobID != nil {
+		if job.EventJobID != nil || job.EventJobIDSet {
 			return fmt.Errorf("plugin: sync job %q: EventJobID is only valid for event triggers", name)
 		}
 	case extapi.SyncTriggerEvent:
@@ -133,9 +133,12 @@ func (a *App) registerSyncJob(pluginSlug string, job extapi.SyncJob) error {
 			return fmt.Errorf("plugin: sync job %q: event name required", name)
 		}
 		reg.Job.Trigger.EventName = eventName
+		if job.EventJobIDSet && job.EventJobID == nil {
+			return fmt.Errorf("plugin: sync job %q: WithEventJobID requires a non-nil func", name)
+		}
 	case extapi.SyncTriggerManual:
 		// On-demand only; no cron/event fields.
-		if job.EventJobID != nil {
+		if job.EventJobID != nil || job.EventJobIDSet {
 			return fmt.Errorf("plugin: sync job %q: EventJobID is only valid for event triggers", name)
 		}
 	default:
@@ -198,7 +201,8 @@ func newSyncJobEnvelope(reg SyncJobRegistration, trigger string, payload map[str
 	return job, nil
 }
 
-func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
+// ShallowCopyStringMap copies a string-keyed map (nil → nil).
+func ShallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 	if in == nil {
 		return nil
 	}
@@ -207,6 +211,10 @@ func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
+}
+
+func shallowCopyStringMap(in map[string]interface{}) map[string]interface{} {
+	return ShallowCopyStringMap(in)
 }
 
 // InjectRequestID shallow-copies payload and, when ctx carries a request ID

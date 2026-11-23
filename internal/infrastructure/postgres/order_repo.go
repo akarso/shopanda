@@ -272,14 +272,12 @@ func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string)
 }
 
 // ListCreatedSince returns orders with CreatedAt >= since, oldest first.
-// Items are not loaded. afterID continues after that order; unknown afterID
-// fails closed. limit <= 0 fails closed; limit > 100 is capped at 100.
+// Items are not loaded. afterID continues after that order within the since
+// window; unknown afterID or afterID with created_at < since fails closed.
+// limit must be in 1..100 (no silent clamp).
 func (r *OrderRepo) ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]order.Order, error) {
-	if limit <= 0 {
-		return nil, fmt.Errorf("order_repo: list created since: limit must be > 0")
-	}
-	if limit > 100 {
-		limit = 100
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("order_repo: list created since: limit must be 1..100")
 	}
 	afterID = strings.TrimSpace(afterID)
 	var (
@@ -304,6 +302,9 @@ func (r *OrderRepo) ListCreatedSince(ctx context.Context, since time.Time, after
 				return nil, mapped
 			}
 			return nil, fmt.Errorf("order_repo: list created since: lookup after_id: %w", err)
+		}
+		if afterCreated.Before(since) {
+			return nil, fmt.Errorf("order_repo: list created since: after_id %q is before since", afterID)
 		}
 		const q = `SELECT ` + orderSelectColumns + `
 			FROM orders

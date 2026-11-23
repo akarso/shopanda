@@ -18,7 +18,6 @@ import (
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
-
 func mustSeedPort(t *testing.T, products catalog.ProductRepository, variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, stock inventory.StockRepository, db any) pluginsdk.CatalogSeedPort {
 	t.Helper()
 	port, err := pluginsdk.NewCatalogSeedPort(products, variants, prices, history, stock, db)
@@ -76,8 +75,14 @@ type stubOrders struct {
 func (s stubOrders) FindByID(_ context.Context, id string) (*domainorder.Order, error) {
 	return s.byID[id], nil
 }
-func (stubOrders) FindByIDs(context.Context, []string) (map[string]*domainorder.Order, error) {
-	return nil, nil
+func (s stubOrders) FindByIDs(_ context.Context, ids []string) (map[string]*domainorder.Order, error) {
+	out := make(map[string]*domainorder.Order, len(ids))
+	for _, id := range ids {
+		if o := s.byID[id]; o != nil {
+			out[id] = o
+		}
+	}
+	return out, nil
 }
 func (stubOrders) FindByCustomerID(context.Context, string) ([]domainorder.Order, error) {
 	return nil, nil
@@ -92,9 +97,9 @@ func (s stubOrders) ListCreatedSince(context.Context, time.Time, string, int) ([
 	}
 	return s.listed, nil
 }
-func (stubOrders) Save(context.Context, *domainorder.Order) error { return nil }
-func (stubOrders) UpdateStatus(context.Context, *domainorder.Order) error      { return nil }
-func (stubOrders) LinkToCustomer(context.Context, *domainorder.Order) error    { return nil }
+func (stubOrders) Save(context.Context, *domainorder.Order) error           { return nil }
+func (stubOrders) UpdateStatus(context.Context, *domainorder.Order) error   { return nil }
+func (stubOrders) LinkToCustomer(context.Context, *domainorder.Order) error { return nil }
 func (stubOrders) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
 }
@@ -290,16 +295,25 @@ func TestOrdersPort_FindByID(t *testing.T) {
 }
 
 type stubOrderExtReader struct {
-	byVariant map[string][]domainext.Value
-	owners    map[string]string
+	byVariant  map[string][]domainext.Value
+	owners     map[string]string
 	pluginOnly map[string]bool
+	private    map[string]bool
 }
 
 func (s stubOrderExtReader) ListByOrderItems(_ context.Context, _ string, _ []string, _ bool) (map[string][]domainext.Value, error) {
 	return s.byVariant, nil
 }
+func (s stubOrderExtReader) ListByOrderItemsBatch(_ context.Context, byOrder map[string][]string, _ bool) (map[string]map[string][]domainext.Value, error) {
+	out := make(map[string]map[string][]domainext.Value, len(byOrder))
+	for orderID := range byOrder {
+		out[orderID] = s.byVariant
+	}
+	return out, nil
+}
 func (s stubOrderExtReader) IsPluginOnlyWrite(code string) bool { return s.pluginOnly[code] }
-func (s stubOrderExtReader) FieldOwner(code string) string     { return s.owners[code] }
+func (s stubOrderExtReader) IsPrivate(code string) bool         { return s.private[code] }
+func (s stubOrderExtReader) FieldOwner(code string) string      { return s.owners[code] }
 
 func TestOrdersPort_Lines_FiltersPluginOnlyByOwner(t *testing.T) {
 	item, err := domainorder.NewItem("v1", "SKU-1", "Widget", 2, shared.MustNewMoney(500, "EUR"))
@@ -372,6 +386,63 @@ func TestOrdersPort_ListCreatedSince(t *testing.T) {
 	}
 }
 
+func TestOrdersPort_AttachVisibleToPortTakenDuringInit(t *testing.T) {
+	item, err := domainorder.NewItem("v1", "SKU", "Name", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := domainorder.NewOrder("o1", "c1", "", "EUR", []domainorder.Item{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := pluginsdk.NewOrdersPort(stubOrders{byID: map[string]*domainorder.Order{o.ID: &o}})
+	hostApp := &plugin.App{}
+	if err := hostApp.BindOrdersPort(port); err != nil {
+		t.Fatalf("BindOrdersPort: %v", err)
+	}
+	hostApp.RecordNeedsFor("acme", plugin.CapOrders)
+	held, ok := pluginsdk.AsHostFor(hostApp, "acme").Orders()
+	if !ok {
+		t.Fatal("Orders() false")
+	}
+	design := "d1"
+	pluginsdk.AttachOrderLineExtensions(port, stubOrderExtReader{
+		byVariant: map[string][]domainext.Value{
+			"v1": {{FieldCode: "acme.design", Payload: domainext.ValuePayload{StringValue: &design}}},
+		},
+		pluginOnly: map[string]bool{"acme.design": true},
+		owners:     map[string]string{"acme.design": "acme"},
+	})
+	lines, err := held.Lines(context.Background(), "o1")
+	if err != nil || len(lines) != 1 || lines[0].Extensions["acme.design"] != "d1" {
+		t.Fatalf("Lines after late Attach = %+v err=%v", lines, err)
+	}
+}
+
+func TestOrdersPort_UnattributedKeepsPublicPluginOnly(t *testing.T) {
+	item, err := domainorder.NewItem("v1", "SKU", "Name", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := domainorder.NewOrder("o1", "c1", "", "EUR", []domainorder.Item{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := pluginsdk.NewOrdersPort(stubOrders{byID: map[string]*domainorder.Order{o.ID: &o}})
+	val := "x"
+	pluginsdk.AttachOrderLineExtensions(port, stubOrderExtReader{
+		byVariant: map[string][]domainext.Value{
+			"v1": {{FieldCode: "acme.design", Payload: domainext.ValuePayload{StringValue: &val}}},
+		},
+		pluginOnly: map[string]bool{"acme.design": true},
+		owners:     map[string]string{"acme.design": "acme"},
+	})
+	lines, err := port.Lines(context.Background(), "o1")
+	if err != nil || lines[0].Extensions["acme.design"] != "x" {
+		t.Fatalf("unattributed Lines = %+v err=%v", lines, err)
+	}
+}
+
 func TestCatalogSeedPort_EnsureProductValidation(t *testing.T) {
 	port := mustSeedPort(t, stubProducts{}, stubVariants{}, nil, nil, nil, nil)
 	if _, _, err := port.EnsureProduct(context.Background(), pluginsdk.CatalogProductSeed{Name: "X"}); err == nil {
@@ -381,7 +452,7 @@ func TestCatalogSeedPort_EnsureProductValidation(t *testing.T) {
 
 type seedProducts struct {
 	stubProducts
-	bySlug map[string]*catalog.Product
+	bySlug  map[string]*catalog.Product
 	created []*catalog.Product
 }
 
@@ -841,8 +912,10 @@ func (s *seedPrices) FindByVariantCurrencyAndStore(_ context.Context, variantID,
 func (s *seedPrices) FindByVariantsCurrencyAndStore(context.Context, []string, string, string) (map[string]*pricing.Price, error) {
 	return nil, nil
 }
-func (s *seedPrices) ListByVariantID(context.Context, string) ([]pricing.Price, error) { return nil, nil }
-func (s *seedPrices) List(context.Context, int, int) ([]pricing.Price, error)          { return nil, nil }
+func (s *seedPrices) ListByVariantID(context.Context, string) ([]pricing.Price, error) {
+	return nil, nil
+}
+func (s *seedPrices) List(context.Context, int, int) ([]pricing.Price, error) { return nil, nil }
 func (s *seedPrices) Upsert(_ context.Context, p *pricing.Price) error {
 	if s.byKey == nil {
 		s.byKey = map[string]*pricing.Price{}

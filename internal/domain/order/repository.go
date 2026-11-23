@@ -30,8 +30,8 @@ type OrderRepository interface {
 	// ListCreatedSince returns orders with CreatedAt >= since, ordered by
 	// (created_at ASC, id ASC), for reconciliation sweeps. afterID continues
 	// after that order within the same window (empty starts at since). Items
-	// are not loaded. limit is capped at 100; values <= 0 fail closed.
-	// Unknown afterID fails closed.
+	// are not loaded. limit must be 1..100. Unknown afterID or afterID with
+	// created_at before since fails closed.
 	ListCreatedSince(ctx context.Context, since time.Time, afterID string, limit int) ([]Order, error)
 
 	// Save persists an order and its items (insert-only; orders are immutable

@@ -11,6 +11,7 @@ import (
 
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	domainorder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -133,6 +134,61 @@ func TestRegisterSyncJobEventTriggers_EnqueuesOnPublish(t *testing.T) {
 	payload, _ := queue.first().Payload["payload"].(map[string]interface{})
 	if payload["order_id"] != "ord-1" {
 		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestRegisterSyncJobEventTriggers_EventJobIDFromOrderCreatedData(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	queue := &memQueue{}
+	app := &plugin.App{
+		Logger:    log,
+		Bus:       bus,
+		Bootstrap: &plugin.Bootstrap{},
+	}
+	var sawOrderID string
+	fixedNS := id.New()
+	job := extapi.SyncJob{
+		Name:    "snap.order",
+		Trigger: extapi.OnEvent(domainorder.EventOrderCreated),
+		Handler: func(context.Context, extapi.SyncJobContext) error { return nil },
+		EventJobID: func(payload map[string]interface{}) string {
+			sawOrderID, _ = payload["order_id"].(string)
+			if sawOrderID == "" {
+				return ""
+			}
+			return fixedNS
+		},
+		EventJobIDSet: true,
+	}
+	if err := app.Integration("acme").RegisterSyncJob(job); err != nil {
+		t.Fatalf("RegisterSyncJob: %v", err)
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(app, bus, queue, log); err != nil {
+		t.Fatalf("RegisterSyncJobEventTriggers: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.Event{
+		Name: domainorder.EventOrderCreated,
+		Data: domainorder.OrderCreatedData{OrderID: "ord-typed-1", Currency: "EUR", ItemCount: 2},
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && queue.len() == 0 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if queue.len() != 1 {
+		t.Fatalf("enqueued = %d, sawOrderID=%q", queue.len(), sawOrderID)
+	}
+	if sawOrderID != "ord-typed-1" {
+		t.Fatalf("EventJobID saw order_id=%q, want ord-typed-1", sawOrderID)
+	}
+	if queue.first().ID != fixedNS {
+		t.Fatalf("job id = %q, want derived %q", queue.first().ID, fixedNS)
+	}
+	payload, _ := queue.first().Payload["payload"].(map[string]interface{})
+	if payload["order_id"] != "ord-typed-1" {
+		t.Fatalf("stored payload = %#v", payload)
 	}
 }
 
