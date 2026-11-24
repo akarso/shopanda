@@ -4,30 +4,19 @@ import (
 	"context"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/domain/order"
 )
 
-func orderItemExtensionsMap(ctx context.Context, values extensionapp.ValueAPI, orderID string, variantIDs []string) (map[string][]cartItemExtensionResponse, error) {
-	if values == nil || len(variantIDs) == 0 {
-		return nil, nil
-	}
-
-	storedByVariant, err := values.ListByOrderItems(ctx, orderID, variantIDs, false)
+func orderItemExtensionsMap(ctx context.Context, values extensionapp.ValueAPI, orderID string, variantIDs []string, onFieldErr extensionapp.SoftFieldError) (map[string][]cartItemExtensionResponse, error) {
+	byVariant, err := extensionapp.PublicOrderItemAPIByVariant(ctx, values, orderID, variantIDs, onFieldErr)
 	if err != nil {
 		return nil, err
 	}
-	if len(storedByVariant) == 0 {
+	if len(byVariant) == 0 {
 		return nil, nil
 	}
-
-	out := make(map[string][]cartItemExtensionResponse, len(storedByVariant))
-	for variantID, stored := range storedByVariant {
-		if len(stored) == 0 {
-			continue
-		}
-		apiValues, err := extensionapp.APIValuesForTarget(values.Registry(), stored)
-		if err != nil {
-			return nil, err
-		}
+	out := make(map[string][]cartItemExtensionResponse, len(byVariant))
+	for variantID, apiValues := range byVariant {
 		items := make([]cartItemExtensionResponse, 0, len(apiValues))
 		for _, item := range apiValues {
 			items = append(items, cartItemExtensionResponse{
@@ -47,4 +36,73 @@ func orderItemExtensionsFromMap(byVariant map[string][]cartItemExtensionResponse
 		return nil
 	}
 	return byVariant[variantID]
+}
+
+// storefrontOrderLineItems builds account/confirm line rows with VariantID and
+// public order_item extensions (same ExtensionDisplayRows order as email).
+func (h *StorefrontHandler) storefrontOrderLineItems(ctx context.Context, o *order.Order) ([]StorefrontAccountOrderItem, error) {
+	if o == nil {
+		return nil, nil
+	}
+	orderItems := o.Items()
+	items := make([]StorefrontAccountOrderItem, 0, len(orderItems))
+	variantIDs := make([]string, len(orderItems))
+	for i, item := range orderItems {
+		variantIDs[i] = item.VariantID
+		lineTotal, err := item.LineTotal()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, StorefrontAccountOrderItem{
+			Name:          item.Name,
+			SKU:           item.SKU,
+			VariantID:     item.VariantID,
+			Quantity:      item.Quantity,
+			UnitPriceText: formatStorefrontMoney(item.UnitPrice.Amount(), item.UnitPrice.Currency()),
+			LineTotalText: formatStorefrontMoney(lineTotal.Amount(), lineTotal.Currency()),
+		})
+	}
+	if h == nil || h.extensions == nil || len(variantIDs) == 0 {
+		return items, nil
+	}
+	var onFieldErr extensionapp.SoftFieldError
+	if h.log != nil {
+		onFieldErr = func(code string, fieldErr error) {
+			h.log.Error("storefront.order_item_extension_field_failed", fieldErr, map[string]interface{}{
+				"order_id":   o.ID,
+				"field_code": code,
+			})
+		}
+	}
+	byVariant, err := extensionapp.PublicOrderItemAPIByVariant(ctx, h.extensions, o.ID, variantIDs, onFieldErr)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("storefront.order_line_extensions_failed", err, map[string]interface{}{
+				"order_id": o.ID,
+			})
+		}
+		// Core name/SKU/qty/price still render; extensions are best-effort.
+		return items, nil
+	}
+	reg := h.extensions.Registry()
+	for i := range items {
+		rows := extensionapp.ExtensionDisplayRows(reg, byVariant[items[i].VariantID])
+		items[i].Extensions = storefrontDisplaysFromRows(rows)
+	}
+	return items, nil
+}
+
+func storefrontDisplaysFromRows(rows []extensionapp.ExtensionDisplayRow) []StorefrontOrderLineExtensionDisplay {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]StorefrontOrderLineExtensionDisplay, len(rows))
+	for i, row := range rows {
+		out[i] = StorefrontOrderLineExtensionDisplay{
+			FieldCode: row.FieldCode,
+			Label:     row.Label,
+			Value:     row.Value,
+		}
+	}
+	return out
 }

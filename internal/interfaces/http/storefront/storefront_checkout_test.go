@@ -20,9 +20,11 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -1006,6 +1008,273 @@ func TestStorefrontHandler_CheckoutPaymentReturn_NeutralCopy(t *testing.T) {
 	csp := rec.Header().Get("Content-Security-Policy")
 	if strings.Contains(csp, "js.stripe.com") {
 		t.Fatalf("return page must not widen Stripe CSP: %q", csp)
+	}
+}
+
+func paymentReturnOrderFixture(t *testing.T, ownerID string) (*storefrontAccountOrderRepoStub, extensionapp.ValueAPI) {
+	t.Helper()
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-SECRET", "Secret Widget", 1, shared.MustNewMoney(9999, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-secret", ownerID, "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetOrderItem, StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newOrderTestExtensionValueRepo()
+	msg := "owner-gift"
+	extRepo.values[orderTestExtKey(domainext.OrderItemTarget("ord-secret", "var-1"), "acme.gift.message")] = domainext.Value{
+		FieldCode: "acme.gift.message", TargetType: domainext.TargetOrderItem, TargetID: "ord-secret:var-1",
+		Payload: domainext.ValuePayload{StringValue: &msg},
+	}
+	return orders, extensionapp.NewValueService(reg, extRepo)
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_AnonymousOrderIDHasNoLines(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders, values := paymentReturnOrderFixture(t, "owner-1")
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-secret", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, leak := range []string{"Secret Widget", "SKU-SECRET", "owner-gift", "confirm-line", "view-order"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("unsigned return leaked %q: %s", leak, body)
+		}
+	}
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_OwnerSeesLines(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders, values := paymentReturnOrderFixture(t, "owner-1")
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := storefrontCustomerRequest(httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-secret", nil), "owner-1")
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Secret Widget") || !strings.Contains(body, "SKU-SECRET") || !strings.Contains(body, "Gift:owner-gift") {
+		t.Fatalf("owner missing line data: %s", body)
+	}
+	if !strings.Contains(body, `id="view-order"`) || !strings.Contains(body, "/account/orders/ord-secret") {
+		t.Fatalf("owner missing View Order: %s", body)
+	}
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_OtherCustomerHasNoLines(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders, values := paymentReturnOrderFixture(t, "owner-1")
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := storefrontCustomerRequest(httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-secret", nil), "other-9")
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, leak := range []string{"Secret Widget", "SKU-SECRET", "owner-gift", "confirm-line", "view-order", "/account/orders/ord-secret"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("other customer leaked %q: %s", leak, body)
+		}
+	}
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_MatchingFlashShowsGuestLines(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Guest Widget", 1, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	// Guest order: empty CustomerID.
+	o, err := order.NewOrder("ord-guest", "", "guest@example.com", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift message", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetOrderItem, StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newOrderTestExtensionValueRepo()
+	msg := "Hello guest"
+	extRepo.values[orderTestExtKey(domainext.OrderItemTarget("ord-guest", "var-1"), "acme.gift.message")] = domainext.Value{
+		FieldCode: "acme.gift.message", TargetType: domainext.TargetOrderItem, TargetID: "ord-guest:var-1",
+		Payload: domainext.ValuePayload{StringValue: &msg},
+	}
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	flash := signCheckoutFlashCookie(t, map[string]interface{}{
+		"order_id":     "ord-guest",
+		"status":       "pending",
+		"total_text":   "EUR 15.00",
+		"notice":       "Thanks",
+		"continue_url": "/products",
+		"guest_email":  "guest@example.com",
+		"exp":          time.Now().UTC().Add(10 * time.Minute).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-guest", nil)
+	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_placed", Value: flash})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Guest Widget") || !strings.Contains(body, "Gift message:Hello guest") {
+		t.Fatalf("matching flash should show guest lines: %s", body)
+	}
+	cleared := false
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected confirm flash cleared after payment return")
+	}
+}
+
+func TestStorefrontHandler_CheckoutPaymentReturn_MismatchedFlashNoLines(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders, values := paymentReturnOrderFixture(t, "owner-1")
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	// Flash for ord-secret; query asks for a different id. Session is neither owner.
+	flash := signCheckoutFlashCookie(t, map[string]interface{}{
+		"order_id":       "ord-secret",
+		"status":         "pending",
+		"total_text":     "EUR 99.99",
+		"notice":         "Thanks",
+		"continue_url":   "/products",
+		"view_order_url": "/account/orders/ord-secret",
+		"exp":            time.Now().UTC().Add(10 * time.Minute).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	req := storefrontCustomerRequest(httptest.NewRequest("GET", "/checkout/payment/return?order_id=ord-other", nil), "other-9")
+	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_placed", Value: flash})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, leak := range []string{"Secret Widget", "SKU-SECRET", "owner-gift", "confirm-line", "view-order", "/account/orders/ord-secret"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("mismatched flash leaked %q: %s", leak, body)
+		}
+	}
+	cleared := false
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "shopanda_checkout_placed" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected confirm flash cleared even when order_id mismatches")
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_FlashRendersLineExtensions(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift message", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetOrderItem, StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := newOrderTestExtensionValueRepo()
+	msg := "Hello"
+	extRepo.values[orderTestExtKey(domainext.OrderItemTarget("ord-1", "var-1"), "acme.gift.message")] = domainext.Value{
+		FieldCode: "acme.gift.message", TargetType: domainext.TargetOrderItem, TargetID: "ord-1:var-1",
+		Payload: domainext.ValuePayload{StringValue: &msg},
+	}
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values))
+	router := newStorefrontRouter(h)
+
+	flash := signCheckoutFlashCookie(t, map[string]interface{}{
+		"order_id":       "ord-1",
+		"status":         "pending",
+		"total_text":     "EUR 15.00",
+		"notice":         "Thanks",
+		"continue_url":   "/products",
+		"needs_shipping": false,
+		"exp":            time.Now().UTC().Add(10 * time.Minute).Unix(),
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/checkout/confirm", nil)
+	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_placed", Value: flash})
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-variant="var-1"`) || !strings.Contains(body, "Gift message:Hello") {
+		t.Fatalf("confirm flash missing line extensions: %s", body)
 	}
 }
 

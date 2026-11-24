@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -54,6 +55,7 @@ type Service struct {
 	storeURL    string                    // public store URL
 	invoices    invoice.InvoiceRepository // optional — for invoice emails
 	pdfRenderer invoice.PDFRenderer       // optional — for invoice PDF attachments
+	extensions  extensionapp.ValueAPI     // optional — public order_item values on confirmation lines
 }
 
 // Option configures optional Service fields.
@@ -80,6 +82,14 @@ func WithPDFRenderer(r invoice.PDFRenderer) Option {
 // order shipped).
 func WithEmailDedupe(store EmailDedupeStore) Option {
 	return func(s *Service) { s.dedupe = store }
+}
+
+// WithOrderExtensions attaches public order_item extension values onto
+// order_confirmed line maps (plus VariantID/SKU on every line). Private
+// fields stay omitted. Nil is a no-op for extensions; VariantID/SKU still
+// come from the order.
+func WithOrderExtensions(api extensionapp.ValueAPI) Option {
+	return func(s *Service) { s.extensions = api }
 }
 
 // New creates a notification Service.
@@ -246,15 +256,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return err
 	}
 
-	items := o.Items()
-	tmplItems := make([]map[string]interface{}, len(items))
-	for i, it := range items {
-		tmplItems[i] = map[string]interface{}{
-			"Name":  it.Name,
-			"Qty":   it.Quantity,
-			"Price": it.UnitPrice.String(),
-		}
-	}
+	tmplItems := s.orderConfirmedItems(ctx, o)
 
 	ed := mail.EmailData{
 		StoreURL: s.storeURL,
@@ -280,6 +282,61 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		"customer_id": o.CustomerID,
 		"guest":       recipient.Guest,
 	}, data.OrderID, KindOrderConfirmed)
+}
+
+// orderConfirmedItems builds order_confirmed line maps: Name/Qty/Price plus
+// VariantID/SKU. When ValueAPI is wired, public Extensions (code→value for
+// product overrides) and ExtensionsList (Label/Value in registry order for
+// the default template) are attached. Extension lookup failures are logged
+// and skipped so confirmation still enqueues.
+func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map[string]interface{} {
+	items := o.Items()
+	tmplItems := make([]map[string]interface{}, len(items))
+	variantIDs := make([]string, len(items))
+	for i, it := range items {
+		variantIDs[i] = it.VariantID
+		tmplItems[i] = map[string]interface{}{
+			"Name":      it.Name,
+			"Qty":       it.Quantity,
+			"Price":     it.UnitPrice.String(),
+			"VariantID": it.VariantID,
+			"SKU":       it.SKU,
+		}
+	}
+	if s == nil || s.extensions == nil || len(items) == 0 {
+		return tmplItems
+	}
+	byVariant, err := extensionapp.PublicOrderItemAPIByVariant(ctx, s.extensions, o.ID, variantIDs, func(code string, fieldErr error) {
+		s.log.Error("HandleOrderPaid.order_item_extension_field_failed", fieldErr, map[string]interface{}{
+			"order_id":   o.ID,
+			"field_code": code,
+		})
+	})
+	if err != nil {
+		s.log.Error("HandleOrderPaid.order_item_extensions_failed", err, map[string]interface{}{
+			"order_id": o.ID,
+		})
+		return tmplItems
+	}
+	reg := s.extensions.Registry()
+	for i, it := range items {
+		apiItems := byVariant[it.VariantID]
+		if ext := extensionapp.ExtensionMapFromAPIItems(apiItems); len(ext) > 0 {
+			tmplItems[i]["Extensions"] = ext
+		}
+		if rows := extensionapp.ExtensionDisplayRows(reg, apiItems); len(rows) > 0 {
+			list := make([]map[string]interface{}, len(rows))
+			for j, row := range rows {
+				list[j] = map[string]interface{}{
+					"FieldCode": row.FieldCode,
+					"Label":     row.Label,
+					"Value":     row.Value,
+				}
+			}
+			tmplItems[i]["ExtensionsList"] = list
+		}
+	}
+	return tmplItems
 }
 
 // orderConfirmedJobID returns a stable UUID v5-shaped id for one confirmation

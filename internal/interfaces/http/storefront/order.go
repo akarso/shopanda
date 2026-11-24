@@ -11,12 +11,14 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // OrderHandler handles order read endpoints.
 type OrderHandler struct {
 	orders     order.OrderRepository
 	extensions extensionapp.ValueAPI
+	log        logger.Logger
 }
 
 // NewOrderHandler creates an OrderHandler.
@@ -25,6 +27,26 @@ func NewOrderHandler(orders order.OrderRepository, extensions extensionapp.Value
 		panic("http: order repository must not be nil")
 	}
 	return &OrderHandler{orders: orders, extensions: extensions}
+}
+
+// WithLog attaches a logger for soft per-field extension decode failures.
+func (h *OrderHandler) WithLog(log logger.Logger) *OrderHandler {
+	if h != nil && log != nil {
+		h.log = log
+	}
+	return h
+}
+
+func (h *OrderHandler) softFieldError(orderID string) extensionapp.SoftFieldError {
+	if h == nil || h.log == nil {
+		return nil
+	}
+	return func(code string, fieldErr error) {
+		h.log.Error("storefront.order_json_extension_field_failed", fieldErr, map[string]interface{}{
+			"order_id":   orderID,
+			"field_code": code,
+		})
+	}
 }
 
 // Get handles GET /api/v1/orders/{orderId}.
@@ -52,7 +74,7 @@ func (h *OrderHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		resp, err := ToOrderResponse(r.Context(), h.extensions, o)
+		resp, err := ToOrderResponseWithFieldErrors(r.Context(), h.extensions, o, h.softFieldError(o.ID))
 		if err != nil {
 			httpshared.JSONError(w, extensionapp.MapValueError(err))
 			return
@@ -77,7 +99,7 @@ func (h *OrderHandler) List() http.HandlerFunc {
 
 		out := make([]OrderResponse, 0, len(orders))
 		for i := range orders {
-			resp, err := ToOrderResponse(r.Context(), h.extensions, &orders[i])
+			resp, err := ToOrderResponseWithFieldErrors(r.Context(), h.extensions, &orders[i], h.softFieldError(orders[i].ID))
 			if err != nil {
 				httpshared.JSONError(w, extensionapp.MapValueError(err))
 				return
@@ -105,12 +127,18 @@ type OrderResponse struct {
 }
 
 func ToOrderResponse(ctx context.Context, extensions extensionapp.ValueAPI, o *order.Order) (OrderResponse, error) {
+	return ToOrderResponseWithFieldErrors(ctx, extensions, o, nil)
+}
+
+// ToOrderResponseWithFieldErrors is ToOrderResponse with SoftFieldError for
+// per-field APIValue failures (JSON order path).
+func ToOrderResponseWithFieldErrors(ctx context.Context, extensions extensionapp.ValueAPI, o *order.Order, onFieldErr extensionapp.SoftFieldError) (OrderResponse, error) {
 	orderItems := o.Items()
 	variantIDs := make([]string, len(orderItems))
 	for i, item := range orderItems {
 		variantIDs[i] = item.VariantID
 	}
-	extByVariant, err := orderItemExtensionsMap(ctx, extensions, o.ID, variantIDs)
+	extByVariant, err := orderItemExtensionsMap(ctx, extensions, o.ID, variantIDs, onFieldErr)
 	if err != nil {
 		return OrderResponse{}, err
 	}

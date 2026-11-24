@@ -69,9 +69,22 @@ type StorefrontAccountOrdersPageData struct {
 type StorefrontAccountOrderItem struct {
 	Name          string
 	SKU           string
+	VariantID     string
 	Quantity      int
 	UnitPriceText string
 	LineTotalText string
+	// Extensions are public order_item values (FieldCode for product themes;
+	// Label/Value for default display). Same conceptual shape as confirmation
+	// email line Extensions (code → value) and JSON order lines.
+	Extensions []StorefrontOrderLineExtensionDisplay
+}
+
+// StorefrontOrderLineExtensionDisplay is one public order_item extension on
+// account order detail and checkout confirmation line rows.
+type StorefrontOrderLineExtensionDisplay struct {
+	FieldCode string
+	Label     string
+	Value     string
 }
 
 type StorefrontAccountReturnableLine struct {

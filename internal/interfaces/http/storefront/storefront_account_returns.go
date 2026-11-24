@@ -182,19 +182,9 @@ func (h *StorefrontHandler) renderOrderDetailWithMessage(w http.ResponseWriter, 
 }
 
 func (h *StorefrontHandler) buildAccountOrderDetailPage(r *http.Request, o *order.Order, customerID string) (StorefrontAccountOrderDetailPageData, error) {
-	items := make([]StorefrontAccountOrderItem, 0, len(o.Items()))
-	for _, item := range o.Items() {
-		lineTotal, err := item.LineTotal()
-		if err != nil {
-			return StorefrontAccountOrderDetailPageData{}, err
-		}
-		items = append(items, StorefrontAccountOrderItem{
-			Name:          item.Name,
-			SKU:           item.SKU,
-			Quantity:      item.Quantity,
-			UnitPriceText: formatStorefrontMoney(item.UnitPrice.Amount(), item.UnitPrice.Currency()),
-			LineTotalText: formatStorefrontMoney(lineTotal.Amount(), lineTotal.Currency()),
-		})
+	items, err := h.storefrontOrderLineItems(r.Context(), o)
+	if err != nil {
+		return StorefrontAccountOrderDetailPageData{}, err
 	}
 
 	page := StorefrontAccountOrderDetailPageData{
