@@ -43,6 +43,25 @@ func (c *Context) Set(key string, value interface{}) {
 	c.Payload[key] = value
 }
 
+// Clone returns a shallow copy of the context: a new Payload map with the same
+// key→value pointers. Pointer values (e.g. validation_errors) stay shared so
+// adapted handlers can still append to a common collector; map identity does not.
+func (c *Context) Clone() *Context {
+	if c == nil {
+		return nil
+	}
+	out := &Context{Name: c.Name}
+	if c.Payload == nil {
+		out.Payload = make(map[string]interface{})
+		return out
+	}
+	out.Payload = make(map[string]interface{}, len(c.Payload))
+	for k, v := range c.Payload {
+		out.Payload[k] = v
+	}
+	return out
+}
+
 const (
 	// HookCartAddItemBefore runs before a cart line is added (mutation not yet applied).
 	HookCartAddItemBefore = "cart.add_item.before"

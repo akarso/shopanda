@@ -467,6 +467,118 @@ func TestValueService_PluginOnlyWrite_TrustedContextAllowed(t *testing.T) {
 	}
 }
 
+func TestValueService_PrivatePluginOnlyWrite_TrustedOwnerAllowed(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := pluginOnlyField("acme.secret")
+	def.Visibility = domainext.VisibilityPrivate
+	def.StorageMode = domainext.StorageStored
+	if err := reg.RegisterOwned(def, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	in := []domainext.ValueInput{{FieldCode: "acme.secret", Value: "hidden"}}
+
+	if err := svc.ValidateBatch(context.Background(), target, in, false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("untrusted ValidateBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if _, err := svc.UpsertBatch(context.Background(), target, in, "cust-1", false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("untrusted UpsertBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("stored without grant = %+v", repo.values)
+	}
+
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.secret")
+	if err := svc.ValidateBatch(ctx, target, in, false); err != nil {
+		t.Fatalf("trusted ValidateBatch: %v", err)
+	}
+	if _, err := svc.UpsertBatch(ctx, target, in, "cust-1", false); err != nil {
+		t.Fatalf("trusted UpsertBatch: %v", err)
+	}
+	if len(repo.values) != 1 {
+		t.Fatalf("stored = %d, want 1", len(repo.values))
+	}
+
+	other := extensionapp.WithPluginWrite(context.Background(), "other", "acme.secret")
+	if err := svc.ValidateBatch(other, target, in, false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("wrong owner ValidateBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+}
+
+func TestValueService_PrivatePluginOnlyWrite_UnownedStillForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := pluginOnlyField("admin.secret")
+	def.Visibility = domainext.VisibilityPrivate
+	def.StorageMode = domainext.StorageStored
+	registerValueField(t, reg, def) // no owner
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	in := []domainext.ValueInput{{FieldCode: "admin.secret", Value: "hidden"}}
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "admin.secret")
+	if err := svc.ValidateBatch(ctx, target, in, false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("unowned private PluginOnlyWrite err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if _, err := svc.UpsertBatch(ctx, target, in, "cust-1", false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("unowned UpsertBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("stored = %+v, want none", repo.values)
+	}
+}
+
+func TestValueService_PrivateNonPluginOnly_TrustedWriteStillForbidden(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, domainext.FieldDef{
+		Code: "core.secret", Label: "Secret", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+		Visibility: domainext.VisibilityPrivate,
+	})
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	in := []domainext.ValueInput{{FieldCode: "core.secret", Value: "hidden"}}
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "core.secret")
+	if err := svc.ValidateBatch(ctx, target, in, false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("ValidateBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if _, err := svc.UpsertBatch(ctx, target, in, "cust-1", false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("UpsertBatch err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if len(repo.values) != 0 {
+		t.Fatalf("stored = %+v, want none", repo.values)
+	}
+}
+
+func TestValueService_PrivatePluginOnlyWrite_DeleteTrustedOwner(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	def := pluginOnlyField("acme.secret")
+	def.Visibility = domainext.VisibilityPrivate
+	def.StorageMode = domainext.StorageStored
+	if err := reg.RegisterOwned(def, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	target := domainext.CartItemTarget("cart-1", "var-1")
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.secret")
+	if _, err := svc.UpsertBatch(ctx, target, []domainext.ValueInput{{FieldCode: "acme.secret", Value: "x"}}, "cust-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(context.Background(), target, "acme.secret", false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("untrusted Delete err = %v, want ErrForbiddenPrivateField", err)
+	}
+	wrong := extensionapp.WithPluginWrite(context.Background(), "other", "acme.secret")
+	if err := svc.Delete(wrong, target, "acme.secret", false); err != domainext.ErrForbiddenPrivateField {
+		t.Fatalf("wrong owner Delete err = %v, want ErrForbiddenPrivateField", err)
+	}
+	if err := svc.Delete(ctx, target, "acme.secret", false); err != nil {
+		t.Fatalf("trusted Delete: %v", err)
+	}
+}
+
 // failUpsertRepo fails the next UpsertBatch call. Used to prove ReplaceTarget
 // upserts before deleting extras: a failed upsert must leave existing rows.
 type failUpsertRepo struct {

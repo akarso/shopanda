@@ -28,8 +28,12 @@ func cartViewFromDomain(c *domainCart.Cart) *extapi.CartView {
 }
 
 // CartView builds an extapi.CartView including stored line extension values.
-// Private fields are omitted (visibility-filtered ListByCartItems). Plugin-only
-// owner scoping is applied later by redactCartViewForRegistrant / FilterCartViewForPlugin.
+// Private values are loaded so cart.validate and CartPort can keep an owner's
+// private PluginOnlyWrite fields (same rule as ordersPort.keepOrderExtension).
+// The returned view is NOT shopper-safe: callers MUST run
+// redactCartViewForRegistrant / FilterCartViewForPlugin before exposing it
+// (CartPort.viewFor and validationIssues do). Never return CartView directly
+// from a public handler. The public storefront lists with includePrivate=false.
 func (s *Service) CartView(ctx context.Context, c *domainCart.Cart) (*extapi.CartView, error) {
 	if c == nil {
 		return nil, nil
@@ -44,7 +48,7 @@ func (s *Service) CartView(ctx context.Context, c *domainCart.Cart) (*extapi.Car
 		variantIDs[i] = it.VariantID
 		indexByVariant[it.VariantID] = i
 	}
-	byVariant, err := s.extensions.ListByCartItems(ctx, c.ID, variantIDs, false)
+	byVariant, err := s.extensions.ListByCartItems(ctx, c.ID, variantIDs, true)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: cart view extensions: %w", err)
 	}
@@ -118,6 +122,8 @@ type pluginOnlyFieldChecker interface {
 	IsPluginOnlyWrite(code string) bool
 	// FieldOwner returns the registrant that owns code, or "" when unowned.
 	FieldOwner(code string) string
+	// IsPrivate reports VisibilityPrivate for a registered field code.
+	IsPrivate(code string) bool
 }
 
 type exclusiveStringChecker interface {
@@ -146,14 +152,15 @@ func collectPluginWriteCodes(writeCtx context.Context, inputs []domainext.ValueI
 // pluginWriteCodesForRegistrant returns the subset of trusted write codes
 // the current handler is allowed to see: owned plugin-only fields only when
 // registrant matches the owner; unowned plugin-only fields are never listed
-// (an empty owner is treated as redacted for every handler).
+// (an empty owner is treated as redacted for every handler). Nil checker
+// fails closed (empty list) — same posture as keepCartExtension.
 func pluginWriteCodesForRegistrant(trusted []string, registrant string, pluginOnly pluginOnlyFieldChecker) []string {
-	if len(trusted) == 0 {
+	if len(trusted) == 0 || pluginOnly == nil {
 		return nil
 	}
 	out := make([]string, 0, len(trusted))
 	for _, code := range trusted {
-		if pluginOnly != nil && pluginOnly.IsPluginOnlyWrite(code) {
+		if pluginOnly.IsPluginOnlyWrite(code) {
 			owner := pluginOnly.FieldOwner(code)
 			if owner == "" || owner != registrant {
 				continue
@@ -168,9 +175,10 @@ func pluginWriteCodesForRegistrant(trusted []string, registrant string, pluginOn
 // omitted unless writeCtx granted that code AND the current handler's
 // registrant is the field's owner. An empty owner is treated as redacted for
 // every handler (fields registered outside plugin Init are unowned and must
-// not leak a trusted plugin-only value to the whole hook chain). Callers
-// invoke this once per handler via hooks.Registry.InvokeAdapted, passing
-// that handler's registrant.
+// not leak a trusted plugin-only value to the whole hook chain). Nil checker
+// fails closed (codes only, no values) so an opaque writer cannot leak on
+// add_item.before while cart.validate redacts. Callers invoke this once per
+// handler via hooks.Registry.InvokeAdapted, passing that handler's registrant.
 func extensionInputsForHook(inputs []domainext.ValueInput, trusted []string, registrant string, pluginOnly pluginOnlyFieldChecker) []map[string]interface{} {
 	trustedSet := make(map[string]struct{}, len(trusted))
 	for _, c := range trusted {
@@ -179,13 +187,14 @@ func extensionInputsForHook(inputs []domainext.ValueInput, trusted []string, reg
 	out := make([]map[string]interface{}, 0, len(inputs))
 	for _, in := range inputs {
 		row := map[string]interface{}{"field_code": in.FieldCode}
-		redact := pluginOnly != nil && pluginOnly.IsPluginOnlyWrite(in.FieldCode)
+		if pluginOnly == nil {
+			out = append(out, row)
+			continue
+		}
+		redact := pluginOnly.IsPluginOnlyWrite(in.FieldCode)
 		if redact {
 			if _, ok := trustedSet[in.FieldCode]; ok {
-				owner := ""
-				if pluginOnly != nil {
-					owner = pluginOnly.FieldOwner(in.FieldCode)
-				}
+				owner := pluginOnly.FieldOwner(in.FieldCode)
 				// Empty owner: always redact (unowned plugin-only).
 				if owner != "" && owner == registrant {
 					redact = false
@@ -207,8 +216,8 @@ func redactCartViewForRegistrant(view *extapi.CartView, registrant string, plugi
 	return filterCartViewExtensions(view, registrant, pluginOnly)
 }
 
-// redactPendingLine copies pending and omits plugin-only extensions the
-// registrant does not own (same rule as CartView line extensions).
+// redactPendingLine copies pending and omits extensions the registrant must
+// not see (same keepCartExtension rule as CartView line extensions).
 func redactPendingLine(pending *extapi.PendingCartLine, registrant string, pluginOnly pluginOnlyFieldChecker) *extapi.PendingCartLine {
 	if pending == nil {
 		return nil
@@ -222,16 +231,32 @@ func redactPendingLine(pending *extapi.PendingCartLine, registrant string, plugi
 	}
 	kept := make([]extapi.CartLineExtension, 0, len(pending.Extensions))
 	for _, e := range pending.Extensions {
-		if pluginOnly != nil && pluginOnly.IsPluginOnlyWrite(e.Code) {
-			owner := pluginOnly.FieldOwner(e.Code)
-			if registrant == "" || owner == "" || owner != registrant {
-				continue
-			}
+		if !keepCartExtension(e.Code, registrant, pluginOnly) {
+			continue
 		}
 		kept = append(kept, e)
 	}
 	out.Extensions = kept
 	return out
+}
+
+// keepCartExtension mirrors ordersPort.keepOrderExtension: owned PluginOnlyWrite
+// (including private) stays for the owner; unattributed Host keeps only
+// non-private plugin-only; private non-plugin-only is always dropped.
+// Nil checker fails closed (drop) — CartView may hold private rows and a
+// missing IsPrivate implementation must not leak them.
+func keepCartExtension(code, registrant string, checker pluginOnlyFieldChecker) bool {
+	if checker == nil {
+		return false
+	}
+	if checker.IsPluginOnlyWrite(code) {
+		if registrant == "" {
+			return !checker.IsPrivate(code)
+		}
+		owner := checker.FieldOwner(code)
+		return owner != "" && owner == registrant
+	}
+	return !checker.IsPrivate(code)
 }
 
 // pendingLineFromAdd builds the cart.validate pending_line payload. Nil when
@@ -351,11 +376,8 @@ func filterCartViewExtensions(view *extapi.CartView, pluginName string, pluginOn
 	for i, line := range view.Items {
 		var kept []extapi.CartLineExtension
 		for _, e := range line.Extensions {
-			if pluginOnly != nil && pluginOnly.IsPluginOnlyWrite(e.Code) {
-				owner := pluginOnly.FieldOwner(e.Code)
-				if pluginName == "" || owner == "" || owner != pluginName {
-					continue
-				}
+			if !keepCartExtension(e.Code, pluginName, pluginOnly) {
+				continue
 			}
 			kept = append(kept, e)
 		}
@@ -368,8 +390,9 @@ func filterCartViewExtensions(view *extapi.CartView, pluginName string, pluginOn
 	return out
 }
 
-// FilterCartViewForPlugin keeps non-plugin-only extensions and plugin-only
-// extensions owned by pluginName (CartPort.Get via AsHostFor / Adapt).
+// FilterCartViewForPlugin keeps extensions visible to pluginName using the same
+// owner/private rules as OrderPort line reads (CartPort.Get via AsHostFor / Adapt).
+// Empty pluginName strips private fields and keeps non-private plugin-only.
 func (s *Service) FilterCartViewForPlugin(view *extapi.CartView, pluginName string) *extapi.CartView {
 	var pluginOnly pluginOnlyFieldChecker
 	if po, ok := s.extensions.(pluginOnlyFieldChecker); ok {
@@ -398,15 +421,18 @@ func (s *Service) invokeCartItemHook(ctx context.Context, name, cartID, customer
 	if len(opts.extensions) == 0 {
 		return s.invokeCartHook(ctx, name, hookCtx)
 	}
+	// Clone per registrant so an owner’s private in-flight value never sits
+	// on the shared hookCtx for a later handler (or a kept *Context).
 	adapt := func(registrant string, src *hooks.Context) *hooks.Context {
+		out := src.Clone()
 		visible := pluginWriteCodesForRegistrant(writeCodes, registrant, checker)
 		if len(visible) > 0 {
-			src.Set("plugin_write_codes", visible)
+			out.Set("plugin_write_codes", visible)
 		} else {
-			src.Set("plugin_write_codes", []string(nil))
+			out.Set("plugin_write_codes", []string(nil))
 		}
-		src.Set("extensions", extensionInputsForHook(opts.extensions, visible, registrant, checker))
-		return src
+		out.Set("extensions", extensionInputsForHook(opts.extensions, visible, registrant, checker))
+		return out
 	}
 	return s.invokeCartHookAdapted(ctx, name, hookCtx, adapt)
 }

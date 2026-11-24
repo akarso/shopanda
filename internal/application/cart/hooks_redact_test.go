@@ -7,12 +7,14 @@ import (
 )
 
 type stubPluginOnly struct {
-	codes  map[string]bool
-	owners map[string]string
+	codes    map[string]bool
+	owners   map[string]string
+	privates map[string]bool
 }
 
 func (s stubPluginOnly) IsPluginOnlyWrite(code string) bool { return s.codes[code] }
 func (s stubPluginOnly) FieldOwner(code string) string      { return s.owners[code] }
+func (s stubPluginOnly) IsPrivate(code string) bool         { return s.privates[code] }
 
 func TestExtensionInputsForHook_RedactsPluginOnlyUnlessTrusted(t *testing.T) {
 	inputs := []domainext.ValueInput{
@@ -85,5 +87,53 @@ func TestExtensionInputsForHook_OwnedFieldOnlyVisibleToOwner(t *testing.T) {
 	untrusted := extensionInputsForHook(inputs, nil, "acme", checker)
 	if _, ok := untrusted[0]["value"]; ok {
 		t.Fatal("owned plugin-only value must still require write trust")
+	}
+}
+
+func TestExtensionInputsForHook_NilCheckerFailClosed(t *testing.T) {
+	inputs := []domainext.ValueInput{
+		{FieldCode: "acme.locked", Value: "secret"},
+		{FieldCode: "acme.note", Value: "open"},
+	}
+	out := extensionInputsForHook(inputs, []string{"acme.locked"}, "acme", nil)
+	if len(out) != 2 {
+		t.Fatalf("len = %d", len(out))
+	}
+	for i, row := range out {
+		if _, ok := row["value"]; ok {
+			t.Fatalf("row %d: nil checker must omit values", i)
+		}
+	}
+	if codes := pluginWriteCodesForRegistrant([]string{"acme.locked", "acme.open"}, "acme", nil); codes != nil {
+		t.Fatalf("nil checker write codes = %v, want nil", codes)
+	}
+}
+
+func TestKeepCartExtension_PrivateOwnerParity(t *testing.T) {
+	checker := stubPluginOnly{
+		codes:    map[string]bool{"acme.design": true, "acme.note": true},
+		owners:   map[string]string{"acme.design": "acme", "acme.note": "acme"},
+		privates: map[string]bool{"acme.design": true, "core.private": true},
+	}
+	if !keepCartExtension("acme.design", "acme", checker) {
+		t.Fatal("owner must keep private PluginOnlyWrite")
+	}
+	if keepCartExtension("acme.design", "other", checker) {
+		t.Fatal("non-owner must not keep private PluginOnlyWrite")
+	}
+	if keepCartExtension("acme.design", "", checker) {
+		t.Fatal("unattributed must not keep private PluginOnlyWrite")
+	}
+	if !keepCartExtension("acme.note", "", checker) {
+		t.Fatal("unattributed must keep public PluginOnlyWrite")
+	}
+	if keepCartExtension("core.private", "acme", checker) {
+		t.Fatal("private non-plugin-only must be dropped for every registrant")
+	}
+	if !keepCartExtension("acme.note", "acme", checker) {
+		t.Fatal("owner must keep public PluginOnlyWrite")
+	}
+	if keepCartExtension("acme.note", "acme", nil) {
+		t.Fatal("nil checker must fail closed")
 	}
 }

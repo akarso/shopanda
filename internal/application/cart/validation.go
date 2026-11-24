@@ -23,7 +23,8 @@ func (s *Service) validationIssues(ctx context.Context, c *domainCart.Cart, pend
 	// sees one effective line (pending wins on the same code). Stored-only
 	// CartView would miss in-flight AddItem values until upsert.
 	view = overlayPendingOnCartView(view, pending)
-	hookCtx.Set("cart", view)
+	// Do not put the unfiltered (private-inclusive) view on the shared
+	// hookCtx — adapt clones per registrant and sets a redacted cart.
 
 	var checker pluginOnlyFieldChecker
 	if po, ok := s.extensions.(pluginOnlyFieldChecker); ok {
@@ -33,11 +34,12 @@ func (s *Service) validationIssues(ctx context.Context, c *domainCart.Cart, pend
 	// design_id) are visible only to the owning handler — same rule as
 	// add_item.before. pending_line is set only when AddItem carries extensions.
 	adapt := func(registrant string, src *hooks.Context) *hooks.Context {
-		src.Set("cart", redactCartViewForRegistrant(view, registrant, checker))
+		out := src.Clone()
+		out.Set("cart", redactCartViewForRegistrant(view, registrant, checker))
 		if pending != nil {
-			src.Set("pending_line", redactPendingLine(pending, registrant, checker))
+			out.Set("pending_line", redactPendingLine(pending, registrant, checker))
 		}
-		return src
+		return out
 	}
 	if err := s.invokeCartHookAdapted(ctx, hooks.HookCartValidate, hookCtx, adapt); err != nil {
 		return nil, err
