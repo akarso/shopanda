@@ -39,7 +39,7 @@ func orderItemExtensionsFromMap(byVariant map[string][]cartItemExtensionResponse
 }
 
 // storefrontOrderLineItems builds account/confirm line rows with VariantID and
-// public order_item extensions (same ExtensionDisplayRows order as email).
+// public order_item extensions (same ExtensionDisplayRows + enrich order as email).
 func (h *StorefrontHandler) storefrontOrderLineItems(ctx context.Context, o *order.Order) ([]StorefrontAccountOrderItem, error) {
 	if o == nil {
 		return nil, nil
@@ -62,31 +62,60 @@ func (h *StorefrontHandler) storefrontOrderLineItems(ctx context.Context, o *ord
 			LineTotalText: formatStorefrontMoney(lineTotal.Amount(), lineTotal.Currency()),
 		})
 	}
-	if h == nil || h.extensions == nil || len(variantIDs) == 0 {
+	if h == nil || len(variantIDs) == 0 {
 		return items, nil
 	}
-	var onFieldErr extensionapp.SoftFieldError
-	if h.log != nil {
-		onFieldErr = func(code string, fieldErr error) {
-			h.log.Error("storefront.order_item_extension_field_failed", fieldErr, map[string]interface{}{
-				"order_id":   o.ID,
-				"field_code": code,
-			})
-		}
-	}
-	byVariant, err := extensionapp.PublicOrderItemAPIByVariant(ctx, h.extensions, o.ID, variantIDs, onFieldErr)
-	if err != nil {
+	var byVariant map[string][]extensionapp.APIValueItem
+	var reg *extensionapp.Registry
+	if h.extensions != nil {
+		var onFieldErr extensionapp.SoftFieldError
 		if h.log != nil {
-			h.log.Error("storefront.order_line_extensions_failed", err, map[string]interface{}{
-				"order_id": o.ID,
-			})
+			onFieldErr = func(code string, fieldErr error) {
+				h.log.Error("storefront.order_item_extension_field_failed", fieldErr, map[string]interface{}{
+					"order_id":   o.ID,
+					"field_code": code,
+				})
+			}
 		}
-		// Core name/SKU/qty/price still render; extensions are best-effort.
-		return items, nil
+		var err error
+		byVariant, err = extensionapp.PublicOrderItemAPIByVariant(ctx, h.extensions, o.ID, variantIDs, onFieldErr)
+		if err != nil {
+			if h.log != nil {
+				h.log.Error("storefront.order_line_extensions_failed", err, map[string]interface{}{
+					"order_id": o.ID,
+				})
+			}
+			byVariant = nil
+		} else {
+			reg = h.extensions.Registry()
+		}
 	}
-	reg := h.extensions.Registry()
 	for i := range items {
-		rows := extensionapp.ExtensionDisplayRows(reg, byVariant[items[i].VariantID])
+		apiItems := byVariant[items[i].VariantID]
+		extMap := extensionapp.ExtensionMapFromAPIItems(apiItems)
+		rows := extensionapp.ExtensionDisplayRows(reg, apiItems)
+		hookExt := extensionapp.CloneExtensionMap(extMap)
+		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, h.orderLineHooks, o.ID, items[i].VariantID, hookExt, rows,
+			func(registrant string, hookErr error) {
+				if h.log != nil {
+					h.log.Error("storefront.order_line_display_failed", hookErr, map[string]interface{}{
+						"order_id":   o.ID,
+						"variant_id": items[i].VariantID,
+						"registrant": registrant,
+					})
+				}
+			},
+			func(fieldCode, reason string) {
+				if h.log != nil {
+					h.log.Info("storefront.order_line_display_row_skipped", map[string]interface{}{
+						"order_id":   o.ID,
+						"variant_id": items[i].VariantID,
+						"field_code": fieldCode,
+						"reason":     reason,
+					})
+				}
+			},
+		)
 		items[i].Extensions = storefrontDisplaysFromRows(rows)
 	}
 	return items, nil
@@ -101,7 +130,9 @@ func storefrontDisplaysFromRows(rows []extensionapp.ExtensionDisplayRow) []Store
 		out[i] = StorefrontOrderLineExtensionDisplay{
 			FieldCode: row.FieldCode,
 			Label:     row.Label,
+			Kind:      row.Kind,
 			Value:     row.Value,
+			Alt:       row.Alt,
 		}
 	}
 	return out

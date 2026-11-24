@@ -39,6 +39,9 @@ const (
 	HookCartRemoveItemAfter   HookPoint = "cart.remove_item.after"
 	HookCartRecalculateBefore HookPoint = "cart.recalculate.before"
 	HookCartValidate          HookPoint = "cart.validate"
+	// HookOrderLineDisplay appends derived shopper-facing fields on confirmation
+	// email and storefront order lines (order id + variant id in payload).
+	HookOrderLineDisplay HookPoint = "order.line.display"
 )
 
 var hookPoints = []HookPoint{
@@ -48,6 +51,7 @@ var hookPoints = []HookPoint{
 	HookCartRemoveItemAfter,
 	HookCartRecalculateBefore,
 	HookCartValidate,
+	HookOrderLineDisplay,
 }
 
 // HookPoints returns all documented stable hook point names.

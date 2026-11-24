@@ -11,7 +11,7 @@ import (
 )
 
 func TestStableHookPointsMatchInternal(t *testing.T) {
-	internal := hooksapp.CartHookPoints()
+	internal := hooksapp.DocumentedHookPoints()
 	stable := extapi.HookPoints()
 	if len(stable) != len(internal) {
 		t.Fatalf("stable hook points len = %d, internal len = %d", len(stable), len(internal))

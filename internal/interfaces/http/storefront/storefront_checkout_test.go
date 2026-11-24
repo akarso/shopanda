@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,7 +22,9 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -1251,9 +1254,29 @@ func TestStorefrontHandler_CheckoutConfirm_FlashRendersLineExtensions(t *testing
 	}
 	values := extensionapp.NewValueService(reg, extRepo)
 
+	extensionapp.SetImageHostLookupForTest(t, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		raw, _ := ctx.Get("fields")
+		fields := raw.(*[]extapi.OrderLineDisplayField)
+		*fields = append(*fields,
+			extapi.OrderLineDisplayField{
+				Code: "plugin.thumb", Label: "Design", Kind: extapi.DisplayKindImage,
+				Value: "https://cdn.example/confirm.png", Alt: "thumb",
+			},
+			extapi.OrderLineDisplayField{
+				Code: "plugin.http", Kind: extapi.DisplayKindImage, Value: "http://cdn.example/no.png",
+			},
+		)
+		return nil
+	})
+
 	h := withCheckoutFlash(storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
 		WithAccount(nil, orders, &storefrontAccountDeleterStub{}).
-		WithExtensions(values))
+		WithExtensions(values).
+		WithOrderLineHooks(hookReg))
 	router := newStorefrontRouter(h)
 
 	flash := signCheckoutFlashCookie(t, map[string]interface{}{
@@ -1275,6 +1298,12 @@ func TestStorefrontHandler_CheckoutConfirm_FlashRendersLineExtensions(t *testing
 	body := rec.Body.String()
 	if !strings.Contains(body, `data-variant="var-1"`) || !strings.Contains(body, "Gift message:Hello") {
 		t.Fatalf("confirm flash missing line extensions: %s", body)
+	}
+	if !strings.Contains(body, `src="https://cdn.example/confirm.png"`) {
+		t.Fatalf("confirm missing https image: %s", body)
+	}
+	if strings.Contains(body, "http://cdn.example/no.png") {
+		t.Fatalf("http image must not render: %s", body)
 	}
 }
 

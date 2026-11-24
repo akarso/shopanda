@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	"github.com/akarso/shopanda/internal/application/notification"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
@@ -597,6 +601,131 @@ func TestHandleOrderPaid_ExtensionListFailureStillEnqueues(t *testing.T) {
 	body, _ := q.enqueued[0].Payload["body"].(string)
 	if !strings.Contains(body, "var-1|SKU-1|hasExt=no") {
 		t.Fatalf("body = %q, want core line without Extensions", body)
+	}
+}
+
+func TestHandleOrderPaid_OrderLineDisplayEnrichImage(t *testing.T) {
+	extensionapp.SetImageHostLookupForTest(t, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	bodyHTML, err := os.ReadFile("../../../templates/emails/order_confirmed.html")
+	if err != nil {
+		t.Fatalf("read real email template: %v", err)
+	}
+	tmpl := mail.NewTemplates()
+	tmpl.Register("order_confirmed",
+		"Order {{.Data.OrderID}} — Confirmation",
+		string(bodyHTML),
+	)
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		rawExt, _ := ctx.Get("extensions")
+		if ext, _ := rawExt.(map[string]interface{}); ext != nil {
+			ext["acme.gift.message"] = "tampered-by-hook"
+		}
+		raw, _ := ctx.Get("fields")
+		fields := raw.(*[]extapi.OrderLineDisplayField)
+		*fields = append(*fields,
+			extapi.OrderLineDisplayField{
+				Code:  "plugin.thumb",
+				Label: "Design",
+				Kind:  extapi.DisplayKindImage,
+				Value: "https://cdn.example/ord-1/var-1.png?x=1&y=2",
+				Alt:   `preview "quoted"`,
+			},
+			extapi.OrderLineDisplayField{
+				Code:  "plugin.http",
+				Kind:  extapi.DisplayKindImage,
+				Value: "http://cdn.example/nope.png",
+			},
+			extapi.OrderLineDisplayField{
+				Code:  "plugin.note",
+				Label: "Note",
+				Kind:  extapi.DisplayKindText,
+				Value: `say <b>hi</b> & "bye"`,
+			},
+		)
+		return nil
+	})
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 50, "boom", func(ctx *hooks.Context) error {
+		raw, _ := ctx.Get("fields")
+		fields := raw.(*[]extapi.OrderLineDisplayField)
+		*fields = append(*fields, extapi.OrderLineDisplayField{
+			Code: "plugin.partial", Kind: extapi.DisplayKindText, Value: "should-drop",
+		})
+		return errors.New("enrich boom")
+	})
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code: "acme.gift.message", Label: "Gift", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetOrderItem, StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	extRepo := &notifExtMemRepo{values: map[string]domainext.Value{}}
+	msg := "Happy birthday"
+	target := domainext.OrderItemTarget("ord-1", "var-1")
+	extRepo.values[string(target.Type)+":"+target.ID+":acme.gift.message"] = domainext.Value{
+		FieldCode: "acme.gift.message", TargetType: target.Type, TargetID: target.ID,
+		Payload: domainext.ValuePayload{StringValue: &msg},
+	}
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &o, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithOrderExtensions(values),
+		notification.WithOrderLineHooks(hookReg),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d, want 1", len(q.enqueued))
+	}
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if !strings.Contains(body, `src="https://cdn.example/ord-1/var-1.png?x=1&amp;y=2"`) {
+		t.Fatalf("body missing escaped https img: %q", body)
+	}
+	if !strings.Contains(body, `alt="preview &#34;quoted&#34;"`) && !strings.Contains(body, `alt="preview &#34;quoted&#34;`) {
+		// html/template may encode quotes as &#34;
+		if !strings.Contains(body, "preview") || !strings.Contains(body, "alt=") {
+			t.Fatalf("body missing alt: %q", body)
+		}
+	}
+	if strings.Contains(body, "http://cdn.example/nope.png") || strings.Contains(body, "should-drop") {
+		t.Fatalf("http/partial must be absent: %q", body)
+	}
+	if strings.Contains(body, "tampered-by-hook") {
+		t.Fatalf("hook must not mutate stored Extensions map: %q", body)
+	}
+	if !strings.Contains(body, "Gift: Happy birthday") {
+		t.Fatalf("stored text row missing: %q", body)
+	}
+	if !strings.Contains(body, "say &lt;b&gt;hi&lt;/b&gt;") {
+		t.Fatalf("text with < must be escaped: %q", body)
 	}
 }
 

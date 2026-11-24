@@ -10,6 +10,7 @@ import (
 	"time"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -56,6 +57,7 @@ type Service struct {
 	invoices    invoice.InvoiceRepository // optional — for invoice emails
 	pdfRenderer invoice.PDFRenderer       // optional — for invoice PDF attachments
 	extensions  extensionapp.ValueAPI     // optional — public order_item values on confirmation lines
+	hooks       *hooks.Registry           // optional — order.line.display enrich
 }
 
 // Option configures optional Service fields.
@@ -90,6 +92,12 @@ func WithEmailDedupe(store EmailDedupeStore) Option {
 // come from the order.
 func WithOrderExtensions(api extensionapp.ValueAPI) Option {
 	return func(s *Service) { s.extensions = api }
+}
+
+// WithOrderLineHooks wires the hook registry for order.line.display enrich
+// (derived fields such as signed thumbnail URLs). Nil is a no-op.
+func WithOrderLineHooks(reg *hooks.Registry) Option {
+	return func(s *Service) { s.hooks = reg }
 }
 
 // New creates a notification Service.
@@ -286,9 +294,10 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 // orderConfirmedItems builds order_confirmed line maps: Name/Qty/Price plus
 // VariantID/SKU. When ValueAPI is wired, public Extensions (code→value for
-// product overrides) and ExtensionsList (Label/Value in registry order for
-// the default template) are attached. Extension lookup failures are logged
-// and skipped so confirmation still enqueues.
+// product overrides) and ExtensionsList (Label/Kind/Value/Alt) are attached.
+// order.line.display enrich (when hooks wired) appends derived fields.
+// Extension lookup and enrich-handler failures are logged and skipped so
+// confirmation still enqueues.
 func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map[string]interface{} {
 	items := o.Items()
 	tmplItems := make([]map[string]interface{}, len(items))
@@ -303,37 +312,60 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 			"SKU":       it.SKU,
 		}
 	}
-	if s == nil || s.extensions == nil || len(items) == 0 {
+	if s == nil || len(items) == 0 {
 		return tmplItems
 	}
-	byVariant, err := extensionapp.PublicOrderItemAPIByVariant(ctx, s.extensions, o.ID, variantIDs, func(code string, fieldErr error) {
-		s.log.Error("HandleOrderPaid.order_item_extension_field_failed", fieldErr, map[string]interface{}{
-			"order_id":   o.ID,
-			"field_code": code,
+	var byVariant map[string][]extensionapp.APIValueItem
+	var reg *extensionapp.Registry
+	if s.extensions != nil {
+		var err error
+		byVariant, err = extensionapp.PublicOrderItemAPIByVariant(ctx, s.extensions, o.ID, variantIDs, func(code string, fieldErr error) {
+			s.log.Error("HandleOrderPaid.order_item_extension_field_failed", fieldErr, map[string]interface{}{
+				"order_id":   o.ID,
+				"field_code": code,
+			})
 		})
-	})
-	if err != nil {
-		s.log.Error("HandleOrderPaid.order_item_extensions_failed", err, map[string]interface{}{
-			"order_id": o.ID,
-		})
-		return tmplItems
+		if err != nil {
+			s.log.Error("HandleOrderPaid.order_item_extensions_failed", err, map[string]interface{}{
+				"order_id": o.ID,
+			})
+			byVariant = nil
+		} else {
+			reg = s.extensions.Registry()
+		}
 	}
-	reg := s.extensions.Registry()
 	for i, it := range items {
 		apiItems := byVariant[it.VariantID]
-		if ext := extensionapp.ExtensionMapFromAPIItems(apiItems); len(ext) > 0 {
-			tmplItems[i]["Extensions"] = ext
-		}
-		if rows := extensionapp.ExtensionDisplayRows(reg, apiItems); len(rows) > 0 {
-			list := make([]map[string]interface{}, len(rows))
-			for j, row := range rows {
-				list[j] = map[string]interface{}{
-					"FieldCode": row.FieldCode,
-					"Label":     row.Label,
-					"Value":     row.Value,
-				}
-			}
+		extMap := extensionapp.ExtensionMapFromAPIItems(apiItems)
+		rows := extensionapp.ExtensionDisplayRows(reg, apiItems)
+		baseLen := len(rows)
+		// Hook gets a clone so handlers cannot mutate the template map.
+		hookExt := extensionapp.CloneExtensionMap(extMap)
+		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, s.hooks, o.ID, it.VariantID, hookExt, rows,
+			func(registrant string, hookErr error) {
+				s.log.Error("HandleOrderPaid.order_line_display_failed", hookErr, map[string]interface{}{
+					"order_id":   o.ID,
+					"variant_id": it.VariantID,
+					"registrant": registrant,
+				})
+			},
+			func(fieldCode, reason string) {
+				s.log.Info("HandleOrderPaid.order_line_display_row_skipped", map[string]interface{}{
+					"order_id":   o.ID,
+					"variant_id": it.VariantID,
+					"field_code": fieldCode,
+					"reason":     reason,
+				})
+			},
+		)
+		if list := extensionapp.DisplayRowsToTemplateList(rows); len(list) > 0 {
 			tmplItems[i]["ExtensionsList"] = list
+		}
+		// Template Extensions map stays private; enrich codes overwrite from
+		// normalized rows only (never from a live hook mutation).
+		extOut := extensionapp.ApplyEnrichedOverrides(extensionapp.CloneExtensionMap(extMap), rows, baseLen)
+		if len(extOut) > 0 {
+			tmplItems[i]["Extensions"] = extOut
 		}
 	}
 	return tmplItems
