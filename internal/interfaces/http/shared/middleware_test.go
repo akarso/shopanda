@@ -1,9 +1,12 @@
 package shared_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -54,6 +57,66 @@ func TestLoggingMiddleware_Returns200(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestLoggingMiddleware_LogsRoutePatternNotRawPath(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "info")
+	router := shared.NewRouter()
+	router.Use(shared.LoggingMiddleware(log))
+	router.HandleFunc("GET /api/customizer/order-thumbnails/{token}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	secret := "hmac-token-must-not-appear-in-logs"
+	req := httptest.NewRequest(http.MethodGet, "/api/customizer/order-thumbnails/"+secret, nil)
+	rec := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	raw := buf.String()
+	if strings.Contains(raw, secret) {
+		t.Fatalf("access log leaked path secret: %s", raw)
+	}
+	var entry struct {
+		Event   string                 `json:"event"`
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("parse log: %v; raw=%s", err, raw)
+	}
+	if entry.Event != "http.request" {
+		t.Fatalf("event = %q", entry.Event)
+	}
+	want := "GET /api/customizer/order-thumbnails/{token}"
+	if entry.Context["path"] != want {
+		t.Fatalf("path = %v, want %q", entry.Context["path"], want)
+	}
+}
+
+func TestLoggingMiddleware_UnmatchedUsesBoundedLabel(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.NewWithWriter(&buf, "info")
+	// Outside Router.Handler — no routeMatch box (probe wrap).
+	mw := shared.LoggingMiddleware(log)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	var entry struct {
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("parse log: %v; raw=%s", err, buf.String())
+	}
+	if entry.Context["path"] != "unmatched" {
+		t.Fatalf("path = %v, want unmatched", entry.Context["path"])
 	}
 }
 
