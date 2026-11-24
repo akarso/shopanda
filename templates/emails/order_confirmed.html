@@ -19,7 +19,14 @@
         {{if .ExtensionsList}}
         <div style="color: #666666; font-size: 12px; margin-top: 4px;">
           {{range .ExtensionsList}}
+          {{if eq .Kind "image"}}
+          <div style="margin-top: 6px;">
+            {{if .Label}}<div>{{.Label}}</div>{{end}}
+            <img src="{{.Value}}" alt="{{.Alt}}" width="120" style="display: block; max-width: 120px; height: auto; border: 0;">
+          </div>
+          {{else}}
           <div>{{.Label}}: {{.Value}}</div>
+          {{end}}
           {{end}}
         </div>
         {{end}}

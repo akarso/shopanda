@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +18,8 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/application/hooks"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -781,6 +784,68 @@ func TestStorefrontHandler_AccountOrderDetail_IncludesLineExtensions(t *testing.
 	}
 	if strings.Contains(body, "nope") || strings.Contains(body, "acme.secret") {
 		t.Fatalf("private extension leaked into account HTML: %s", body)
+	}
+}
+
+func TestStorefrontHandler_AccountOrderDetail_OrderLineDisplayImage(t *testing.T) {
+	extensionapp.SetImageHostLookupForTest(t, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.216.34")}, nil
+	})
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", out.CustomerID, "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+	orders.byCustomer[out.CustomerID] = []order.Order{o}
+
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		raw, _ := ctx.Get("fields")
+		fields := raw.(*[]extapi.OrderLineDisplayField)
+		*fields = append(*fields, extapi.OrderLineDisplayField{
+			Code:  "plugin.thumb",
+			Label: "Design",
+			Kind:  extapi.DisplayKindImage,
+			Value: "https://cdn.example/thumb.png",
+			Alt:   "order thumbnail",
+		})
+		return nil
+	})
+
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, orders, &storefrontAccountDeleterStub{}).
+		WithOrderLineHooks(hookReg)
+
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/orders/ord-1", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `src="https://cdn.example/thumb.png"`) || !strings.Contains(body, `alt="order thumbnail"`) {
+		t.Fatalf("body missing https img: %s", body)
+	}
+	if !strings.Contains(body, `data-field="plugin.thumb"`) {
+		t.Fatalf("body missing field code: %s", body)
 	}
 }
 

@@ -30,7 +30,9 @@ type registeredHandler struct {
 
 // Registry stores hook handlers and executes ordered chains.
 // Panics in handlers are recovered and returned as errors so core state is not corrupted.
-// The first handler error stops the chain and is returned to the caller.
+// Invoke / InvokeAdapted: the first handler error stops the chain and is
+// returned to the caller. InvokeContinueOnError (order.line.display) reports
+// errors via callback and keeps running later handlers.
 type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string][]registeredHandler
@@ -93,6 +95,123 @@ func (r *Registry) Invoke(_ context.Context, hookCtx *Context) error {
 		}
 	}
 	return nil
+}
+
+// InvokeContinueOnError runs order.line.display handlers in priority order.
+// Handler errors and recovered panics are reported via onErr (when non-nil)
+// and do not stop later handlers.
+//
+// Cancel is checked only between handlers: a handler that has already started
+// is not interrupted. On cancel, onErr is called with an empty registrant
+// (chain-level), not the next plugin name.
+//
+// Before each handler, order_id / variant_id are reset to the chain values and
+// extensions is set to a deep copy of the original map so in-place writes cannot
+// retarget a later plugin. On handler error or panic, fields are restored from
+// a by-value snapshot (including when the handler mutated elements or replaced
+// the pointer). Successful appends are kept for later handlers.
+//
+// This method is specialized for order.line.display; do not reuse it for other
+// hooks without revisiting the sealed keys and fields rollback.
+func (r *Registry) InvokeContinueOnError(ctx context.Context, hookCtx *Context, onErr func(registrant string, err error)) {
+	if r == nil || hookCtx == nil {
+		return
+	}
+	if strings.TrimSpace(hookCtx.Name) == "" {
+		if onErr != nil {
+			onErr("", fmt.Errorf("hooks: context name must not be empty"))
+		}
+		return
+	}
+
+	r.mu.RLock()
+	handlers := append([]registeredHandler(nil), r.handlers[hookCtx.Name]...)
+	r.mu.RUnlock()
+
+	sealedOrderID, hasOrderID := hookCtx.Get("order_id")
+	sealedVariantID, hasVariantID := hookCtx.Get("variant_id")
+	var sealedExt map[string]interface{}
+	if rawExt, ok := hookCtx.Get("extensions"); ok && rawExt != nil {
+		if m, ok := rawExt.(map[string]interface{}); ok {
+			sealedExt = deepCopyJSONMap(m)
+		}
+	}
+
+	for _, h := range handlers {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				if onErr != nil {
+					onErr("", ctx.Err())
+				}
+				return
+			default:
+			}
+		}
+
+		if hasOrderID {
+			hookCtx.Set("order_id", sealedOrderID)
+		} else if hookCtx.Payload != nil {
+			delete(hookCtx.Payload, "order_id")
+		}
+		if hasVariantID {
+			hookCtx.Set("variant_id", sealedVariantID)
+		} else if hookCtx.Payload != nil {
+			delete(hookCtx.Payload, "variant_id")
+		}
+		if sealedExt != nil {
+			hookCtx.Set("extensions", deepCopyJSONMap(sealedExt))
+		} else if hookCtx.Payload != nil {
+			delete(hookCtx.Payload, "extensions")
+		}
+
+		fieldsSnap := takeOrderLineFieldsSnapshot(hookCtx)
+		err := r.runHandler(hookCtx, h)
+
+		// Always re-seal identity for the next handler (success or failure).
+		if hasOrderID {
+			hookCtx.Set("order_id", sealedOrderID)
+		}
+		if hasVariantID {
+			hookCtx.Set("variant_id", sealedVariantID)
+		}
+		if sealedExt != nil {
+			hookCtx.Set("extensions", deepCopyJSONMap(sealedExt))
+		}
+
+		if err != nil {
+			restoreOrderLineFieldsSnapshot(hookCtx, fieldsSnap)
+			if onErr != nil {
+				onErr(h.registrant, err)
+			}
+		}
+	}
+}
+
+func deepCopyJSONMap(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = deepCopyJSONValue(v)
+	}
+	return out
+}
+
+func deepCopyJSONValue(v interface{}) interface{} {
+	switch x := v.(type) {
+	case map[string]interface{}:
+		return deepCopyJSONMap(x)
+	case []interface{}:
+		out := make([]interface{}, len(x))
+		for i, e := range x {
+			out[i] = deepCopyJSONValue(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // InvokeAdapted runs all handlers for hookCtx.Name in priority order, like
