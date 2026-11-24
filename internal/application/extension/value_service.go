@@ -71,13 +71,19 @@ func NewValueService(registry *Registry, repo domainext.ValueRepository) *ValueS
 }
 
 // pluginWriter returns the trusted registrant for code and whether it may write
-// the field: the context must name code and, when the field has a recorded owner,
-// the registrant must be that owner. Unowned fields (admin-created, or registered
-// outside plugin Init) accept any registrant. The owner is read at write time, so a
-// field removed and re-registered under another owner is judged by the new owner.
-// The registrant is still a plain string: this stops accidental and cross-plugin
-// writes; it is not a security boundary against in-process code that impersonates
-// the owner's name.
+// the field for PluginOnlyWrite gating: the context must name code and, when the
+// field has a recorded owner, the registrant must be that owner. Unowned
+// PluginOnlyWrite fields (admin-created, or registered outside plugin Init)
+// accept any registrant for this check alone. The owner is read at write time,
+// so a field removed and re-registered under another owner is judged by the
+// new owner. The registrant is still a plain string: this stops accidental and
+// cross-plugin writes; it is not a security boundary against in-process code
+// that impersonates the owner's name.
+//
+// VisibilityPrivate is gated separately in validateBatchValues / Delete: an
+// unowned private field still returns ErrForbiddenPrivateField when
+// canAccessPrivate is false, even when pluginWriter would allow the
+// registrant. Do not "align" that private check with empty-owner acceptance.
 func (s *ValueService) pluginWriter(ctx context.Context, code string) (string, bool) {
 	registrant, ok := pluginWriteFor(ctx, code)
 	if !ok {
@@ -348,16 +354,26 @@ func (s *ValueService) validateBatchValues(ctx context.Context, target domainext
 		if field.StorageMode == domainext.StorageComputed {
 			return nil, domainext.ValidationErrf("extension field %q is computed and cannot be stored", code)
 		}
-		if field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate {
-			return nil, domainext.ErrForbiddenPrivateField
-		}
+		// Private without canAccessPrivate is forbidden, except a trusted
+		// plugin-write of an *owned* PluginOnlyWrite field (same field only).
+		// Unowned PluginOnlyWrite+Private still needs canAccessPrivate — an
+		// empty owner must not open a cart-path bypass for any registrant.
+		privateBlocked := field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate
 		rowUpdatedBy := updatedBy
 		if field.Access.PluginOnlyWrite {
 			registrant, allowed := s.pluginWriter(ctx, code)
 			if !allowed {
+				if privateBlocked {
+					return nil, domainext.ErrForbiddenPrivateField
+				}
 				return nil, domainext.ErrForbiddenPluginOnlyField
 			}
+			if privateBlocked && s.registry.Owner(code) == "" {
+				return nil, domainext.ErrForbiddenPrivateField
+			}
 			rowUpdatedBy = "plugin:" + registrant
+		} else if privateBlocked {
+			return nil, domainext.ErrForbiddenPrivateField
 		}
 
 		payload, err := domainext.PayloadFromInput(field, input.Value)
@@ -512,13 +528,19 @@ func (s *ValueService) Delete(ctx context.Context, target domainext.Target, fiel
 	if !ok {
 		return domainext.ErrUnknownFieldCode
 	}
-	if field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate {
-		return domainext.ErrForbiddenPrivateField
-	}
+	privateBlocked := field.Visibility == domainext.VisibilityPrivate && !canAccessPrivate
 	if field.Access.PluginOnlyWrite {
 		if _, allowed := s.pluginWriter(ctx, fieldCode); !allowed {
+			if privateBlocked {
+				return domainext.ErrForbiddenPrivateField
+			}
 			return domainext.ErrForbiddenPluginOnlyField
 		}
+		if privateBlocked && s.registry.Owner(fieldCode) == "" {
+			return domainext.ErrForbiddenPrivateField
+		}
+	} else if privateBlocked {
+		return domainext.ErrForbiddenPrivateField
 	}
 	return s.repo.Delete(ctx, target, fieldCode)
 }

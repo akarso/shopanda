@@ -503,6 +503,13 @@ func TestCartPort_Get_HidesPrivateAndOtherOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := extReg.RegisterOwned(domainext.FieldDef{
+		Code: "acme.design_id", Label: "Design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+		Visibility: domainext.VisibilityPrivate, Access: domainext.Access{PluginOnlyWrite: true},
+	}, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := extReg.RegisterOwned(domainext.FieldDef{
 		Code: "other.secret", Label: "Secret", Type: domainext.FieldTypeString,
 		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
 		Visibility: domainext.VisibilityPublic, Access: domainext.Access{PluginOnlyWrite: true},
@@ -521,9 +528,12 @@ func TestCartPort_Get_HidesPrivateAndOtherOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.note")
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.note", "acme.design_id")
 	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
-		Extensions: []domainext.ValueInput{{FieldCode: "acme.note", Value: "hello"}},
+		Extensions: []domainext.ValueInput{
+			{FieldCode: "acme.note", Value: "hello"},
+			{FieldCode: "acme.design_id", Value: "d-42"},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -550,18 +560,38 @@ func TestCartPort_Get_HidesPrivateAndOtherOwners(t *testing.T) {
 	if len(view.Items) != 1 {
 		t.Fatalf("items = %d", len(view.Items))
 	}
-	codes := map[string]bool{}
+	codes := map[string]interface{}{}
 	for _, e := range view.Items[0].Extensions {
-		codes[e.Code] = true
+		codes[e.Code] = e.Value
 	}
-	if !codes["acme.note"] {
+	if codes["acme.note"] != "hello" {
 		t.Fatal("owner should see acme.note")
 	}
-	if codes["other.secret"] {
+	if codes["acme.design_id"] != "d-42" {
+		t.Fatal("owner should see own private PluginOnlyWrite field")
+	}
+	if _, ok := codes["other.secret"]; ok {
 		t.Fatal("must not see other plugin-only field")
 	}
-	if codes["core.private"] {
+	if _, ok := codes["core.private"]; ok {
 		t.Fatal("must not see private field")
+	}
+
+	// Unattributed Host strips private (including owned private plugin-only).
+	unattr := pluginsdk.AsHost(app)
+	unattr.Require(pluginsdk.CapCart)
+	uport, ok := unattr.Cart()
+	if !ok {
+		t.Fatal("unattributed Cart() ok=false")
+	}
+	uview, err := uport.Get(context.Background(), c.ID, "cust-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range uview.Items[0].Extensions {
+		if e.Code == "acme.design_id" || e.Code == "core.private" {
+			t.Fatalf("unattributed Host must not see private %q", e.Code)
+		}
 	}
 }
 

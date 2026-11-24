@@ -259,8 +259,8 @@ Short pointers for plugin work (full mechanism choice → [Extension Points](doc
 | Tutorial walkthrough | [DEVELOPER.md](docs/guides/DEVELOPER.md) |
 | Multi-plugin ordering on the same seam | [PLUGIN_COMPOSITION.md](docs/guides/PLUGIN_COMPOSITION.md) |
 | Public SDK plugin (`pkg/pluginsdk` only) | Register `pluginsdk.Adapt(yours)`; copy [`plugins/extref`](plugins/extref/README.md) |
-| Plugin-only cart field + trusted add | `RegisterField` with `PluginOnlyWrite`, then `WithPluginWrite` + `CartPort.AddItem` (pitfalls in EXTENSION_POINTS) |
-| Session cart from a public route | `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`); keep `cart_id` out of JSON — see `plugins/extref` design-line |
+| Plugin-only cart field + trusted add | `RegisterField` with `PluginOnlyWrite` (optional `VisibilityPrivate`), then `WithPluginWrite` + `CartPort.AddItem`; owner `CartPort.Get` / `cart.validate` see private PluginOnlyWrite (pitfalls in EXTENSION_POINTS) |
+| Session cart from a public route | `CartPort.EnsureStorefrontCart` (`pkg/storefrontsession`); keep `cart_id` and private `Items[].Extensions` out of public JSON — see `plugins/extref` design-line |
 | Failed first guest add left empty cart | `CartPort.DiscardEmptyGuestCart(ctx, w, r, cart.ID)` with Ensure id (clears cookie only if deleted) |
 | Validate design/extensions during AddItem | Effective `CartView` line overlays pending codes; `pending_line` only when AddItem has extensions |
 | Signed-in customer + owner-token on plugin route | Keep `AuthMiddleware` for opaque (non-JWT) owner tokens; JWT-shaped owners still 401 until confirmed; `pluginsdk.CustomerID(r)` |

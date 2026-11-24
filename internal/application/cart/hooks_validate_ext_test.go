@@ -16,7 +16,8 @@ func TestService_CartValidate_PluginOnlyExtensionVisibleOnlyToOwner(t *testing.T
 	if err := reg.RegisterOwned(domainext.FieldDef{
 		Code: "acme.design_id", Label: "Design", Type: domainext.FieldTypeString,
 		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
-		Access: domainext.Access{PluginOnlyWrite: true},
+		Visibility: domainext.VisibilityPrivate,
+		Access:     domainext.Access{PluginOnlyWrite: true},
 	}, "acme"); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,8 @@ func TestService_CartValidate_PendingOverlaysStoredEmpty(t *testing.T) {
 	if err := reg.RegisterOwned(domainext.FieldDef{
 		Code: "acme.design_id", Label: "Design", Type: domainext.FieldTypeString,
 		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
-		Access: domainext.Access{PluginOnlyWrite: true},
+		Visibility: domainext.VisibilityPrivate,
+		Access:     domainext.Access{PluginOnlyWrite: true},
 	}, "acme"); err != nil {
 		t.Fatal(err)
 	}
