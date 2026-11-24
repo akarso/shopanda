@@ -440,6 +440,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithInvoices(repos.invoiceRepo),
 		notification.WithPDFRenderer(invoicePDFRenderer),
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
+		notification.WithOrderExtensions(extensionApp.AsValueAPI(extensionValueService)),
 	)
 
 	// Media storage (resolve + bind so BoundMediaStorage matches this instance).
@@ -934,7 +935,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts).
 		WithOffers(catalogOffers)
 	cartHandler := storefront.NewCartHandler(cartService, extensionApp.AsValueAPI(extensionValueService))
-	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionApp.AsValueAPI(extensionValueService))
+	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionApp.AsValueAPI(extensionValueService)).WithLog(log)
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionApp.AsValueAPI(extensionValueService)).
 		WithEventBus(bus).
 		WithShipmentStatusService(shipmentStatusService)

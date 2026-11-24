@@ -14,7 +14,16 @@
   <tbody>
     {{range .Data.Items}}
     <tr style="border-bottom: 1px solid #eaeaea;">
-      <td style="padding: 8px;">{{.Name}}</td>
+      <td style="padding: 8px;">
+        {{.Name}}
+        {{if .ExtensionsList}}
+        <div style="color: #666666; font-size: 12px; margin-top: 4px;">
+          {{range .ExtensionsList}}
+          <div>{{.Label}}: {{.Value}}</div>
+          {{end}}
+        </div>
+        {{end}}
+      </td>
       <td align="center" style="padding: 8px;">{{.Qty}}</td>
       <td align="right" style="padding: 8px;">{{.Price}}</td>
     </tr>

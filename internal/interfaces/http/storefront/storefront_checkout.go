@@ -69,6 +69,10 @@ type StorefrontCheckoutConfirmation struct {
 	ViewOrderURL string // empty for guest orders, which have no account order page
 	ContinueURL  string
 	GuestEmail   string // set for guest orders; confirmation is sent here
+	// Items carry VariantID + public order_item extensions (same shape as
+	// account order detail / confirmation email lines). Empty when the order
+	// cannot be loaded.
+	Items []StorefrontAccountOrderItem
 }
 
 type StorefrontCheckoutPageData struct {
@@ -389,10 +393,24 @@ func (h *StorefrontHandler) CheckoutPaymentReturn() http.HandlerFunc {
 			ContinueURL: "/products",
 			Notice:      "Checking payment status. You will receive a confirmation email when the payment is recorded.",
 		}
-		if customerID := storefrontCustomerID(r); customerID != "" && orderID != "" {
-			page.Confirmation.ViewOrderURL = "/account/orders/" + orderID
+		// Prefer HMAC confirm flash for this order (guest SCA just finished).
+		// Otherwise only the owning logged-in customer may see lines / View Order.
+		flash, flashOK := h.readConfirmFlash(r)
+		customerID := storefrontCustomerID(r)
+		if flashOK && orderID != "" && strings.TrimSpace(flash.OrderID) == orderID {
+			h.attachCheckoutConfirmItems(r.Context(), page.Confirmation)
+			safeView := "/account/orders/" + orderID
+			if strings.TrimSpace(flash.ViewOrderURL) == safeView {
+				page.Confirmation.ViewOrderURL = safeView
+			} else {
+				h.setConfirmViewOrderURLIfOwner(r.Context(), page.Confirmation, customerID)
+			}
+		} else if customerID != "" && orderID != "" {
+			h.attachCheckoutConfirmItemsForCustomer(r.Context(), page.Confirmation, customerID)
+			// Link when ownership matches, even if line rendering failed.
+			h.setConfirmViewOrderURLIfOwner(r.Context(), page.Confirmation, customerID)
 		}
-		// Drop any leftover confirm flash (PI secret / PII) after the redirect return.
+		// Drop leftover confirm flash (PI secret / PII) after the redirect return.
 		h.clearConfirmFlash(w, r)
 		h.renderCheckoutSensitive(w, "checkout_confirm", page, http.StatusOK)
 	}
@@ -520,6 +538,7 @@ func (h *StorefrontHandler) serveCheckoutConfirmGet(w http.ResponseWriter, r *ht
 		ContinueURL:  flash.ContinueURL,
 		GuestEmail:   flash.GuestEmail,
 	}
+	h.attachCheckoutConfirmItems(r.Context(), page.Confirmation)
 	page.StripePending = flash.StripePending
 	if flash.StripePending {
 		if h.applyStripeConfirmFields(&page, flash.OrderID, flash.StripeClientSecret) {
@@ -538,6 +557,79 @@ func (h *StorefrontHandler) serveCheckoutConfirmGet(w http.ResponseWriter, r *ht
 		h.clearConfirmFlash(w, r)
 	}
 	h.renderCheckoutSensitive(w, "checkout_confirm", page, http.StatusOK)
+}
+
+// attachCheckoutConfirmItems loads public line rows for the HMAC-gated
+// /checkout/confirm page. Lookup failures leave Items empty so confirmation
+// still renders.
+func (h *StorefrontHandler) attachCheckoutConfirmItems(ctx context.Context, conf *StorefrontCheckoutConfirmation) {
+	h.attachCheckoutConfirmItemsChecked(ctx, conf, "")
+}
+
+// attachCheckoutConfirmItemsForCustomer loads lines only when the order's
+// CustomerID matches. Used by unsigned Stripe return_url — never for guests
+// or strangers who only know the order id.
+func (h *StorefrontHandler) attachCheckoutConfirmItemsForCustomer(ctx context.Context, conf *StorefrontCheckoutConfirmation, customerID string) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return
+	}
+	h.attachCheckoutConfirmItemsChecked(ctx, conf, customerID)
+}
+
+func (h *StorefrontHandler) attachCheckoutConfirmItemsChecked(ctx context.Context, conf *StorefrontCheckoutConfirmation, requireCustomerID string) {
+	if h == nil || conf == nil || h.orders == nil {
+		return
+	}
+	orderID := strings.TrimSpace(conf.OrderID)
+	if orderID == "" {
+		return
+	}
+	o, err := h.orders.FindByID(ctx, orderID)
+	if err != nil || o == nil {
+		if err != nil && h.log != nil {
+			h.log.Error("storefront.checkout.confirm_order_lookup_failed", err, map[string]interface{}{
+				"order_id": orderID,
+			})
+		}
+		return
+	}
+	if requireCustomerID != "" && strings.TrimSpace(o.CustomerID) != requireCustomerID {
+		return
+	}
+	items, err := h.storefrontOrderLineItems(ctx, o)
+	if err != nil {
+		// storefrontOrderLineItems fail-softs extension errors; this path is
+		// for unexpected core line failures — keep confirmation without items.
+		if h.log != nil {
+			h.log.Error("storefront.checkout.confirm_line_items_failed", err, map[string]interface{}{
+				"order_id": orderID,
+			})
+		}
+		return
+	}
+	conf.Items = items
+}
+
+// setConfirmViewOrderURLIfOwner sets ViewOrderURL only when the order belongs
+// to customerID (flash path without a pre-filled ViewOrderURL).
+func (h *StorefrontHandler) setConfirmViewOrderURLIfOwner(ctx context.Context, conf *StorefrontCheckoutConfirmation, customerID string) {
+	if h == nil || conf == nil || h.orders == nil {
+		return
+	}
+	customerID = strings.TrimSpace(customerID)
+	orderID := strings.TrimSpace(conf.OrderID)
+	if customerID == "" || orderID == "" {
+		return
+	}
+	o, err := h.orders.FindByID(ctx, orderID)
+	if err != nil || o == nil {
+		return
+	}
+	if strings.TrimSpace(o.CustomerID) != customerID {
+		return
+	}
+	conf.ViewOrderURL = "/account/orders/" + orderID
 }
 
 // applyStripeConfirmFields returns true when Stripe.js can be mounted.

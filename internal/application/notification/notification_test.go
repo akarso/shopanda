@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/notification"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
@@ -459,6 +461,212 @@ func TestHandleOrderPaid_CustomerNotFound(t *testing.T) {
 	if len(q.enqueued) != 0 {
 		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
 	}
+}
+
+func TestHandleOrderPaid_IncludesLineExtensionsAndVariantID(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("order_confirmed",
+		"Order {{.Data.OrderID}} — Confirmation",
+		`{{range .Data.Items}}{{.VariantID}}|{{.SKU}}|{{index .Extensions "acme.gift.message"}}|{{range .ExtensionsList}}{{.Label}}:{{.Value}}{{end}}{{end}}`,
+	)
+
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.secret",
+		Label:       "Secret",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+		Visibility:  domainext.VisibilityPrivate,
+	}); err != nil {
+		t.Fatalf("register private: %v", err)
+	}
+	extRepo := &notifExtMemRepo{values: map[string]domainext.Value{}}
+	msg := "Happy birthday"
+	secret := "nope"
+	target := domainext.OrderItemTarget("ord-1", "var-1")
+	extRepo.values[string(target.Type)+":"+target.ID+":acme.gift.message"] = domainext.Value{
+		FieldCode:  "acme.gift.message",
+		TargetType: target.Type,
+		TargetID:   target.ID,
+		Payload:    domainext.ValuePayload{StringValue: &msg},
+	}
+	extRepo.values[string(target.Type)+":"+target.ID+":acme.secret"] = domainext.Value{
+		FieldCode:  "acme.secret",
+		TargetType: target.Type,
+		TargetID:   target.ID,
+		Payload:    domainext.ValuePayload{StringValue: &secret},
+	}
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &o, nil
+			}
+			return nil, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithOrderExtensions(values))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d, want 1", len(q.enqueued))
+	}
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if !strings.Contains(body, "var-1|SKU-1|Happy birthday|Gift:Happy birthday") {
+		t.Fatalf("body = %q, want variant/sku/extension + labeled list", body)
+	}
+	if strings.Contains(body, "nope") || strings.Contains(body, "acme.secret") {
+		t.Fatalf("private extension leaked into email body: %q", body)
+	}
+}
+
+func TestHandleOrderPaid_ExtensionListFailureStillEnqueues(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("order_confirmed",
+		"Order {{.Data.OrderID}} — Confirmation",
+		`{{range .Data.Items}}{{.VariantID}}|{{.SKU}}|hasExt={{if .Extensions}}yes{{else}}no{{end}}{{end}}`,
+	)
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	reg := extensionapp.NewRegistry()
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &o, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithOrderExtensions(boomOrderExtAPI{reg: reg}))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d, want 1 despite extension failure", len(q.enqueued))
+	}
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if !strings.Contains(body, "var-1|SKU-1|hasExt=no") {
+		t.Fatalf("body = %q, want core line without Extensions", body)
+	}
+}
+
+type boomOrderExtAPI struct {
+	reg *extensionapp.Registry
+}
+
+func (b boomOrderExtAPI) Registry() *extensionapp.Registry { return b.reg }
+func (b boomOrderExtAPI) List(context.Context, domainext.Target, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (b boomOrderExtAPI) ListByOrderItems(context.Context, string, []string, bool) (map[string][]domainext.Value, error) {
+	return nil, errors.New("list boom")
+}
+func (b boomOrderExtAPI) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
+	return nil, errors.New("unused")
+}
+func (b boomOrderExtAPI) Delete(context.Context, domainext.Target, string, bool) error {
+	return errors.New("unused")
+}
+
+type notifExtMemRepo struct {
+	values map[string]domainext.Value
+}
+
+func (m *notifExtMemRepo) ListByTarget(_ context.Context, target domainext.Target) ([]domainext.Value, error) {
+	var out []domainext.Value
+	for _, v := range m.values {
+		if v.TargetType == target.Type && v.TargetID == target.ID {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+func (m *notifExtMemRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	want := map[string]struct{}{}
+	for _, id := range targetIDs {
+		want[id] = struct{}{}
+	}
+	var out []domainext.Value
+	for _, v := range m.values {
+		if v.TargetType == targetType {
+			if _, ok := want[v.TargetID]; ok {
+				out = append(out, v)
+			}
+		}
+	}
+	return out, nil
+}
+func (m *notifExtMemRepo) Upsert(_ context.Context, value domainext.Value) error {
+	m.values[string(value.TargetType)+":"+value.TargetID+":"+value.FieldCode] = value
+	return nil
+}
+func (m *notifExtMemRepo) UpsertBatch(ctx context.Context, values []domainext.Value) error {
+	for _, v := range values {
+		if err := m.Upsert(ctx, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (m *notifExtMemRepo) UpsertBatchSelective(ctx context.Context, values []domainext.Value, _ map[string]struct{}) error {
+	return m.UpsertBatch(ctx, values)
+}
+func (m *notifExtMemRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, _ domainext.TargetType, _ string) ([]string, error) {
+	return nil, nil
+}
+func (m *notifExtMemRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
+	delete(m.values, string(target.Type)+":"+target.ID+":"+fieldCode)
+	return nil
 }
 
 func TestHandleOrderPaid_BadEventData(t *testing.T) {

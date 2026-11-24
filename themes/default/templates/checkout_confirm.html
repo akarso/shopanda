@@ -85,6 +85,26 @@
         {{ if .Confirmation.GuestEmail }}
         <p class="muted-note">A confirmation email will be sent to <strong>{{ .Confirmation.GuestEmail }}</strong>. Keep it — you can use that email address later to claim this order from a customer account.</p>
         {{ end }}
+        {{ if .Confirmation.Items }}
+        <ul class="checkout-summary-panel__items">
+            {{ range .Confirmation.Items }}
+            <li>
+                <div>
+                    <strong>{{ .Name }}</strong>
+                    <span>{{ .SKU }} · Qty {{ .Quantity }}</span>
+                    {{ if .Extensions }}
+                    <ul class="cart-row__extensions">
+                        {{ range .Extensions }}
+                        <li><span>{{ .Label }}:</span> {{ .Value }}</li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
+                </div>
+                <strong>{{ .LineTotalText }}</strong>
+            </li>
+            {{ end }}
+        </ul>
+        {{ end }}
         <div class="checkout-actions checkout-actions--centered">
             {{ if .Confirmation.ViewOrderURL }}
             <a class="button-link" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>
