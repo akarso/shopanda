@@ -219,10 +219,11 @@ func deepCopyJSONValue(v interface{}) interface{} {
 // handler gets its own view of the payload. Used when a payload value is
 // sensitive to which plugin is receiving it (e.g. a plugin-only extension
 // value that must not leak to every handler just because one handler's
-// registrant is trusted to see it): adapt mutates/returns hookCtx with that
-// value recomputed for the current registrant. Other payload keys are left
-// as-is, so handlers still see each other's hctx.Set calls like plain
-// Invoke. A nil adapt or nil return falls back to the unadapted hookCtx.
+// registrant is trusted to see it). adapt may mutate hookCtx or return a
+// Clone with per-registrant keys (cart.validate clones so private cart
+// rows never sit on the shared context). Pointer payload values remain
+// shared across clones when adapt copies them. A nil adapt or nil return
+// falls back to the unadapted hookCtx.
 func (r *Registry) InvokeAdapted(ctx context.Context, hookCtx *Context, adapt func(registrant string, src *Context) *Context) error {
 	if adapt == nil {
 		return r.Invoke(ctx, hookCtx)

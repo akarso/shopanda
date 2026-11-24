@@ -18,6 +18,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 type memCartExtensionValueRepo struct {
@@ -151,6 +152,13 @@ func (w *trackingExtWriter) IsPluginOnlyWrite(code string) bool {
 		return false
 	}
 	return w.inner.IsPluginOnlyWrite(code)
+}
+
+func (w *trackingExtWriter) IsPrivate(code string) bool {
+	if w.inner == nil {
+		return false
+	}
+	return w.inner.IsPrivate(code)
 }
 
 func (w *trackingExtWriter) ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error {
@@ -802,6 +810,58 @@ func TestService_AddItem_BeforeHookOwnedPluginOnlyValueHiddenFromOtherRegistrant
 	}
 	if len(otherWriteCodes) != 0 {
 		t.Fatalf("other registrant plugin_write_codes = %v, want empty (owner-only)", otherWriteCodes)
+	}
+}
+
+func TestService_AddItem_BeforeHookClonesContextPerRegistrant(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(domainext.FieldDef{
+		Code: "acme.secret", Label: "Secret", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+		Visibility: domainext.VisibilityPrivate,
+		Access:     domainext.Access{PluginOnlyWrite: true},
+	}, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	values := extensionapp.NewValueService(reg, newMemCartExtensionValueRepo())
+	hookReg := hooks.NewRegistry(nil)
+	var ownerKept *hooks.Context
+	_ = hookReg.Register(hooks.HookCartAddItemBefore, 100, "acme", func(hctx *hooks.Context) error {
+		ownerKept = hctx
+		return nil
+	})
+	_ = hookReg.Register(hooks.HookCartAddItemBefore, 200, "other", func(hctx *hooks.Context) error {
+		raw, _ := hctx.Get("extensions")
+		list, _ := raw.([]map[string]interface{})
+		if len(list) == 1 {
+			if _, ok := list[0]["value"]; ok {
+				t.Fatal("other must not see private plugin-only value")
+			}
+		}
+		return nil
+	})
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, hookReg)
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.secret")
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.secret", Value: "classified"}},
+	}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	if ownerKept == nil {
+		t.Fatal("owner handler did not run")
+	}
+	raw, _ := ownerKept.Get("extensions")
+	list, _ := raw.([]map[string]interface{})
+	if len(list) != 1 || list[0]["value"] != "classified" {
+		t.Fatalf("kept owner context extensions = %v, want classified (clone must not be overwritten by later registrant)", list)
 	}
 }
 
@@ -2070,5 +2130,201 @@ func TestService_AddItem_TrustDoesNotLeakToEventHandlers(t *testing.T) {
 	}
 	if !errors.Is(handlerErr, domainext.ErrForbiddenPluginOnlyField) {
 		t.Fatalf("handler err = %v, want ErrForbiddenPluginOnlyField (trust must not leak)", handlerErr)
+	}
+}
+
+type countingSaveCartRepo struct {
+	*stubCartRepo
+	saves int
+}
+
+func (r *countingSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
+	r.saves++
+	return r.stubCartRepo.Save(ctx, c)
+}
+
+func TestService_AddItem_PrivateExclusiveStringConflictBeforeSave(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(domainext.FieldDef{
+		Code: "acme.design_id", Label: "Design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+		Visibility: domainext.VisibilityPrivate,
+		Access:     domainext.Access{PluginOnlyWrite: true, ExclusiveString: true},
+	}, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	repo := newMemCartExtensionValueRepo()
+	values := extensionapp.NewValueService(reg, repo)
+	carts := &countingSaveCartRepo{stubCartRepo: newStubCartRepo()}
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), values, nil)
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design_id")
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design_id", Value: "design-a"}},
+	}); err != nil {
+		t.Fatalf("first AddItem: %v", err)
+	}
+	savesAfterFirst := carts.saves
+
+	_, err = svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design_id", Value: "design-b"}},
+	})
+	if err == nil || !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("second AddItem err = %v, want conflict", err)
+	}
+	if carts.saves != savesAfterFirst {
+		t.Fatalf("saves = %d, want %d (conflict must not call carts.Save)", carts.saves, savesAfterFirst)
+	}
+	got, err := svc.GetCart(ctx, c.ID, "cust-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Quantity != 1 {
+		t.Fatalf("items = %+v, want qty 1 unchanged", got.Items)
+	}
+	listed, err := values.ListByCartItems(ctx, c.ID, []string{"var-1"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := listed["var-1"]
+	if len(rows) != 1 || rows[0].Payload.StringValue == nil || *rows[0].Payload.StringValue != "design-a" {
+		t.Fatalf("stored = %+v, want design-a", rows)
+	}
+}
+
+// opaqueExtWriter forwards extensionValueWriter but deliberately omits
+// pluginOnlyFieldChecker (no IsPrivate) so FilterCartViewForPlugin fails closed.
+type opaqueExtWriter struct {
+	inner *extensionapp.ValueService
+}
+
+func (o opaqueExtWriter) ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error {
+	return o.inner.ValidateBatch(ctx, target, inputs, canAccessPrivate)
+}
+func (o opaqueExtWriter) UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error) {
+	return o.inner.UpsertBatch(ctx, target, inputs, updatedBy, canAccessPrivate)
+}
+func (o opaqueExtWriter) UpsertBatchSelective(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool, exclusiveFieldCodes map[string]struct{}) ([]domainext.Value, error) {
+	return o.inner.UpsertBatchSelective(ctx, target, inputs, updatedBy, canAccessPrivate, exclusiveFieldCodes)
+}
+func (o opaqueExtWriter) Delete(ctx context.Context, target domainext.Target, fieldCode string, canAccessPrivate bool) error {
+	return o.inner.Delete(ctx, target, fieldCode, canAccessPrivate)
+}
+func (o opaqueExtWriter) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
+	return o.inner.DeleteAllForTarget(ctx, target)
+}
+func (o opaqueExtWriter) DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error {
+	return o.inner.DeleteOrphanCartItemExtensions(ctx, cartID, keepVariantIDs)
+}
+func (o opaqueExtWriter) CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error {
+	return o.inner.CopyTarget(ctx, from, to, updatedBy)
+}
+func (o opaqueExtWriter) ListByTarget(ctx context.Context, target domainext.Target) ([]domainext.Value, error) {
+	return o.inner.ListByTarget(ctx, target)
+}
+func (o opaqueExtWriter) ReplaceTarget(ctx context.Context, target domainext.Target, values []domainext.Value) error {
+	return o.inner.ReplaceTarget(ctx, target, values)
+}
+func (o opaqueExtWriter) ListTargetIDsByTypeAndIDPrefix(ctx context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	return o.inner.ListTargetIDsByTypeAndIDPrefix(ctx, targetType, idPrefix)
+}
+func (o opaqueExtWriter) ListByCartItems(ctx context.Context, cartID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error) {
+	return o.inner.ListByCartItems(ctx, cartID, variantIDs, includePrivate)
+}
+
+func TestService_CartViewFilter_OpaqueWriterOmitsPrivate(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	if err := reg.RegisterOwned(domainext.FieldDef{
+		Code: "acme.design_id", Label: "Design", Type: domainext.FieldTypeString,
+		Scope: domainext.TargetCartItem, StorageMode: domainext.StorageStored,
+		Visibility: domainext.VisibilityPrivate,
+		Access:     domainext.Access{PluginOnlyWrite: true},
+	}, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	inner := extensionapp.NewValueService(reg, newMemCartExtensionValueRepo())
+	writer := opaqueExtWriter{inner: inner}
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	hookReg := hooks.NewRegistry(nil)
+	var validateSawPrivate bool
+	_ = hookReg.Register(hooks.HookCartValidate, 100, "acme", func(hctx *hooks.Context) error {
+		raw, _ := hctx.Get("cart")
+		view, ok := raw.(*extapi.CartView)
+		if !ok || view == nil {
+			return nil
+		}
+		for _, line := range view.Items {
+			for _, e := range line.Extensions {
+				if e.Code == "acme.design_id" {
+					validateSawPrivate = true
+				}
+			}
+		}
+		return nil
+	})
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), writer, hookReg)
+	ctx := extensionapp.WithPluginWrite(context.Background(), "acme", "acme.design_id")
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write via inner (owned ValueService) so the row exists; opaque writer still lists it.
+	target := domainext.CartItemTarget(c.ID, "var-1")
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inner.UpsertBatch(ctx, target, []domainext.ValueInput{{FieldCode: "acme.design_id", Value: "secret"}}, "plugin:acme", false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := carts.FindByID(ctx, c.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	rawView, err := svc.CartView(ctx, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rawView.Items) != 1 || len(rawView.Items[0].Extensions) != 1 {
+		t.Fatalf("CartView must load private row for filtering; got %+v", rawView.Items)
+	}
+	filtered := svc.FilterCartViewForPlugin(rawView, "acme")
+	if len(filtered.Items[0].Extensions) != 0 {
+		t.Fatalf("opaque writer (no IsPrivate) must fail closed; got %+v", filtered.Items[0].Extensions)
+	}
+	if _, err := svc.ValidationIssues(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if validateSawPrivate {
+		t.Fatal("cart.validate must omit private when checker cast fails")
+	}
+
+	var beforeSawValue bool
+	_ = hookReg.Register(hooks.HookCartAddItemBefore, 100, "acme", func(hctx *hooks.Context) error {
+		raw, _ := hctx.Get("extensions")
+		list, _ := raw.([]map[string]interface{})
+		for _, row := range list {
+			if _, ok := row["value"]; ok {
+				beforeSawValue = true
+			}
+		}
+		return nil
+	})
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.design_id", Value: "again"}},
+	}); err != nil {
+		// ExclusiveString not set; may succeed or conflict — either way hook ran.
+		_ = err
+	}
+	if beforeSawValue {
+		t.Fatal("add_item.before must omit values when checker cast fails")
 	}
 }

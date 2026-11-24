@@ -355,7 +355,9 @@ func (s *Service) rejectExclusiveStringConflicts(ctx context.Context, cartID, va
 	if e, ok := s.extensions.(exclusiveStringChecker); ok {
 		exclusive = e
 	}
-	existing, err := s.extensions.ListByCartItems(ctx, cartID, []string{variantID}, false)
+	// includePrivate: ExclusiveString + VisibilityPrivate (e.g. design_id) must
+	// be visible here so a second distinct value fails before carts.Save.
+	existing, err := s.extensions.ListByCartItems(ctx, cartID, []string{variantID}, true)
 	if err != nil {
 		return fmt.Errorf("cart service: list line extensions: %w", err)
 	}

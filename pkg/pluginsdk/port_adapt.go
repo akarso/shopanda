@@ -1256,10 +1256,8 @@ func (p *cartPort) viewFor(ctx context.Context, c *domaincart.Cart) (*extapi.Car
 	if err != nil {
 		return nil, err
 	}
-	if p.owner != "" {
-		return p.svc.FilterCartViewForPlugin(view, p.owner), nil
-	}
-	return view, nil
+	// Always filter: CartView loads private values for owner scoping.
+	return p.svc.FilterCartViewForPlugin(view, p.owner), nil
 }
 
 func (p *cartPort) Get(ctx context.Context, cartID, customerID string) (*extapi.CartView, error) {
