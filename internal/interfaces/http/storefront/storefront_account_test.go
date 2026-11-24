@@ -16,7 +16,9 @@ import (
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -694,6 +696,150 @@ func TestStorefrontHandler_AccountVerifyEmail_DeletedCustomer_ShowsInvalidLink(t
 	if !strings.Contains(verifyRec.Body.String(), "This email verification link is invalid or has expired.") {
 		t.Fatalf("expected invalid link message in body: %s", verifyRec.Body.String())
 	}
+}
+
+func TestStorefrontHandler_AccountOrderDetail_IncludesLineExtensions(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 2, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", out.CustomerID, "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+	orders.byCustomer[out.CustomerID] = []order.Order{o}
+
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift message",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.secret",
+		Label:       "Secret",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetOrderItem,
+		StorageMode: domainext.StorageSnapshot,
+		Visibility:  domainext.VisibilityPrivate,
+	}); err != nil {
+		t.Fatalf("register private: %v", err)
+	}
+	extRepo := newOrderTestExtensionValueRepo()
+	msg := "Hello Ada"
+	secret := "nope"
+	extRepo.values[orderTestExtKey(domainext.OrderItemTarget("ord-1", "var-1"), "acme.gift.message")] = domainext.Value{
+		FieldCode:  "acme.gift.message",
+		TargetType: domainext.TargetOrderItem,
+		TargetID:   "ord-1:var-1",
+		Payload:    domainext.ValuePayload{StringValue: &msg},
+	}
+	extRepo.values[orderTestExtKey(domainext.OrderItemTarget("ord-1", "var-1"), "acme.secret")] = domainext.Value{
+		FieldCode:  "acme.secret",
+		TargetType: domainext.TargetOrderItem,
+		TargetID:   "ord-1:var-1",
+		Payload:    domainext.ValuePayload{StringValue: &secret},
+	}
+	values := extensionapp.NewValueService(reg, extRepo)
+
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(values)
+
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/orders/ord-1", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-variant="var-1"`) {
+		t.Fatalf("body missing VariantID: %s", body)
+	}
+	if !strings.Contains(body, `data-field="acme.gift.message"`) || !strings.Contains(body, "Gift message:Hello Ada") {
+		t.Fatalf("body missing extension: %s", body)
+	}
+	if strings.Contains(body, "nope") || strings.Contains(body, "acme.secret") {
+		t.Fatalf("private extension leaked into account HTML: %s", body)
+	}
+}
+
+func TestStorefrontHandler_AccountOrderDetail_ExtensionFailureStillRenders(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 2, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-1", out.CustomerID, "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	orders.byID[o.ID] = &o
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, orders, &storefrontAccountDeleterStub{}).
+		WithExtensions(boomStorefrontExtAPI{reg: extensionapp.NewRegistry()})
+
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/orders/ord-1", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 when extensions fail; body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Widget") || !strings.Contains(body, `data-variant="var-1"`) {
+		t.Fatalf("expected core line without extensions: %s", body)
+	}
+}
+
+type boomStorefrontExtAPI struct {
+	reg *extensionapp.Registry
+}
+
+func (b boomStorefrontExtAPI) Registry() *extensionapp.Registry { return b.reg }
+func (b boomStorefrontExtAPI) List(context.Context, domainext.Target, bool) ([]domainext.Value, error) {
+	return nil, nil
+}
+func (b boomStorefrontExtAPI) ListByOrderItems(context.Context, string, []string, bool) (map[string][]domainext.Value, error) {
+	return nil, errors.New("list boom")
+}
+func (b boomStorefrontExtAPI) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
+	return nil, errors.New("unused")
+}
+func (b boomStorefrontExtAPI) Delete(context.Context, domainext.Target, string, bool) error {
+	return errors.New("unused")
 }
 
 func TestStorefrontHandler_AccountOrders_RendersCustomerOrders(t *testing.T) {

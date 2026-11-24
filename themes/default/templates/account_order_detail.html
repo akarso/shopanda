@@ -24,6 +24,13 @@
                 <div>
                     <strong>{{ .Name }}</strong>
                     <span>{{ .SKU }} · Qty {{ .Quantity }}</span>
+                    {{ if .Extensions }}
+                    <ul class="cart-row__extensions">
+                        {{ range .Extensions }}
+                        <li><span>{{ .Label }}:</span> {{ .Value }}</li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
                 </div>
                 <strong>{{ .LineTotalText }}</strong>
             </li>
