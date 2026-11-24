@@ -16,7 +16,10 @@ func RequestIDMiddleware() Middleware {
 	}
 }
 
-// LoggingMiddleware logs each request with method, path, status, and duration.
+// LoggingMiddleware logs each request with method, matched route template,
+// status, and duration. The "path" field is the ServeMux pattern (e.g.
+// "GET /api/x/{token}"), never r.URL.Path — raw paths can carry HMAC tokens
+// or reset secrets (same policy as TracingMiddleware / MetricsMiddleware).
 func LoggingMiddleware(log logger.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +28,7 @@ func LoggingMiddleware(log logger.Logger) Middleware {
 			next.ServeHTTP(sw, r)
 			log.Info("http.request", map[string]interface{}{
 				"method":      r.Method,
-				"path":        r.URL.Path,
+				"path":        accessLogPath(r),
 				"status":      sw.status,
 				"duration_ms": time.Since(start).Milliseconds(),
 				"request_id":  requestctx.RequestID(r.Context()),
@@ -42,7 +45,7 @@ func RecoveryMiddleware(log logger.Logger) Middleware {
 				if rec := recover(); rec != nil {
 					log.Error("http.panic", fmt.Errorf("%v", rec), map[string]interface{}{
 						"method":     r.Method,
-						"path":       r.URL.Path,
+						"path":       accessLogPath(r),
 						"request_id": requestctx.RequestID(r.Context()),
 					})
 					w.Header().Set("Content-Type", "application/json")
@@ -53,6 +56,18 @@ func RecoveryMiddleware(log logger.Logger) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// accessLogPath returns the matched ServeMux route template for this request,
+// or unmatchedRoute when nothing matched / the handler sits outside Router.
+func accessLogPath(r *http.Request) string {
+	if r == nil {
+		return unmatchedRoute
+	}
+	if pattern := routeMatchFromContext(r.Context()); pattern != "" {
+		return pattern
+	}
+	return unmatchedRoute
 }
 
 // statusWriter wraps http.ResponseWriter to capture the status code.
