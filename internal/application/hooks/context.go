@@ -56,6 +56,9 @@ const (
 	HookCartRecalculateBefore = "cart.recalculate.before"
 	// HookCartValidate runs to collect structured cart validation issues for storefront APIs.
 	HookCartValidate = "cart.validate"
+	// HookOrderLineDisplay lets plugins append derived shopper-facing fields
+	// (e.g. signed thumbnail URL) to confirmation email and order page lines.
+	HookOrderLineDisplay = "order.line.display"
 )
 
 // CartHookPoints returns documented cart lifecycle hook names (stable ordering).
@@ -68,6 +71,21 @@ func CartHookPoints() []string {
 		HookCartRecalculateBefore,
 		HookCartValidate,
 	}
+}
+
+// OrderHookPoints returns documented order-line display hook names.
+func OrderHookPoints() []string {
+	return []string{HookOrderLineDisplay}
+}
+
+// DocumentedHookPoints returns every stable hook point name (cart + order).
+func DocumentedHookPoints() []string {
+	cart := CartHookPoints()
+	order := OrderHookPoints()
+	out := make([]string, 0, len(cart)+len(order))
+	out = append(out, cart...)
+	out = append(out, order...)
+	return out
 }
 
 var hookNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)

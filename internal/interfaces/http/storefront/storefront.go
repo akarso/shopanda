@@ -24,6 +24,7 @@ import (
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -56,6 +57,7 @@ type StorefrontHandler struct {
 	variants            catalog.VariantRepository
 	carts               *cartApp.Service
 	extensions          extensionApp.ValueAPI
+	orderLineHooks      *hooks.Registry
 	auth                *appAuth.Service
 	checkout            *checkoutApp.Service
 	orders              order.OrderRepository
@@ -364,6 +366,12 @@ func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *
 // WithExtensions enables cart line extension capture and storefront display.
 func (h *StorefrontHandler) WithExtensions(extensions extensionApp.ValueAPI) *StorefrontHandler {
 	h.extensions = extensions
+	return h
+}
+
+// WithOrderLineHooks wires order.line.display enrich for account/confirm lines.
+func (h *StorefrontHandler) WithOrderLineHooks(reg *hooks.Registry) *StorefrontHandler {
+	h.orderLineHooks = reg
 	return h
 }
 

@@ -117,6 +117,7 @@ type serveRuntime struct {
 	authService              *authApp.Service
 	accountService           *accountApp.Service
 	returnService            *returnsApp.Service
+	hookRegistry             *hooksApp.Registry
 	extensionValueService    *extensionApp.ValueService
 	setupService             *setupApp.Service
 	bundleService            *catalogApp.BundleService
@@ -441,6 +442,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithPDFRenderer(invoicePDFRenderer),
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 		notification.WithOrderExtensions(extensionApp.AsValueAPI(extensionValueService)),
+		notification.WithOrderLineHooks(hookRegistry),
 	)
 
 	// Media storage (resolve + bind so BoundMediaStorage matches this instance).
@@ -1159,6 +1161,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		authService:                    authService,
 		accountService:                 accountService,
 		returnService:                  returnService,
+		hookRegistry:                   hookRegistry,
 		extensionValueService:          extensionValueService,
 		setupService:                   setupService,
 		bundleService:                  bundleService,

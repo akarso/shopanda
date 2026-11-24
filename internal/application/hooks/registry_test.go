@@ -3,6 +3,7 @@ package hooks_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/hooks"
@@ -59,6 +60,61 @@ func TestRegistry_InvokeRecoversHandlerPanic(t *testing.T) {
 	err := reg.Invoke(context.Background(), hooks.NewContext(hooks.HookCartAddItemAfter))
 	if err == nil || err.Error() == "" {
 		t.Fatalf("Invoke err = %v, want panic error", err)
+	}
+}
+
+func TestRegistry_InvokeContinueOnErrorKeepsGoing(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	var ran []string
+	var seen []string
+	_ = reg.Register(hooks.HookOrderLineDisplay, 100, "plugin.a", func(ctx *hooks.Context) error {
+		ran = append(ran, "a")
+		return errors.New("skip me")
+	})
+	_ = reg.Register(hooks.HookOrderLineDisplay, 200, "plugin.b", func(ctx *hooks.Context) error {
+		ran = append(ran, "b")
+		return nil
+	})
+
+	hookCtx := hooks.NewContext(hooks.HookOrderLineDisplay)
+	reg.InvokeContinueOnError(context.Background(), hookCtx, func(registrant string, err error) {
+		seen = append(seen, registrant+":"+err.Error())
+	})
+	if len(ran) != 2 || ran[0] != "a" || ran[1] != "b" {
+		t.Fatalf("ran = %v, want [a b]", ran)
+	}
+	if len(seen) != 1 || !strings.Contains(seen[0], "plugin.a") {
+		t.Fatalf("onErr = %v", seen)
+	}
+}
+
+func TestRegistry_InvokeContinueOnError_RespectsCancel(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	var ran int
+	_ = reg.Register(hooks.HookOrderLineDisplay, 100, "a", func(ctx *hooks.Context) error {
+		ran++
+		return nil
+	})
+	_ = reg.Register(hooks.HookOrderLineDisplay, 200, "b", func(ctx *hooks.Context) error {
+		ran++
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var got error
+	var registrant string
+	reg.InvokeContinueOnError(ctx, hooks.NewContext(hooks.HookOrderLineDisplay), func(regName string, err error) {
+		registrant = regName
+		got = err
+	})
+	if ran != 0 {
+		t.Fatalf("ran = %d, want 0 after cancel", ran)
+	}
+	if registrant != "" {
+		t.Fatalf("cancel must be chain-level (empty registrant), got %q", registrant)
+	}
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("onErr = %v, want canceled", got)
 	}
 }
 

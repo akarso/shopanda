@@ -27,7 +27,14 @@
                     {{ if .Extensions }}
                     <ul class="cart-row__extensions">
                         {{ range .Extensions }}
+                        {{ if eq .Kind "image" }}
+                        <li>
+                            {{ if .Label }}<span>{{ .Label }}:</span>{{ end }}
+                            <img src="{{ .Value }}" alt="{{ .Alt }}" width="96" style="max-width: 96px; height: auto;" loading="lazy">
+                        </li>
+                        {{ else }}
                         <li><span>{{ .Label }}:</span> {{ .Value }}</li>
+                        {{ end }}
                         {{ end }}
                     </ul>
                     {{ end }}
