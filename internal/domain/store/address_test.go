@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseAddressRole(t *testing.T) {
-	for _, role := range store.AddressRoles {
+	for _, role := range store.AllAddressRoles() {
 		got, err := store.ParseAddressRole("  " + string(role) + " ")
 		if err != nil {
 			t.Fatalf("ParseAddressRole(%q): %v", role, err)
@@ -19,6 +19,15 @@ func TestParseAddressRole(t *testing.T) {
 	}
 	if _, err := store.ParseAddressRole("warehouse"); err == nil {
 		t.Fatal("expected error for unknown role")
+	}
+}
+
+func TestAllAddressRoles_IsCopy(t *testing.T) {
+	a := store.AllAddressRoles()
+	b := store.AllAddressRoles()
+	a[0] = store.AddressRole("mutated")
+	if b[0] != store.AddressRoleGeneral {
+		t.Fatal("AllAddressRoles must return an independent copy")
 	}
 }
 
@@ -37,14 +46,21 @@ func TestNewAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAddress: %v", err)
 	}
-	if a.Role != store.AddressRoleInvoice {
-		t.Errorf("Role = %q", a.Role)
+	if a.Role != store.AddressRoleInvoice || a.Country != "PL" {
+		t.Fatalf("unexpected %+v", a)
 	}
-	if a.Country != "PL" {
-		t.Errorf("Country = %q, want PL", a.Country)
+	if a.IsEmpty() {
+		t.Fatal("filled address must not be empty")
 	}
-	if a.Line1 != "ul. Test 1" || a.City != "Warszawa" || a.Postcode != "00-001" {
-		t.Errorf("fields not trimmed: %+v", a)
+}
+
+func TestAddress_IsEmpty_CountryOnly(t *testing.T) {
+	a, err := store.NewAddress("s-1", store.AddressRoleGeneral, "", "", "", "", "", "DE", "")
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	if !a.IsEmpty() {
+		t.Fatal("country-only address must be IsEmpty for role fallback")
 	}
 }
 
@@ -53,17 +69,22 @@ func TestNewAddress_Validation(t *testing.T) {
 		name    string
 		storeID string
 		role    store.AddressRole
+		line1   string
 		country string
 		want    string
 	}{
 		{name: "empty store", storeID: " ", role: store.AddressRoleGeneral, country: "PL", want: "store id"},
 		{name: "bad role", storeID: "s-1", role: store.AddressRole("nope"), country: "PL", want: "invalid role"},
 		{name: "empty country", storeID: "s-1", role: store.AddressRoleGeneral, country: "", want: "country"},
-		{name: "bad country", storeID: "s-1", role: store.AddressRoleGeneral, country: "POL", want: "country"},
+		{name: "digits", storeID: "s-1", role: store.AddressRoleGeneral, country: "12", want: "country"},
+		{name: "alnum", storeID: "s-1", role: store.AddressRoleGeneral, country: "A1", want: "country"},
+		{name: "two-byte rune", storeID: "s-1", role: store.AddressRoleGeneral, country: "Å", want: "country"},
+		{name: "newline line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "a\nb", country: "PL", want: "newlines"},
+		{name: "long line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: strings.Repeat("x", 256), country: "PL", want: "max length"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := store.NewAddress(tt.storeID, tt.role, "", "", "", "", "", tt.country, "")
+			_, err := store.NewAddress(tt.storeID, tt.role, tt.line1, "", "", "", "", tt.country, "")
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -74,19 +95,30 @@ func TestNewAddress_Validation(t *testing.T) {
 	}
 }
 
-func TestAddressRoles_Order(t *testing.T) {
+func TestAllAddressRoles_Order(t *testing.T) {
 	want := []store.AddressRole{
 		store.AddressRoleGeneral,
 		store.AddressRoleInvoice,
 		store.AddressRoleShippingOrigin,
 		store.AddressRoleReturns,
 	}
-	if len(store.AddressRoles) != len(want) {
-		t.Fatalf("len = %d", len(store.AddressRoles))
+	got := store.AllAddressRoles()
+	if len(got) != len(want) {
+		t.Fatalf("len = %d", len(got))
 	}
 	for i := range want {
-		if store.AddressRoles[i] != want[i] {
-			t.Fatalf("AddressRoles[%d] = %q, want %q", i, store.AddressRoles[i], want[i])
+		if got[i] != want[i] {
+			t.Fatalf("AllAddressRoles[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestNewAddressFromDB_UnvalidatedRoundTrip(t *testing.T) {
+	a := store.NewAddressFromDB("s-1", store.AddressRoleGeneral, "l1\nx", "", "", "", "", "12", "")
+	if a == nil {
+		t.Fatal("nil Address")
+	}
+	if a.Country != "12" || a.Line1 != "l1\nx" {
+		t.Fatalf("FromDB must keep raw bytes, got %+v", a)
 	}
 }
