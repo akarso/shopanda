@@ -19,6 +19,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/translation"
+	domainvoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -49,6 +50,10 @@ type extensionSnapshotter interface {
 // silently stay one parent line. credits, extensions, and reservations may be
 // nil. reservations releases Meta reservations when Execute fails before the
 // order is saved.
+type voucherSettingsFinder interface {
+	FindByProductID(ctx context.Context, productID string) (*domainvoucher.Settings, error)
+}
+
 type CreateOrderStep struct {
 	orders       order.OrderRepository
 	variants     catalog.VariantRepository
@@ -62,6 +67,7 @@ type CreateOrderStep struct {
 	tx           assignmentTxBeginner
 	bus          *event.Bus
 	log          logger.Logger
+	vouchers     voucherSettingsFinder
 }
 
 type assignmentTxBeginner interface {
@@ -112,6 +118,39 @@ func (s *CreateOrderStep) WithAssignmentFlow(flow *assignmentapp.Flow, db assign
 	s.assignments = flow
 	s.tx = db
 	return s
+}
+
+// WithVoucherSettings snapshots voucher entitlement onto order lines at
+// checkout so order.paid issues from what was bought, not live settings.
+func (s *CreateOrderStep) WithVoucherSettings(finder voucherSettingsFinder) *CreateOrderStep {
+	if s == nil {
+		return nil
+	}
+	s.vouchers = finder
+	return s
+}
+
+func (s *CreateOrderStep) applyVoucherSnapshot(ctx context.Context, product *catalog.Product, item *order.Item) error {
+	if s == nil || s.vouchers == nil || product == nil || item == nil {
+		return nil
+	}
+	if product.Type != catalog.TypeVirtual {
+		return nil
+	}
+	settings, err := s.vouchers.FindByProductID(ctx, product.ID)
+	if err != nil {
+		return fmt.Errorf("create_order: voucher settings %s: %w", product.ID, err)
+	}
+	if settings == nil || !settings.Enabled {
+		return nil
+	}
+	if err := settings.Validate(); err != nil {
+		return orderLinesValidation(err.Error())
+	}
+	cpu, maxR := settings.CodesPerUnit, settings.MaxRedemptions
+	item.VoucherCodesPerUnit = &cpu
+	item.VoucherMaxRedemptions = &maxR
+	return nil
 }
 
 // NewCreateOrderStep creates a CreateOrderStep.
@@ -633,6 +672,9 @@ func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, c
 		if product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic {
 			oi.Restockable = false
 		}
+		if err := s.applyVoucherSnapshot(ctx, product, &oi); err != nil {
+			return nil, false, err
+		}
 		return []order.Item{oi}, false, nil
 	}
 	if product.PricingMode != catalog.PricingModeDynamic || product.StockMode != catalog.StockModeDynamic {
@@ -678,6 +720,9 @@ func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, c
 			return nil, false, orderLinesValidation(fmt.Sprintf("component %s product is missing", leaf.Component.ComponentProductID))
 		}
 		item.Restockable = orderLineRestockable(leaf.Product.Type)
+		if err := s.applyVoucherSnapshot(ctx, leaf.Product, &item); err != nil {
+			return nil, false, err
+		}
 		leafLines = append(leafLines, item)
 	}
 	merged, err := mergeOrderItems([][]order.Item{leafLines})

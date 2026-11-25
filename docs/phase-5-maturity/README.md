@@ -20,7 +20,7 @@ Phase 5 closed operational, compliance, and platform gaps on top of the Phase 4 
 
 | Track | Highlights |
 | --- | --- |
-| A | Returns/RMA, B2B customer groups & pricing, payment ledger, store credit API |
+| A | Returns/RMA, B2B customer groups & pricing, payment ledger, store credit API. Vouchers (code, PDF, staff redemption) are parked in [Phase 18](../phase-18-vouchers/ROADMAP.md), not this phase |
 | B | Advanced promotions, navigation/blocks API, abandoned cart, reviews |
 | C | Admin users/roles/MFA, audit export, shipping zones UI |
 | D | Omnibus storefront, WEEE/EPR/GPSR fields, OSS/IOSS export |

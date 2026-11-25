@@ -86,6 +86,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireAssignmentsWrite := admin.RequirePermission(rbac.AssignmentsWrite)
 	requireDownloadsRead := admin.RequirePermission(rbac.DownloadsRead)
 	requireDownloadsWrite := admin.RequirePermission(rbac.DownloadsWrite)
+	requireVouchersRead := admin.RequirePermission(rbac.VouchersRead)
+	requireVouchersWrite := admin.RequirePermission(rbac.VouchersWrite)
 	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
 	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
 	requireCustomersRead := admin.RequirePermission(rbac.CustomersRead)
@@ -207,6 +209,16 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/download-grants", requireDownloadsRead(rt.downloadGrantAdmin.List()))
 	router.Handle("POST /api/v1/admin/download-grants/{id}/revoke", requireDownloadsWrite(rt.downloadGrantAdmin.Revoke()))
 	router.Handle("POST /api/v1/admin/download-grants/{id}/reissue", requireDownloadsWrite(rt.downloadGrantAdmin.Reissue()))
+	router.Handle("GET /api/v1/admin/vouchers", requireVouchersRead(rt.voucherAdmin.List()))
+	router.Handle("GET /api/v1/admin/vouchers/lookup", requireVouchersRead(rt.voucherAdmin.Lookup()))
+	router.Handle("GET /api/v1/admin/vouchers/{id}", requireVouchersRead(rt.voucherAdmin.Get()))
+	router.Handle("GET /api/v1/admin/vouchers/{id}/redemptions", requireVouchersRead(rt.voucherAdmin.ListRedemptions()))
+	router.Handle("GET /api/v1/admin/vouchers/{id}/pdf", requireVouchersRead(rt.voucherAdmin.DownloadPDF()))
+	router.Handle("POST /api/v1/admin/vouchers/{id}/redeem", requireVouchersWrite(rt.voucherAdmin.Redeem()))
+	router.Handle("POST /api/v1/admin/vouchers/{id}/unredeem", requireVouchersWrite(rt.voucherAdmin.Unredeem()))
+	router.Handle("GET /api/v1/admin/products/{id}/voucher-settings", requireProductsRead(rt.voucherSettingsAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/products/{id}/voucher-settings", requireProductsWrite(rt.voucherSettingsAdmin.Put()))
+	router.Handle("DELETE /api/v1/admin/products/{id}/voucher-settings", requireProductsWrite(rt.voucherSettingsAdmin.Delete()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(rt.statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/customers", requireCustomersRead(rt.customerAdmin.List()))
 	router.Handle("GET /api/v1/admin/customers/{customerId}", requireCustomersRead(rt.customerAdmin.Get()))
@@ -234,6 +246,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/orders/{orderId}/shipment", requireOrdersRead(rt.orderAdmin.GetShipment()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}/shipment", requireOrdersWrite(rt.orderAdmin.UpdateShipment()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}/download-grants", requireDownloadsRead(rt.downloadGrantAdmin.ListByOrder()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}/vouchers", requireVouchersRead(rt.voucherAdmin.ListByOrder()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}/vouchers/pdf", requireVouchersRead(rt.voucherAdmin.DownloadOrderPDF()))
+	router.Handle("POST /api/v1/admin/orders/{orderId}/vouchers/reissue", requireVouchersWrite(rt.voucherAdmin.Reissue()))
+	router.Handle("POST /api/v1/admin/orders/{orderId}/vouchers/resend-email", requireVouchersWrite(rt.voucherAdmin.ResendEmail()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}/invoices", requireInvoicesRead(rt.invoiceAdmin.ListByOrder()))
 	router.Handle("GET /api/v1/admin/invoices/{invoiceId}/pdf", requireInvoicesRead(rt.invoiceAdmin.DownloadPDF()))
 	if rt.refundHandler != nil {
@@ -628,7 +644,9 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 		}),
 		claimURL: storefrontClaimPageURL(cfg),
 	}
-	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
+	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
+		WithVouchers(rt.voucherService).
+		WithTxStarter(rt.db)
 	sf = sf.
 		WithOrderClaim(claimService).
 		WithOrderClaimEmailer(claimEmailer).

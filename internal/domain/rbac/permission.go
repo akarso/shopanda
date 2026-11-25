@@ -22,6 +22,11 @@ const (
 	DownloadsRead  Permission = "downloads.read"
 	DownloadsWrite Permission = "downloads.write"
 
+	// VouchersRead / VouchersWrite gate the issued-code register and
+	// staff redeem/unredeem. Product voucher_settings stay on products.write.
+	VouchersRead  Permission = "vouchers.read"
+	VouchersWrite Permission = "vouchers.write"
+
 	OrdersRead  Permission = "orders.read"
 	OrdersWrite Permission = "orders.write"
 

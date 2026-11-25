@@ -12,9 +12,11 @@ import (
 
 	assignmentapp "github.com/akarso/shopanda/internal/application/assignment"
 	downloadapp "github.com/akarso/shopanda/internal/application/download"
+	voucherapp "github.com/akarso/shopanda/internal/application/voucher"
 	domainAssignment "github.com/akarso/shopanda/internal/domain/assignment"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainDownload "github.com/akarso/shopanda/internal/domain/download"
+	domainVoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -77,20 +79,44 @@ type grantIssuer interface {
 	IssueForOrder(ctx context.Context, orderID string) (int, error)
 }
 
+// voucherHooks voids issued vouchers on approve/refund (Phase 18).
+// *voucherapp.Service satisfies it.
+type voucherHooks interface {
+	VoidForOrderItem(ctx context.Context, orderItemID string) ([]domainVoucher.Voucher, error)
+	ListByOrder(ctx context.Context, orderID string) ([]domainVoucher.Voucher, error)
+	BindsTx() bool
+	WithTx(tx *sql.Tx) *voucherapp.Service
+}
+
+// voucherIssuer retries voucher issuance after a blocking return is closed.
+type voucherIssuer interface {
+	IssueForOrder(ctx context.Context, orderID string) (int, error)
+}
+
 // Service orchestrates the return (RMA) workflow.
 type Service struct {
-	returns     domainReturns.Repository
-	orders      order.OrderRepository
-	stock       inventory.StockRepository
-	variants    catalog.VariantRepository
-	payments    payment.PaymentRepository
-	refunder    payment.Refunder
-	bus         *event.Bus
-	log         logger.Logger
-	txStarter   TxStarter
-	assignments assignmentHooks
-	grants      grantHooks
-	issuer      grantIssuer
+	returns        domainReturns.Repository
+	orders         order.OrderRepository
+	stock          inventory.StockRepository
+	variants       catalog.VariantRepository
+	payments       payment.PaymentRepository
+	refunder       payment.Refunder
+	bus            *event.Bus
+	log            logger.Logger
+	txStarter      TxStarter
+	assignments    assignmentHooks
+	grants         grantHooks
+	issuer         grantIssuer
+	vouchers        voucherHooks
+	voucherIssuer   voucherIssuer
+	voucherSettings voucherSettingsFinder
+	products        catalog.ProductRepository
+}
+
+// voucherSettingsFinder looks up live voucher_settings for partial-return
+// refusal when the order line has no checkout entitlement snapshot yet.
+type voucherSettingsFinder interface {
+	FindByProductID(ctx context.Context, productID string) (*domainVoucher.Settings, error)
 }
 
 // WithTxStarter wires the transaction used by Receive. Without it, Receive
@@ -151,6 +177,52 @@ func (s *Service) WithDownloadGrantIssuer(issuer *downloadapp.Issuer) *Service {
 	return s
 }
 
+// WithVouchers hooks voucher void into approve/refund (Phase 18).
+func (s *Service) WithVouchers(v *voucherapp.Service) *Service {
+	if s == nil {
+		return nil
+	}
+	if v == nil {
+		s.vouchers = nil
+	} else {
+		s.vouchers = v
+	}
+	return s
+}
+
+// WithVoucherIssuer retries voucher issuance after Reject/Cancel.
+func (s *Service) WithVoucherIssuer(issuer *voucherapp.Issuer) *Service {
+	if s == nil {
+		return nil
+	}
+	if issuer == nil {
+		s.voucherIssuer = nil
+	} else {
+		s.voucherIssuer = issuer
+	}
+	return s
+}
+
+// WithVoucherSettings refuses partial returns when live settings would still
+// issue codes for a line that has no checkout snapshot yet.
+func (s *Service) WithVoucherSettings(finder voucherSettingsFinder) *Service {
+	if s == nil {
+		return nil
+	}
+	s.voucherSettings = finder
+	return s
+}
+
+// WithProducts loads product type for live voucher-settings partial checks
+// (issuer only issues for virtual products).
+func (s *Service) WithProducts(products catalog.ProductRepository) *Service {
+	if s == nil {
+		return nil
+	}
+	s.products = products
+	return s
+}
+
 func (s *Service) retryDownloadGrantsAfterReturnClosed(ctx context.Context, orderID string) {
 	if s == nil || s.issuer == nil {
 		return
@@ -160,6 +232,14 @@ func (s *Service) retryDownloadGrantsAfterReturnClosed(ctx context.Context, orde
 			"order_id": orderID,
 			"error":    err.Error(),
 		})
+	}
+	if s.voucherIssuer != nil {
+		if _, err := s.voucherIssuer.IssueForOrder(ctx, orderID); err != nil {
+			s.log.Warn("returns: voucher issue retry after return closed failed", map[string]interface{}{
+				"order_id": orderID,
+				"error":    err.Error(),
+			})
+		}
 	}
 }
 
@@ -324,9 +404,6 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 	if err := s.validateReturnQuantities(ctx, orderID, orderItems, returnItems); err != nil {
 		return nil, err
 	}
-	if err := s.assertNoPartialDownloadableReturn(ctx, orderID, orderItems, returnItems); err != nil {
-		return nil, err
-	}
 	if err := s.assertParentsReturnable(ctx, orderID, returnItems); err != nil {
 		return nil, err
 	}
@@ -335,7 +412,7 @@ func (s *Service) RequestReturn(ctx context.Context, orderID, customerID, reason
 	if err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.persistNewReturnLocked(ctx, &ret); err != nil {
+	if err := s.persistNewReturnLocked(ctx, &ret, orderItems); err != nil {
 		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRequested, ret)
@@ -802,15 +879,19 @@ func (s *Service) assertParentsReturnable(ctx context.Context, orderID string, i
 }
 
 // persistNewReturnLocked saves a new RMA under the same per-unit advisory
-// locks assignment writes take, then re-checks the parent gate so an
-// AssignOwned that raced the first check cannot land under an open RMA.
-func (s *Service) persistNewReturnLocked(ctx context.Context, ret *domainReturns.Return) error {
+// locks assignment / voucher issue / redeem take, then re-checks the parent
+// gate and partial-downloadable/voucher rules so a concurrent IssueForOrder
+// cannot land codes under a partial return.
+func (s *Service) persistNewReturnLocked(ctx context.Context, ret *domainReturns.Return, orderItems map[string]order.Item) error {
 	if ret == nil {
 		return nil
 	}
 	txReturns, ok := s.returns.(txReturnRepo)
-	// Only serialize with assignment writes when the flow is wired.
-	if s.assignments == nil || s.txStarter == nil || !ok {
+	needLock := s.assignments != nil || s.vouchers != nil || s.grants != nil
+	if !needLock || s.txStarter == nil || !ok {
+		if err := s.assertNoPartialDownloadableReturn(ctx, ret.OrderID, orderItems, ret.Items()); err != nil {
+			return err
+		}
 		return persistReturnSave(s.returns.Save(ctx, ret))
 	}
 	tx, err := s.txStarter.BeginTx(ctx, nil)
@@ -822,6 +903,9 @@ func (s *Service) persistNewReturnLocked(ctx context.Context, ret *domainReturns
 		return err
 	}
 	if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
+		return err
+	}
+	if err := s.assertNoPartialDownloadableReturn(ctx, ret.OrderID, orderItems, ret.Items()); err != nil {
 		return err
 	}
 	if err := persistReturnSave(txReturns.WithTx(tx).Save(ctx, ret)); err != nil {
@@ -852,11 +936,11 @@ func returnUnitIDs(ret *domainReturns.Return) []string {
 }
 
 // persistReturnWithAssignmentRevoke commits assignment + download-grant
-// revoke + return Update in one transaction when either hook is wired.
-// Domain transition must already have succeeded in memory. Without both
-// hooks, updates the return directly.
+// revoke + voucher void + return Update in one transaction when any hook
+// is wired. Domain transition must already have succeeded in memory.
+// Without hooks, updates the return directly.
 func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *domainReturns.Return, revokeReason, op string) error {
-	if s.assignments == nil && s.grants == nil {
+	if s.assignments == nil && s.grants == nil && s.vouchers == nil {
 		return persistReturnUpdate(s.returns.Update(ctx, ret), op)
 	}
 	if s.txStarter == nil {
@@ -868,6 +952,9 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 	if s.grants != nil && !s.grants.BindsTx() {
 		return apperror.Internal("returns: download grant repository does not support transactions")
 	}
+	if s.vouchers != nil && !s.vouchers.BindsTx() {
+		return apperror.Internal("returns: voucher repository does not support transactions")
+	}
 	txReturns, ok := s.returns.(txReturnRepo)
 	if !ok {
 		return apperror.Internal("returns: return repository does not support transactions")
@@ -878,12 +965,14 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 	}
 	defer tx.Rollback()
 
-	// Serialize against AssignOwned / AdminAssign / RecordPurchase on the
-	// same unit ids (advisory locks + their open-return recheck).
-	if s.assignments != nil {
+	// Serialize against AssignOwned / AdminAssign / RecordPurchase / voucher
+	// IssueForOrder on the same unit ids (advisory locks + open-return recheck).
+	if s.assignments != nil || s.vouchers != nil {
 		if err := assignmentapp.LockAssignmentUnits(ctx, tx, returnUnitIDs(ret)...); err != nil {
 			return err
 		}
+	}
+	if s.assignments != nil {
 		if err := s.assertParentsReturnable(ctx, ret.OrderID, ret.Items()); err != nil {
 			return err
 		}
@@ -905,6 +994,17 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 			return err
 		}
 	}
+	var voidedVouchers []domainVoucher.Voucher
+	if s.vouchers != nil {
+		boundVouchers := s.vouchers.WithTx(tx)
+		if err := assertNoRedeemedVouchersOnReturn(ctx, boundVouchers, ret); err != nil {
+			return err
+		}
+		voidedVouchers, err = voidVouchersForReturn(ctx, boundVouchers, ret)
+		if err != nil {
+			return err
+		}
+	}
 	boundReturns := txReturns.WithTx(tx)
 	if err := persistReturnUpdate(boundReturns.Update(ctx, ret), op); err != nil {
 		return err
@@ -918,6 +1018,9 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 	for _, g := range revokedGrants {
 		s.publishGrantRevoked(ctx, g, revokeReason)
 	}
+	for i := range voidedVouchers {
+		s.publishVoucherVoided(ctx, &voidedVouchers[i], revokeReason)
+	}
 	return nil
 }
 
@@ -925,30 +1028,168 @@ func (s *Service) persistReturnWithAssignmentRevoke(ctx context.Context, ret *do
 // have DownloadGrant rows. Until download_limit scaling exists, a return of a
 // downloadable line must cover the full ordered quantity (approve/refund then
 // fully revokes). Lines without grants are unaffected (virtual / non-digital).
+// Voucher lines are always full-quantity: checkout snapshot, any live code, or
+// live voucher_settings that would still issue (legacy rows without snapshot).
+// Call under the unit advisory lock so IssueForOrder cannot insert in the gap.
 func (s *Service) assertNoPartialDownloadableReturn(
 	ctx context.Context,
 	orderID string,
 	orderItems map[string]order.Item,
 	items []domainReturns.Item,
 ) error {
-	if s == nil || s.grants == nil {
+	if s == nil {
 		return nil
 	}
+	var voucherByItem map[string][]domainVoucher.Voucher
+	if s.vouchers != nil {
+		needVoucherScan := false
+		for _, item := range items {
+			oi := orderItems[item.VariantID]
+			if item.Quantity < oi.Quantity && oi.VoucherCodesPerUnit == nil {
+				needVoucherScan = true
+				break
+			}
+		}
+		if needVoucherScan {
+			all, err := s.vouchers.ListByOrder(ctx, orderID)
+			if err != nil {
+				return err
+			}
+			voucherByItem = make(map[string][]domainVoucher.Voucher)
+			for i := range all {
+				voucherByItem[all[i].OrderItemID] = append(voucherByItem[all[i].OrderItemID], all[i])
+			}
+		}
+	}
 	for _, item := range items {
-		ordered := orderItems[item.VariantID].Quantity
+		oi := orderItems[item.VariantID]
+		ordered := oi.Quantity
 		if item.Quantity >= ordered {
 			continue
 		}
 		orderItemID := domainDownload.OrderItemID(orderID, item.VariantID)
-		rows, err := s.grants.ListByOrderItem(ctx, orderItemID)
-		if err != nil {
-			return err
+		if s.grants != nil {
+			rows, err := s.grants.ListByOrderItem(ctx, orderItemID)
+			if err != nil {
+				return err
+			}
+			if len(rows) > 0 {
+				return apperror.Validation("partial return is not supported for downloadable items")
+			}
 		}
-		if len(rows) > 0 {
-			return apperror.Validation("partial return is not supported for downloadable items")
+		if oi.VoucherCodesPerUnit != nil {
+			return apperror.Validation("partial return is not supported for voucher items")
+		}
+		for _, v := range voucherByItem[orderItemID] {
+			if v.VoidedAt == nil {
+				return apperror.Validation("partial return is not supported for voucher items")
+			}
+		}
+		if ok, err := s.liveVoucherSettingsWouldIssue(ctx, item.VariantID); err != nil {
+			return err
+		} else if ok {
+			return apperror.Validation("partial return is not supported for voucher items")
 		}
 	}
 	return nil
+}
+
+func (s *Service) liveVoucherSettingsWouldIssue(ctx context.Context, variantID string) (bool, error) {
+	if s == nil || s.voucherSettings == nil || s.variants == nil || s.products == nil {
+		return false, nil
+	}
+	variant, err := s.variants.FindByID(ctx, variantID)
+	if err != nil {
+		return false, err
+	}
+	if variant == nil {
+		return false, nil
+	}
+	product, err := s.products.FindByID(ctx, variant.ProductID)
+	if err != nil {
+		return false, err
+	}
+	// Match issuer entitlementForLine: settings alone do not issue after a
+	// product leaves TypeVirtual (orphan voucher_settings row can remain).
+	if product == nil || product.Type != catalog.TypeVirtual {
+		return false, nil
+	}
+	settings, err := s.voucherSettings.FindByProductID(ctx, variant.ProductID)
+	if err != nil {
+		return false, err
+	}
+	if settings == nil || !settings.Enabled {
+		return false, nil
+	}
+	if err := settings.Validate(); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// assertNoRedeemedVouchersOnReturn refuses approve/refund when a live code on
+// the returned line already has redemptions (admission spent).
+func assertNoRedeemedVouchersOnReturn(ctx context.Context, hooks voucherHooks, ret *domainReturns.Return) error {
+	if hooks == nil || ret == nil {
+		return nil
+	}
+	all, err := hooks.ListByOrder(ctx, ret.OrderID)
+	if err != nil {
+		return err
+	}
+	wanted := make(map[string]struct{}, len(ret.Items()))
+	for _, item := range ret.Items() {
+		wanted[domainVoucher.OrderItemKey(ret.OrderID, item.VariantID)] = struct{}{}
+	}
+	for i := range all {
+		v := &all[i]
+		if _, ok := wanted[v.OrderItemID]; !ok {
+			continue
+		}
+		if v.VoidedAt != nil {
+			continue
+		}
+		if v.RedeemedCount > 0 {
+			return apperror.Validation("cannot approve or refund: a voucher on this line has already been redeemed")
+		}
+	}
+	return nil
+}
+
+// voidVouchersForReturn voids issued vouchers for each return line.
+func voidVouchersForReturn(ctx context.Context, hooks voucherHooks, ret *domainReturns.Return) ([]domainVoucher.Voucher, error) {
+	if hooks == nil || ret == nil {
+		return nil, nil
+	}
+	out := make([]domainVoucher.Voucher, 0)
+	for _, item := range ret.Items() {
+		orderItemID := domainVoucher.OrderItemKey(ret.OrderID, item.VariantID)
+		voided, err := hooks.VoidForOrderItem(ctx, orderItemID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, voided...)
+	}
+	return out, nil
+}
+
+func (s *Service) publishVoucherVoided(ctx context.Context, v *domainVoucher.Voucher, reason string) {
+	if s == nil || v == nil || s.bus == nil {
+		return
+	}
+	data := domainVoucher.VoidedData{
+		VoucherID:   v.ID,
+		OrderID:     v.OrderID,
+		OrderItemID: v.OrderItemID,
+		Reason:      reason,
+	}
+	if err := s.bus.Publish(ctx, event.New(domainVoucher.EventVoucherVoided, "returns.service", data)); err != nil {
+		s.log.Warn("returns: publish voucher voided failed", map[string]interface{}{
+			"event":      domainVoucher.EventVoucherVoided,
+			"voucher_id": v.ID,
+			"error":      err.Error(),
+		})
+	}
 }
 
 // revokeGrantsForReturn revokes DownloadGrant rows for each return line.

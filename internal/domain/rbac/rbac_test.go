@@ -151,7 +151,7 @@ func TestPermissionsForRole_Admin(t *testing.T) {
 	// Core admin grants in role_permissions.go (products/assignments/orders/categories/
 	// customers/store_credit/invoices/media/content/settings/shipping/audit/extensions*/
 	// jobs/search.reindex/cache*).
-	const wantCoreAdmin = 33
+	const wantCoreAdmin = 35 // includes vouchers.read / vouchers.write (PR-1803)
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}
