@@ -737,7 +737,7 @@ func TestHandleOrderPaid_OrderLineDisplayEnrichImage(t *testing.T) {
 	}
 }
 
-func TestHandleOrderPaid_OrderLineDisplayLanguageFallsBackToStore(t *testing.T) {
+func TestHandleOrderPaid_OrderLineDisplayLanguageFallsBackToStatic(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	tmpl.Register("order_confirmed", "Order {{.Data.OrderID}}", "ok")
 	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
@@ -748,7 +748,7 @@ func TestHandleOrderPaid_OrderLineDisplayLanguageFallsBackToStore(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
-	// Language unset — legacy row; enrich must use store fallback.
+	// Language unset — legacy row; enrich must use static fallback.
 	var sawLang string
 	hookReg := hooks.NewRegistry(nil)
 	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
@@ -780,11 +780,68 @@ func TestHandleOrderPaid_OrderLineDisplayLanguageFallsBackToStore(t *testing.T) 
 		t.Fatalf("HandleOrderPaid: %v", err)
 	}
 	if sawLang != "fr" {
-		t.Fatalf("hook language = %q, want fr store fallback", sawLang)
+		t.Fatalf("hook language = %q, want fr static fallback", sawLang)
 	}
 }
 
-func TestHandleOrderPaid_OrderLineDisplayLanguageOrderBeatsFallback(t *testing.T) {
+func TestHandleOrderPaid_OrderLineDisplayLanguageLookupEmptyOrder(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("order_confirmed", "Order {{.Data.OrderID}}", "ok")
+	item1, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	item2, err := order.NewItem("var-2", "SKU-2", "Gadget", 1, shared.MustNewMoney(2000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-legacy", "cust-1", "", "EUR", []order.Item{item1, item2})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	var sawLang string
+	var lookupCalls int
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		if raw, ok := ctx.Get("language"); ok {
+			sawLang, _ = raw.(string)
+		}
+		return nil
+	})
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &o, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithOrderLineHooks(hookReg),
+		notification.WithStoreLanguageLookup(func(context.Context) (string, error) {
+			lookupCalls++
+			return "pl", nil
+		}),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-legacy", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if sawLang != "pl" {
+		t.Fatalf("hook language = %q, want pl from store lookup", sawLang)
+	}
+	if lookupCalls != 1 {
+		t.Fatalf("store lookup calls = %d, want 1 (once per email, not per line)", lookupCalls)
+	}
+}
+
+func TestHandleOrderPaid_OrderLineDisplayLanguageOrderBeatsLookup(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	tmpl.Register("order_confirmed", "Order {{.Data.OrderID}}", "ok")
 	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
@@ -796,6 +853,59 @@ func TestHandleOrderPaid_OrderLineDisplayLanguageOrderBeatsFallback(t *testing.T
 		t.Fatalf("NewOrder: %v", err)
 	}
 	o.Language = "de"
+	var sawLang string
+	var lookupCalls int
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		if raw, ok := ctx.Get("language"); ok {
+			sawLang, _ = raw.(string)
+		}
+		return nil
+	})
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &o, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithOrderLineHooks(hookReg),
+		notification.WithStoreLanguageLookup(func(context.Context) (string, error) {
+			lookupCalls++
+			return "fr", nil
+		}),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-de", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if sawLang != "de" {
+		t.Fatalf("hook language = %q, want de (order beats lookup fr)", sawLang)
+	}
+	if lookupCalls != 0 {
+		t.Fatalf("store lookup calls = %d, want 0 when order language is set", lookupCalls)
+	}
+}
+
+func TestHandleOrderPaid_OrderLineDisplayLanguageLookupErrorUsesStatic(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("order_confirmed", "Order {{.Data.OrderID}}", "ok")
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-legacy", "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	var sawLang string
 	hookReg := hooks.NewRegistry(nil)
 	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
@@ -819,15 +929,18 @@ func TestHandleOrderPaid_OrderLineDisplayLanguageOrderBeatsFallback(t *testing.T
 	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
 		notification.WithOrderLineHooks(hookReg),
 		notification.WithFallbackLanguage("fr"),
+		notification.WithStoreLanguageLookup(func(context.Context) (string, error) {
+			return "", errors.New("store down")
+		}),
 	)
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
-		OrderID: "ord-de", OldStatus: "pending", NewStatus: "paid",
+		OrderID: "ord-legacy", OldStatus: "pending", NewStatus: "paid",
 	})
 	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
 		t.Fatalf("HandleOrderPaid: %v", err)
 	}
-	if sawLang != "de" {
-		t.Fatalf("hook language = %q, want de (order beats fallback fr)", sawLang)
+	if sawLang != "fr" {
+		t.Fatalf("hook language = %q, want fr static fallback after lookup error", sawLang)
 	}
 }
 

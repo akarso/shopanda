@@ -118,19 +118,34 @@ func WithStoreLanguageLookup(fn func(context.Context) (string, error)) Option {
 	return func(s *Service) { s.storeLanguageLookup = fn }
 }
 
+// orderDisplayLanguage resolves the sealed hook language once per email.
+// Lookup runs only when the order has no usable primary language; a failed
+// lookup keeps the static fallback for every line (no per-line retry).
 func (s *Service) orderDisplayLanguage(ctx context.Context, o *order.Order) string {
+	if s == nil {
+		return translation.DisplayLanguage("", "")
+	}
+	orderLang := ""
+	orderID := ""
+	if o != nil {
+		orderLang = o.Language
+		orderID = o.ID
+	}
+	if translation.PrimaryLanguage(orderLang) != "" {
+		return translation.DisplayLanguage(orderLang, "")
+	}
 	fallback := s.fallbackLanguage
-	if s != nil && s.storeLanguageLookup != nil {
+	if s.storeLanguageLookup != nil {
 		lang, err := s.storeLanguageLookup(ctx)
 		if err != nil {
-			s.log.Error("HandleOrderPaid.store_language_failed", err, nil)
+			fields := map[string]interface{}{}
+			if orderID != "" {
+				fields["order_id"] = orderID
+			}
+			s.log.Error("HandleOrderPaid.store_language_failed", err, fields)
 		} else if strings.TrimSpace(lang) != "" {
 			fallback = lang
 		}
-	}
-	orderLang := ""
-	if o != nil {
-		orderLang = o.Language
 	}
 	return translation.DisplayLanguage(orderLang, fallback)
 }
@@ -369,6 +384,12 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 			reg = s.extensions.Registry()
 		}
 	}
+	// Language is only sealed into order.line.display; skip store lookup when
+	// no hooks are wired. Resolve once so a multi-line email does one FindDefault.
+	lang := ""
+	if s.hooks != nil {
+		lang = s.orderDisplayLanguage(ctx, o)
+	}
 	for i, it := range items {
 		apiItems := byVariant[it.VariantID]
 		extMap := extensionapp.ExtensionMapFromAPIItems(apiItems)
@@ -376,7 +397,6 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 		baseLen := len(rows)
 		// Hook gets a clone so handlers cannot mutate the template map.
 		hookExt := extensionapp.CloneExtensionMap(extMap)
-		lang := s.orderDisplayLanguage(ctx, o)
 		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, s.hooks, o.ID, it.VariantID, lang, hookExt, rows,
 			func(registrant string, hookErr error) {
 				s.log.Error("HandleOrderPaid.order_line_display_failed", hookErr, map[string]interface{}{

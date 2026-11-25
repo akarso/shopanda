@@ -905,6 +905,61 @@ func TestStorefrontHandler_AccountOrderDetail_OrderLineDisplayLanguageFromQuery(
 	}
 }
 
+func TestStorefrontHandler_AccountOrderDetail_OrderLineDisplayLanguageFromStore(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "storelang@example.com", Password: "password123", FirstName: "Store", LastName: "Lang"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	orders := newStorefrontAccountOrderRepoStub()
+	item, err := order.NewItem("var-1", "SKU-1", "Widget", 1, shared.MustNewMoney(1500, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder("ord-store-lang", out.CustomerID, "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	o.Language = "de" // page must use store lang when request has no WithLanguage
+	orders.byID[o.ID] = &o
+
+	var sawLang string
+	hookReg := hooks.NewRegistry(nil)
+	_ = hookReg.Register(hooks.HookOrderLineDisplay, 100, "metaldogs", func(ctx *hooks.Context) error {
+		if raw, ok := ctx.Get("language"); ok {
+			sawLang, _ = raw.(string)
+		}
+		return nil
+	})
+
+	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, orders, &storefrontAccountDeleterStub{}).
+		WithOrderLineHooks(hookReg)
+
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	st, err := store.NewDefaultStore("s-1", "default", "Default", "EUR", "PL", "pl", "")
+	if err != nil {
+		t.Fatalf("NewDefaultStore: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/orders/ord-store-lang", nil)
+	// No LanguageMiddleware / WithLanguage — storefront falls back to store.Language.
+	req = req.WithContext(auth.WithIdentity(store.WithStore(req.Context(), &st), id))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if sawLang != "pl" {
+		t.Fatalf("hook language = %q, want pl from store (not order de)", sawLang)
+	}
+}
+
 func TestStorefrontHandler_AccountOrderDetail_ExtensionFailureStillRenders(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
