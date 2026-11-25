@@ -179,6 +179,7 @@
         // Marketing
         "/admin/marketing/promotions": { title: "Promotions", render: renderPromotionsGrid, auth: true },
         "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
+        "/admin/marketing/vouchers": { title: "Vouchers", render: renderVouchersGrid, auth: true },
         "/admin/marketing/abandoned-cart": { title: "Abandoned Cart", render: renderAbandonedCartSettingsPage, auth: true },
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
@@ -1321,6 +1322,7 @@
                 setupProductCompositionSections(typeSectionsHost, product, productID, form);
                 setupProductLinkedSection(typeSectionsHost, product, productID, form);
                 setupProductDownloadableSection(typeSectionsHost, product, productID, form);
+                setupProductVoucherSettings(typeSectionsHost, product, productID);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1579,6 +1581,57 @@
         if (form) {
             form._shopandaDownloadableBound = true;
         }
+    }
+
+    function setupProductVoucherSettings(typeSectionsHost, product, productID) {
+        if (!typeSectionsHost || !productID) {
+            return;
+        }
+        var typ = (product && product.type) || "simple";
+        var host = typeSectionsHost.querySelector("[data-voucher-settings-host]");
+        if (!host) {
+            host = document.createElement("div");
+            host.setAttribute("data-voucher-settings-host", "");
+            host.setAttribute("data-product-type-section", "virtual");
+            typeSectionsHost.appendChild(host);
+        }
+        if (typ !== "virtual") {
+            host.style.display = "none";
+            return;
+        }
+        host.style.display = "";
+        var ui = voucherUI();
+        host.innerHTML = "<h3>Voucher settings</h3><div data-voucher-settings-msg></div><div data-voucher-settings-body>Loading…</div>";
+        var body = host.querySelector("[data-voucher-settings-body]");
+        var msg = host.querySelector("[data-voucher-settings-msg]");
+        api("/admin/products/" + encodeURIComponent(productID) + "/voucher-settings").then(function (res) {
+            if (!body) { return; }
+            if (res && res.error) {
+                body.innerHTML = "<p>" + esc((res.error && res.error.message) || "Failed") + "</p>";
+                return;
+            }
+            body.innerHTML = ui ? ui.settingsFormHTML(res) : "";
+            var form = body.querySelector("[data-voucher-settings-form]");
+            if (!form) { return; }
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var payload = {
+                    enabled: !!form.elements.enabled.checked,
+                    codes_per_unit: Number(form.elements.codes_per_unit.value || 1),
+                    max_redemptions: Number(form.elements.max_redemptions.value || 1)
+                };
+                api("/admin/products/" + encodeURIComponent(productID) + "/voucher-settings", {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (putRes) {
+                    if (msg) {
+                        msg.innerHTML = (putRes && putRes.error)
+                            ? '<p role="alert">' + esc((putRes.error && putRes.error.message) || "Save failed") + "</p>"
+                            : "<p>Saved.</p>";
+                    }
+                });
+            });
+        });
     }
 
     function bindDownloadableSection(host, productID) {
@@ -4764,6 +4817,7 @@
                             refreshSearchNavVisibility();
                             refreshCacheNavVisibility();
                             refreshAssignmentsNavVisibility();
+                            refreshVouchersNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
@@ -10688,6 +10742,275 @@
         return (typeof ShopandaDownloadGrantAdminUI !== "undefined") ? ShopandaDownloadGrantAdminUI : null;
     }
 
+    function voucherUI() {
+        return (typeof ShopandaVoucherAdminUI !== "undefined") ? ShopandaVoucherAdminUI : null;
+    }
+
+    function downloadVoucherPdf(path, filename, onError) {
+        var headers = buildHeaders({});
+        fetch(API_BASE + path, { headers: headers })
+            .then(function (res) {
+                if (res.status === 401) {
+                    clearToken();
+                    setLoginMessage("Your session expired. Sign in again to continue.");
+                    navigateTo("/admin");
+                    return Promise.reject(new Error("unauthorized"));
+                }
+                if (!res.ok) {
+                    return res.json().then(function (body) {
+                        throw body;
+                    }).catch(function (err) {
+                        if (err && err.error) {
+                            throw err;
+                        }
+                        throw { error: { message: "Failed to download voucher PDF." } };
+                    });
+                }
+                return res.blob();
+            })
+            .then(function (blob) {
+                if (!blob) {
+                    return;
+                }
+                var url = URL.createObjectURL(blob);
+                var link = document.createElement("a");
+                link.href = url;
+                link.download = filename || "voucher.pdf";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            })
+            .catch(function (err) {
+                if (onError) {
+                    onError(err);
+                }
+            });
+    }
+
+    function bindVoucherActions(host, reload) {
+        if (!host) { return; }
+        var canWrite = userHasPermission("vouchers.write");
+        host.querySelectorAll("[data-download-voucher-pdf]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-download-voucher-pdf") || "";
+                if (!id) { return; }
+                downloadVoucherPdf(
+                    "/admin/vouchers/" + encodeURIComponent(id) + "/pdf",
+                    "voucher-" + id + ".pdf",
+                    function (err) {
+                        window.alert((err && err.error && err.error.message) || "Failed to download voucher PDF.");
+                    }
+                );
+            });
+        });
+        host.querySelectorAll("[data-download-order-vouchers-pdf]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                var orderID = btn.getAttribute("data-download-order-vouchers-pdf") || "";
+                if (!orderID) { return; }
+                downloadVoucherPdf(
+                    "/admin/orders/" + encodeURIComponent(orderID) + "/vouchers/pdf",
+                    "vouchers-" + orderID + ".pdf",
+                    function (err) {
+                        window.alert((err && err.error && err.error.message) || "Failed to download voucher PDF.");
+                    }
+                );
+            });
+        });
+        host.querySelectorAll("[data-reissue-order-vouchers]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                if (!canWrite) { return; }
+                var orderID = btn.getAttribute("data-reissue-order-vouchers") || "";
+                if (!orderID || btn.disabled) { return; }
+                btn.disabled = true;
+                api("/admin/orders/" + encodeURIComponent(orderID) + "/vouchers/reissue", {
+                    method: "POST",
+                    body: "{}"
+                }).then(function (body) {
+                    btn.disabled = false;
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to reissue");
+                        return;
+                    }
+                    if (reload) { reload(); }
+                }).catch(function () {
+                    btn.disabled = false;
+                    window.alert("Failed to reissue");
+                });
+            });
+        });
+        host.querySelectorAll("[data-resend-order-vouchers-email]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                if (!canWrite) { return; }
+                var orderID = btn.getAttribute("data-resend-order-vouchers-email") || "";
+                if (!orderID || btn.disabled) { return; }
+                if (!window.confirm("Resend the voucher pack email to the buyer?")) { return; }
+                btn.disabled = true;
+                api("/admin/orders/" + encodeURIComponent(orderID) + "/vouchers/resend-email", {
+                    method: "POST",
+                    body: JSON.stringify({ force: true })
+                }).then(function (body) {
+                    btn.disabled = false;
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to resend email");
+                        return;
+                    }
+                    window.alert("Voucher email queued.");
+                }).catch(function () {
+                    btn.disabled = false;
+                    window.alert("Failed to resend email");
+                });
+            });
+        });
+        if (!canWrite) {
+            return;
+        }
+        host.querySelectorAll("[data-redeem-voucher]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                if (btn.disabled) { return; }
+                var id = btn.getAttribute("data-redeem-voucher");
+                var note = window.prompt("Note (optional):", "");
+                if (note == null) { return; }
+                btn.disabled = true;
+                api("/admin/vouchers/" + encodeURIComponent(id) + "/redeem", {
+                    method: "POST",
+                    body: JSON.stringify({ note: String(note).trim() })
+                }).then(function (body) {
+                    btn.disabled = false;
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to redeem");
+                        return;
+                    }
+                    if (reload) { reload(); }
+                }).catch(function () {
+                    btn.disabled = false;
+                    window.alert("Failed to redeem");
+                });
+            });
+        });
+        host.querySelectorAll("[data-unredeem-voucher]").forEach(function (btn) {
+            if (btn.getAttribute("data-bound")) { return; }
+            btn.setAttribute("data-bound", "1");
+            btn.addEventListener("click", function () {
+                if (btn.disabled) { return; }
+                var id = btn.getAttribute("data-unredeem-voucher");
+                var note = window.prompt("Reason for unredeem:", "");
+                if (note == null || !String(note).trim()) { return; }
+                btn.disabled = true;
+                api("/admin/vouchers/" + encodeURIComponent(id) + "/unredeem", {
+                    method: "POST",
+                    body: JSON.stringify({ note: String(note).trim() })
+                }).then(function (body) {
+                    btn.disabled = false;
+                    if (body && body.error) {
+                        window.alert(body.error.message || "Failed to unredeem");
+                        return;
+                    }
+                    if (reload) { reload(); }
+                }).catch(function () {
+                    btn.disabled = false;
+                    window.alert("Failed to unredeem");
+                });
+            });
+        });
+    }
+
+    function mountOrderVouchersPanel(mountEl, orderID) {
+        if (!mountEl) { return; }
+        if (!userHasPermission("vouchers.read")) {
+            mountEl.innerHTML = "";
+            return;
+        }
+        var ui = voucherUI();
+        var canWrite = userHasPermission("vouchers.write");
+        mountEl.innerHTML = ui
+            ? ui.panelHTML("Vouchers", { orderID: orderID, canWrite: canWrite })
+            : "<section><h3>Vouchers</h3><p>UI unavailable</p></section>";
+        var body = mountEl.querySelector("[data-vouchers-body]");
+        var msg = mountEl.querySelector("[data-vouchers-msg]");
+        function load() {
+            api("/admin/orders/" + encodeURIComponent(orderID) + "/vouchers").then(function (res) {
+                if (!body) { return; }
+                if (res && res.error) {
+                    body.innerHTML = "<p role=\"alert\">" + esc((res.error && res.error.message) || "Failed to load vouchers") + "</p>";
+                    return;
+                }
+                var rows = (res && res.vouchers) || [];
+                body.innerHTML = ui ? ui.vouchersTableHTML(rows, canWrite) : "";
+                bindVoucherActions(mountEl, load);
+            });
+        }
+        load();
+        if (msg) { msg.innerHTML = ""; }
+    }
+
+    function renderVouchersGrid(container) {
+        if (!userHasPermission("vouchers.read")) {
+            container.innerHTML = "<h1>Vouchers</h1><p>Your account does not have voucher access.</p>";
+            return;
+        }
+        var ui = voucherUI();
+        var canWrite = userHasPermission("vouchers.write");
+        container.innerHTML =
+            '<h1>Vouchers</h1>' +
+            '<form id="voucher-lookup-form" style="margin-bottom:1rem">' +
+            '<label>Lookup code <input name="code" placeholder="XXXX-XXXX-XXXX" required></label> ' +
+            '<button type="submit">Lookup</button></form>' +
+            '<div id="voucher-lookup-result"></div>' +
+            '<div id="voucher-grid-msg"></div>' +
+            '<div id="voucher-grid-body">Loading…</div>';
+        function loadList() {
+            api("/admin/vouchers?limit=50").then(function (res) {
+                var body = document.getElementById("voucher-grid-body");
+                if (!body) { return; }
+                if (res && res.error) {
+                    body.innerHTML = "<p role=\"alert\">" + esc((res.error && res.error.message) || "Failed") + "</p>";
+                    return;
+                }
+                body.innerHTML = ui ? ui.vouchersTableHTML((res && res.vouchers) || [], canWrite) : "";
+                bindVoucherActions(container, loadList);
+            });
+        }
+        loadList();
+        var form = document.getElementById("voucher-lookup-form");
+        if (form) {
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var code = form.elements.code.value;
+                api("/admin/vouchers/lookup?code=" + encodeURIComponent(code)).then(function (res) {
+                    var box = document.getElementById("voucher-lookup-result");
+                    if (!box) { return; }
+                    if (res && res.error) {
+                        box.innerHTML = "<p role=\"alert\">" + esc((res.error && res.error.message) || "Not found") + "</p>";
+                        return;
+                    }
+                    box.innerHTML = ui ? ui.vouchersTableHTML([res], canWrite) : "";
+                    bindVoucherActions(box, function () {
+                        form.dispatchEvent(new Event("submit", { cancelable: true }));
+                    });
+                });
+            });
+        }
+    }
+
+    function refreshVouchersNavVisibility() {
+        var visible = userHasPermission("vouchers.read");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/marketing/vouchers"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
+        }
+    }
+
     function bindDownloadGrantActions(host, reload) {
         var canWrite = userHasPermission("downloads.write");
         if (!canWrite || !host) {
@@ -11109,12 +11432,14 @@
                     '<h3>Invoices</h3>' +
                     '<div id="order-invoices-panel"></div>' +
                     '<div id="order-download-grants-panel"></div>' +
+                    '<div id="order-vouchers-panel"></div>' +
                     '</article>';
 
                 mountOrderShipmentPanel(document.getElementById("order-shipment-panel"), order.id, msg);
                 mountOrderRefundPanel(document.getElementById("order-refund-panel"), order);
                 mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
                 mountOrderDownloadGrantsPanel(document.getElementById("order-download-grants-panel"), order.id);
+                mountOrderVouchersPanel(document.getElementById("order-vouchers-panel"), order.id);
 
                 var form = document.getElementById("order-status-form");
                 if (form) {
@@ -12251,6 +12576,7 @@
             refreshSearchNavVisibility();
             refreshCacheNavVisibility();
             refreshAssignmentsNavVisibility();
+            refreshVouchersNavVisibility();
             handleRoute();
         });
     }

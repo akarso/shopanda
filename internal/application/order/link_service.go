@@ -2,6 +2,7 @@ package order
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -17,12 +18,32 @@ type OrderAuther interface {
 	DeleteCustomer(ctx context.Context, customerID string) error
 }
 
+// voucherCustomerLinker stamps vouchers.customer_id when a guest order is claimed.
+type voucherCustomerLinker interface {
+	LinkCustomer(ctx context.Context, orderID, customerID string) error
+}
+
+type voucherTxLinker interface {
+	voucherCustomerLinker
+	LinkerWithTx(tx *sql.Tx) voucherCustomerLinker
+}
+
+type orderTxBinder interface {
+	WithTx(tx *sql.Tx) order.OrderRepository
+}
+
+type linkTxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 // LinkOrderService handles account linking for claimed orders.
 // Orchestrates registration + order linking workflow.
 type LinkOrderService struct {
-	orders order.OrderRepository
-	auth   OrderAuther
-	jwt    *jwt.Issuer
+	orders    order.OrderRepository
+	auth      OrderAuther
+	jwt       *jwt.Issuer
+	vouchers  voucherCustomerLinker
+	txStarter linkTxStarter
 }
 
 // NewLinkOrderService creates a LinkOrderService.
@@ -45,6 +66,24 @@ func NewLinkOrderService(
 		auth:   auth,
 		jwt:    jwt,
 	}
+}
+
+// WithVouchers stamps vouchers.customer_id when guest orders are claimed.
+func (s *LinkOrderService) WithVouchers(v voucherCustomerLinker) *LinkOrderService {
+	if s == nil {
+		return nil
+	}
+	s.vouchers = v
+	return s
+}
+
+// WithTxStarter enables one transaction for order link + voucher customer stamp.
+func (s *LinkOrderService) WithTxStarter(starter linkTxStarter) *LinkOrderService {
+	if s == nil {
+		return nil
+	}
+	s.txStarter = starter
+	return s
 }
 
 // RegisterAndLinkInput contains account registration and linking fields.
@@ -91,7 +130,6 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: password must not be empty")
 	}
 
-	// Register the customer
 	regOut, err := s.auth.Register(ctx, auth.RegisterInput{
 		Email:     in.Email,
 		Password:  in.Password,
@@ -103,35 +141,30 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 	}
 	createdCustomerID := regOut.CustomerID
 
-	// Fetch the order
 	o, err := s.orders.FindByID(ctx, in.OrderID)
 	if err != nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
-			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: find order: %w (cleanup customer: %v)", err, cleanupErr)
-		}
-		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: find order: %w", err)
+		return s.cleanupAndFail(ctx, createdCustomerID, fmt.Errorf("link order service: find order: %w", err))
 	}
 	if o == nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
-			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: order not found (cleanup customer: %v)", cleanupErr)
-		}
-		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: order not found")
+		return s.cleanupAndFail(ctx, createdCustomerID, fmt.Errorf("link order service: order not found"))
 	}
 
-	// Link order to customer
 	if err := o.LinkToCustomer(regOut.CustomerID); err != nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
-			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w (cleanup customer: %v)", err, cleanupErr)
-		}
-		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w", err)
+		return s.cleanupAndFail(ctx, createdCustomerID, fmt.Errorf("link order service: link order: %w", err))
 	}
 
-	// Persist the customer linking
-	if err := s.orders.LinkToCustomer(ctx, o); err != nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
-			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: persist link: %w (cleanup customer: %v)", err, cleanupErr)
+	if err := s.persistOrderLink(ctx, func(orders order.OrderRepository, vouchers voucherCustomerLinker) error {
+		if err := orders.LinkToCustomer(ctx, o); err != nil {
+			return fmt.Errorf("link order service: persist link: %w", err)
 		}
-		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: persist link: %w", err)
+		if vouchers != nil {
+			if err := vouchers.LinkCustomer(ctx, o.ID, regOut.CustomerID); err != nil {
+				return fmt.Errorf("link order service: link vouchers: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return s.cleanupAndFail(ctx, createdCustomerID, err)
 	}
 
 	return RegisterAndLinkOutput{
@@ -144,8 +177,6 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 
 // RegisterAndClaimByEmail registers a new customer under a verified guest
 // contact email and links every guest order carrying that contact email.
-// The caller is responsible for having verified that the contact email
-// belongs to the requester (claim token).
 func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in RegisterAndClaimInput) (RegisterAndLinkOutput, error) {
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
 	in.FirstName = strings.TrimSpace(in.FirstName)
@@ -176,23 +207,30 @@ func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in Regis
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: register: %w", err)
 	}
 
-	// Run the same per-order domain checks as RegisterAndLink before the
-	// atomic persist so invalid rows abort without touching the database.
 	for i := range guestOrders {
 		if err := guestOrders[i].LinkToCustomer(regOut.CustomerID); err != nil {
 			return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: link order %s: %w", guestOrders[i].ID, err))
 		}
 	}
 
-	// Link all matching guest orders in one atomic repository operation so a
-	// failure can never leave a partially claimed set of orders.
-	linked, err := s.orders.LinkToCustomerByContactEmail(ctx, in.ContactEmail, regOut.CustomerID, time.Now().UTC())
-	if err != nil {
-		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: persist links: %w", err))
-	}
-	if linked == 0 {
-		// The orders found above were claimed by someone else in the meantime.
-		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: no claimable orders for this email"))
+	if err := s.persistOrderLink(ctx, func(orders order.OrderRepository, vouchers voucherCustomerLinker) error {
+		linked, err := orders.LinkToCustomerByContactEmail(ctx, in.ContactEmail, regOut.CustomerID, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("link order service: persist links: %w", err)
+		}
+		if linked == 0 {
+			return fmt.Errorf("link order service: no claimable orders for this email")
+		}
+		if vouchers != nil {
+			for i := range guestOrders {
+				if err := vouchers.LinkCustomer(ctx, guestOrders[i].ID, regOut.CustomerID); err != nil {
+					return fmt.Errorf("link order service: link vouchers: %w", err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return s.cleanupAndFail(ctx, regOut.CustomerID, err)
 	}
 
 	return RegisterAndLinkOutput{
@@ -201,6 +239,33 @@ func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in Regis
 		Token:      regOut.Token,
 		ExpiresAt:  regOut.ExpiresAt,
 	}, nil
+}
+
+// persistOrderLink runs order + voucher customer stamps in one TX when both
+// binders and a starter are available. Failure rolls the order link back so
+// DeleteCustomer cleanup does not leave an orphan linked order.
+func (s *LinkOrderService) persistOrderLink(ctx context.Context, fn func(orders order.OrderRepository, vouchers voucherCustomerLinker) error) error {
+	orderTX, okOrder := s.orders.(orderTxBinder)
+	voucherTX, okVoucher := s.vouchers.(voucherTxLinker)
+	if s.txStarter != nil && okOrder && (s.vouchers == nil || okVoucher) {
+		tx, err := s.txStarter.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("link order service: begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		var vouchers voucherCustomerLinker
+		if s.vouchers != nil {
+			vouchers = voucherTX.LinkerWithTx(tx)
+		}
+		if err := fn(orderTX.WithTx(tx), vouchers); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("link order service: commit: %w", err)
+		}
+		return nil
+	}
+	return fn(s.orders, s.vouchers)
 }
 
 // cleanupAndFail removes the just-registered customer after a linking failure

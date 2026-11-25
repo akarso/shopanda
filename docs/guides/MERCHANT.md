@@ -52,6 +52,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Customers | Groups | `/admin/customers/groups` | **B2B license required** (PR-610) |
 | Marketing | Promotions | `/admin/marketing/promotions` | Guided + advanced rules (PR-642) |
 | Marketing | Coupons | `/admin/marketing/coupons` | Coupon codes |
+| Marketing | Vouchers | `/admin/marketing/vouchers` | Issued codes (PDF / staff redeem) |
 | Marketing | Abandoned Cart | `/admin/marketing/abandoned-cart` | Recovery email settings (PR-641) |
 | Content | Pages | `/admin/content/pages` | CMS pages |
 | Content | Navigation | `/admin/content/navigation` | Menu builder (PR-600) |
@@ -299,6 +300,7 @@ Without a license, the groups screen shows setup instructions instead of the gri
 
 - **Promotions** (`/admin/marketing/promotions`): create catalog or cart promotions using templates (percentage, tiered quantity, buy-X-get-Y, fixed cart discount) or the **Advanced JSON** tab for power users.
 - **Coupons** (`/admin/marketing/coupons`): attach coupon codes to promotions.
+- **Vouchers** (`/admin/marketing/vouchers`): staff register for codes issued from paid **virtual** products with voucher settings enabled. Lookup, redeem, unredeem, and PDF. Not a cart discount and not store credit.
 
 ### Abandoned cart recovery
 

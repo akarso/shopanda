@@ -35,6 +35,9 @@ type serveRepos struct {
 	downloadableFileRepo          *postgres.DownloadableFileRepo
 	downloadGrantRepo             *postgres.DownloadGrantRepo
 	downloadableGrantSettingsRepo *postgres.DownloadableGrantSettingsRepo
+	voucherRepo                   *postgres.VoucherRepo
+	voucherSettingsRepo           *postgres.VoucherSettingsRepo
+	voucherRedemptionRepo         *postgres.VoucherRedemptionRepo
 	notificationDedupeRepo        *postgres.NotificationDedupeRepo
 	productAssignmentRepo         *postgres.ProductAssignmentRepo
 	taxRateRepo                   *postgres.TaxRateRepo
@@ -192,6 +195,19 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	// downloadGrantRepo + settings: opened at serve start. wire_services
 	// constructs DownloadGrant Service + order.paid Issuer (PR-1075).
 	// Delivery HTTP is PR-1077; admin grant HTTP is PR-1078.
+
+	repos.voucherRepo, err = postgres.NewVoucherRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("voucherRepo", err)
+	}
+	repos.voucherSettingsRepo, err = postgres.NewVoucherSettingsRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("voucherSettingsRepo", err)
+	}
+	repos.voucherRedemptionRepo, err = postgres.NewVoucherRedemptionRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("voucherRedemptionRepo", err)
+	}
 
 	repos.notificationDedupeRepo, err = postgres.NewNotificationDedupeRepo(conn)
 	if err != nil {

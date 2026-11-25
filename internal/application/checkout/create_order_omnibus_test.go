@@ -111,17 +111,19 @@ func TestCreateOrderStep_ExplodedOrderTaxStaysOnOrder(t *testing.T) {
 func assertOrderItemHasNoTaxField(t *testing.T, item order.Item) {
 	t.Helper()
 	allowed := map[string]struct{}{
-		"VariantID":   {},
-		"SKU":         {},
-		"Name":        {},
-		"Quantity":    {},
-		"UnitPrice":   {},
-		"Restockable": {},
-		"CreatedAt":   {},
+		"VariantID":               {},
+		"SKU":                     {},
+		"Name":                    {},
+		"Quantity":                {},
+		"UnitPrice":               {},
+		"Restockable":             {},
+		"VoucherCodesPerUnit":     {},
+		"VoucherMaxRedemptions":   {},
+		"CreatedAt":               {},
 	}
 	typ := reflect.TypeOf(item)
 	if typ.NumField() != len(allowed) {
-		t.Fatalf("order item fields = %d, want %d (Restockable is the only extra)", typ.NumField(), len(allowed))
+		t.Fatalf("order item fields = %d, want %d", typ.NumField(), len(allowed))
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name

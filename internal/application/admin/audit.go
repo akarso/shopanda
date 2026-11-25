@@ -174,9 +174,19 @@ const (
 	AuditDownloadGrantRevoke  AuditAction = "download_grant.revoke"
 	AuditDownloadGrantReissue AuditAction = "download_grant.reissue"
 
+	// Voucher admin operations (PR-1803 / PR-1804)
+	AuditVoucherList           AuditAction = "voucher.list"
+	AuditVoucherRedeem         AuditAction = "voucher.redeem"
+	AuditVoucherUnredeem       AuditAction = "voucher.unredeem"
+	AuditVoucherReissue        AuditAction = "voucher.reissue"
+	AuditVoucherResendEmail    AuditAction = "voucher.resend_email"
+	AuditVoucherSettingsGet    AuditAction = "product.voucher_settings.get"
+	AuditVoucherSettingsPut    AuditAction = "product.voucher_settings.put"
+	AuditVoucherSettingsDelete AuditAction = "product.voucher_settings.delete"
+
 	// Job admin operations (PR-1029)
-	AuditJobList   AuditAction = "job.list"
-	AuditJobRead   AuditAction = "job.read"
+	AuditJobList    AuditAction = "job.list"
+	AuditJobRead    AuditAction = "job.read"
 	AuditJobRetry   AuditAction = "job.retry"
 	AuditJobRequeue AuditAction = "job.requeue"
 	AuditJobCancel  AuditAction = "job.cancel"
