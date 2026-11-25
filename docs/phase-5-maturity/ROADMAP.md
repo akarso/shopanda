@@ -103,7 +103,7 @@ Full compliance overview: [`docs/guides/COMPLIANCE_EU.md`](../guides/COMPLIANCE_
 | PR-502 | [oss] | Returns domain + workflow (done) | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
 | PR-503 | [oss] | Returns admin + account UI (done) | Admin list/detail/actions; customer "request return" on eligible orders |
 | PR-504 | [oss] | Payment transaction ledger admin (done) | Read-only admin grid over payment records with order links and status filter |
-| PR-505 | [oss] | Store credit / gift cards (stretch) | Issued credit balance, redemption at checkout — only if returns (502–503) expose clear need |
+| PR-505 | [oss] | Store credit (done) | Issued credit balance, redemption at checkout. A code plus PDF plus staff redemption is a voucher, not credit — parked in [Phase 18](../phase-18-vouchers/ROADMAP.md) |
 
 **Out of scope for Track A:** Full OMS/WMS, drop-ship vendor portals, marketplace split payouts.
 

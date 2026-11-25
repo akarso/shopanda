@@ -531,6 +531,27 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected order invoices wiring %q in JS", expected)
 		}
 	}
+	expectedVouchersWiring := []string{
+		"mountOrderVouchersPanel",
+		"order-vouchers-panel",
+		"downloadVoucherPdf",
+		"refreshVouchersNavVisibility",
+		"vouchers.read",
+		"vouchers.write",
+		"/admin/vouchers/",
+		"/vouchers/pdf",
+		"/vouchers/reissue",
+		"/vouchers/resend-email",
+		"Failed to download voucher PDF.",
+		"Your account does not have voucher access.",
+		"buildHeaders",
+		"note == null",
+	}
+	for _, expected := range expectedVouchersWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected vouchers wiring %q in JS", expected)
+		}
+	}
 	expectedOrderRefundWiring := []string{
 		"mountOrderRefundPanel",
 		"order-refund-panel",

@@ -21,7 +21,12 @@ type Item struct {
 	// non-exploded dynamic-stock bundle parent (stock was reserved on the
 	// leaves). Receive trusts this flag and does not re-read the live product.
 	Restockable bool
-	CreatedAt   time.Time
+	// VoucherCodesPerUnit / VoucherMaxRedemptions snapshot entitlement at
+	// checkout for virtual voucher lines. Nil means not a voucher line;
+	// order.paid issues from this snapshot, not live product settings.
+	VoucherCodesPerUnit   *int
+	VoucherMaxRedemptions *int
+	CreatedAt             time.Time
 }
 
 // NewItem creates an Item with validation.

@@ -418,6 +418,17 @@ ON CONFLICT (country, class, store_id) DO NOTHING;
 
 - Reverse charge / VAT ID is not implemented. OSS CSV columns are unchanged (PR-534). Plugin tax calculators (e.g. `taxdemo`) ignore `tax_classes` — an operator trap if you expect class-aware rates from a flat plugin. Treat live EU digital VAT as needing tax-domain sign-off; this PR is a seam, not compliance-complete.
 
+## Admin vouchers (Phase 18)
+
+- Enable on a **virtual** product: `PUT /api/v1/admin/products/{id}/voucher-settings` (`products.write`) with **`enabled` required**, plus `codes_per_unit`, `max_redemptions`. Omitting `enabled` is rejected (does not default to on).
+- Checkout snapshots `voucher_codes_per_unit` / `voucher_max_redemptions` onto order lines. `order.paid` issues from that snapshot (legacy rows fall back to live settings).
+- Issuance is idempotent on `(order_id, variant_id, seq)`. Code unique collisions retry inside a SAVEPOINT. Publish `voucher.issued` only after commit. Issue, redeem, and return void share per-unit advisory locks; issuance rechecks blocking returns inside the TX. If the async handler fails, `POST …/vouchers/reissue` creates missing codes (and republishes when created=0); `POST …/vouchers/resend-email` with `force` clears the dedupe claim and enqueues a **new** `email.send` job id (dedupe key stays the hashed id set).
+- Email dedupe `subject_key` is a fixed-length hash of the sorted id set (btree-safe for 100+ codes). Job ids are fresh UUIDs. Enqueue failure clears the pending claim for retry.
+- Return approve/refund voids unused live codes in the same TX as grant revoke. Redeemed live codes refuse approve/refund. Redeem refuses while the line is on a blocking return. Voucher lines (snapshot or any live code) are full-quantity only.
+- Guest claim / contact-email link stamps `vouchers.customer_id` in the same transaction as the order link.
+- Staff register: `GET /api/v1/admin/vouchers`, `…/lookup?code=`, redeem/unredeem (`vouchers.write`; unredeem requires a note). PDF downloads use authenticated `fetch` + blob (Bearer). GUI gates nav / order panel on `vouchers.read`.
+- Not a coupon and not store credit — codes are redeemed by staff, not at checkout.
+
 ## Admin store credit issuance
 
 - `POST /api/v1/admin/customers/{customerId}/store-credit/issue` mints store credit; gated by the dedicated `customers.store_credit.write` permission (`RoleAdmin` only by default), not `customers.write`.

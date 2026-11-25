@@ -467,8 +467,9 @@ func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order
 	if len(items) == 0 {
 		return nil
 	}
-	const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, restockable,
+		voucher_codes_per_unit, voucher_max_redemptions, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	stmt, err := exec.PrepareContext(ctx, insertItem)
 	if err != nil {
 		return fmt.Errorf("order_repo: prepare item insert: %w", err)
@@ -479,6 +480,7 @@ func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order
 		_, err = stmt.ExecContext(ctx,
 			o.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
 			item.UnitPrice.Amount(), item.UnitPrice.Currency(), item.Restockable,
+			nullIntPtr(item.VoucherCodesPerUnit), nullIntPtr(item.VoucherMaxRedemptions),
 			item.CreatedAt,
 		)
 		if err != nil {
@@ -527,9 +529,17 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, o *order.Order) error {
 	return nil
 }
 
+func (r *OrderRepo) execer() orderExecer {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
+}
+
 // LinkToCustomer persists customer ownership for a previously guest order.
 // The WHERE guard (customer_id = ”) ensures an already-linked order is never
-// silently reassigned to another customer.
+// silently reassigned to another customer. Honours WithTx so guest claim can
+// stamp vouchers.customer_id in the same transaction.
 func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 	if o == nil {
 		return fmt.Errorf("order_repo: link to customer: order must not be nil")
@@ -539,7 +549,7 @@ func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 		return fmt.Errorf("order_repo: link to customer: empty customer id")
 	}
 	const q = `UPDATE orders SET customer_id = $1, updated_at = $2 WHERE id = $3 AND customer_id = ''`
-	res, err := r.db.ExecContext(ctx, q, customerID, o.UpdatedAt, o.ID)
+	res, err := r.execer().ExecContext(ctx, q, customerID, o.UpdatedAt, o.ID)
 	if err != nil {
 		return fmt.Errorf("order_repo: link to customer: %w", err)
 	}
@@ -555,7 +565,7 @@ func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 
 // LinkToCustomerByContactEmail atomically links every unclaimed guest order
 // carrying the contact email to the customer. A single UPDATE statement keeps
-// the multi-order claim all-or-nothing.
+// the multi-order claim all-or-nothing. Honours WithTx for voucher stamping.
 func (r *OrderRepo) LinkToCustomerByContactEmail(ctx context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error) {
 	email := strings.ToLower(strings.TrimSpace(contactEmail))
 	if email == "" {
@@ -566,7 +576,7 @@ func (r *OrderRepo) LinkToCustomerByContactEmail(ctx context.Context, contactEma
 		return 0, fmt.Errorf("order_repo: link by contact email: empty customer id")
 	}
 	const q = `UPDATE orders SET customer_id = $1, updated_at = $2 WHERE LOWER(contact_email) = $3 AND customer_id = ''`
-	res, err := r.db.ExecContext(ctx, q, customerID, updatedAt, email)
+	res, err := r.execer().ExecContext(ctx, q, customerID, updatedAt, email)
 	if err != nil {
 		return 0, fmt.Errorf("order_repo: link by contact email: %w", err)
 	}
@@ -579,7 +589,8 @@ func (r *OrderRepo) LinkToCustomerByContactEmail(ctx context.Context, contactEma
 
 // loadItems fetches all items for a single order, ordered by created_at.
 func (r *OrderRepo) loadItems(ctx context.Context, orderID string) ([]order.Item, error) {
-	const q = `SELECT variant_id, sku, name, quantity, unit_price, currency, restockable, created_at
+	const q = `SELECT variant_id, sku, name, quantity, unit_price, currency, restockable,
+		voucher_codes_per_unit, voucher_max_redemptions, created_at
 		FROM order_items WHERE order_id = $1
 		ORDER BY created_at`
 	rows, err := r.db.QueryContext(ctx, q, orderID)
@@ -592,7 +603,8 @@ func (r *OrderRepo) loadItems(ctx context.Context, orderID string) ([]order.Item
 
 // loadItemsBatch fetches items for multiple orders in a single query.
 func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[string][]order.Item, error) {
-	const q = `SELECT order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at
+	const q = `SELECT order_id, variant_id, sku, name, quantity, unit_price, currency, restockable,
+		voucher_codes_per_unit, voucher_max_redemptions, created_at
 		FROM order_items WHERE order_id = ANY($1)
 		ORDER BY order_id, created_at`
 	rows, err := r.db.QueryContext(ctx, q, orderIDs)
@@ -608,18 +620,17 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 		var priceAmount int64
 		var priceCurrency string
 		var restockable bool
+		var codesPerUnit, maxRedemptions sql.NullInt64
 		var createdAt time.Time
-		if err := rows.Scan(&orderID, &variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable, &createdAt); err != nil {
+		if err := rows.Scan(&orderID, &variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable,
+			&codesPerUnit, &maxRedemptions, &createdAt); err != nil {
 			return nil, fmt.Errorf("order_repo: scan batch item: %w", err)
 		}
 		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
 		if err != nil {
 			return nil, fmt.Errorf("order_repo: batch item money: %w", err)
 		}
-		// Construct Item directly (bypassing NewItem) because DB data was
-		// validated on write and we must preserve the stored CreatedAt.
-		// SetItemsFromDB validates the total on the caller side.
-		result[orderID] = append(result[orderID], order.Item{
+		item := order.Item{
 			VariantID:   variantID,
 			SKU:         sku,
 			Name:        name,
@@ -627,7 +638,16 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 			UnitPrice:   unitPrice,
 			Restockable: restockable,
 			CreatedAt:   createdAt,
-		})
+		}
+		if codesPerUnit.Valid {
+			v := int(codesPerUnit.Int64)
+			item.VoucherCodesPerUnit = &v
+		}
+		if maxRedemptions.Valid {
+			v := int(maxRedemptions.Int64)
+			item.VoucherMaxRedemptions = &v
+		}
+		result[orderID] = append(result[orderID], item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("order_repo: batch items rows: %w", err)
@@ -644,16 +664,17 @@ func (r *OrderRepo) scanItems(rows *sql.Rows) ([]order.Item, error) {
 		var priceAmount int64
 		var priceCurrency string
 		var restockable bool
+		var codesPerUnit, maxRedemptions sql.NullInt64
 		var createdAt time.Time
-		if err := rows.Scan(&variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable, &createdAt); err != nil {
+		if err := rows.Scan(&variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable,
+			&codesPerUnit, &maxRedemptions, &createdAt); err != nil {
 			return nil, fmt.Errorf("order_repo: scan item: %w", err)
 		}
 		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
 		if err != nil {
 			return nil, fmt.Errorf("order_repo: item money: %w", err)
 		}
-		// Construct Item directly — see loadItemsBatch comment for rationale.
-		items = append(items, order.Item{
+		item := order.Item{
 			VariantID:   variantID,
 			SKU:         sku,
 			Name:        name,
@@ -661,7 +682,16 @@ func (r *OrderRepo) scanItems(rows *sql.Rows) ([]order.Item, error) {
 			UnitPrice:   unitPrice,
 			Restockable: restockable,
 			CreatedAt:   createdAt,
-		})
+		}
+		if codesPerUnit.Valid {
+			v := int(codesPerUnit.Int64)
+			item.VoucherCodesPerUnit = &v
+		}
+		if maxRedemptions.Valid {
+			v := int(maxRedemptions.Int64)
+			item.VoucherMaxRedemptions = &v
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("order_repo: items rows: %w", err)

@@ -95,6 +95,29 @@ func TestService_Catalog_IncludesCorePermissions(t *testing.T) {
 	}
 }
 
+func TestService_UpdateRole_AcceptsVouchersPermissions(t *testing.T) {
+	repo := &stubRolePermRepo{}
+	svc := adminroleApp.NewService(repo, rbac.NewRegistry())
+	resp, err := svc.UpdateRole(context.Background(), identity.RoleSupport, []string{
+		string(rbac.VouchersRead),
+		string(rbac.VouchersWrite),
+		string(rbac.OrdersRead),
+	})
+	if err != nil {
+		t.Fatalf("UpdateRole vouchers: %v", err)
+	}
+	got := map[string]bool{}
+	for _, p := range resp.Permissions {
+		got[p] = true
+	}
+	if !got[string(rbac.VouchersRead)] || !got[string(rbac.VouchersWrite)] {
+		t.Fatalf("permissions = %v, want vouchers.read/write kept", resp.Permissions)
+	}
+	if !rbac.IsCatalogPermission(rbac.VouchersRead) || !rbac.IsCatalogPermission(rbac.VouchersWrite) {
+		t.Fatal("vouchers.* must be catalog permissions")
+	}
+}
+
 // TestService_Catalog_MutatingResultDoesNotCorruptCache pins PR-1040's
 // L1 cache over Catalog(): each call must return an independent copy, so
 // a caller appending to (or otherwise mutating) its own result can never

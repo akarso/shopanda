@@ -51,6 +51,7 @@ import (
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
+	voucherApp "github.com/akarso/shopanda/internal/application/voucher"
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -69,10 +70,12 @@ import (
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/translation"
+	domainvoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
+	"github.com/akarso/shopanda/internal/infrastructure/voucherpdf"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -89,6 +92,7 @@ import (
 
 type serveRuntime struct {
 	repos *serveRepos
+	db    *sql.DB
 
 	pluginApp *plugin.App
 	bus       *event.Bus
@@ -126,6 +130,7 @@ type serveRuntime struct {
 	productAssignmentService *assignmentApp.Service
 	assignmentFlow           *assignmentApp.Flow
 	downloadGrantService     *downloadApp.Service
+	voucherService           *voucherApp.Service
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -145,6 +150,8 @@ type serveRuntime struct {
 	linkedEligibilityAdmin         *admin.LinkedEligibilityAdminHandler
 	downloadableFileAdmin          *admin.DownloadableFileAdminHandler
 	downloadGrantAdmin             *admin.DownloadGrantAdminHandler
+	voucherAdmin                   *admin.VoucherAdminHandler
+	voucherSettingsAdmin           *admin.VoucherSettingsAdminHandler
 	downloadableFileService        *catalogApp.DownloadableFileService
 	productTranslationAdmin        *admin.ProductTranslationAdminHandler
 	productPriceAdmin              *admin.ProductPriceAdminHandler
@@ -434,6 +441,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	notification.RegisterTemplates(mailTemplates)
 
 	invoicePDFRenderer := invoicepdf.NewRenderer()
+	voucherPDFRenderer := voucherpdf.NewRenderer()
 
 	notifSvc := notification.New(mailTemplates, repos.customerRepo, repos.orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
@@ -443,6 +451,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 		notification.WithOrderExtensions(extensionApp.AsValueAPI(extensionValueService)),
 		notification.WithOrderLineHooks(hookRegistry),
+		notification.WithVouchers(repos.voucherRepo),
+		notification.WithVoucherPDF(voucherPDFRenderer),
 		notification.WithStoreLanguageLookup(func(ctx context.Context) (string, error) {
 			st, err := repos.storeRepo.FindDefault(ctx)
 			if err != nil {
@@ -548,6 +558,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	// Wire invoice.created → email notification with PDF attachment.
 	bus.OnAsync(invoice.EventInvoiceCreated, notifSvc.HandleInvoiceCreated)
+	bus.OnAsync(domainvoucher.EventVoucherIssued, notifSvc.HandleVoucherIssued)
 
 	// Wire catalog events → URL rewrites.
 	rewriteSub := rewrite.NewSubscriber(repos.rewriteRepo, log)
@@ -653,6 +664,22 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// order.paid is published from sync payment success, $0 payment_skipped,
 	// payment.completed webhooks, and admin/integration ApplyStatus(paid).
 	bus.OnAsync(order.EventOrderPaid, downloadGrantIssuer.HandleOrderPaid)
+
+	voucherService := voucherApp.NewService(repos.voucherRepo, bus, log).
+		WithSettings(repos.voucherSettingsRepo).
+		WithRedemptions(repos.voucherRedemptionRepo).
+		WithTxStarter(conn)
+	voucherIssuer := voucherApp.NewIssuer(
+		repos.orderRepo,
+		repos.variantRepo,
+		repos.productRepo,
+		repos.voucherSettingsRepo,
+		voucherService,
+		log,
+	).WithPayments(repos.paymentRepo).
+		WithTxStarter(conn)
+	bus.OnAsync(order.EventOrderPaid, voucherIssuer.HandleOrderPaid)
+
 	productAssignmentService := assignmentApp.NewService(repos.productAssignmentRepo)
 	assignmentFlow := assignmentApp.NewFlow(
 		productAssignmentService,
@@ -774,7 +801,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService, repos.productRepo, repos.bundleComponentRepo, repos.priceRepo).
 		WithReservations(repos.reservationRepo).
 		WithStockEventPublishing(bus, log).
-		WithAssignmentFlow(assignmentFlow, conn)
+		WithAssignmentFlow(assignmentFlow, conn).
+		WithVoucherSettings(repos.voucherSettingsRepo)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo).
 		WithAssignmentFlow(assignmentFlow).
@@ -938,6 +966,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	downloadableFileAdmin.SetProducts(repos.productRepo) // PR-1080: enrich ProductUpdatedData like composition
 	downloadableFileAdmin.SetBus(bus)                    // PR-1080: downloadable file attach/remove → search reindex
 	downloadGrantAdmin := admin.NewDownloadGrantAdminHandler(downloadGrantService, repos.orderRepo, sharedAuditor)
+	voucherAdmin := admin.NewVoucherAdminHandler(voucherService, sharedAuditor).
+		WithPDFRenderer(voucherPDFRenderer).
+		WithIssuer(voucherIssuer).
+		WithEmailResender(notifSvc)
+	voucherSettingsAdmin := admin.NewVoucherSettingsAdminHandler(voucherService, repos.productRepo, sharedAuditor)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
@@ -991,10 +1024,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithTxStarter(conn).
 		WithAssignmentFlow(assignmentFlow).
 		WithDownloadGrants(downloadGrantService).
-		WithDownloadGrantIssuer(downloadGrantIssuer)
+		WithDownloadGrantIssuer(downloadGrantIssuer).
+		WithVouchers(voucherService).
+		WithVoucherIssuer(voucherIssuer).
+		WithVoucherSettings(repos.voucherSettingsRepo).
+		WithProducts(repos.productRepo)
 	assignmentFlow.WithTxStarter(conn).WithOpenReturnChecker(returnService)
 	// Skip grant issuance for lines on open/refunded returns (order.paid heal).
 	downloadGrantIssuer.WithBlockingReturnChecker(returnService)
+	voucherIssuer.WithBlockingReturnChecker(returnService)
+	voucherService.WithBlockingReturnChecker(returnService)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	assignmentAccount := storefront.NewAssignmentAccountHandler(assignmentFlow)
@@ -1151,6 +1190,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	return &serveRuntime{
 		repos:                          repos,
+		db:                             conn,
 		pluginApp:                      pluginApp,
 		bus:                            bus,
 		registry:                       registry,
@@ -1180,6 +1220,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		productAssignmentService:       productAssignmentService,
 		assignmentFlow:                 assignmentFlow,
 		downloadGrantService:           downloadGrantService,
+		voucherService:                 voucherService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,
@@ -1196,6 +1237,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		linkedEligibilityAdmin:         linkedEligibilityAdmin,
 		downloadableFileAdmin:          downloadableFileAdmin,
 		downloadGrantAdmin:             downloadGrantAdmin,
+		voucherAdmin:                   voucherAdmin,
+		voucherSettingsAdmin:           voucherSettingsAdmin,
 		downloadableFileService:        downloadableFileService,
 		productTranslationAdmin:        productTranslationAdmin,
 		productPriceAdmin:              productPriceAdmin,

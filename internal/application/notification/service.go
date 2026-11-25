@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/translation"
+	domainvoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -33,6 +35,9 @@ const KindOrderConfirmed = "order_confirmed"
 // KindOrderShipped is the notification_dedupe kind for shipment.shipped emails.
 const KindOrderShipped = "order_shipped"
 
+// KindVoucherIssued is the notification_dedupe kind for voucher.issued emails.
+const KindVoucherIssued = "voucher_issued"
+
 // EmailDedupeStore claims one send per (subject_key, kind) so confirmation
 // dedupe does not depend on queue-driver job-id primary-key behavior.
 type EmailDedupeStore interface {
@@ -47,20 +52,22 @@ type EmailDedupeStore interface {
 // Service wires order/shipping/customer events to email notifications
 // via the job queue.
 type Service struct {
-	templates   *mail.Templates
-	customers   customer.CustomerRepository
-	orders      order.OrderRepository
-	queue       jobs.Queue
-	dedupe      EmailDedupeStore
-	log         logger.Logger
-	resetURL    string                    // base URL for password reset links
-	storeURL    string                    // public store URL
-	invoices    invoice.InvoiceRepository // optional — for invoice emails
-	pdfRenderer invoice.PDFRenderer       // optional — for invoice PDF attachments
-	extensions           extensionapp.ValueAPI // optional — public order_item values on confirmation lines
-	hooks                *hooks.Registry       // optional — order.line.display enrich
-	fallbackLanguage     string                // static fallback when lookup unset (tests)
-	storeLanguageLookup  func(context.Context) (string, error)
+	templates           *mail.Templates
+	customers           customer.CustomerRepository
+	orders              order.OrderRepository
+	queue               jobs.Queue
+	dedupe              EmailDedupeStore
+	log                 logger.Logger
+	resetURL            string                    // base URL for password reset links
+	storeURL            string                    // public store URL
+	invoices            invoice.InvoiceRepository // optional — for invoice emails
+	pdfRenderer         invoice.PDFRenderer       // optional — for invoice PDF attachments
+	extensions          extensionapp.ValueAPI     // optional — public order_item values on confirmation lines
+	hooks               *hooks.Registry           // optional — order.line.display enrich
+	fallbackLanguage    string                    // static fallback when lookup unset (tests)
+	storeLanguageLookup func(context.Context) (string, error)
+	vouchers            domainvoucher.Repository
+	voucherPDF          domainvoucher.PDFRenderer
 }
 
 // Option configures optional Service fields.
@@ -116,6 +123,16 @@ func WithFallbackLanguage(lang string) Option {
 // and the static fallback (if any) is used.
 func WithStoreLanguageLookup(fn func(context.Context) (string, error)) Option {
 	return func(s *Service) { s.storeLanguageLookup = fn }
+}
+
+// WithVouchers wires voucher lookup for voucher.issued emails.
+func WithVouchers(repo domainvoucher.Repository) Option {
+	return func(s *Service) { s.vouchers = repo }
+}
+
+// WithVoucherPDF wires the voucher pack PDF renderer for email attachments.
+func WithVoucherPDF(r domainvoucher.PDFRenderer) Option {
+	return func(s *Service) { s.voucherPDF = r }
 }
 
 // orderDisplayLanguage resolves the sealed hook language once per email.
@@ -195,6 +212,12 @@ func RegisterTemplates(t *mail.Templates) {
 		"Order {{.Data.OrderID}} — Confirmation",
 		"{{if .Data.FirstName}}<h1>Thank you, {{.Data.FirstName}}!</h1>{{else}}<h1>Thank you for your order!</h1>{{end}}"+
 			"<p>Your order <strong>{{.Data.OrderID}}</strong> has been paid and confirmed.</p>")
+
+	t.Register("voucher_issued",
+		"Your vouchers for order {{.Data.OrderID}}",
+		"{{if .Data.FirstName}}<h1>Hi {{.Data.FirstName}},</h1>{{else}}<h1>Your vouchers</h1>{{end}}"+
+			"<p>Vouchers for order <strong>{{.Data.OrderID}}</strong> are attached as a PDF.</p>"+
+			"<ul>{{range .Data.Codes}}<li><code>{{.}}</code></li>{{end}}</ul>")
 
 	t.Register("password_reset",
 		"Reset your password",
@@ -721,6 +744,164 @@ func orderShippedJobID(shipmentID string) string {
 	sum := sha1.Sum([]byte("shopanda.email.order_shipped:" + strings.TrimSpace(shipmentID)))
 	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
 	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+}
+
+// ResendVoucherIssued rebuilds and enqueues the pack email for live codes on
+// the order. When force is true, any completed dedupe claim is cleared first
+// so staff can recover from a lost mail after a successful enqueue mark.
+func (s *Service) ResendVoucherIssued(ctx context.Context, orderID string, force bool) error {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return apperror.Validation("order id is required")
+	}
+	if s.vouchers == nil || s.voucherPDF == nil {
+		return apperror.Unavailable("voucher email dependencies not configured")
+	}
+	rows, err := s.vouchers.ListByOrderID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("notification: list vouchers: %w", err)
+	}
+	ids := make([]string, 0, len(rows))
+	customerID := ""
+	for i := range rows {
+		if rows[i].VoidedAt != nil {
+			continue
+		}
+		ids = append(ids, rows[i].ID)
+		if customerID == "" {
+			customerID = rows[i].CustomerID
+		}
+	}
+	if len(ids) == 0 {
+		return apperror.NotFound("no vouchers for order")
+	}
+	if force && s.dedupe != nil {
+		if err := s.dedupe.Delete(ctx, voucherIssuedSubjectKey(ids), KindVoucherIssued); err != nil {
+			return fmt.Errorf("notification: clear voucher dedupe: %w", err)
+		}
+	}
+	return s.HandleVoucherIssued(ctx, event.New(domainvoucher.EventVoucherIssued, "admin.voucher.resend", domainvoucher.IssuedData{
+		OrderID:    orderID,
+		CustomerID: customerID,
+		VoucherIDs: ids,
+	}))
+}
+
+// HandleVoucherIssued emails the buyer a PDF pack of newly issued codes.
+// Dedupe is keyed by a fixed-length hash of the issued id set so a later
+// reissue batch is not swallowed, btree index limits are respected, and a
+// failed send can retry after enqueueEmailOnce deletes the pending claim.
+func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(domainvoucher.IssuedData)
+	if !ok {
+		return fmt.Errorf("notification: unexpected event data type %T", evt.Data)
+	}
+	if s.vouchers == nil || s.voucherPDF == nil {
+		s.log.Warn("HandleVoucherIssued.skipped_no_deps", map[string]interface{}{
+			"order_id": data.OrderID,
+		})
+		return nil
+	}
+	if len(data.VoucherIDs) == 0 {
+		return nil
+	}
+	o, err := s.orders.FindByID(ctx, data.OrderID)
+	if err != nil {
+		return fmt.Errorf("notification: find order %s: %w", data.OrderID, err)
+	}
+	if o == nil {
+		return fmt.Errorf("notification: order %s not found", data.OrderID)
+	}
+	recipient, err := s.resolveOrderRecipient(ctx, o, "HandleVoucherIssued")
+	if err != nil {
+		return err
+	}
+	want := make(map[string]struct{}, len(data.VoucherIDs))
+	for _, id := range data.VoucherIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			want[id] = struct{}{}
+		}
+	}
+	rows, err := s.vouchers.ListByOrderID(ctx, data.OrderID)
+	if err != nil {
+		return fmt.Errorf("notification: list vouchers: %w", err)
+	}
+	codes := make([]domainvoucher.PDFCode, 0, len(want))
+	codeStrs := make([]string, 0, len(want))
+	var issuedAt time.Time
+	for i := range rows {
+		if _, ok := want[rows[i].ID]; !ok {
+			continue
+		}
+		formatted := domainvoucher.FormatCode(rows[i].Code)
+		codes = append(codes, domainvoucher.PDFCode{Code: rows[i].Code, Status: rows[i].Status()})
+		codeStrs = append(codeStrs, formatted)
+		if issuedAt.IsZero() || rows[i].IssuedAt.Before(issuedAt) {
+			issuedAt = rows[i].IssuedAt
+		}
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	if issuedAt.IsZero() {
+		issuedAt = time.Now().UTC()
+	}
+	pdfBytes, err := s.voucherPDF.Render(domainvoucher.PDFDocument{
+		OrderID:    data.OrderID,
+		CustomerID: data.CustomerID,
+		IssuedAt:   issuedAt.UTC().Format("2006-01-02"),
+		Codes:      codes,
+	})
+	if err != nil {
+		s.log.Error("HandleVoucherIssued.pdf_render_failed", err, map[string]interface{}{"order_id": data.OrderID})
+		return fmt.Errorf("notification: render voucher PDF: %w", err)
+	}
+	ed := mail.EmailData{
+		StoreURL: s.storeURL,
+		Data: map[string]interface{}{
+			"OrderID":   data.OrderID,
+			"FirstName": recipient.FirstName,
+			"Guest":     recipient.Guest,
+			"Codes":     codeStrs,
+		},
+	}
+	msg, err := s.templates.Render("voucher_issued", recipient.Email, ed)
+	if err != nil {
+		return fmt.Errorf("notification: render voucher template: %w", err)
+	}
+	msg.Attachments = []mail.Attachment{{
+		Filename:    fmt.Sprintf("vouchers-%s.pdf", data.OrderID),
+		ContentType: "application/pdf",
+		Data:        pdfBytes,
+	}}
+	// Dedupe key is the fixed-length hash; job id must be fresh so force
+	// resend can enqueue after the original email.send row is still pending
+	// or failed in jobs (Enqueue conflict on the hashed id is not a resend).
+	subjectKey := voucherIssuedSubjectKey(data.VoucherIDs)
+	return s.enqueueEmailOnce(ctx, msg, id.New(), "HandleVoucherIssued", map[string]interface{}{
+		"order_id":    data.OrderID,
+		"customer_id": data.CustomerID,
+		"guest":       recipient.Guest,
+	}, subjectKey, KindVoucherIssued)
+}
+
+// voucherIssuedSubjectKey returns a fixed-length UUID derived from the sorted
+// issued id set. Comma-joining raw UUIDs overflows the notification_dedupe
+// btree unique index (~2700 bytes) above ~74 codes; a legal line can issue 100+.
+func voucherIssuedSubjectKey(ids []string) string {
+	cleaned := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			cleaned = append(cleaned, id)
+		}
+	}
+	sort.Strings(cleaned)
+	sum := sha1.Sum([]byte("shopanda.email.voucher_issued:" + strings.Join(cleaned, ",")))
+	sum[6] = (sum[6] & 0x0f) | 0x50
+	sum[8] = (sum[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 

@@ -26,6 +26,7 @@ func CorePermissions() []Permission {
 		ProductsRead, ProductsWrite,
 		AssignmentsRead, AssignmentsWrite,
 		DownloadsRead, DownloadsWrite,
+		VouchersRead, VouchersWrite,
 		OrdersRead, OrdersWrite,
 		CategoriesRead, CategoriesWrite,
 		CustomersRead, CustomersWrite, StoreCreditWrite,
