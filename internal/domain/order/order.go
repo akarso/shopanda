@@ -43,6 +43,10 @@ type Order struct {
 	StoreCreditApplied shared.Money
 	// DestinationCountry is the ISO 3166-1 alpha-2 shipping country at checkout.
 	DestinationCountry string
+	// Language is the BCP 47 primary tag resolved at checkout (nullable in DB
+	// for legacy rows). Empty → callers fall back to the store language for
+	// order.line.display on email.
+	Language string
 	// TaxAmount is the VAT total applied at checkout (zero when unset).
 	TaxAmount shared.Money
 	CreatedAt time.Time

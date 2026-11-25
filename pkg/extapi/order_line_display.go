@@ -49,6 +49,12 @@ func (c *HookContext) OrderLineDisplayVariantID() string {
 	return hookPayloadString(c, "variant_id")
 }
 
+// OrderLineDisplayLanguage returns the BCP 47 primary language tag for this
+// enrich (request language on storefront pages, order language on email).
+func (c *HookContext) OrderLineDisplayLanguage() string {
+	return hookPayloadString(c, "language")
+}
+
 // OrderLineDisplayExtensions returns the public stored extension map for the
 // line (code → value), or nil when unset.
 func (c *HookContext) OrderLineDisplayExtensions() map[string]interface{} {

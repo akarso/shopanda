@@ -443,6 +443,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
 		notification.WithOrderExtensions(extensionApp.AsValueAPI(extensionValueService)),
 		notification.WithOrderLineHooks(hookRegistry),
+		notification.WithStoreLanguageLookup(func(ctx context.Context) (string, error) {
+			st, err := repos.storeRepo.FindDefault(ctx)
+			if err != nil {
+				return "", err
+			}
+			if st == nil {
+				return "", nil
+			}
+			return translation.PrimaryLanguage(st.Language), nil
+		}),
 	)
 
 	// Media storage (resolve + bind so BoundMediaStorage matches this instance).

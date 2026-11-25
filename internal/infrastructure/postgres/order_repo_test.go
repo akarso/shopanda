@@ -674,6 +674,7 @@ func TestOrderRepo_TaxSnapshotRoundTrip(t *testing.T) {
 	if err := o.SetTaxSnapshot("FR", shared.MustNewMoney(420, "EUR")); err != nil {
 		t.Fatalf("SetTaxSnapshot: %v", err)
 	}
+	o.Language = "de"
 	if err := repo.Save(ctx, &o); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -687,6 +688,39 @@ func TestOrderRepo_TaxSnapshotRoundTrip(t *testing.T) {
 	}
 	if got.TaxAmount.Amount() != 420 {
 		t.Fatalf("TaxAmount = %d", got.TaxAmount.Amount())
+	}
+	if got.Language != "de" {
+		t.Fatalf("Language = %q, want de", got.Language)
+	}
+}
+
+func TestOrderRepo_EmptyLanguageRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	o := mustNewOrder(t, "cust-1", "EUR")
+	if o.Language != "" {
+		t.Fatalf("seed Language = %q, want empty", o.Language)
+	}
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.FindByID(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.Language != "" {
+		t.Fatalf("Language = %q, want empty (NULL round-trip)", got.Language)
 	}
 }
 

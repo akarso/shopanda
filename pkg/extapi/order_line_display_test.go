@@ -10,6 +10,7 @@ func TestAppendOrderLineDisplayField(t *testing.T) {
 	ctx := &extapi.HookContext{Name: string(extapi.HookOrderLineDisplay)}
 	ctx.Set("order_id", "ord-1")
 	ctx.Set("variant_id", "var-1")
+	ctx.Set("language", "pl")
 	ctx.Set("extensions", map[string]interface{}{"design_id": "d1"})
 
 	ctx.AppendOrderLineDisplayField(extapi.OrderLineDisplayField{
@@ -23,6 +24,9 @@ func TestAppendOrderLineDisplayField(t *testing.T) {
 
 	if ctx.OrderLineDisplayOrderID() != "ord-1" || ctx.OrderLineDisplayVariantID() != "var-1" {
 		t.Fatalf("ids = %q %q", ctx.OrderLineDisplayOrderID(), ctx.OrderLineDisplayVariantID())
+	}
+	if ctx.OrderLineDisplayLanguage() != "pl" {
+		t.Fatalf("language = %q, want pl", ctx.OrderLineDisplayLanguage())
 	}
 	if got := ctx.OrderLineDisplayExtensions()["design_id"]; got != "d1" {
 		t.Fatalf("extensions = %#v", ctx.OrderLineDisplayExtensions())

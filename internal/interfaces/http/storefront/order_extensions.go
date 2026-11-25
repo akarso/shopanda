@@ -5,6 +5,8 @@ import (
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/translation"
 )
 
 func orderItemExtensionsMap(ctx context.Context, values extensionapp.ValueAPI, orderID string, variantIDs []string, onFieldErr extensionapp.SoftFieldError) (map[string][]cartItemExtensionResponse, error) {
@@ -90,12 +92,21 @@ func (h *StorefrontHandler) storefrontOrderLineItems(ctx context.Context, o *ord
 			reg = h.extensions.Registry()
 		}
 	}
+	storeLang := ""
+	if st := store.FromContext(ctx); st != nil {
+		storeLang = st.Language
+	}
+	preferred := ""
+	if raw, ok := translation.LanguageOK(ctx); ok {
+		preferred = raw
+	}
+	lang := translation.DisplayLanguage(preferred, storeLang)
 	for i := range items {
 		apiItems := byVariant[items[i].VariantID]
 		extMap := extensionapp.ExtensionMapFromAPIItems(apiItems)
 		rows := extensionapp.ExtensionDisplayRows(reg, apiItems)
 		hookExt := extensionapp.CloneExtensionMap(extMap)
-		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, h.orderLineHooks, o.ID, items[i].VariantID, hookExt, rows,
+		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, h.orderLineHooks, o.ID, items[i].VariantID, lang, hookExt, rows,
 			func(registrant string, hookErr error) {
 				if h.log != nil {
 					h.log.Error("storefront.order_line_display_failed", hookErr, map[string]interface{}{
