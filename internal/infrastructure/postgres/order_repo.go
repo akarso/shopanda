@@ -16,7 +16,7 @@ import (
 var _ order.OrderRepository = (*OrderRepo)(nil)
 
 const orderSelectColumns = `id, customer_id, contact_email, status, currency,
-	total_amount, total_currency, destination_country, tax_amount, store_credit_amount, created_at, updated_at`
+	total_amount, total_currency, destination_country, tax_amount, store_credit_amount, language, created_at, updated_at`
 
 // OrderRepo implements order.OrderRepository using PostgreSQL.
 // WithTx is adapter-only so checkout can save the order and write
@@ -56,17 +56,19 @@ func (r *OrderRepo) hydrateOrder(s orderScanner) (*order.Order, error) {
 	var status string
 	var contactEmail sql.NullString
 	var destinationCountry sql.NullString
+	var language sql.NullString
 	var totalAmount int64
 	var totalCurrency string
 	var taxAmount sql.NullInt64
 	var storeCreditAmount int64
 	err := s.Scan(&o.ID, &o.CustomerID, &contactEmail, &status, &o.Currency,
-		&totalAmount, &totalCurrency, &destinationCountry, &taxAmount, &storeCreditAmount, &o.CreatedAt, &o.UpdatedAt)
+		&totalAmount, &totalCurrency, &destinationCountry, &taxAmount, &storeCreditAmount, &language, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	o.ContactEmail = strings.TrimSpace(contactEmail.String)
 	o.DestinationCountry = strings.TrimSpace(destinationCountry.String)
+	o.Language = strings.TrimSpace(language.String)
 	if err := o.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
@@ -437,8 +439,8 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 
 func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order) error {
 	const insertOrder = `INSERT INTO orders (id, customer_id, contact_email, status, currency,
-		total_amount, total_currency, destination_country, tax_amount, store_credit_amount, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+		total_amount, total_currency, destination_country, tax_amount, store_credit_amount, language, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	var destinationCountry interface{}
 	if strings.TrimSpace(o.DestinationCountry) != "" {
 		destinationCountry = strings.ToUpper(strings.TrimSpace(o.DestinationCountry))
@@ -447,10 +449,14 @@ func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order
 	if strings.TrimSpace(o.DestinationCountry) != "" {
 		taxAmount = o.TaxAmount.Amount()
 	}
+	var language interface{}
+	if lang := strings.TrimSpace(o.Language); lang != "" {
+		language = lang
+	}
 	_, err := exec.ExecContext(ctx, insertOrder,
 		o.ID, o.CustomerID, strings.TrimSpace(o.ContactEmail), string(o.Status()), o.Currency,
 		o.TotalAmount.Amount(), o.TotalAmount.Currency(),
-		destinationCountry, taxAmount, o.StoreCreditApplied.Amount(),
+		destinationCountry, taxAmount, o.StoreCreditApplied.Amount(), language,
 		o.CreatedAt, o.UpdatedAt,
 	)
 	if err != nil {

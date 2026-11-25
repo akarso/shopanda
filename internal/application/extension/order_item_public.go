@@ -250,12 +250,13 @@ func ExtensionDisplayRows(registry *Registry, items []APIValueItem) []ExtensionD
 // EnrichOrderLineDisplayRows runs order.line.display and appends normalized
 // plugin fields after base (stored) rows. Pass a clone of the public extension
 // map (CloneExtensionMap) — the hook must not share the template map.
-// Handler errors are skip-and-log via onErr; dropped rows via onSkip.
-// Image fields require public https URLs. Nil hooks is a no-op.
+// language is the BCP 47 primary tag (request language on pages, order/store
+// language on email). Handler errors are skip-and-log via onErr; dropped rows
+// via onSkip. Image fields require public https URLs. Nil hooks is a no-op.
 func EnrichOrderLineDisplayRows(
 	ctx context.Context,
 	hookReg *hooks.Registry,
-	orderID, variantID string,
+	orderID, variantID, language string,
 	extensions map[string]interface{},
 	base []ExtensionDisplayRow,
 	onErr SoftHookError,
@@ -267,6 +268,9 @@ func EnrichOrderLineDisplayRows(
 	hookCtx := hooks.NewContext(hooks.HookOrderLineDisplay)
 	hookCtx.Set("order_id", orderID)
 	hookCtx.Set("variant_id", variantID)
+	if lang := strings.TrimSpace(language); lang != "" {
+		hookCtx.Set("language", lang)
+	}
 	if extensions != nil {
 		hookCtx.Set("extensions", extensions)
 	}

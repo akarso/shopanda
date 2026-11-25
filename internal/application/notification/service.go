@@ -17,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -56,8 +57,10 @@ type Service struct {
 	storeURL    string                    // public store URL
 	invoices    invoice.InvoiceRepository // optional — for invoice emails
 	pdfRenderer invoice.PDFRenderer       // optional — for invoice PDF attachments
-	extensions  extensionapp.ValueAPI     // optional — public order_item values on confirmation lines
-	hooks       *hooks.Registry           // optional — order.line.display enrich
+	extensions           extensionapp.ValueAPI // optional — public order_item values on confirmation lines
+	hooks                *hooks.Registry       // optional — order.line.display enrich
+	fallbackLanguage     string                // static fallback when lookup unset (tests)
+	storeLanguageLookup  func(context.Context) (string, error)
 }
 
 // Option configures optional Service fields.
@@ -98,6 +101,38 @@ func WithOrderExtensions(api extensionapp.ValueAPI) Option {
 // (derived fields such as signed thumbnail URLs). Nil is a no-op.
 func WithOrderLineHooks(reg *hooks.Registry) Option {
 	return func(s *Service) { s.hooks = reg }
+}
+
+// WithFallbackLanguage sets a static BCP 47 tag used when the order has no
+// stored language and no store lookup is configured (unit tests). Empty falls
+// through to "en" in DisplayLanguage.
+func WithFallbackLanguage(lang string) Option {
+	return func(s *Service) { s.fallbackLanguage = strings.TrimSpace(lang) }
+}
+
+// WithStoreLanguageLookup resolves the default store language at email-build
+// time (legacy orders with NULL language). Prefer this over a boot-time string
+// so admin language changes apply without restart. Lookup errors are logged
+// and the static fallback (if any) is used.
+func WithStoreLanguageLookup(fn func(context.Context) (string, error)) Option {
+	return func(s *Service) { s.storeLanguageLookup = fn }
+}
+
+func (s *Service) orderDisplayLanguage(ctx context.Context, o *order.Order) string {
+	fallback := s.fallbackLanguage
+	if s != nil && s.storeLanguageLookup != nil {
+		lang, err := s.storeLanguageLookup(ctx)
+		if err != nil {
+			s.log.Error("HandleOrderPaid.store_language_failed", err, nil)
+		} else if strings.TrimSpace(lang) != "" {
+			fallback = lang
+		}
+	}
+	orderLang := ""
+	if o != nil {
+		orderLang = o.Language
+	}
+	return translation.DisplayLanguage(orderLang, fallback)
 }
 
 // New creates a notification Service.
@@ -341,7 +376,8 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 		baseLen := len(rows)
 		// Hook gets a clone so handlers cannot mutate the template map.
 		hookExt := extensionapp.CloneExtensionMap(extMap)
-		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, s.hooks, o.ID, it.VariantID, hookExt, rows,
+		lang := s.orderDisplayLanguage(ctx, o)
+		rows = extensionapp.EnrichOrderLineDisplayRows(ctx, s.hooks, o.ID, it.VariantID, lang, hookExt, rows,
 			func(registrant string, hookErr error) {
 				s.log.Error("HandleOrderPaid.order_line_display_failed", hookErr, map[string]interface{}{
 					"order_id":   o.ID,

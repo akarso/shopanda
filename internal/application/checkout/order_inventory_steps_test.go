@@ -20,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -950,12 +951,16 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
 
-	if err := step.Execute(context.Background(), cctx); err != nil {
+	ctx := translation.WithLanguage(context.Background(), "de")
+	if err := step.Execute(ctx, cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	if cctx.Order == nil {
 		t.Fatal("expected Order to be set on context")
+	}
+	if cctx.Order.Language != "de" {
+		t.Errorf("Order.Language = %q, want de from WithLanguage", cctx.Order.Language)
 	}
 	if cctx.Order.CustomerID != "cust-1" {
 		t.Errorf("Order.CustomerID = %q, want cust-1", cctx.Order.CustomerID)
@@ -980,6 +985,42 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	}
 	if v.(string) == "" {
 		t.Error("created_order_id should not be empty")
+	}
+}
+
+func TestCreateOrderStep_NoLanguageLeavesEmpty(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil, idleProducts(), idleComponents(), idlePrices())
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if cctx.Order == nil {
+		t.Fatal("expected Order")
+	}
+	if cctx.Order.Language != "" {
+		t.Fatalf("Order.Language = %q, want empty when context has no WithLanguage", cctx.Order.Language)
+	}
+}
+
+func TestCreateOrderStep_PrimaryLanguageFromRegionTag(t *testing.T) {
+	orderRepo := &mockOrderRepo{}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil, idleProducts(), idleComponents(), idlePrices())
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
+	ctx := translation.WithLanguage(context.Background(), "pt-BR")
+	if err := step.Execute(ctx, cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if cctx.Order.Language != "pt" {
+		t.Fatalf("Order.Language = %q, want pt from pt-BR", cctx.Order.Language)
 	}
 }
 
