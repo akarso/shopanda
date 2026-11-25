@@ -142,8 +142,11 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 		return fmt.Errorf("store_credit_repo: upsert account: %w", err)
 	}
 
+	// $6 must be uuid-typed: NULLIF($6, '') is inferred as text and fails on
+	// PG ("column order_id is of type uuid but expression is of type text").
+	// Empty OrderID is already nil'd below so a plain $6::uuid is enough.
 	const insertLedger = `INSERT INTO store_credit_ledger (id, customer_id, currency, amount, kind, order_id, note, idempotency_key, created_at)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, NULLIF($8, ''), $9)`
+		VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, NULLIF($8, ''), $9)`
 	var orderID interface{}
 	if entry.OrderID != "" {
 		orderID = entry.OrderID

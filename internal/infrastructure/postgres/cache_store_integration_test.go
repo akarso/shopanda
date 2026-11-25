@@ -329,10 +329,14 @@ func TestCacheStoreDB_CompareAndSubtractBasic(t *testing.T) {
 
 func TestCacheStoreDB_CompareAndSubtractVsIncrConcurrent(t *testing.T) {
 	_, store := setupCacheStore(t)
-	if _, err := store.Incr("cas", 10, time.Minute); err != nil {
+	const workers = 20
+	// Seed must be >= workers: CompareAndSubtract no-ops when the row is
+	// missing or current < expected. With base < workers, early subtracts can
+	// drain the key to zero/delete while later subtracts no-op and every Incr
+	// still applies → final drifts above base (not a FOR UPDATE bug).
+	if _, err := store.Incr("cas", workers, time.Minute); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	const workers = 20
 	var wg sync.WaitGroup
 	wg.Add(workers * 2)
 	for i := 0; i < workers; i++ {
@@ -355,9 +359,10 @@ func TestCacheStoreDB_CompareAndSubtractVsIncrConcurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	// Net: +workers Incr and -workers Subtract from base 10 → expect 10 if none lost.
-	if !hit || got != 10 {
-		t.Fatalf("Get after mixed race = hit=%v val=%d, want 10 (lost updates if FOR UPDATE missing)", hit, got)
+	// Net: +workers Incr and -workers Subtract from base workers → expect workers
+	// if none lost and no subtract no-op'd.
+	if !hit || got != workers {
+		t.Fatalf("Get after mixed race = hit=%v val=%d, want %d (lost updates if FOR UPDATE missing)", hit, got, workers)
 	}
 }
 
