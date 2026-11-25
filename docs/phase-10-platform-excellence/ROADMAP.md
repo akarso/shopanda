@@ -89,7 +89,7 @@ Recommended order:
 | PR-1000 | Unbreak the test suite | Fix non-compiling mocks (`FindBySKUs`, `SetStocks`); fix RBAC permission count; fix extension-port expectation; de-flake integrationdemo HMAC timestamp test; fix mutex-by-value in webhook test |
 | PR-1001 | Repo hygiene | `.gitignore`/`dockerignore` for `api`; `git rm --cached api`; gofmt all; delete unused `internal/infrastructure/postgres/migrations/022_*` (runtime uses root `migrations/`) |
 | PR-1002 | GitHub Actions CI (unit) | Workflow reports `CI / unit` (`gofmt`/`vet`/`test`, `-mod=readonly`); admin must require the check to block merges |
-| PR-1003 | CI integration job | `CI / integration`: Postgres 17 + readiness + `-json` anti-skip + `-p 1` — **in progress** until DSN suite green |
+| PR-1003 | CI integration job | `CI / integration`: Postgres 17 + readiness + `-json` anti-skip + `-p 1` — **done** (local DSN suite green; admin: require checks + billing) |
 
 **Definition of done:** CI fails on broken mocks/assertions; branch rules require **`CI / unit`** and **`CI / integration`** so those failures cannot merge. Integration job must use `go test -json` anti-skip (not default text) and `-p 1`.
 
@@ -189,11 +189,11 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | PR | Track | Status |
 | --- | --- | --- |
 | 1000–1002 | A | done |
-| 1003 | A | in progress |
+| 1003 | A | done |
 | 1004–1008 | B | done |
 | 1009–1012 | C | done |
 | 1013–1019 | D | done |
-| 1020–1026 | E | done — all A+ exit-criteria pillars addressed. **Phase 10 overall is not done: PR-1003 above is still open.** |
+| 1020–1026 | E | done — all A+ exit-criteria pillars addressed. **Phase 10 engineering complete** (admin: require `CI / unit` + `CI / integration` on `main`/`dev`). |
 | PR-DOCS-SPLIT | process | done — product docs vs working history (`scripts/promote-dev-to-main.sh`) |
 
 PR specs: [`prs/`](prs/).
@@ -207,4 +207,4 @@ Planned-spec tightenings from the post-audit plan review are documented separate
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
-| **Phase 10** | Platform excellence | **In progress (Tracks B–E done; PR-1003 the only open item, Track A)** |
+| **Phase 10** | Platform excellence | **Shipped** (Tracks A–E done; admin merge-gate / billing still manual) |

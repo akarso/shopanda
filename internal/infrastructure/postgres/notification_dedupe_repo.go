@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -34,29 +35,30 @@ func (r *NotificationDedupeRepo) TryInsert(ctx context.Context, subjectKey, kind
 	if subjectKey == "" || kind == "" {
 		return false, fmt.Errorf("notification_dedupe: subject_key and kind required")
 	}
-	// Reclaim only unfinished claims left behind when enqueue failed and
-	// cleanup did not run (e.g. process crash), then claim. Completed and
-	// fresh pending claims still conflict.
+	// Claim or reclaim in one statement. A CTE DELETE + INSERT ON CONFLICT in
+	// the same command is unsafe on Postgres: ON CONFLICT still sees the
+	// just-deleted row, DO NOTHING skips the insert, and the DELETE already
+	// removed the claim (lost row, inserted=false). DO UPDATE with a stale
+	// WHERE reclaims in place; RETURNING (not RowsAffected) distinguishes a
+	// real claim from a no-op conflict where the WHERE did not match.
 	const q = `
-WITH reclaimed AS (
-	DELETE FROM notification_dedupe
-	WHERE subject_key = $1 AND kind = $2
-	  AND status = 'pending'
-	  AND created_at < now() - $3::interval
-	RETURNING 1
-)
 INSERT INTO notification_dedupe (subject_key, kind, status)
 VALUES ($1, $2, 'pending')
-ON CONFLICT (subject_key, kind) DO NOTHING`
-	res, err := r.db.ExecContext(ctx, q, subjectKey, kind, notificationDedupeStaleInterval)
+ON CONFLICT (subject_key, kind) DO UPDATE
+SET created_at = now(),
+    status = 'pending'
+WHERE notification_dedupe.status = 'pending'
+  AND notification_dedupe.created_at < now() - $3::interval
+RETURNING subject_key`
+	var claimed string
+	err = r.db.QueryRowContext(ctx, q, subjectKey, kind, notificationDedupeStaleInterval).Scan(&claimed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("notification_dedupe insert: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("notification_dedupe rows: %w", err)
-	}
-	return n == 1, nil
+	return true, nil
 }
 
 // MarkCompleted makes a successful claim permanent so stale reclaim cannot
