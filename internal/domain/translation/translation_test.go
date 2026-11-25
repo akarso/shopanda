@@ -73,6 +73,47 @@ func TestLanguageContext_Default(t *testing.T) {
 	}
 }
 
+func TestPrimaryLanguage(t *testing.T) {
+	if got := translation.PrimaryLanguage("pt-BR"); got != "pt" {
+		t.Fatalf("PrimaryLanguage(pt-BR) = %q, want pt", got)
+	}
+	if got := translation.PrimaryLanguage("DE"); got != "de" {
+		t.Fatalf("PrimaryLanguage(DE) = %q, want de", got)
+	}
+	if got := translation.PrimaryLanguage(""); got != "" {
+		t.Fatalf("PrimaryLanguage(empty) = %q, want empty", got)
+	}
+	if got := translation.PrimaryLanguage("und"); got != "" {
+		t.Fatalf("PrimaryLanguage(und) = %q, want empty (Low confidence)", got)
+	}
+	if got := translation.PrimaryLanguage("root"); got != "" {
+		t.Fatalf("PrimaryLanguage(root) = %q, want empty", got)
+	}
+}
+
+func TestLanguageOK(t *testing.T) {
+	if _, ok := translation.LanguageOK(context.Background()); ok {
+		t.Fatal("empty context must not report language present")
+	}
+	ctx := translation.WithLanguage(context.Background(), "pl")
+	got, ok := translation.LanguageOK(ctx)
+	if !ok || got != "pl" {
+		t.Fatalf("LanguageOK = %q %v, want pl true", got, ok)
+	}
+}
+
+func TestDisplayLanguage(t *testing.T) {
+	if got := translation.DisplayLanguage("de", "fr"); got != "de" {
+		t.Fatalf("preferred = %q, want de", got)
+	}
+	if got := translation.DisplayLanguage("", "fr"); got != "fr" {
+		t.Fatalf("fallback = %q, want fr", got)
+	}
+	if got := translation.DisplayLanguage("", ""); got != "en" {
+		t.Fatalf("default = %q, want en", got)
+	}
+}
+
 // mockTranslationRepo implements translation.TranslationRepository for tests.
 type mockTranslationRepo struct {
 	findFn func(ctx context.Context, key, language string) (*translation.Translation, error)

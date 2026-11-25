@@ -18,6 +18,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -236,6 +237,13 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error
 
 	if err := o.SetTaxSnapshot(cctx.Input.Address.Country, pctx.TaxTotal); err != nil {
 		return fmt.Errorf("create_order: tax snapshot: %w", err)
+	}
+	// Persist only when WithLanguage set a value (do not invent "en" from an
+	// empty context — leave NULL so email can fall back to the store language).
+	if raw, ok := translation.LanguageOK(ctx); ok {
+		if lang := translation.PrimaryLanguage(raw); lang != "" {
+			o.Language = lang
+		}
 	}
 
 	appliedCredit, err := s.applyStoreCredit(ctx, cctx, &o)

@@ -125,6 +125,7 @@ func TestEnrichOrderLineDisplayRows_AppendsAndSkipsErrors(t *testing.T) {
 		reg,
 		"ord-1",
 		"var-1",
+		"",
 		map[string]interface{}{"gift": "hi"},
 		base,
 		func(registrant string, err error) {
@@ -172,7 +173,7 @@ func TestEnrichOrderLineDisplayRows_DropsAppendsOnHandlerError(t *testing.T) {
 		return nil
 	})
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", nil, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", nil, nil, nil, nil)
 	if len(rows) != 1 || rows[0].FieldCode != "plugin.keep" {
 		t.Fatalf("rows = %+v, want only plugin.keep (partial appends dropped)", rows)
 	}
@@ -196,7 +197,7 @@ func TestEnrichOrderLineDisplayRows_DropsInPlaceMutationOnError(t *testing.T) {
 		return errors.New("after mutate")
 	})
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", nil, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", nil, nil, nil, nil)
 	if len(rows) != 1 || rows[0].Value != "https://cdn.example/good.png" {
 		t.Fatalf("in-place mutate on error must roll back: %+v", rows)
 	}
@@ -221,7 +222,7 @@ func TestEnrichOrderLineDisplayRows_DropsPointerReplaceOnError(t *testing.T) {
 		return errors.New("after replace")
 	})
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", nil, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", nil, nil, nil, nil)
 	if len(rows) != 1 || rows[0].FieldCode != "plugin.seed" || rows[0].Value != "keep" {
 		t.Fatalf("pointer replace on error must restore snapshot: %+v", rows)
 	}
@@ -252,13 +253,32 @@ func TestEnrichOrderLineDisplayRows_DropsAppendsOnPanic(t *testing.T) {
 	})
 
 	var errs int
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", nil, nil,
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", nil, nil,
 		func(string, error) { errs++ }, nil)
 	if errs != 1 {
 		t.Fatalf("errs = %d", errs)
 	}
 	if len(rows) != 1 || rows[0].FieldCode != "plugin.after" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestEnrichOrderLineDisplayRows_SealsLanguageAgainstRewrite(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	_ = reg.Register(hooks.HookOrderLineDisplay, 50, "attacker", func(ctx *hooks.Context) error {
+		ctx.Set("language", "xx")
+		return nil
+	})
+	var saw string
+	_ = reg.Register(hooks.HookOrderLineDisplay, 100, "ok", func(ctx *hooks.Context) error {
+		if raw, ok := ctx.Get("language"); ok {
+			saw, _ = raw.(string)
+		}
+		return nil
+	})
+	_ = extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "pl", nil, nil, nil, nil)
+	if saw != "pl" {
+		t.Fatalf("language = %q, want sealed pl", saw)
 	}
 }
 
@@ -282,7 +302,7 @@ func TestEnrichOrderLineDisplayRows_SealsOrderIDAgainstRewrite(t *testing.T) {
 		return nil
 	})
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-real", "var-1", nil, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-real", "var-1", "", nil, nil, nil, nil)
 	if seenBySecond != "ord-real" {
 		t.Fatalf("second handler saw order_id=%q, want ord-real", seenBySecond)
 	}
@@ -323,7 +343,7 @@ func TestEnrichOrderLineDisplayRows_DeepCopiesExtensionsPerHandler(t *testing.T)
 		"meta":      map[string]interface{}{"color": "blue"},
 	}
 	hookExt := extensionapp.CloneExtensionMap(original)
-	_ = extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", hookExt, nil, nil, nil)
+	_ = extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", hookExt, nil, nil, nil)
 	if seenBySecond != "d1" {
 		t.Fatalf("second handler saw design_id=%v, want d1", seenBySecond)
 	}
@@ -353,7 +373,7 @@ func TestEnrichOrderLineDisplayRows_NestedCloneIsolatesApplyOverrides(t *testing
 		"meta": map[string]interface{}{"color": "blue"},
 	}
 	hookExt := extensionapp.CloneExtensionMap(original)
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", hookExt, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", hookExt, nil, nil, nil)
 	extOut := extensionapp.ApplyEnrichedOverrides(extensionapp.CloneExtensionMap(original), rows, 0)
 	if extOut["meta"].(map[string]interface{})["color"] != "blue" {
 		t.Fatalf("ApplyEnrichedOverrides map saw hook mutation: %#v", extOut["meta"])
@@ -384,7 +404,7 @@ func TestEnrichOrderLineDisplayRows_ExtensionMapIsolatedFromTemplate(t *testing.
 	base := []extensionapp.ExtensionDisplayRow{{
 		FieldCode: "gift", Label: "Gift", Kind: extensionapp.DisplayKindText, Value: "hi",
 	}}
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", hookExt, base, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "", hookExt, base, nil, nil)
 
 	if original["design_id"] != "d1" || original["gift"] != "hi" {
 		t.Fatalf("original map mutated: %#v", original)
@@ -420,7 +440,7 @@ func TestEnrichOrderLineDisplayRows_OverwriteFromNormalizedNotLiveMap(t *testing
 		return nil
 	})
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1",
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-1", "",
 		map[string]interface{}{}, nil, nil, nil)
 	extOut := extensionapp.ApplyEnrichedOverrides(map[string]interface{}{}, rows, 0)
 	if extOut["plugin.thumb"] != "https://cdn.example/good.png" {
@@ -449,7 +469,7 @@ func TestEnrichOrderLineDisplayRows_PluginHooksRegisterPath(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-9", nil, nil, nil, nil)
+	rows := extensionapp.EnrichOrderLineDisplayRows(context.Background(), reg, "ord-1", "var-9", "", nil, nil, nil, nil)
 	if len(rows) != 1 || rows[0].Value != "https://cdn.example/from-plugin.png" {
 		t.Fatalf("rows = %+v", rows)
 	}

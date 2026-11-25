@@ -105,11 +105,12 @@ func (r *Registry) Invoke(_ context.Context, hookCtx *Context) error {
 // is not interrupted. On cancel, onErr is called with an empty registrant
 // (chain-level), not the next plugin name.
 //
-// Before each handler, order_id / variant_id are reset to the chain values and
-// extensions is set to a deep copy of the original map so in-place writes cannot
-// retarget a later plugin. On handler error or panic, fields are restored from
-// a by-value snapshot (including when the handler mutated elements or replaced
-// the pointer). Successful appends are kept for later handlers.
+// Before each handler, order_id / variant_id / language are reset to the chain
+// values and extensions is set to a deep copy of the original map so in-place
+// writes cannot retarget a later plugin. On handler error or panic, fields are
+// restored from a by-value snapshot (including when the handler mutated
+// elements or replaced the pointer). Successful appends are kept for later
+// handlers.
 //
 // This method is specialized for order.line.display; do not reuse it for other
 // hooks without revisiting the sealed keys and fields rollback.
@@ -130,6 +131,7 @@ func (r *Registry) InvokeContinueOnError(ctx context.Context, hookCtx *Context, 
 
 	sealedOrderID, hasOrderID := hookCtx.Get("order_id")
 	sealedVariantID, hasVariantID := hookCtx.Get("variant_id")
+	sealedLanguage, hasLanguage := hookCtx.Get("language")
 	var sealedExt map[string]interface{}
 	if rawExt, ok := hookCtx.Get("extensions"); ok && rawExt != nil {
 		if m, ok := rawExt.(map[string]interface{}); ok {
@@ -159,6 +161,11 @@ func (r *Registry) InvokeContinueOnError(ctx context.Context, hookCtx *Context, 
 		} else if hookCtx.Payload != nil {
 			delete(hookCtx.Payload, "variant_id")
 		}
+		if hasLanguage {
+			hookCtx.Set("language", sealedLanguage)
+		} else if hookCtx.Payload != nil {
+			delete(hookCtx.Payload, "language")
+		}
 		if sealedExt != nil {
 			hookCtx.Set("extensions", deepCopyJSONMap(sealedExt))
 		} else if hookCtx.Payload != nil {
@@ -174,6 +181,9 @@ func (r *Registry) InvokeContinueOnError(ctx context.Context, hookCtx *Context, 
 		}
 		if hasVariantID {
 			hookCtx.Set("variant_id", sealedVariantID)
+		}
+		if hasLanguage {
+			hookCtx.Set("language", sealedLanguage)
 		}
 		if sealedExt != nil {
 			hookCtx.Set("extensions", deepCopyJSONMap(sealedExt))
