@@ -445,6 +445,34 @@ func (q *JobQueue) Retry(ctx context.Context, id string) error {
 		})
 }
 
+// ReplaceFailed writes a new payload onto a failed job, resets attempts to 0,
+// and re-pends it under the same id (heal path for stable email.send jobs).
+func (q *JobQueue) ReplaceFailed(ctx context.Context, job jobs.Job) error {
+	if jobIDUnusable(job.ID) {
+		return jobs.ErrRequeueNotFound
+	}
+	payload, err := json.Marshal(job.Payload)
+	if err != nil {
+		return fmt.Errorf("job_queue: replace failed marshal: %w", err)
+	}
+	res, err := q.db.ExecContext(ctx, `
+		UPDATE jobs
+		SET payload = $2, status = 'pending', attempts = 0, run_at = NOW(),
+		    updated_at = NOW(), last_error = NULL
+		WHERE id = $1 AND status = 'failed'`, job.ID, payload)
+	if err != nil {
+		return fmt.Errorf("job_queue: replace failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("job_queue: replace failed rows: %w", err)
+	}
+	if n == 0 {
+		return jobs.ErrRequeueNotTerminal
+	}
+	return nil
+}
+
 // Cancel marks a pending job cancelled — it will never be dequeued. See
 // jobs.Admin for the full contract, including why a processing job cannot
 // be cancelled.

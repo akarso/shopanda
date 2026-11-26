@@ -177,7 +177,19 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 	}
 	inv.SetSellerSnapshot(seller)
 
-	if err := s.invoices.Save(ctx, &inv); err != nil {
+	// Render inside SavePreparing so a layout failure rolls the insert back
+	// (no stuck row). Storage stays after commit — transient store errors
+	// leave the row for ensureIssued.
+	var pdfBytes []byte
+	err = s.invoices.SavePreparing(ctx, &inv, func(saved *domainInvoice.Invoice) error {
+		var renderErr error
+		pdfBytes, renderErr = s.renderer.Render(*saved, saved.Seller())
+		if renderErr != nil {
+			return fmt.Errorf("invoice: render pdf: %w", renderErr)
+		}
+		return nil
+	})
+	if err != nil {
 		if apperror.Is(err, apperror.CodeConflict) {
 			existing, findErr := s.invoices.FindByOrderID(ctx, input.OrderID)
 			if findErr != nil {
@@ -188,15 +200,10 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 			}
 			return s.ensureIssued(ctx, existing)
 		}
-		return nil, fmt.Errorf("invoice: save: %w", err)
+		return nil, err
 	}
 
 	pdfPath := invoicePDFPath(inv)
-	pdfBytes, err := s.renderer.Render(inv, inv.Seller())
-	if err != nil {
-		// Leave the row: next order.paid / concurrent ensureIssued repairs.
-		return nil, fmt.Errorf("invoice: render pdf: %w", err)
-	}
 	if err := s.storage.Save(pdfPath, bytes.NewReader(pdfBytes)); err != nil {
 		return nil, fmt.Errorf("invoice: store pdf: %w", err)
 	}
@@ -270,20 +277,10 @@ func invoicePDFPath(inv domainInvoice.Invoice) string {
 	return fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
 }
 
-// pdfStored reports whether the sealed PDF object exists. Uses Read or Head.
-// Storage that cannot probe returns an error — never "missing" (that would
-// force a re-PutObject on every later order.paid against S3).
+// pdfStored reports whether the sealed PDF object exists. Prefers Head
+// (cheap on S3); falls back to Read. Storage that cannot probe returns an
+// error — never "missing".
 func (s *Service) pdfStored(ctx context.Context, path string) (bool, error) {
-	if reader, ok := s.storage.(media.ReadableStorage); ok {
-		data, err := reader.Read(ctx, path)
-		if err != nil {
-			if media.IsNotFound(err) {
-				return false, nil
-			}
-			return false, fmt.Errorf("invoice: read stored pdf: %w", err)
-		}
-		return len(data) > 0, nil
-	}
 	if headed, ok := s.storage.(media.SignedURLStorage); ok {
 		err := headed.Head(ctx, path)
 		if err != nil {
@@ -293,6 +290,16 @@ func (s *Service) pdfStored(ctx context.Context, path string) (bool, error) {
 			return false, fmt.Errorf("invoice: head stored pdf: %w", err)
 		}
 		return true, nil
+	}
+	if reader, ok := s.storage.(media.ReadableStorage); ok {
+		data, err := reader.Read(ctx, path)
+		if err != nil {
+			if media.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("invoice: read stored pdf: %w", err)
+		}
+		return len(data) > 0, nil
 	}
 	return false, fmt.Errorf("invoice: storage %T cannot probe PDF existence", s.storage)
 }

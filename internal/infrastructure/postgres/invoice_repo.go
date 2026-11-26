@@ -138,8 +138,13 @@ func (r *InvoiceRepo) FindByOrderID(ctx context.Context, orderID string) (*invoi
 }
 
 // Save persists an invoice and its items (insert-only).
-// Assigns InvoiceNumber from the DB sequence.
 func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
+	return r.SavePreparing(ctx, inv, nil)
+}
+
+// SavePreparing inserts the invoice, assigns InvoiceNumber, runs beforeCommit
+// (e.g. PDF render) before commit, and rolls back if beforeCommit fails.
+func (r *InvoiceRepo) SavePreparing(ctx context.Context, inv *invoice.Invoice, beforeCommit func(*invoice.Invoice) error) error {
 	if inv == nil {
 		return fmt.Errorf("invoice_repo: save: invoice must not be nil")
 	}
@@ -172,6 +177,7 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		}
 		return fmt.Errorf("invoice_repo: insert invoice: %w", err)
 	}
+	inv.SetInvoiceNumberFromDB(invoiceNumber)
 
 	items := inv.Items()
 	if len(items) > 0 {
@@ -195,10 +201,15 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		}
 	}
 
+	if beforeCommit != nil {
+		if err := beforeCommit(inv); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("invoice_repo: commit: %w", err)
 	}
-	inv.SetInvoiceNumberFromDB(invoiceNumber)
 	return nil
 }
 

@@ -45,6 +45,10 @@ func (r *invoiceHTTPRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 
 func (r *invoiceHTTPRepo) Save(context.Context, *domainInvoice.Invoice) error { return nil }
 
+func (r *invoiceHTTPRepo) SavePreparing(context.Context, *domainInvoice.Invoice, func(*domainInvoice.Invoice) error) error {
+	return nil
+}
+
 func (r *invoiceHTTPRepo) Delete(context.Context, string) error { return nil }
 
 type invoiceHTTPOrderRepo struct {
@@ -89,7 +93,6 @@ func (r *invoiceHTTPOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, 
 func (r *invoiceHTTPOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]order.Order, error) {
 	return nil, nil
 }
-
 
 type stubInvoicePDFRenderer struct {
 	data []byte

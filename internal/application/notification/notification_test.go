@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -55,7 +56,7 @@ type mockQueue struct {
 	ignoreID  bool // when true, do not conflict on duplicate job ids
 	enqueueFn func(ctx context.Context, job jobs.Job) error
 	details   map[string]*jobs.Detail
-	requeued  []string
+	replaced  []jobs.Job
 }
 
 func (m *mockQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
@@ -66,7 +67,14 @@ func (m *mockQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
 }
 
 func (m *mockQueue) Requeue(_ context.Context, id string, _ int, _ ...jobs.RequeueOption) error {
-	m.requeued = append(m.requeued, id)
+	return nil
+}
+
+func (m *mockQueue) ReplaceFailed(_ context.Context, job jobs.Job) error {
+	m.replaced = append(m.replaced, job)
+	if m.details != nil {
+		m.details[job.ID] = &jobs.Detail{Summary: jobs.Summary{ID: job.ID, Status: jobs.StatusPending, Attempts: 0}}
+	}
 	return nil
 }
 
@@ -1764,7 +1772,7 @@ func TestHandleInvoiceCreated(t *testing.T) {
 	}
 }
 
-func TestHandleInvoiceCreated_HealRequeuesFailedJob(t *testing.T) {
+func TestHandleInvoiceCreated_HealReplacesFailedJobPayload(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
 
@@ -1774,7 +1782,6 @@ func TestHandleInvoiceCreated_HealRequeuesFailedJob(t *testing.T) {
 	inv, _ := domainInvoice.NewInvoice("inv-heal", "ord-heal", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
 	inv.SetInvoiceNumberFromDB(42)
 
-	jobID := "" // filled after first send
 	q := &mockQueue{details: map[string]*jobs.Detail{}}
 	dedupe := &mockDedupe{}
 	custRepo := &mockCustomerRepo{
@@ -1793,9 +1800,11 @@ func TestHandleInvoiceCreated_HealRequeuesFailedJob(t *testing.T) {
 			return &inv, nil
 		},
 	}
+	pdfN := 0
 	renderer := &mockPDFRenderer{
 		render: func(_ domainInvoice.Invoice) ([]byte, error) {
-			return []byte("%PDF-heal"), nil
+			pdfN++
+			return []byte(fmt.Sprintf("%%PDF-heal-%d", pdfN)), nil
 		},
 	}
 	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
@@ -1816,17 +1825,29 @@ func TestHandleInvoiceCreated_HealRequeuesFailedJob(t *testing.T) {
 	if len(q.enqueued) != 1 {
 		t.Fatalf("enqueued = %d", len(q.enqueued))
 	}
-	jobID = q.enqueued[0].ID
+	jobID := q.enqueued[0].ID
 	q.details[jobID] = &jobs.Detail{Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}}
 
 	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
 		t.Fatalf("heal: %v", err)
 	}
 	if len(q.enqueued) != 1 {
-		t.Fatalf("heal must not enqueue a second job, got %d", len(q.enqueued))
+		t.Fatalf("heal must keep stable id (no second enqueue), got %d", len(q.enqueued))
 	}
-	if len(q.requeued) != 1 || q.requeued[0] != jobID {
-		t.Fatalf("requeued = %v, want [%s]", q.requeued, jobID)
+	if len(q.replaced) != 1 || q.replaced[0].ID != jobID {
+		t.Fatalf("replaced = %#v, want job %s", q.replaced, jobID)
+	}
+	atts, _ := q.replaced[0].Payload["attachments"].([]map[string]interface{})
+	if len(atts) != 1 {
+		t.Fatalf("replaced attachments = %#v", q.replaced[0].Payload["attachments"])
+	}
+	dataStr, _ := atts[0]["data"].(string)
+	decoded, err := base64.StdEncoding.DecodeString(dataStr)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(decoded) != "%PDF-heal-2" {
+		t.Fatalf("replaced PDF = %q, want fresh heal-2 payload", decoded)
 	}
 }
 

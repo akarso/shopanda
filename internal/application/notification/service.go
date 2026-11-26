@@ -1131,6 +1131,12 @@ type emailJobGetter interface {
 	Get(ctx context.Context, id string) (*jobs.Detail, error)
 }
 
+// emailFailedReplacer replaces a failed email.send payload and re-pends it
+// with attempts=0 under the same stable id (Postgres JobQueue.ReplaceFailed).
+type emailFailedReplacer interface {
+	ReplaceFailed(ctx context.Context, job jobs.Job) error
+}
+
 // enqueueEmailOnce enqueues with a caller-supplied job id. When subjectKey and
 // kind are set and a dedupe store is wired, the store is claimed first (pending);
 // enqueue runs only on a new claim. After a successful enqueue (or queue Conflict),
@@ -1154,28 +1160,12 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
 		}
 		if !inserted {
-			return s.healExistingEmailJob(ctx, jobID, handler, logFields)
+			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg)
 		}
 		claimed = true
 	}
 
-	payload := map[string]interface{}{
-		"to":      msg.To,
-		"subject": msg.Subject,
-		"body":    msg.Body,
-	}
-	if len(msg.Attachments) > 0 {
-		atts := make([]map[string]interface{}, len(msg.Attachments))
-		for i, a := range msg.Attachments {
-			atts[i] = map[string]interface{}{
-				"filename":     a.Filename,
-				"content_type": a.ContentType,
-				"data":         base64.StdEncoding.EncodeToString(a.Data),
-			}
-		}
-		payload["attachments"] = atts
-	}
-
+	payload := emailJobPayload(msg)
 	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
 	if err != nil {
 		if claimed {
@@ -1192,7 +1182,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			if claimed {
 				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
 			}
-			return s.healExistingEmailJob(ctx, job.ID, handler, logFields)
+			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg)
 		}
 		if claimed {
 			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
@@ -1210,10 +1200,30 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	return nil
 }
 
-// healExistingEmailJob requeues a terminal-failed email.send for a stable job
-// id when a heal republish hits an existing dedupe claim. Pending/done jobs
-// are left alone. Queues without Get (non-Postgres) skip the heal.
-func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}) error {
+func emailJobPayload(msg mail.Message) map[string]interface{} {
+	payload := map[string]interface{}{
+		"to":      msg.To,
+		"subject": msg.Subject,
+		"body":    msg.Body,
+	}
+	if len(msg.Attachments) > 0 {
+		atts := make([]map[string]interface{}, len(msg.Attachments))
+		for i, a := range msg.Attachments {
+			atts[i] = map[string]interface{}{
+				"filename":     a.Filename,
+				"content_type": a.ContentType,
+				"data":         base64.StdEncoding.EncodeToString(a.Data),
+			}
+		}
+		payload["attachments"] = atts
+	}
+	return payload
+}
+
+// healExistingEmailJob replaces a terminal-failed email.send with a fresh
+// payload (e.g. repaired PDF) and resets attempts under the same stable id.
+// Pending/done jobs are left alone. Queues without Get/ReplaceFailed skip.
+func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message) error {
 	logFields = copyLogFields(logFields)
 	logFields["job_id"] = jobID
 	s.log.Info(handler+".email_already_enqueued", logFields)
@@ -1233,16 +1243,23 @@ func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler strin
 	if detail == nil || detail.Status != jobs.StatusFailed {
 		return nil
 	}
-	if err := s.queue.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal()); err != nil {
+	replacer, ok := s.queue.(emailFailedReplacer)
+	if !ok {
+		return nil
+	}
+	job, err := jobs.NewJob(jobID, JobTypeEmailSend, emailJobPayload(msg))
+	if err != nil {
+		return fmt.Errorf("notification: rebuild email job %s: %w", jobID, err)
+	}
+	if err := replacer.ReplaceFailed(ctx, job); err != nil {
 		if errors.Is(err, jobs.ErrRequeueNotFound) ||
-			errors.Is(err, jobs.ErrRequeueNotTerminal) ||
-			errors.Is(err, jobs.ErrRequeueUnsupported) {
+			errors.Is(err, jobs.ErrRequeueNotTerminal) {
 			return nil
 		}
-		s.log.Error(handler+".email_requeue_failed", err, logFields)
-		return fmt.Errorf("notification: requeue failed email job %s: %w", jobID, err)
+		s.log.Error(handler+".email_replace_failed", err, logFields)
+		return fmt.Errorf("notification: replace failed email job %s: %w", jobID, err)
 	}
-	s.log.Info(handler+".email_requeued", logFields)
+	s.log.Info(handler+".email_replaced", logFields)
 	return nil
 }
 

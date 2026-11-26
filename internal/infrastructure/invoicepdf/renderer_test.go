@@ -149,14 +149,13 @@ func TestRenderer_Render_PageBreakKeepsRowAndTotals(t *testing.T) {
 	}
 }
 
-func TestRenderer_Render_RowTallerThanPageFails(t *testing.T) {
-	// Build a name that wraps to more lines than one page body can hold.
+func TestRenderer_Render_TallRowSplitsAcrossPages(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 200; i++ {
 		b.WriteString(fmt.Sprintf("word%d ", i))
 	}
 	price := shared.MustNewMoney(100, "EUR")
-	item, err := invoice.NewItem("v-1", "SKU", b.String(), 1, price)
+	item, err := invoice.NewItem("v-1", "SKU-TALL", b.String(), 1, price)
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
@@ -165,9 +164,19 @@ func TestRenderer_Render_RowTallerThanPageFails(t *testing.T) {
 		t.Fatalf("NewInvoice: %v", err)
 	}
 	inv.SetInvoiceNumberFromDB(1)
-	_, err = invoicepdf.NewRenderer().Render(inv, invoice.SellerBlock{})
-	if err == nil || !strings.Contains(err.Error(), "exceeds page body") {
-		t.Fatalf("err = %v, want exceeds page body", err)
+	pdf, err := invoicepdf.NewRenderer().Render(inv, invoice.SellerBlock{})
+	if err != nil {
+		t.Fatalf("Render tall row: %v", err)
+	}
+	text := extractUTF16PDFStrings(t, pdf)
+	if !strings.Contains(text, "word0") || !strings.Contains(text, "word199") {
+		t.Errorf("split row missing ends\n%s", text)
+	}
+	if !strings.Contains(text, "SKU-TALL") {
+		t.Errorf("SKU missing\n%s", text)
+	}
+	if strings.Count(text, "Unit Price") < 2 {
+		t.Errorf("expected repeated header across pages\n%s", text)
 	}
 }
 

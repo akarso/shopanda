@@ -88,12 +88,23 @@ func (f *fakeInvoiceRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 	}
 	return nil, nil
 }
-func (f *fakeInvoiceRepo) Save(_ context.Context, inv *domainInvoice.Invoice) error {
+func (f *fakeInvoiceRepo) Save(ctx context.Context, inv *domainInvoice.Invoice) error {
+	return f.SavePreparing(ctx, inv, nil)
+}
+func (f *fakeInvoiceRepo) SavePreparing(_ context.Context, inv *domainInvoice.Invoice, beforeCommit func(*domainInvoice.Invoice) error) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
 	f.seq++
 	inv.SetInvoiceNumberFromDB(f.seq)
+	if beforeCommit != nil {
+		if err := beforeCommit(inv); err != nil {
+			// Roll back in-memory insert (mirrors DB rollback).
+			f.seq--
+			inv.SetInvoiceNumberFromDB(0)
+			return err
+		}
+	}
 	cp := *inv
 	f.saved = &cp
 	if f.byID == nil {
@@ -559,7 +570,7 @@ func TestGenerateFromOrder_MissingDefaultStoreErrors(t *testing.T) {
 	}
 }
 
-func TestGenerateFromOrder_RenderFailureLeavesRowForRepair(t *testing.T) {
+func TestGenerateFromOrder_RenderFailureRollsBackRow(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
 	invoices := &fakeInvoiceRepo{}
@@ -574,11 +585,8 @@ func TestGenerateFromOrder_RenderFailureLeavesRowForRepair(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected render error")
 	}
-	if len(invoices.deleted) != 0 {
-		t.Fatalf("must not delete row on render failure: %v", invoices.deleted)
-	}
-	if invoices.saved == nil {
-		t.Fatal("row must remain for ensureIssued")
+	if invoices.saved != nil {
+		t.Fatal("SavePreparing must roll back the row when Render fails")
 	}
 
 	renderer.err = nil
@@ -586,10 +594,10 @@ func TestGenerateFromOrder_RenderFailureLeavesRowForRepair(t *testing.T) {
 		OrderID:   "ord-1",
 		TaxAmount: shared.MustNewMoney(380, "EUR"),
 	}); err != nil {
-		t.Fatalf("repair after render failure: %v", err)
+		t.Fatalf("retry after render failure: %v", err)
 	}
 	if len(storage.saved) == 0 {
-		t.Fatal("expected PDF stored on repair")
+		t.Fatal("expected PDF stored on retry")
 	}
 }
 

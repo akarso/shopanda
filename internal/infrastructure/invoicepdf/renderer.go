@@ -42,7 +42,6 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetCompression(true)
 	pdf.SetMargins(leftMargin, 10, leftMargin)
-	// Auto-break for seller/metadata; table rows break explicitly.
 	pdf.SetAutoPageBreak(true, breakMargin)
 	pdf.AddUTF8FontFromBytes(fontFamily, "", dejaVuSans)
 	pdf.AddUTF8FontFromBytes(fontFamily, "B", dejaVuSansBold)
@@ -53,12 +52,10 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 
 	seller = seller.SanitizeForPDF()
 
-	// ── Header ──────────────────────────────────────────────────────
 	pdf.SetFont(fontFamily, "B", 20)
 	writeWrapped(pdf, "INVOICE", 10)
 	pdf.Ln(4)
 
-	// ── Seller block (sealed snapshot) ──────────────────────────────
 	if !seller.IsEmpty() {
 		pdf.SetFont(fontFamily, "B", 11)
 		writeWrapped(pdf, "Seller", 6)
@@ -94,7 +91,6 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 		pdf.Ln(4)
 	}
 
-	// ── Metadata ────────────────────────────────────────────────────
 	pdf.SetFont(fontFamily, "", 10)
 	writeWrapped(pdf, fmt.Sprintf("Invoice #: %d", inv.InvoiceNumber()), 6)
 	writeWrapped(pdf, fmt.Sprintf("Date: %s", inv.CreatedAt().Format("2006-01-02")), 6)
@@ -103,25 +99,32 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	pdf.Ln(6)
 
 	pdf.SetAutoPageBreak(false, 0)
-	if err := ensureSpace(pdf, headerH); err != nil {
-		return nil, err
-	}
-	writeTableHeader(pdf)
 
-	// ── Items rows ──────────────────────────────────────────────────
-	pdf.SetFont(fontFamily, "", 9)
+	items := inv.Items()
 	cur := inv.Currency()
-	for _, item := range inv.Items() {
+	tableStarted := false
+	for _, item := range items {
 		lt, err := item.LineTotal()
 		if err != nil {
 			return nil, fmt.Errorf("invoicepdf: line total: %w", err)
 		}
-		if err := writeItemRow(pdf, item.Name, item.SKU, item.Quantity, formatMoney(item.UnitPrice.Amount(), cur), formatMoney(lt.Amount(), cur)); err != nil {
+		unit := formatMoney(item.UnitPrice.Amount(), cur)
+		total := formatMoney(lt.Amount(), cur)
+		if !tableStarted {
+			// Reserve space for header + at least one text line so the header
+			// is never left alone in the bottom margin.
+			if err := ensureSpace(pdf, headerH+rowLine); err != nil {
+				return nil, err
+			}
+			writeTableHeader(pdf)
+			tableStarted = true
+		}
+		pdf.SetFont(fontFamily, "", 9)
+		if err := writeItemRow(pdf, item.Name, item.SKU, item.Quantity, unit, total); err != nil {
 			return nil, err
 		}
 	}
 
-	// ── Totals ──────────────────────────────────────────────────────
 	if err := ensureSpace(pdf, 5+7*3); err != nil {
 		return nil, err
 	}
@@ -184,9 +187,14 @@ func pageBottom(pdf *fpdf.Fpdf) float64 {
 	return pageH - breakMargin
 }
 
-func maxRowHeight(pdf *fpdf.Fpdf) float64 {
+func maxBodyLines(pdf *fpdf.Fpdf) int {
 	_, top, _, _ := pdf.GetMargins()
-	return pageBottom(pdf) - top - headerH
+	maxH := pageBottom(pdf) - top - headerH
+	n := int(maxH / rowLine)
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 func ensureSpace(pdf *fpdf.Fpdf, need float64) error {
@@ -198,32 +206,87 @@ func ensureSpace(pdf *fpdf.Fpdf, need float64) error {
 	return nil
 }
 
-// writeItemRow draws one invoice line with wrapped name/SKU on a single page.
+// writeItemRow draws one invoice line, splitting a too-tall name/SKU across
+// pages instead of failing the document.
 func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTotal string) error {
 	name = strings.TrimSpace(name)
 	sku = strings.TrimSpace(sku)
 	nameLines := pdf.SplitText(name, colName-1)
 	skuLines := pdf.SplitText(sku, colSKU-1)
-	n := len(nameLines)
-	if len(skuLines) > n {
-		n = len(skuLines)
-	}
-	if n < 1 {
-		n = 1
+	if len(nameLines) == 0 {
 		nameLines = []string{""}
 	}
-	rowH := float64(n) * rowLine
-	if rowH > maxRowHeight(pdf) {
-		return fmt.Errorf("invoicepdf: item row height %.1fmm exceeds page body", rowH)
+	totalLines := len(nameLines)
+	if len(skuLines) > totalLines {
+		totalLines = len(skuLines)
 	}
 
-	_, y := pdf.GetXY()
-	if y+rowH > pageBottom(pdf) {
-		pdf.AddPage()
-		writeTableHeader(pdf)
-		pdf.SetFont(fontFamily, "", 9)
-	}
+	maxLines := maxBodyLines(pdf)
+	offset := 0
+	first := true
+	for offset < totalLines {
+		_, y := pdf.GetXY()
+		room := int((pageBottom(pdf) - y) / rowLine)
+		if room < 1 {
+			if err := ensureSpace(pdf, headerH+rowLine); err != nil {
+				return err
+			}
+			writeTableHeader(pdf)
+			pdf.SetFont(fontFamily, "", 9)
+			_, y = pdf.GetXY()
+			room = int((pageBottom(pdf) - y) / rowLine)
+			if room < 1 {
+				room = 1
+			}
+		}
+		chunk := room
+		if chunk > maxLines {
+			chunk = maxLines
+		}
+		remain := totalLines - offset
+		if chunk > remain {
+			chunk = remain
+		}
+		chunkH := float64(chunk) * rowLine
+		// If this chunk needs a header on a new page, reserve header+chunk.
+		if y+chunkH > pageBottom(pdf) {
+			if err := ensureSpace(pdf, headerH+chunkH); err != nil {
+				return err
+			}
+			writeTableHeader(pdf)
+			pdf.SetFont(fontFamily, "", 9)
+		}
 
+		nameChunk := sliceLines(nameLines, offset, chunk)
+		skuChunk := sliceLines(skuLines, offset, chunk)
+		qtyStr, unitStr, totalStr := "", "", ""
+		if first {
+			qtyStr = fmt.Sprintf("%d", qty)
+			unitStr = unitPrice
+			totalStr = lineTotal
+			first = false
+		}
+		drawItemChunk(pdf, nameChunk, skuChunk, qtyStr, unitStr, totalStr, chunkH)
+		offset += chunk
+	}
+	return nil
+}
+
+func sliceLines(lines []string, offset, n int) []string {
+	if offset >= len(lines) {
+		out := make([]string, n)
+		return out
+	}
+	end := offset + n
+	if end > len(lines) {
+		end = len(lines)
+	}
+	out := make([]string, n)
+	copy(out, lines[offset:end])
+	return out
+}
+
+func drawItemChunk(pdf *fpdf.Fpdf, nameLines, skuLines []string, qty, unitPrice, lineTotal string, rowH float64) {
 	x, y := pdf.GetXY()
 	pdf.Rect(x, y, colName, rowH, "D")
 	pdf.Rect(x+colName, y, colSKU, rowH, "D")
@@ -240,14 +303,12 @@ func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTota
 		pdf.CellFormat(colSKU-2, rowLine, line, "", 0, "", false, 0, "")
 	}
 	pdf.SetXY(x+colName+colSKU, y)
-	pdf.CellFormat(colQty, rowH, fmt.Sprintf("%d", qty), "", 0, "C", false, 0, "")
+	pdf.CellFormat(colQty, rowH, qty, "", 0, "C", false, 0, "")
 	pdf.CellFormat(colUnit, rowH, unitPrice, "", 0, "R", false, 0, "")
 	pdf.CellFormat(colTotal, rowH, lineTotal, "", 0, "R", false, 0, "")
 	pdf.SetXY(x, y+rowH)
-	return nil
 }
 
-// formatMoney formats an int64 minor-unit amount as "CUR major.minor".
 func formatMoney(amount int64, currency string) string {
 	whole := amount / 100
 	cents := amount % 100
