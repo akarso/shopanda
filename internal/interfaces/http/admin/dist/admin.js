@@ -198,6 +198,7 @@
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/store-information": { title: "Store Information", render: renderStoreInformationPage, auth: true },
+        "/admin/settings/store-addresses": { title: "Store Addresses", render: renderStoreAddressesIndexPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
         "/admin/settings/users": { title: "Users & Roles", render: renderUsersRolesPage, auth: true },
         "/admin/settings/audit": { title: "Audit Log", render: renderAuditLogPage, auth: true },
@@ -404,6 +405,15 @@
                 title: "Job Detail",
                 auth: true,
                 render: function (container) { renderJobDetail(container, jobID); }
+            };
+        }
+        var storeAddressRoleMatch = path.match(/^\/admin\/settings\/store-addresses\/([^/]+)$/);
+        if (storeAddressRoleMatch) {
+            var addressRole = decodeURIComponent(storeAddressRoleMatch[1]);
+            return {
+                title: "Store Address",
+                auth: true,
+                render: function (container) { renderStoreAddressRolePage(container, addressRole); }
             };
         }
         return routes["/admin/dashboard"];
@@ -4624,11 +4634,23 @@
     }
 
     function headerContextChangeRequiresRemount(path) {
+        if (typeof ShopandaStoreAddressesAdminUI !== "undefined" &&
+            ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount &&
+            !ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount(path)) {
+            return false;
+        }
         if (typeof ShopandaStoreInformationAdminUI !== "undefined" &&
             ShopandaStoreInformationAdminUI.headerContextChangeRequiresRemount) {
             return ShopandaStoreInformationAdminUI.headerContextChangeRequiresRemount(path);
         }
-        return path !== "/admin/settings/store-information";
+        if (path === "/admin/settings/store-information") {
+            return false;
+        }
+        if (path === "/admin/settings/store-addresses" ||
+            (path && path.indexOf("/admin/settings/store-addresses/") === 0)) {
+            return false;
+        }
+        return true;
     }
 
     function navigateTo(path) {
@@ -8893,7 +8915,7 @@
             '<h2>Settings</h2>' +
             '<div id="settings-global-msg"></div>' +
             '<div id="settings-scope-banner" class="settings-scope-banner"></div>' +
-            '<p class="settings-scope-note">Operational configuration has moved to <a href="/admin/operations/shipping" data-link>Shipping</a> and <a href="/admin/operations/payments" data-link>Payments</a>. Legal name, contact emails, and tax IDs are under <a href="/admin/settings/store-information" data-link>Store Information</a>. Postal address and logo URL editors move to Store Addresses and Site Identity; existing values remain served until those pages ship.</p>' +
+            '<p class="settings-scope-note">Operational configuration has moved to <a href="/admin/operations/shipping" data-link>Shipping</a> and <a href="/admin/operations/payments" data-link>Payments</a>. Legal name, contact emails, and tax IDs are under <a href="/admin/settings/store-information" data-link>Store Information</a>. Structured addresses are under <a href="/admin/settings/store-addresses" data-link>Store Addresses</a>. Logo moves to Site Identity; existing logo values remain served until that page ships.</p>' +
             '<div class="settings-grid">' +
             '<section><h3>Store</h3><div id="settings-store-msg"></div><form id="settings-store-form"></form></section>' +
             '<section><h3>Email</h3><div id="settings-email-msg"></div><form id="settings-email-form"></form></section>' +
@@ -9984,6 +10006,318 @@
             html += '<option value="' + storeInfoEscAttr(t.code) + '">' + esc(t.label) + ' (' + esc(t.code) + ')' + esc(hint) + '</option>';
         }
         return html;
+    }
+
+    var storeAddressesUI = (typeof ShopandaStoreAddressesAdminUI !== "undefined")
+        ? ShopandaStoreAddressesAdminUI
+        : null;
+    var storeAddressesLoadGate = storeAddressesUI && storeAddressesUI.newStoreAddressesLoadGate
+        ? storeAddressesUI.newStoreAddressesLoadGate()
+        : {
+            start: function (storeID) {
+                var captured = storeID || "";
+                return {
+                    storeID: captured,
+                    isCurrent: function (currentStoreID) {
+                        return captured === (currentStoreID || "");
+                    }
+                };
+            }
+        };
+
+    function storeAddressesScopeMatches(capturedStoreID) {
+        if (storeAddressesUI && storeAddressesUI.shouldApplyWriteResult) {
+            return storeAddressesUI.shouldApplyWriteResult(capturedStoreID, adminScope.store_id);
+        }
+        return (capturedStoreID || "") === (adminScope.store_id || "");
+    }
+
+    function renderStoreAddressesScopeBanner(store, storeID) {
+        var banner = document.getElementById("store-addresses-scope-banner");
+        if (!banner) {
+            return;
+        }
+        var copy = storeAddressesUI && storeAddressesUI.scopeBannerCopy
+            ? storeAddressesUI.scopeBannerCopy(store, storeID)
+            : { text: store ? ("Editing store: " + (store.name || store.id)) : (storeID ? ("Editing store id " + storeID) : "Select a store.") };
+        banner.innerHTML = "<p><strong>" + esc(copy.text) + "</strong></p>";
+    }
+
+    function renderStoreAddressesIndexPage(container) {
+        var ticket = storeAddressesLoadGate.start(adminScope.store_id || "");
+        container.innerHTML =
+            '<h2>Store Addresses</h2>' +
+            '<div id="store-addresses-scope-banner" class="settings-scope-banner"></div>' +
+            '<div id="store-addresses-msg"></div>' +
+            '<div id="store-addresses-grid"></div>';
+
+        api('/admin/stores').then(function (storesResponse) {
+            if (!ticket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (storesResponse && storesResponse.error && storesResponse.error.code === 'forbidden') {
+                container.innerHTML = '<h2>Store Addresses</h2><p role="alert">Your account does not have settings access.</p>';
+                return;
+            }
+            var stores = normalizeStores(storesResponse && storesResponse.data && storesResponse.data.stores);
+            var storeID = ticket.storeID;
+            var activeStore = findStoreByID(stores, storeID);
+            renderStoreAddressesScopeBanner(activeStore, storeID);
+
+            if (!storeID) {
+                document.getElementById('store-addresses-grid').innerHTML =
+                    '<p role="alert">Select a store in the header switcher to edit store addresses. Addresses are store-scoped; there is no global record.</p>';
+                return;
+            }
+
+            return api('/admin/store-addresses').then(function (addrResponse) {
+                if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                if (addrResponse && addrResponse.error && addrResponse.error.code === 'forbidden') {
+                    container.innerHTML = '<h2>Store Addresses</h2><p role="alert">Your account does not have settings access.</p>';
+                    return;
+                }
+                if (addrResponse && addrResponse.error) {
+                    setSettingsMessage('store-addresses-msg', extractErrorMessage(addrResponse, 'Failed to load store addresses.'), true);
+                    return;
+                }
+                var addresses = (addrResponse && addrResponse.data && addrResponse.data.addresses) || [];
+                renderStoreAddressesIndexCards(addresses);
+            });
+        }).catch(function (err) {
+            if (!ticket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            container.innerHTML = '<h2>Store Addresses</h2><p role="alert">' + esc(extractErrorMessage(err, 'Failed to load store addresses.')) + '</p>';
+        });
+    }
+
+    function renderStoreAddressesIndexCards(addresses) {
+        var grid = document.getElementById('store-addresses-grid');
+        if (!grid) {
+            return;
+        }
+        var byRole = storeAddressesUI && storeAddressesUI.indexByRole
+            ? storeAddressesUI.indexByRole(addresses)
+            : {};
+        if (!storeAddressesUI) {
+            for (var i = 0; i < addresses.length; i++) {
+                if (addresses[i] && addresses[i].role) {
+                    byRole[addresses[i].role] = addresses[i];
+                }
+            }
+        }
+        var roles = storeAddressesUI && storeAddressesUI.addressRoles
+            ? storeAddressesUI.addressRoles()
+            : [
+                { role: "general", label: "General", blurb: "Footer, email layout, and public identity." },
+                { role: "invoice", label: "Invoice", blurb: "Invoice PDF seller block and imprint." },
+                { role: "shipping_origin", label: "Shipping origin", blurb: "Warehouse / rate origin." },
+                { role: "returns", label: "Returns", blurb: "RMA / return label address." }
+            ];
+
+        var html = '<p class="settings-scope-note">Four Magento-like address roles. Invoice falls back to general; returns fall back to shipping origin, then general.</p>';
+        html += '<div class="settings-grid">';
+        for (var r = 0; r < roles.length; r++) {
+            var meta = roles[r];
+            var addr = byRole[meta.role] || { role: meta.role };
+            var summary = storeAddressesUI && storeAddressesUI.formatAddressSummary
+                ? storeAddressesUI.formatAddressSummary(addr)
+                : (addr.line1 || "Not set");
+            var hint = storeAddressesUI && storeAddressesUI.fallbackHintForRole
+                ? storeAddressesUI.fallbackHintForRole(meta.role, addr)
+                : "";
+            html += '<section>' +
+                '<h3>' + esc(meta.label) + '</h3>' +
+                '<p class="settings-scope-note">' + esc(meta.blurb) + '</p>' +
+                '<p>' + esc(summary) + '</p>' +
+                (hint ? ('<p class="admin-form-hint">' + esc(hint) + '</p>') : '') +
+                '<p><a href="/admin/settings/store-addresses/' + encodeURIComponent(meta.role) + '" data-link>Edit ' + esc(meta.label) + '</a></p>' +
+                '</section>';
+        }
+        html += '</div>';
+        grid.innerHTML = html;
+    }
+
+    function renderStoreAddressRolePage(container, role) {
+        var normalizedRole = String(role || "").toLowerCase();
+        if (storeAddressesUI && storeAddressesUI.isValidAddressRole && !storeAddressesUI.isValidAddressRole(normalizedRole)) {
+            container.innerHTML = '<h2>Store Address</h2><p role="alert">Unknown address role.</p>' +
+                '<p><a href="/admin/settings/store-addresses" data-link>Back to Store Addresses</a></p>';
+            return;
+        }
+        var meta = storeAddressesUI && storeAddressesUI.roleMeta
+            ? storeAddressesUI.roleMeta(normalizedRole)
+            : { role: normalizedRole, label: normalizedRole, blurb: "" };
+        var ticket = storeAddressesLoadGate.start(adminScope.store_id || "");
+        container.innerHTML =
+            '<h2>' + esc(meta.label || "Store Address") + '</h2>' +
+            '<p><a href="/admin/settings/store-addresses" data-link>Back to Store Addresses</a></p>' +
+            '<div id="store-addresses-scope-banner" class="settings-scope-banner"></div>' +
+            '<div id="store-address-role-msg"></div>' +
+            '<form id="store-address-role-form"></form>';
+
+        api('/admin/stores').then(function (storesResponse) {
+            if (!ticket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (storesResponse && storesResponse.error && storesResponse.error.code === 'forbidden') {
+                container.innerHTML = '<h2>Store Address</h2><p role="alert">Your account does not have settings access.</p>';
+                return;
+            }
+            var stores = normalizeStores(storesResponse && storesResponse.data && storesResponse.data.stores);
+            var storeID = ticket.storeID;
+            var activeStore = findStoreByID(stores, storeID);
+            renderStoreAddressesScopeBanner(activeStore, storeID);
+
+            if (!storeID) {
+                document.getElementById('store-address-role-form').innerHTML =
+                    '<p role="alert">Select a store in the header switcher to edit this address.</p>';
+                return;
+            }
+
+            return api('/admin/store-addresses/' + encodeURIComponent(normalizedRole)).then(function (addrResponse) {
+                if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                if (addrResponse && addrResponse.error && addrResponse.error.code === 'forbidden') {
+                    container.innerHTML = '<h2>Store Address</h2><p role="alert">Your account does not have settings access.</p>';
+                    return;
+                }
+                if (addrResponse && addrResponse.error) {
+                    setSettingsMessage('store-address-role-msg', extractErrorMessage(addrResponse, 'Failed to load address.'), true);
+                    return;
+                }
+                var addr = (addrResponse && addrResponse.data) || {
+                    role: normalizedRole,
+                    country: (activeStore && activeStore.country) || "",
+                    persisted: false
+                };
+                if (!addr.country && activeStore && activeStore.country) {
+                    addr.country = activeStore.country;
+                }
+                renderStoreAddressRoleForm(container, normalizedRole, meta, addr, ticket);
+            });
+        }).catch(function (err) {
+            if (!ticket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            container.innerHTML = '<h2>Store Address</h2><p role="alert">' + esc(extractErrorMessage(err, 'Failed to load address.')) + '</p>';
+        });
+    }
+
+    function fillStoreAddressRoleForm(form, addr) {
+        var targets = {
+            line1: form.elements.line1,
+            line2: form.elements.line2,
+            city: form.elements.city,
+            region: form.elements.region,
+            postcode: form.elements.postcode,
+            country: form.elements.country,
+            phone: form.elements.phone
+        };
+        if (storeAddressesUI && storeAddressesUI.applyAddressValues) {
+            storeAddressesUI.applyAddressValues(targets, addr);
+            return;
+        }
+        form.elements.line1.value = (addr && addr.line1) || "";
+        form.elements.line2.value = (addr && addr.line2) || "";
+        form.elements.city.value = (addr && addr.city) || "";
+        form.elements.region.value = (addr && addr.region) || "";
+        form.elements.postcode.value = (addr && addr.postcode) || "";
+        form.elements.country.value = (addr && addr.country) || "";
+        form.elements.phone.value = (addr && addr.phone) || "";
+    }
+
+    function renderStoreAddressRoleForm(container, role, meta, addr, ticket) {
+        var form = document.getElementById('store-address-role-form');
+        if (!form) {
+            return;
+        }
+        var hint = storeAddressesUI && storeAddressesUI.fallbackHintForRole
+            ? storeAddressesUI.fallbackHintForRole(role, addr)
+            : "";
+        form.innerHTML = '' +
+            '<p class="settings-scope-note">' + esc(meta.blurb || "") + '</p>' +
+            (hint ? ('<p class="admin-form-hint">' + esc(hint) + '</p>') : '') +
+            '<label>Address line 1<input name="line1" maxlength="255"></label>' +
+            '<label>Address line 2<input name="line2" maxlength="255"></label>' +
+            '<label>City<input name="city" maxlength="128"></label>' +
+            '<label>Region / state<input name="region" maxlength="128"></label>' +
+            '<label>Postcode<input name="postcode" maxlength="32"></label>' +
+            '<label>Country (ISO-2)<input name="country" maxlength="2" required></label>' +
+            '<label>Phone (optional)<input name="phone" maxlength="64"></label>' +
+            '<button type="submit">Save address</button>';
+        fillStoreAddressRoleForm(form, addr);
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (!storeAddressesScopeMatches(ticket.storeID)) {
+                setSettingsMessage('store-address-role-msg', 'Store scope changed; save cancelled.', true);
+                return;
+            }
+            var btn = form.querySelector('button[type="submit"]');
+            var fields = {
+                line1: form.elements.line1.value,
+                line2: form.elements.line2.value,
+                city: form.elements.city.value,
+                region: form.elements.region.value,
+                postcode: form.elements.postcode.value,
+                country: form.elements.country.value,
+                phone: form.elements.phone.value
+            };
+            var payload = storeAddressesUI && storeAddressesUI.buildAddressPutBody
+                ? storeAddressesUI.buildAddressPutBody(fields)
+                : fields;
+            withButtonBusy(btn, 'Saving…', function () {
+                if (!storeAddressesScopeMatches(ticket.storeID)) {
+                    setSettingsMessage('store-address-role-msg', 'Store scope changed; save cancelled.', true);
+                    return Promise.resolve();
+                }
+                return api('/admin/store-addresses/' + encodeURIComponent(role), {
+                    method: 'PUT',
+                    body: JSON.stringify(payload)
+                }).then(function (res) {
+                    if (!storeAddressesScopeMatches(ticket.storeID)) {
+                        return;
+                    }
+                    if (res && res.error) {
+                        setSettingsMessage('store-address-role-msg', extractErrorMessage(res, 'Failed to save address.'), true);
+                        return;
+                    }
+                    setSettingsMessage('store-address-role-msg', 'Address saved.', false);
+                    var saved = (res && res.data) || payload;
+                    fillStoreAddressRoleForm(form, saved);
+                    var hintEl = form.querySelector('.admin-form-hint');
+                    var nextHint = storeAddressesUI && storeAddressesUI.fallbackHintForRole
+                        ? storeAddressesUI.fallbackHintForRole(role, saved)
+                        : "";
+                    if (hintEl) {
+                        if (nextHint) {
+                            hintEl.textContent = nextHint;
+                        } else {
+                            hintEl.parentNode.removeChild(hintEl);
+                        }
+                    } else if (nextHint) {
+                        var note = form.querySelector('.settings-scope-note');
+                        var p = document.createElement('p');
+                        p.className = 'admin-form-hint';
+                        p.textContent = nextHint;
+                        if (note && note.nextSibling) {
+                            form.insertBefore(p, note.nextSibling);
+                        } else {
+                            form.insertBefore(p, form.firstChild);
+                        }
+                    }
+                }).catch(function (err) {
+                    if (!storeAddressesScopeMatches(ticket.storeID)) {
+                        return;
+                    }
+                    setSettingsMessage('store-address-role-msg', extractErrorMessage(err, 'Failed to save address.'), true);
+                });
+            });
+        });
     }
 
     function renderLocalizationSettingsPage(container) {

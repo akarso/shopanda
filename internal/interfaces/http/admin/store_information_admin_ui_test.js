@@ -136,8 +136,10 @@ test("sidebarLinkIsActive exact-matches /admin/settings", function () {
     assert.equal(ui.sidebarLinkIsActive("/admin", "/admin/settings"), false);
 });
 
-test("headerContextChangeRequiresRemount skips Store Information", function () {
+test("headerContextChangeRequiresRemount skips Store Information and Addresses", function () {
     assert.equal(ui.headerContextChangeRequiresRemount("/admin/settings/store-information"), false);
+    assert.equal(ui.headerContextChangeRequiresRemount("/admin/settings/store-addresses"), false);
+    assert.equal(ui.headerContextChangeRequiresRemount("/admin/settings/store-addresses/invoice"), false);
     assert.equal(ui.headerContextChangeRequiresRemount("/admin/settings"), true);
     assert.equal(ui.headerContextChangeRequiresRemount("/admin/catalog/products"), true);
 });
