@@ -29,14 +29,18 @@ func TestNewTaxIdentifier_Validation(t *testing.T) {
 		want  string
 	}{
 		{name: "empty store", sid: " ", typ: "pl_nip", value: "1", want: "store id"},
+		{name: "newline store", sid: "s\n1", typ: "pl_nip", value: "1", want: "store id"},
 		{name: "empty type", sid: "s-1", typ: "  ", value: "1", want: "type"},
 		{name: "empty value", sid: "s-1", typ: "pl_nip", value: " ", want: "value"},
 		{name: "space in type", sid: "s-1", typ: "pl nip", value: "1", want: "snake token"},
 		{name: "slash in type", sid: "s-1", typ: "a/b", value: "1", want: "snake token"},
-		{name: "control in type", sid: "s-1", typ: "pl\tnip", value: "1", want: "snake token"},
+		{name: "control in type", sid: "s-1", typ: "pl\tnip", value: "1", want: "line breaks or control"},
 		{name: "leading digit", sid: "s-1", typ: "1nip", value: "1", want: "snake token"},
-		{name: "long type", sid: "s-1", typ: "a" + strings.Repeat("b", 64), value: "1", want: "max length"},
-		{name: "long value", sid: "s-1", typ: "pl_nip", value: strings.Repeat("1", 65), want: "max length"},
+		{name: "long type", sid: "s-1", typ: "a" + strings.Repeat("b", store.MaxTaxTypeLen), value: "1", want: "max length"},
+		{name: "long value", sid: "s-1", typ: "pl_nip", value: strings.Repeat("1", store.MaxTaxValueLen+1), want: "max length"},
+		{name: "newline value", sid: "s-1", typ: "pl_nip", value: "12\n34", want: "line breaks or control"},
+		{name: "ls value", sid: "s-1", typ: "pl_nip", value: "12\u202834", want: "line breaks or control"},
+		{name: "nul value", sid: "s-1", typ: "pl_nip", value: "12\x0034", want: "line breaks or control"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,11 +56,11 @@ func TestNewTaxIdentifier_Validation(t *testing.T) {
 }
 
 func TestNewTaxIdentifierFromDB_UnvalidatedRoundTrip(t *testing.T) {
-	ti := store.NewTaxIdentifierFromDB("s-1", "pl nip", "x")
+	ti := store.NewTaxIdentifierFromDB("s-1", "pl nip", "12\n34")
 	if ti == nil {
 		t.Fatal("nil TaxIdentifier")
 	}
-	if ti.Type != "pl nip" {
-		t.Fatalf("FromDB must keep raw type %q", ti.Type)
+	if ti.Type != "pl nip" || ti.Value != "12\n34" {
+		t.Fatalf("FromDB must keep raw bytes, got %+v", ti)
 	}
 }

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -34,13 +33,34 @@ func AllAddressRoles() []AddressRole {
 
 // ParseAddressRole normalizes and validates a role string against addressRoles.
 func ParseAddressRole(v string) (AddressRole, error) {
-	r := AddressRole(strings.TrimSpace(strings.ToLower(v)))
+	trimmed := strings.TrimSpace(v)
+	r := AddressRole(strings.ToLower(trimmed))
 	for _, allowed := range addressRoles {
 		if r == allowed {
 			return r, nil
 		}
 	}
-	return "", fmt.Errorf("store address: invalid role %q", strings.TrimSpace(v))
+	return "", fmt.Errorf("store address: invalid role %q", roleErrorLabel(trimmed))
+}
+
+// roleErrorLabel caps length and replaces controls so error text cannot smuggle
+// newlines or header-injection bytes into logs.
+func roleErrorLabel(v string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range v {
+		if n >= MaxAddressRoleLen {
+			break
+		}
+		switch {
+		case r < 0x20, r == 0x7F, r == 0x85, r == 0x2028, r == 0x2029:
+			b.WriteByte('?')
+		default:
+			b.WriteRune(r)
+		}
+		n++
+	}
+	return b.String()
 }
 
 // Address is a structured store address for one role.
@@ -56,33 +76,37 @@ type Address struct {
 	Phone    string
 }
 
-// IsEmpty reports whether the address has no content fields worth showing.
-// Country alone does not count: a country-only placeholder and a missing row
-// both fall through invoice → general and returns → shipping_origin → general.
+// IsEmpty reports whether the address has no postal content for role fallback.
+// Postal emptiness is line1, line2, city, region, and postcode — phone and
+// country alone do not count, so a phone-only invoice row still falls back to
+// general. A nil receiver is empty (safe for missing-row lookups).
 // PR-1202 backfill should set general.line1 from store.address and
 // general.country from store.Country.
-func (a Address) IsEmpty() bool {
+func (a *Address) IsEmpty() bool {
+	if a == nil {
+		return true
+	}
 	return strings.TrimSpace(a.Line1) == "" &&
 		strings.TrimSpace(a.Line2) == "" &&
 		strings.TrimSpace(a.City) == "" &&
 		strings.TrimSpace(a.Region) == "" &&
-		strings.TrimSpace(a.Postcode) == "" &&
-		strings.TrimSpace(a.Phone) == ""
+		strings.TrimSpace(a.Postcode) == ""
 }
 
 // NewAddress constructs a role address. Country must be a 2-letter ASCII ISO
 // code (always required, including for placeholders). Other fields may be
-// blank; country-only rows are IsEmpty and participate in role fallback.
+// blank; country-only and phone-only rows are IsEmpty and participate in
+// role fallback.
 func NewAddress(
 	storeID string,
 	role AddressRole,
 	line1, line2, city, region, postcode, country, phone string,
 ) (Address, error) {
-	storeID = strings.TrimSpace(storeID)
-	if storeID == "" {
-		return Address{}, errors.New("store address: store id must not be empty")
+	sid, err := normalizeStoreID(storeID)
+	if err != nil {
+		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	role, err := ParseAddressRole(string(role))
+	role, err = ParseAddressRole(string(role))
 	if err != nil {
 		return Address{}, err
 	}
@@ -90,32 +114,32 @@ func NewAddress(
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	l1, err := normalizeSingleLine(line1, maxAddressLineLen, "line1")
+	l1, err := normalizeSingleLine(line1, MaxAddressLineLen, "line1")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	l2, err := normalizeSingleLine(line2, maxAddressLineLen, "line2")
+	l2, err := normalizeSingleLine(line2, MaxAddressLineLen, "line2")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	cityNorm, err := normalizeSingleLine(city, maxCityLen, "city")
+	cityNorm, err := normalizeSingleLine(city, MaxCityLen, "city")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	regionNorm, err := normalizeSingleLine(region, maxRegionLen, "region")
+	regionNorm, err := normalizeSingleLine(region, MaxRegionLen, "region")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	postNorm, err := normalizeSingleLine(postcode, maxPostcodeLen, "postcode")
+	postNorm, err := normalizeSingleLine(postcode, MaxPostcodeLen, "postcode")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
-	phoneNorm, err := normalizeSingleLine(phone, maxPhoneLen, "phone")
+	phoneNorm, err := normalizeSingleLine(phone, MaxPhoneLen, "phone")
 	if err != nil {
 		return Address{}, fmt.Errorf("store address: %w", err)
 	}
 	return Address{
-		StoreID:  storeID,
+		StoreID:  sid,
 		Role:     role,
 		Line1:    l1,
 		Line2:    l2,

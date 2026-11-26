@@ -9,19 +9,22 @@ import (
 	"unicode/utf8"
 )
 
-// Field length caps for identity / address / tax constructors (API and DB columns
-// in PR-1202 follow these).
+// Field length caps for identity / address / tax constructors (API and DB
+// columns in PR-1202 must use these, not hard-coded duplicates).
 const (
-	maxEmailLen       = 254
-	maxLegalNameLen   = 255
-	maxHoursLen       = 255
-	maxPhoneLen       = 64
-	maxAddressLineLen = 255
-	maxCityLen        = 255
-	maxRegionLen      = 255
-	maxPostcodeLen    = 64
-	maxTaxTypeLen     = 64
-	maxTaxValueLen    = 64
+	MaxStoreIDLen     = 64
+	MaxEmailLen       = 254
+	MaxEmailInputLen  = MaxEmailLen * 4 // raw input before ParseAddress (display name discarded)
+	MaxLegalNameLen   = 255
+	MaxHoursLen       = 255
+	MaxPhoneLen       = 64
+	MaxAddressLineLen = 255
+	MaxCityLen        = 255
+	MaxRegionLen      = 255
+	MaxPostcodeLen    = 64
+	MaxTaxTypeLen     = 64
+	MaxTaxValueLen    = 64
+	MaxAddressRoleLen = 64
 )
 
 // Identity is the legal / contact presence for one store (Magento-like Store Information).
@@ -47,19 +50,19 @@ type Identity struct {
 func NewIdentity(
 	storeID, legalName, phone, hours, emailGeneral, emailSales, emailSupport string,
 ) (Identity, error) {
-	storeID = strings.TrimSpace(storeID)
-	if storeID == "" {
-		return Identity{}, errors.New("store identity: store id must not be empty")
-	}
-	legal, err := normalizeSingleLine(legalName, maxLegalNameLen, "legal name")
+	sid, err := normalizeStoreID(storeID)
 	if err != nil {
 		return Identity{}, fmt.Errorf("store identity: %w", err)
 	}
-	phoneNorm, err := normalizeSingleLine(phone, maxPhoneLen, "phone")
+	legal, err := normalizeSingleLine(legalName, MaxLegalNameLen, "legal name")
 	if err != nil {
 		return Identity{}, fmt.Errorf("store identity: %w", err)
 	}
-	hoursNorm, err := normalizeBounded(hours, maxHoursLen, "hours")
+	phoneNorm, err := normalizeSingleLine(phone, MaxPhoneLen, "phone")
+	if err != nil {
+		return Identity{}, fmt.Errorf("store identity: %w", err)
+	}
+	hoursNorm, err := normalizeBounded(hours, MaxHoursLen, "hours")
 	if err != nil {
 		return Identity{}, fmt.Errorf("store identity: %w", err)
 	}
@@ -76,7 +79,7 @@ func NewIdentity(
 		return Identity{}, errors.New("store identity: invalid support email")
 	}
 	return Identity{
-		StoreID:      storeID,
+		StoreID:      sid,
 		LegalName:    legal,
 		Phone:        phoneNorm,
 		Hours:        hoursNorm,
@@ -106,11 +109,25 @@ func NewIdentityFromDB(
 	}
 }
 
+func normalizeStoreID(v string) (string, error) {
+	id, err := normalizeSingleLine(v, MaxStoreIDLen, "store id")
+	if err != nil {
+		return "", err
+	}
+	if id == "" {
+		return "", errors.New("store id must not be empty")
+	}
+	return id, nil
+}
+
 // normalizeOptionalEmail returns the mailbox address only (lowercased).
 func normalizeOptionalEmail(v string) (string, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return "", nil
+	}
+	if utf8.RuneCountInString(v) > MaxEmailInputLen {
+		return "", errors.New("email input too long")
 	}
 	addr, err := mail.ParseAddress(v)
 	if err != nil {
@@ -120,17 +137,35 @@ func normalizeOptionalEmail(v string) (string, error) {
 	if out == "" {
 		return "", errors.New("empty mailbox")
 	}
-	if utf8.RuneCountInString(out) > maxEmailLen {
+	if utf8.RuneCountInString(out) > MaxEmailLen {
 		return "", errors.New("email too long")
 	}
 	return out, nil
 }
 
-// normalizeSingleLine trims, rejects interior newlines/CRs, and caps length.
+// hasDisallowedLineControl reports C0 controls and Unicode line breaks that
+// must not appear in single-line seller-block fields.
+func hasDisallowedLineControl(v string) bool {
+	for _, r := range v {
+		switch {
+		case r == 0 || r == '\n' || r == '\r' || r == '\v' || r == '\f':
+			return true
+		case r == 0x85 || r == 0x2028 || r == 0x2029: // NEL, LS, PS
+			return true
+		case r < 0x20: // remaining C0 (incl. TAB)
+			return true
+		case r == 0x7F: // DEL
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeSingleLine trims, rejects line breaks / C0 controls / NUL, and caps length.
 func normalizeSingleLine(v string, max int, field string) (string, error) {
 	v = strings.TrimSpace(v)
-	if strings.ContainsAny(v, "\r\n") {
-		return "", fmt.Errorf("%s must not contain newlines", field)
+	if hasDisallowedLineControl(v) {
+		return "", fmt.Errorf("%s must not contain line breaks or control characters", field)
 	}
 	if utf8.RuneCountInString(v) > max {
 		return "", fmt.Errorf("%s exceeds max length %d", field, max)
