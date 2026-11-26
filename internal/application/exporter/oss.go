@@ -107,7 +107,7 @@ func (exp *OssExporter) writeDetailRows(writer *csv.Writer, rows []order.TaxSnap
 		record := []string{
 			row.OrderID,
 			row.CreatedAt.UTC().Format(time.RFC3339),
-			row.DestinationCountry,
+			legal.NormalizeCountryCode(row.DestinationCountry),
 			row.Currency,
 			formatMoneyMinor(row.SubtotalAmount),
 			formatMoneyMinor(row.TaxAmount),
@@ -137,10 +137,11 @@ type ossSummaryAgg struct {
 func (exp *OssExporter) writeSummaryRows(writer *csv.Writer, rows []order.TaxSnapshotRow) (int, error) {
 	agg := make(map[ossSummaryKey]*ossSummaryAgg)
 	for _, row := range rows {
-		key := ossSummaryKey{country: row.DestinationCountry, currency: row.Currency}
+		country := legal.NormalizeCountryCode(row.DestinationCountry)
+		key := ossSummaryKey{country: country, currency: row.Currency}
 		entry, ok := agg[key]
 		if !ok {
-			entry = &ossSummaryAgg{country: row.DestinationCountry, currency: row.Currency}
+			entry = &ossSummaryAgg{country: country, currency: row.Currency}
 			agg[key] = entry
 		}
 		entry.orders++

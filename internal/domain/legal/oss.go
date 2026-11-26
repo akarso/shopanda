@@ -52,7 +52,13 @@ func EnsureOssExportEnabled(ctx context.Context, repo ConfigGetter, storeID stri
 	return nil
 }
 
-// NormalizeCountryCode uppercases and trims a 2-letter ISO country code.
+// NormalizeCountryCode uppercases and trims a country code for OSS grouping.
+// "UK" is canonicalized to "GB" so legacy order rows and new writes share one
+// bucket (same alias as store.NormalizeCountry / order.ValidateDestinationCountry).
 func NormalizeCountryCode(code string) string {
-	return strings.ToUpper(strings.TrimSpace(code))
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "UK" {
+		return "GB"
+	}
+	return code
 }

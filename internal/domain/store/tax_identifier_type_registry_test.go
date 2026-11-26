@@ -130,29 +130,25 @@ func TestTaxIdentifierTypeRegistry_AllOrderAndCopy(t *testing.T) {
 	}
 }
 
-func TestEUMemberCountries_MatchExtapi(t *testing.T) {
+// goldenEUMemberCountries is the exact sorted ISO-2 set both EUMemberCountries
+// copies must equal (store + extapi).
+var goldenEUMemberCountries = []string{
+	"AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI",
+	"FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT",
+	"NL", "PL", "PT", "RO", "SE", "SI", "SK",
+}
+
+func TestEUMemberCountries_MatchGolden(t *testing.T) {
+	if len(goldenEUMemberCountries) != 27 {
+		t.Fatalf("golden len = %d", len(goldenEUMemberCountries))
+	}
 	storeEU := store.EUMemberCountries()
 	extEU := extapi.EUMemberCountries()
-	if !reflect.DeepEqual(storeEU, extEU) {
-		t.Fatalf("store vs extapi EU lists diverge:\nstore=%v\nextapi=%v", storeEU, extEU)
+	if !reflect.DeepEqual(storeEU, goldenEUMemberCountries) {
+		t.Fatalf("store EU = %v, want golden %v", storeEU, goldenEUMemberCountries)
 	}
-	if len(storeEU) != 27 {
-		t.Fatalf("EU member count = %d, want 27", len(storeEU))
-	}
-	required := []string{"PL", "DE", "FR", "GR", "IT", "ES", "NL"}
-	set := make(map[string]struct{}, len(storeEU))
-	for _, c := range storeEU {
-		set[c] = struct{}{}
-	}
-	for _, c := range required {
-		if _, ok := set[c]; !ok {
-			t.Fatalf("missing EU member %q", c)
-		}
-	}
-	for _, bad := range []string{"UK", "EL", "GB", "US"} {
-		if _, ok := set[bad]; ok {
-			t.Fatalf("%q must not be in EU member list", bad)
-		}
+	if !reflect.DeepEqual(extEU, goldenEUMemberCountries) {
+		t.Fatalf("extapi EU = %v, want golden %v", extEU, goldenEUMemberCountries)
 	}
 }
 

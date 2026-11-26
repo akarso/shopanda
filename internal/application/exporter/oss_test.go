@@ -117,6 +117,34 @@ func TestOssExport_SummaryRows(t *testing.T) {
 	}
 }
 
+func TestOssExport_SummaryMergesUKIntoGB(t *testing.T) {
+	repo := &stubOssOrderRepo{
+		rows: []order.TaxSnapshotRow{
+			{OrderID: "o1", DestinationCountry: "UK", Currency: "GBP", SubtotalAmount: 1000, TaxAmount: 200},
+			{OrderID: "o2", DestinationCountry: "GB", Currency: "GBP", SubtotalAmount: 2000, TaxAmount: 400},
+		},
+	}
+	exp := exporter.NewOssExporter(repo, stubOssExportConfig{legal.OssEnabledConfigKey: true})
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf, exporter.OssExportOptions{From: from, To: to, Summary: true})
+	if err != nil {
+		t.Fatalf("Export summary: %v", err)
+	}
+	if result.Rows != 1 {
+		t.Fatalf("summary rows = %d, want 1 (UK+GB merged)", result.Rows)
+	}
+	records := parseCSV(t, &buf)
+	if len(records) != 2 {
+		t.Fatalf("csv rows = %d", len(records))
+	}
+	if records[1][0] != "GB" || records[1][2] != "2" {
+		t.Fatalf("unexpected GB summary row: %v", records[1])
+	}
+}
+
 type stubOssExportConfig map[string]interface{}
 
 func (s stubOssExportConfig) Get(_ context.Context, key string) (interface{}, error) {

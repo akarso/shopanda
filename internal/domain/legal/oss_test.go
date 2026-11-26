@@ -35,6 +35,9 @@ func TestNormalizeCountryCode(t *testing.T) {
 	if got := legal.NormalizeCountryCode(" de "); got != "DE" {
 		t.Fatalf("got %q", got)
 	}
+	if got := legal.NormalizeCountryCode(" uk "); got != "GB" {
+		t.Fatalf("UK alias = %q, want GB", got)
+	}
 }
 
 func TestEnsureOssExportEnabled(t *testing.T) {

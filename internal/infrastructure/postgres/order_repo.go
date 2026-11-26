@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
@@ -406,6 +407,8 @@ func (r *OrderRepo) ListPaidTaxSnapshots(ctx context.Context, from, to time.Time
 		if err := rows.Scan(&row.OrderID, &row.CreatedAt, &row.DestinationCountry, &row.Currency, &row.SubtotalAmount, &row.TaxAmount); err != nil {
 			return nil, fmt.Errorf("order_repo: scan tax snapshot: %w", err)
 		}
+		// Legacy UK rows share the GB OSS bucket with new writes.
+		row.DestinationCountry = legal.NormalizeCountryCode(row.DestinationCountry)
 		result = append(result, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -443,7 +446,13 @@ func (r *OrderRepo) saveOn(ctx context.Context, exec orderExecer, o *order.Order
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	var destinationCountry interface{}
 	if strings.TrimSpace(o.DestinationCountry) != "" {
-		destinationCountry = strings.ToUpper(strings.TrimSpace(o.DestinationCountry))
+		// Prefer ValidateDestinationCountry so UK→GB matches checkout; fall back
+		// to uppercased trim if a legacy value somehow bypassed the domain.
+		if normalized, err := order.ValidateDestinationCountry(o.DestinationCountry); err == nil {
+			destinationCountry = normalized
+		} else {
+			destinationCountry = legal.NormalizeCountryCode(o.DestinationCountry)
+		}
 	}
 	var taxAmount interface{}
 	if strings.TrimSpace(o.DestinationCountry) != "" {
