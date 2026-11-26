@@ -21,6 +21,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -80,6 +81,9 @@ type App struct {
 	boundMedia       media.Storage // composition-root bind after resolve
 	taxCalculator    tax.Calculator
 	mailSender       mail.Mailer
+
+	taxIdentifierTypes   *store.TaxIdentifierTypeRegistry
+	taxIdentifierTypesMu sync.Mutex
 
 	configRegistry *ConfigRegistry
 

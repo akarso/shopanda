@@ -3,7 +3,7 @@
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
 | PR-1200 | A | done | [Identity domain](PR-1200.md) |
-| PR-1201 | A | planned | [Tax identifier type registry](PR-1201.md) |
+| PR-1201 | A | done | [Tax identifier type registry](PR-1201.md) |
 | PR-1202 | A | planned | [Persistence + admin/public API](PR-1202.md) |
 | PR-1203 | A | planned | [Store Information admin page](PR-1203.md) |
 | PR-1204 | A | planned | [Address pages](PR-1204.md) |

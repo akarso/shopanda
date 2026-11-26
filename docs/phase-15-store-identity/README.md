@@ -33,7 +33,7 @@ See [`ROADMAP.md`](ROADMAP.md), [`specs/`](specs/), and [`prs/`](prs/).
 
 ## Status
 
-**In progress** (PR-1200 done). PR range **PR-1200–1240**. Independent of Phase 12 catalog work and Phase 13 plugin runtime; can run in parallel. Do not start a merchant site without Track A (identity on invoices) at minimum.
+**In progress** (PR-1200–1201 done). PR range **PR-1200–1240**. Independent of Phase 12 catalog work and Phase 13 plugin runtime; can run in parallel. Do not start a merchant site without Track A (identity on invoices) at minimum.
 
 ## Relationship
 
@@ -43,4 +43,4 @@ See [`ROADMAP.md`](ROADMAP.md), [`specs/`](specs/), and [`prs/`](prs/).
 | Phase 5 | EU compliance flags (Omnibus / WEEE / EPR / GPSR / OSS) | Shipped — stays separate from seller tax IDs |
 | Phase 6 | Merchant-complete admin; email editor left as backlog | Shipped |
 | Phase 7 Track F / 14 | Theme inheritance, slots, `theme:init`, headless | Shipped — no activate UI |
-| **Phase 15** | Store identity, email template admin, Appearance | **In progress** (PR-1200 done) |
+| **Phase 15** | Store identity, email template admin, Appearance | **In progress** (PR-1200–1201 done) |

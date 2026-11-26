@@ -146,6 +146,7 @@ Available today through `plugin.App`:
 | Payment | `RegisterPaymentProvider(payment.Provider)` | `internal/domain/payment` (multi by method) |
 | Media | `RegisterMediaStorage(media.Storage)` | `internal/domain/media` |
 | Tax | `RegisterTaxCalculator(tax.Calculator)` | `internal/domain/tax` |
+| Tax identifier types | `RegisterTaxIdentifierType` (`plugin.App` / `pluginsdk.Host` + `extapi.TaxIdentifierType`) | In-process catalog for store tax IDs (PR-1201); core seeds NIP/VAT/EIN/…; duplicate codes fail closed |
 | Shipping rates | `RegisterShippingRateProvider(shipping.Provider)` | `internal/domain/shipping` (multi by method) |
 | Shipment status (inbound) | `app.IntegrationShipmentStatusUpdater()` | `extapi.IntegrationShipmentStatusUpdater` — ship/deliver/cancel by order id (PR-1400); wired in serve |
 | Mail | `RegisterMailSender(mail.Mailer)` | `internal/domain/mail` |
