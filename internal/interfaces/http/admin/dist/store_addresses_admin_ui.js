@@ -81,7 +81,8 @@
 
     function formatAddressSummary(addr) {
         if (addressIsEmpty(addr)) {
-            return "Not set";
+            var phoneOnly = addr && String(addr.phone || "").trim();
+            return phoneOnly ? ("Phone only: " + phoneOnly) : "Not set";
         }
         var parts = [];
         if (addr.line1) {
@@ -129,8 +130,47 @@
         };
     }
 
+    // newAddressFillGate sequences page GETs and post-write refetches so a late
+    // remount response cannot overwrite a newer fill (or the reverse).
+    function newAddressFillGate() {
+        var seq = 0;
+        return {
+            begin: function (storeID) {
+                seq += 1;
+                var id = seq;
+                var captured = storeID || "";
+                return {
+                    generation: id,
+                    storeID: captured,
+                    isCurrent: function (currentStoreID) {
+                        return id === seq && captured === (currentStoreID || "");
+                    },
+                    // responseStoreID may be blank on placeholders; when set it must match.
+                    acceptsResponse: function (currentStoreID, responseStoreID) {
+                        if (id !== seq) {
+                            return false;
+                        }
+                        if (captured !== (currentStoreID || "")) {
+                            return false;
+                        }
+                        if (responseStoreID != null && responseStoreID !== "" &&
+                            String(responseStoreID) !== captured) {
+                            return false;
+                        }
+                        return true;
+                    }
+                };
+            }
+        };
+    }
+
     function storeScopeMatches(capturedStoreID, currentStoreID) {
         return (capturedStoreID || "") === (currentStoreID || "");
+    }
+
+    function shouldApplyAddressFill(fillTicket, currentStoreID, responseStoreID) {
+        return !!(fillTicket && typeof fillTicket.acceptsResponse === "function" &&
+            fillTicket.acceptsResponse(currentStoreID, responseStoreID));
     }
 
     // Message/fill only when this page generation still owns the live role form.
@@ -151,6 +191,26 @@
             return false;
         }
         return String(liveFormRole || "") === String(writeRole || "");
+    }
+
+    // Errors (and success banners) may apply on a remounted same-role page.
+    function shouldShowAddressWriteFeedback(capturedStoreID, currentStoreID, liveFormRole, writeRole) {
+        return shouldRefetchAddressRoleAfterWrite(capturedStoreID, currentStoreID, liveFormRole, writeRole);
+    }
+
+    function shouldRefreshAddressIndexAfterWrite(capturedStoreID, currentStoreID, gridConnected) {
+        return !!gridConnected && storeScopeMatches(capturedStoreID, currentStoreID);
+    }
+
+    function firstValidationMessage(form) {
+        if (!form) {
+            return "Fix the highlighted fields before saving.";
+        }
+        var invalid = form.querySelector(":invalid");
+        if (invalid && invalid.validationMessage) {
+            return String(invalid.validationMessage);
+        }
+        return "Fix the highlighted fields before saving.";
     }
 
     function applyAddressValues(targets, addr) {
@@ -238,9 +298,14 @@
         formatAddressSummary: formatAddressSummary,
         escAttr: escAttr,
         newStoreAddressesLoadGate: newStoreAddressesLoadGate,
+        newAddressFillGate: newAddressFillGate,
         storeScopeMatches: storeScopeMatches,
+        shouldApplyAddressFill: shouldApplyAddressFill,
         shouldMutateAddressRolePage: shouldMutateAddressRolePage,
         shouldRefetchAddressRoleAfterWrite: shouldRefetchAddressRoleAfterWrite,
+        shouldShowAddressWriteFeedback: shouldShowAddressWriteFeedback,
+        shouldRefreshAddressIndexAfterWrite: shouldRefreshAddressIndexAfterWrite,
+        firstValidationMessage: firstValidationMessage,
         applyAddressValues: applyAddressValues,
         buildAddressPutBody: buildAddressPutBody,
         scopeBannerCopy: scopeBannerCopy,

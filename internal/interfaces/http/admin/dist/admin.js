@@ -10026,6 +10026,29 @@
                 };
             }
         };
+    var storeAddressesFillGate = storeAddressesUI && storeAddressesUI.newAddressFillGate
+        ? storeAddressesUI.newAddressFillGate()
+        : {
+            begin: function (storeID) {
+                var captured = storeID || "";
+                return {
+                    storeID: captured,
+                    isCurrent: function (currentStoreID) {
+                        return captured === (currentStoreID || "");
+                    },
+                    acceptsResponse: function (currentStoreID, responseStoreID) {
+                        if (captured !== (currentStoreID || "")) {
+                            return false;
+                        }
+                        if (responseStoreID != null && responseStoreID !== "" &&
+                            String(responseStoreID) !== captured) {
+                            return false;
+                        }
+                        return true;
+                    }
+                };
+            }
+        };
 
     function storeAddressesScopeMatches(capturedStoreID) {
         if (storeAddressesUI && storeAddressesUI.storeScopeMatches) {
@@ -10043,6 +10066,10 @@
             return null;
         }
         return form;
+    }
+
+    function storeAddressFormIsReady(form) {
+        return !!(form && form.elements && form.elements.line1);
     }
 
     function syncStoreAddressFallbackHint(form, role, addr) {
@@ -10075,10 +10102,20 @@
         }
     }
 
-    function refreshStoreAddressRoleForm(role) {
+    function refreshStoreAddressRoleForm(role, capturedStoreID) {
+        var storeID = capturedStoreID || "";
+        var fill = storeAddressesFillGate.begin(storeID);
         return api("/admin/store-addresses/" + encodeURIComponent(role)).then(function (res) {
+            var responseStoreID = res && res.data ? res.data.store_id : "";
+            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill) {
+                if (!storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)) {
+                    return;
+                }
+            } else if (!fill.acceptsResponse(adminScope.store_id, responseStoreID)) {
+                return;
+            }
             var live = liveStoreAddressRoleForm(role);
-            if (!live) {
+            if (!storeAddressFormIsReady(live)) {
                 return;
             }
             if (res && res.error) {
@@ -10089,10 +10126,49 @@
             fillStoreAddressRoleForm(live, addr);
             syncStoreAddressFallbackHint(live, role, addr);
         }).catch(function (err) {
-            if (!liveStoreAddressRoleForm(role)) {
+            if (!fill.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (!storeAddressFormIsReady(liveStoreAddressRoleForm(role))) {
                 return;
             }
             setSettingsMessage("store-address-role-msg", "Saved, but reload failed: " + extractErrorMessage(err, "unknown error"), true);
+        });
+    }
+
+    function refreshStoreAddressesIndex(capturedStoreID) {
+        var storeID = capturedStoreID || "";
+        var grid = document.getElementById("store-addresses-grid");
+        if (!grid) {
+            return Promise.resolve();
+        }
+        var fill = storeAddressesFillGate.begin(storeID);
+        return api("/admin/store-addresses").then(function (res) {
+            if (!fill.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (!document.getElementById("store-addresses-grid")) {
+                return;
+            }
+            if (res && res.error) {
+                setSettingsMessage("store-addresses-msg", "Saved, but reload failed: " + extractErrorMessage(res, "unknown error"), true);
+                return;
+            }
+            var addresses = (res && res.data && res.data.addresses) || [];
+            var responseStoreID = addresses[0] && addresses[0].store_id ? addresses[0].store_id : storeID;
+            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill &&
+                !storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)) {
+                return;
+            }
+            renderStoreAddressesIndexCards(addresses);
+        }).catch(function (err) {
+            if (!fill.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (!document.getElementById("store-addresses-grid")) {
+                return;
+            }
+            setSettingsMessage("store-addresses-msg", "Saved, but reload failed: " + extractErrorMessage(err, "unknown error"), true);
         });
     }
 
@@ -10110,6 +10186,7 @@
     function renderStoreAddressesIndexPage(container) {
         var ticket = storeAddressesLoadGate.start(adminScope.store_id || "");
         var storeID = ticket.storeID;
+        var fill = storeID ? storeAddressesFillGate.begin(storeID) : null;
         container.innerHTML =
             '<h2>Store Addresses</h2>' +
             '<div id="store-addresses-scope-banner" class="settings-scope-banner"></div>' +
@@ -10138,6 +10215,9 @@
                     '<p role="alert">Select a store in the header switcher to edit store addresses. Addresses are store-scoped; there is no global record.</p>';
                 return;
             }
+            if (fill && !fill.isCurrent(adminScope.store_id)) {
+                return;
+            }
 
             var addrResponse = results[1];
             if (addrResponse && addrResponse.error && addrResponse.error.code === "forbidden") {
@@ -10150,6 +10230,11 @@
                 return;
             }
             var addresses = (addrResponse && addrResponse.data && addrResponse.data.addresses) || [];
+            var responseStoreID = addresses[0] && addresses[0].store_id ? addresses[0].store_id : storeID;
+            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill &&
+                !storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)) {
+                return;
+            }
             renderStoreAddressesIndexCards(addresses);
         }).catch(function (err) {
             if (!ticket.isCurrent(adminScope.store_id)) {
@@ -10196,6 +10281,7 @@
         var meta = storeAddressesUI.roleMeta(normalizedRole);
         var ticket = storeAddressesLoadGate.start(adminScope.store_id || "");
         var storeID = ticket.storeID;
+        var fill = storeID ? storeAddressesFillGate.begin(storeID) : null;
         container.innerHTML =
             "<h2>" + esc(meta.label || "Store Address") + "</h2>" +
             '<p><a href="/admin/settings/store-addresses" data-link>Back to Store Addresses</a></p>' +
@@ -10225,6 +10311,9 @@
                     '<p role="alert">Select a store in the header switcher to edit this address.</p>';
                 return;
             }
+            if (fill && !fill.isCurrent(adminScope.store_id)) {
+                return;
+            }
 
             var addrResponse = results[1];
             if (addrResponse && addrResponse.error && addrResponse.error.code === "forbidden") {
@@ -10233,13 +10322,22 @@
             }
             if (addrResponse && addrResponse.error) {
                 setSettingsMessage("store-address-role-msg", extractErrorMessage(addrResponse, "Failed to load address."), true);
+                var errForm = document.getElementById("store-address-role-form");
+                if (errForm) {
+                    errForm.innerHTML = "";
+                }
                 return;
             }
             var addr = (addrResponse && addrResponse.data) || {
                 role: normalizedRole,
+                store_id: storeID,
                 country: (activeStore && activeStore.country) || "",
                 persisted: false
             };
+            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill &&
+                !storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, addr.store_id || storeID)) {
+                return;
+            }
             if (!addr.country && activeStore && activeStore.country) {
                 addr.country = activeStore.country;
             }
@@ -10286,6 +10384,7 @@
         var max = storeAddressesUI.fieldMaxLengths();
         var hint = storeAddressesUI.fallbackHintForRole(role, addr);
         form.setAttribute("data-role", role);
+        form.setAttribute("novalidate", "");
         form.innerHTML = "" +
             '<p class="settings-scope-note">' + esc(meta.blurb || "") + "</p>" +
             (hint ? ('<p class="admin-form-hint">' + esc(hint) + "</p>") : "") +
@@ -10306,7 +10405,10 @@
                 return;
             }
             if (typeof form.reportValidity === "function" && !form.reportValidity()) {
-                setSettingsMessage("store-address-role-msg", "Fix the highlighted fields before saving.", true);
+                var validityMsg = storeAddressesUI.firstValidationMessage
+                    ? storeAddressesUI.firstValidationMessage(form)
+                    : "Fix the highlighted fields before saving.";
+                setSettingsMessage("store-address-role-msg", validityMsg, true);
                 return;
             }
             var btn = form.querySelector('button[type="submit"]');
@@ -10331,36 +10433,42 @@
                 }).then(function (res) {
                     var live = liveStoreAddressRoleForm(role);
                     var liveRole = live ? live.getAttribute("data-role") : "";
-                    var canRefetch = storeAddressesUI.shouldRefetchAddressRoleAfterWrite(
+                    var showFeedback = storeAddressesUI.shouldShowAddressWriteFeedback(
                         ticket.storeID,
                         adminScope.store_id,
                         liveRole,
                         role
                     );
-                    if (!canRefetch) {
-                        // Navigated to another role/page — do not touch its message or fields.
-                        return;
-                    }
-                    var canMutate = storeAddressesUI.shouldMutateAddressRolePage(
-                        ticket,
+                    var grid = document.getElementById("store-addresses-grid");
+                    var refreshIndex = storeAddressesUI.shouldRefreshAddressIndexAfterWrite(
+                        ticket.storeID,
                         adminScope.store_id,
-                        liveRole,
-                        role
+                        !!(grid && grid.parentNode)
                     );
+
                     if (res && res.error) {
-                        if (canMutate) {
+                        if (showFeedback) {
                             setSettingsMessage("store-address-role-msg", extractErrorMessage(res, "Failed to save address."), true);
                         }
                         return;
                     }
-                    if (canMutate || canRefetch) {
+
+                    if (showFeedback) {
                         setSettingsMessage("store-address-role-msg", "Address saved.", false);
+                        return refreshStoreAddressRoleForm(role, ticket.storeID);
                     }
-                    return refreshStoreAddressRoleForm(role);
+                    if (refreshIndex) {
+                        return refreshStoreAddressesIndex(ticket.storeID);
+                    }
                 }).catch(function (err) {
                     var live = liveStoreAddressRoleForm(role);
                     var liveRole = live ? live.getAttribute("data-role") : "";
-                    if (!storeAddressesUI.shouldMutateAddressRolePage(ticket, adminScope.store_id, liveRole, role)) {
+                    if (!storeAddressesUI.shouldShowAddressWriteFeedback(
+                        ticket.storeID,
+                        adminScope.store_id,
+                        liveRole,
+                        role
+                    )) {
                         return;
                     }
                     setSettingsMessage("store-address-role-msg", extractErrorMessage(err, "Failed to save address."), true);

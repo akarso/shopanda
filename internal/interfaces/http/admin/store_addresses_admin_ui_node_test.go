@@ -44,6 +44,9 @@ func TestAdminHandler_StoreAddressesAdminUIScript(t *testing.T) {
 		"addressIsEmpty",
 		"shouldMutateAddressRolePage",
 		"shouldRefetchAddressRoleAfterWrite",
+		"shouldApplyAddressFill",
+		"newAddressFillGate",
+		"shouldShowAddressWriteFeedback",
 		"fieldMaxLengths",
 	} {
 		if !strings.Contains(body, expected) {

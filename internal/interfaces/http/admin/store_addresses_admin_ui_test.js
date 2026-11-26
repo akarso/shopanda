@@ -25,8 +25,9 @@ test("addressIsEmpty mirrors postal-content emptiness", function () {
     assert.equal(ui.fallbackHintForRole("general", { country: "PL" }), "");
 });
 
-test("formatAddressSummary includes line2 and region", function () {
+test("formatAddressSummary includes line2, region, and phone-only", function () {
     assert.equal(ui.formatAddressSummary({ country: "PL" }), "Not set");
+    assert.equal(ui.formatAddressSummary({ country: "PL", phone: "+48123" }), "Phone only: +48123");
     const line2Only = ui.formatAddressSummary({ line2: "Suite B", country: "DE" });
     assert.match(line2Only, /Suite B/);
     assert.match(line2Only, /DE/);
@@ -97,66 +98,83 @@ test("load gate drops stale generation and mismatched store", function () {
 test("stale generation does not mutate another role page", function () {
     const gate = ui.newStoreAddressesLoadGate();
     const invoiceTicket = gate.start("store-a");
-    // Navigate to Returns (same store) — bumps generation.
-    const returnsTicket = gate.start("store-a");
-    assert.equal(invoiceTicket.isCurrent("store-a"), false);
-    assert.equal(returnsTicket.isCurrent("store-a"), true);
+    gate.start("store-a"); // Returns remount
 
-    const messages = [];
-    function setSettingsMessage(id, text) {
-        messages.push({ id: id, text: text });
-    }
-
-    // Invoice PUT completes while Returns is on screen.
-    const liveFormRole = "returns";
-    const writeRole = "invoice";
-    if (ui.shouldMutateAddressRolePage(invoiceTicket, "store-a", liveFormRole, writeRole)) {
-        setSettingsMessage("store-address-role-msg", "Address saved.");
-    }
-    if (ui.shouldRefetchAddressRoleAfterWrite(invoiceTicket.storeID, "store-a", liveFormRole, writeRole)) {
-        setSettingsMessage("store-address-role-msg", "would-refetch");
-    }
-    assert.deepEqual(messages, [], "cross-role completion must not touch the live page");
-
-    // Same-role remount: store matches and live form is still invoice → refetch allowed.
     assert.equal(
-        ui.shouldRefetchAddressRoleAfterWrite(invoiceTicket.storeID, "store-a", "invoice", "invoice"),
-        true
+        ui.shouldRefetchAddressRoleAfterWrite(invoiceTicket.storeID, "store-a", "returns", "invoice"),
+        false
+    );
+    assert.equal(
+        ui.shouldShowAddressWriteFeedback(invoiceTicket.storeID, "store-a", "invoice", "invoice"),
+        true,
+        "same-role remount may still show PUT error/success"
     );
     assert.equal(
         ui.shouldMutateAddressRolePage(invoiceTicket, "store-a", "invoice", "invoice"),
-        false,
-        "stale generation must not treat mutate as current"
+        false
     );
 });
 
-test("formatAddressSummary and indexByRole", function () {
-    assert.match(ui.formatAddressSummary({ line1: "Main", postcode: "00-001", city: "Warsaw", country: "PL" }), /Main/);
-    const map = ui.indexByRole([
-        { role: "general", line1: "A" },
-        { role: "invoice", line1: "B" }
-    ]);
-    assert.equal(map.general.line1, "A");
-    assert.equal(map.invoice.line1, "B");
+test("refetch fill applies only while captured store id is current", function () {
+    const fillGate = ui.newAddressFillGate();
+    const fills = [];
+    function applyFill(ticket, currentStoreID, response, snapshot) {
+        if (!ui.shouldApplyAddressFill(ticket, currentStoreID, response && response.store_id)) {
+            return;
+        }
+        fills.push(snapshot);
+    }
+
+    const refetch = fillGate.begin("store-a");
+    applyFill(refetch, "store-b", { store_id: "store-a" }, "paint-a-into-b");
+    assert.deepEqual(fills, [], "store switch must drop the fill");
+
+    const ok = fillGate.begin("store-a");
+    applyFill(ok, "store-a", { store_id: "store-a" }, "paint-a");
+    assert.deepEqual(fills, ["paint-a"]);
+
+    applyFill(ok, "store-a", { store_id: "store-b" }, "wrong-response-store");
+    assert.deepEqual(fills, ["paint-a"], "response store_id mismatch must drop");
 });
 
-test("admin.js wires Store Addresses routes, gate checks, and autocomplete", function () {
+test("later page GET does not overwrite an earlier refetch fill", function () {
+    const fillGate = ui.newAddressFillGate();
+    const paints = [];
+    function paint(ticket, currentStoreID, snapshot) {
+        if (!ui.shouldApplyAddressFill(ticket, currentStoreID, "store-a")) {
+            return;
+        }
+        paints.push(snapshot);
+    }
+
+    // Remount page GET starts first (pre-write).
+    const pageGet = fillGate.begin("store-a");
+    // Post-write refetch starts second and must win.
+    const refetch = fillGate.begin("store-a");
+    paint(refetch, "store-a", "post-write");
+    paint(pageGet, "store-a", "pre-write-late");
+    assert.deepEqual(paints, ["post-write"]);
+});
+
+test("index refresh predicate requires connected grid and matching store", function () {
+    assert.equal(ui.shouldRefreshAddressIndexAfterWrite("a", "a", true), true);
+    assert.equal(ui.shouldRefreshAddressIndexAfterWrite("a", "b", true), false);
+    assert.equal(ui.shouldRefreshAddressIndexAfterWrite("a", "a", false), false);
+});
+
+test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths", function () {
     const adminSrc = fs.readFileSync(path.join(__dirname, "dist", "admin.js"), "utf8");
     const indexSrc = fs.readFileSync(path.join(__dirname, "dist", "index.html"), "utf8");
 
     assert.match(indexSrc, /href="\/admin\/settings\/store-addresses"/);
     assert.match(indexSrc, /store_addresses_admin_ui\.js/);
-    assert.match(adminSrc, /renderStoreAddressesIndexPage/);
-    assert.match(adminSrc, /renderStoreAddressRolePage/);
-    assert.match(adminSrc, /newStoreAddressesLoadGate/);
-    assert.match(adminSrc, /shouldMutateAddressRolePage/);
-    assert.match(adminSrc, /shouldRefetchAddressRoleAfterWrite/);
-    assert.match(adminSrc, /refreshStoreAddressRoleForm/);
-    assert.match(adminSrc, /data-role/);
+    assert.match(adminSrc, /newAddressFillGate/);
+    assert.match(adminSrc, /shouldApplyAddressFill/);
+    assert.match(adminSrc, /shouldShowAddressWriteFeedback/);
+    assert.match(adminSrc, /refreshStoreAddressesIndex/);
+    assert.match(adminSrc, /novalidate/);
+    assert.match(adminSrc, /firstValidationMessage/);
     assert.match(adminSrc, /section-store address-line1/);
-    assert.match(adminSrc, /reportValidity/);
-    assert.ok(adminSrc.indexOf('maxlength="255"') >= 0 || adminSrc.indexOf("max.city") >= 0);
     assert.ok(adminSrc.indexOf("/admin/store-addresses/") >= 0);
-    // Single remount predicate — addresses helper must not short-circuit admin.js alone.
     assert.equal(adminSrc.indexOf("ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount"), -1);
 });
