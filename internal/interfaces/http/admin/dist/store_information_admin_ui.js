@@ -71,7 +71,15 @@
     // Language/currency do not affect Store Information payloads; remounting
     // mid-save drops the write callback and can refetch pre-write rows.
     function headerContextChangeRequiresRemount(path) {
-        return path !== "/admin/settings/store-information";
+        if (path === "/admin/settings/store-information") {
+            return false;
+        }
+        // Store Addresses is a sibling settings surface (PR-1204).
+        if (path === "/admin/settings/store-addresses" ||
+            (path && path.indexOf("/admin/settings/store-addresses/") === 0)) {
+            return false;
+        }
+        return true;
     }
 
     function sidebarLinkIsActive(href, currentPath) {
