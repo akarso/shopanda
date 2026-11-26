@@ -3,6 +3,7 @@ package invoicepdf
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/go-pdf/fpdf"
 
@@ -21,15 +22,59 @@ func NewRenderer() *Renderer {
 }
 
 // Render generates a single-page PDF for the given invoice.
-func (r *Renderer) Render(inv invoice.Invoice) ([]byte, error) {
+// An empty seller omits the seller identity block.
+func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetCompression(false) // keep seller/tax text searchable in PDF bytes (tests + tools)
 	pdf.SetAutoPageBreak(true, 20)
 	pdf.AddPage()
 
 	// ── Header ──────────────────────────────────────────────────────
 	pdf.SetFont("Helvetica", "B", 20)
 	pdf.Cell(0, 10, "INVOICE")
-	pdf.Ln(15)
+	pdf.Ln(12)
+
+	// ── Seller block (store identity) ───────────────────────────────
+	if !seller.IsEmpty() {
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.Cell(0, 6, "Seller")
+		pdf.Ln(7)
+		pdf.SetFont("Helvetica", "", 10)
+		if name := strings.TrimSpace(seller.LegalName); name != "" {
+			pdf.Cell(0, 5, name)
+			pdf.Ln(5)
+		}
+		for _, line := range seller.AddressLines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			pdf.Cell(0, 5, line)
+			pdf.Ln(5)
+		}
+		for _, tax := range seller.TaxIDs {
+			value := strings.TrimSpace(tax.Value)
+			if value == "" {
+				continue
+			}
+			label := strings.TrimSpace(tax.Label)
+			text := value
+			if label != "" {
+				text = label + ": " + value
+			}
+			pdf.Cell(0, 5, text)
+			pdf.Ln(5)
+		}
+		if phone := strings.TrimSpace(seller.Phone); phone != "" {
+			pdf.Cell(0, 5, "Phone: "+phone)
+			pdf.Ln(5)
+		}
+		if email := strings.TrimSpace(seller.Email); email != "" {
+			pdf.Cell(0, 5, "Email: "+email)
+			pdf.Ln(5)
+		}
+		pdf.Ln(4)
+	}
 
 	// ── Metadata ────────────────────────────────────────────────────
 	pdf.SetFont("Helvetica", "", 10)

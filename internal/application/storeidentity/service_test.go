@@ -2,6 +2,7 @@ package storeidentity_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
@@ -359,5 +360,66 @@ func TestImprintPublicTaxType(t *testing.T) {
 		if !store.ImprintPublicTaxType(code) {
 			t.Fatalf("%q should be imprint-public", code)
 		}
+	}
+}
+
+func TestService_InvoiceSellerAndLayoutFields(t *testing.T) {
+	st := testStore()
+	mem := newMemIdentity()
+	idty, _ := store.NewIdentity(st.ID, "Legal Co", "+48111", "9-17", "general@x.test", "sales@x.test", "")
+	_ = mem.SaveIdentity(context.Background(), idty)
+	general, _ := store.NewAddress(st.ID, store.AddressRoleGeneral, "Street 1", "Apt 2", "City", "Region", "00-001", "PL", "")
+	_ = mem.SaveAddress(context.Background(), general)
+	nip, _ := store.NewTaxIdentifier(st.ID, "pl_nip", "5252344022")
+	_ = mem.UpsertTaxIdentifier(context.Background(), nip)
+	ein, _ := store.NewTaxIdentifier(st.ID, "us_ein", "12-3456789")
+	_ = mem.UpsertTaxIdentifier(context.Background(), ein)
+
+	svc := storeidentity.NewService(
+		mem,
+		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
+		store.DefaultTaxIdentifierTypeRegistry(),
+	)
+
+	seller, err := svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seller.LegalName != "Legal Co" || seller.Email != "sales@x.test" {
+		t.Fatalf("seller %#v", seller)
+	}
+	if len(seller.TaxIDs) != 2 {
+		t.Fatalf("invoice seller must include all tax IDs, got %#v", seller.TaxIDs)
+	}
+	foundNIP := false
+	for _, ti := range seller.TaxIDs {
+		if ti.Label == "NIP" && ti.Value == "5252344022" {
+			foundNIP = true
+		}
+	}
+	if !foundNIP {
+		t.Fatalf("missing NIP label %#v", seller.TaxIDs)
+	}
+
+	addr, err := svc.FormattedGeneralAddress(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(addr, "Street 1") || !strings.Contains(addr, "00-001 City") {
+		t.Fatalf("formatted address %q", addr)
+	}
+
+	layout, err := svc.LayoutFields(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.LegalName != "Legal Co" || layout.EmailGeneral != "general@x.test" {
+		t.Fatalf("layout %#v", layout)
+	}
+	if !strings.Contains(layout.TaxIDLine, "NIP: 5252344022") {
+		t.Fatalf("tax line %q", layout.TaxIDLine)
+	}
+	if strings.Contains(layout.TaxIDLine, "EIN") || strings.Contains(layout.TaxIDLine, "12-3456789") {
+		t.Fatalf("layout must filter imprint-public only: %q", layout.TaxIDLine)
 	}
 }

@@ -15,14 +15,22 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+// SellerLoader resolves the invoice PDF seller block for a store.
+// Optional — missing or failing loaders omit the seller section.
+type SellerLoader interface {
+	InvoiceSeller(ctx context.Context, storeID string) (domainInvoice.SellerBlock, error)
+}
+
 // Service orchestrates invoice generation use cases.
 type Service struct {
-	orders   order.OrderRepository
-	invoices domainInvoice.InvoiceRepository
-	renderer domainInvoice.PDFRenderer
-	storage  media.Storage
-	bus      *event.Bus
-	log      logger.Logger
+	orders       order.OrderRepository
+	invoices     domainInvoice.InvoiceRepository
+	renderer     domainInvoice.PDFRenderer
+	storage      media.Storage
+	bus          *event.Bus
+	log          logger.Logger
+	seller       SellerLoader
+	defaultStore func(context.Context) (string, error)
 }
 
 // NewService creates an invoice application service.
@@ -60,6 +68,19 @@ func NewService(
 		bus:      bus,
 		log:      log,
 	}
+}
+
+// WithSellerLoader wires store identity for the PDF seller block.
+func (s *Service) WithSellerLoader(loader SellerLoader) *Service {
+	s.seller = loader
+	return s
+}
+
+// WithDefaultStoreLookup resolves the store id when orders have no store_id
+// (FindDefault). Lookup errors omit the seller block.
+func (s *Service) WithDefaultStoreLookup(fn func(context.Context) (string, error)) *Service {
+	s.defaultStore = fn
+	return s
 }
 
 // GenerateInput holds the parameters for invoice generation.
@@ -129,8 +150,8 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 		return nil, fmt.Errorf("invoice: save: %w", err)
 	}
 
-	// 7. Render PDF.
-	pdfBytes, err := s.renderer.Render(inv)
+	// 7. Render PDF (seller block is best-effort from store identity).
+	pdfBytes, err := s.renderer.Render(inv, s.loadSeller(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("invoice: render pdf: %w", err)
 	}
@@ -166,4 +187,33 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 	})
 
 	return &GenerateResult{Invoice: &inv, PDFPath: pdfPath}, nil
+}
+
+func (s *Service) loadSeller(ctx context.Context) domainInvoice.SellerBlock {
+	if s == nil || s.seller == nil {
+		return domainInvoice.SellerBlock{}
+	}
+	storeID := ""
+	if s.defaultStore != nil {
+		id, err := s.defaultStore(ctx)
+		if err != nil {
+			s.log.Warn("invoice: default store lookup failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return domainInvoice.SellerBlock{}
+		}
+		storeID = id
+	}
+	if storeID == "" {
+		return domainInvoice.SellerBlock{}
+	}
+	seller, err := s.seller.InvoiceSeller(ctx, storeID)
+	if err != nil {
+		s.log.Warn("invoice: load seller failed", map[string]interface{}{
+			"store_id": storeID,
+			"error":    err.Error(),
+		})
+		return domainInvoice.SellerBlock{}
+	}
+	return seller
 }

@@ -16,12 +16,19 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
+// InvoiceSellerLoader resolves the PDF seller block (store identity).
+type InvoiceSellerLoader interface {
+	InvoiceSeller(ctx context.Context, storeID string) (domainInvoice.SellerBlock, error)
+}
+
 // InvoiceAdminHandler serves admin invoice list and PDF download endpoints.
 type InvoiceAdminHandler struct {
-	invoices domainInvoice.InvoiceRepository
-	orders   order.OrderRepository
-	renderer domainInvoice.PDFRenderer
-	storage  media.Storage
+	invoices     domainInvoice.InvoiceRepository
+	orders       order.OrderRepository
+	renderer     domainInvoice.PDFRenderer
+	storage      media.Storage
+	seller       InvoiceSellerLoader
+	defaultStore func(context.Context) (string, error)
 }
 
 // NewInvoiceAdminHandler creates an InvoiceAdminHandler.
@@ -46,6 +53,18 @@ func NewInvoiceAdminHandler(
 		renderer: renderer,
 		storage:  storage,
 	}
+}
+
+// WithSellerLoader wires store identity for on-the-fly PDF re-renders.
+func (h *InvoiceAdminHandler) WithSellerLoader(loader InvoiceSellerLoader) *InvoiceAdminHandler {
+	h.seller = loader
+	return h
+}
+
+// WithDefaultStoreLookup resolves the store id when regenerating a PDF.
+func (h *InvoiceAdminHandler) WithDefaultStoreLookup(fn func(context.Context) (string, error)) *InvoiceAdminHandler {
+	h.defaultStore = fn
+	return h
 }
 
 type invoiceSummaryResponse struct {
@@ -148,5 +167,20 @@ func (h *InvoiceAdminHandler) loadPDFBytes(ctx context.Context, inv domainInvoic
 			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
 		}
 	}
-	return h.renderer.Render(inv)
+	return h.renderer.Render(inv, h.loadSeller(ctx))
+}
+
+func (h *InvoiceAdminHandler) loadSeller(ctx context.Context) domainInvoice.SellerBlock {
+	if h == nil || h.seller == nil || h.defaultStore == nil {
+		return domainInvoice.SellerBlock{}
+	}
+	storeID, err := h.defaultStore(ctx)
+	if err != nil || storeID == "" {
+		return domainInvoice.SellerBlock{}
+	}
+	seller, err := h.seller.InvoiceSeller(ctx, storeID)
+	if err != nil {
+		return domainInvoice.SellerBlock{}
+	}
+	return seller
 }

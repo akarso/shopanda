@@ -203,6 +203,7 @@ type serveRuntime struct {
 	extensionPortAdmin             *admin.ExtensionPortAdminHandler
 	inventoryAdmin                 *admin.InventoryAdminHandler
 	storeAdmin                     *admin.StoreAdminHandler
+	storeIdentitySvc               *storeidentity.Service
 	storeIdentityAdmin             *admin.StoreIdentityAdminHandler
 	storeIdentityHandler           *storefront.StoreIdentityHandler
 	auditLogAdmin                  *admin.AuditLogAdminHandler
@@ -446,6 +447,22 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	invoicePDFRenderer := invoicepdf.NewRenderer()
 	voucherPDFRenderer := voucherpdf.NewRenderer()
 
+	storeIdentitySvc := storeidentity.NewService(
+		repos.storeIdentityRepo,
+		repos.storeRepo,
+		pluginApp.TaxIdentifierTypes(),
+	)
+	defaultStoreID := func(ctx context.Context) (string, error) {
+		st, err := repos.storeRepo.FindDefault(ctx)
+		if err != nil {
+			return "", err
+		}
+		if st == nil {
+			return "", nil
+		}
+		return st.ID, nil
+	}
+
 	notifSvc := notification.New(mailTemplates, repos.customerRepo, repos.orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
@@ -456,6 +473,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithOrderLineHooks(hookRegistry),
 		notification.WithVouchers(repos.voucherRepo),
 		notification.WithVoucherPDF(voucherPDFRenderer),
+		notification.WithStoreIdentity(storeIdentitySvc, repos.storeRepo),
+		notification.WithConfig(repos.configRepo),
 		notification.WithStoreLanguageLookup(func(ctx context.Context) (string, error) {
 			st, err := repos.storeRepo.FindDefault(ctx)
 			if err != nil {
@@ -987,7 +1006,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionApp.AsValueAPI(extensionValueService)).
 		WithEventBus(bus).
 		WithShipmentStatusService(shipmentStatusService)
-	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
+	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage).
+		WithSellerLoader(storeIdentitySvc).
+		WithDefaultStoreLookup(defaultStoreID)
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
 	adminMFAHandler := admin.NewAdminMFAHandler(mfaService)
@@ -1131,11 +1152,6 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithTxStarter(conn)
 	inventoryAdmin.SetBus(bus) // PR-1036: stock adjustment → search index update
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
-	storeIdentitySvc := storeidentity.NewService(
-		repos.storeIdentityRepo,
-		repos.storeRepo,
-		pluginApp.TaxIdentifierTypes(),
-	)
 	storeIdentityAdmin := admin.NewStoreIdentityAdminHandlerWithAuditor(storeIdentitySvc, sharedAuditor)
 	storeIdentityHandler := storefront.NewStoreIdentityHandler(storeIdentitySvc)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
@@ -1299,6 +1315,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		extensionPortAdmin:             extensionPortAdmin,
 		inventoryAdmin:                 inventoryAdmin,
 		storeAdmin:                     storeAdmin,
+		storeIdentitySvc:               storeIdentitySvc,
 		storeIdentityAdmin:             storeIdentityAdmin,
 		storeIdentityHandler:           storeIdentityHandler,
 		auditLogAdmin:                  auditLogAdmin,

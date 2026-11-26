@@ -12,12 +12,15 @@ import (
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/hooks"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	domainvoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -68,6 +71,9 @@ type Service struct {
 	storeLanguageLookup func(context.Context) (string, error)
 	vouchers            domainvoucher.Repository
 	voucherPDF          domainvoucher.PDFRenderer
+	identity            *storeidentity.Service
+	stores              store.StoreRepository
+	config              legal.ConfigGetter // optional — interim store.logo for LogoURL
 }
 
 // Option configures optional Service fields.
@@ -133,6 +139,104 @@ func WithVouchers(repo domainvoucher.Repository) Option {
 // WithVoucherPDF wires the voucher pack PDF renderer for email attachments.
 func WithVoucherPDF(r domainvoucher.PDFRenderer) Option {
 	return func(s *Service) { s.voucherPDF = r }
+}
+
+// WithStoreIdentity fills EmailData brand fields and invoice PDF seller blocks
+// from store identity (PR-1205). Nil is a no-op.
+func WithStoreIdentity(svc *storeidentity.Service, stores store.StoreRepository) Option {
+	return func(s *Service) {
+		s.identity = svc
+		s.stores = stores
+	}
+}
+
+// WithConfig enables interim LogoURL from store.logo until Site Identity (PR-1222).
+func WithConfig(cfg legal.ConfigGetter) Option {
+	return func(s *Service) { s.config = cfg }
+}
+
+// baseEmailData starts every template payload with StoreURL plus brand fields
+// from the default store's identity (best-effort).
+func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
+	ed := mail.EmailData{StoreURL: s.storeURL}
+	if s == nil {
+		return ed
+	}
+	storeID, storeName := s.resolveDefaultStore(ctx)
+	ed.StoreName = storeName
+	if s.identity != nil && storeID != "" {
+		addr, err := s.identity.FormattedGeneralAddress(ctx, storeID)
+		if err != nil {
+			s.log.Warn("notification: identity address failed", map[string]interface{}{
+				"store_id": storeID,
+				"error":    err.Error(),
+			})
+		} else {
+			ed.StoreAddress = addr
+		}
+	}
+	ed.LogoURL = s.logoURL(ctx, storeID)
+	return ed
+}
+
+func (s *Service) resolveDefaultStore(ctx context.Context) (storeID, storeName string) {
+	if s == nil || s.stores == nil {
+		return "", ""
+	}
+	st, err := s.stores.FindDefault(ctx)
+	if err != nil {
+		s.log.Warn("notification: default store lookup failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return "", ""
+	}
+	if st == nil {
+		return "", ""
+	}
+	return st.ID, strings.TrimSpace(st.Name)
+}
+
+func (s *Service) logoURL(ctx context.Context, storeID string) string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	read := func(key string) string {
+		v, err := s.config.Get(ctx, key)
+		if err != nil || v == nil {
+			return ""
+		}
+		switch t := v.(type) {
+		case string:
+			return strings.TrimSpace(t)
+		default:
+			return strings.TrimSpace(fmt.Sprint(t))
+		}
+	}
+	if storeID != "" {
+		if u := read(legal.ScopedConfigKey(storeID, "store.logo")); u != "" {
+			return u
+		}
+	}
+	return read("store.logo")
+}
+
+func (s *Service) loadInvoiceSeller(ctx context.Context) invoice.SellerBlock {
+	if s == nil || s.identity == nil {
+		return invoice.SellerBlock{}
+	}
+	storeID, _ := s.resolveDefaultStore(ctx)
+	if storeID == "" {
+		return invoice.SellerBlock{}
+	}
+	seller, err := s.identity.InvoiceSeller(ctx, storeID)
+	if err != nil {
+		s.log.Warn("notification: invoice seller failed", map[string]interface{}{
+			"store_id": storeID,
+			"error":    err.Error(),
+		})
+		return invoice.SellerBlock{}
+	}
+	return seller
 }
 
 // orderDisplayLanguage resolves the sealed hook language once per email.
@@ -339,15 +443,13 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 	tmplItems := s.orderConfirmedItems(ctx, o)
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-			"Items":     tmplItems,
-			"Total":     o.TotalAmount.String(),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
+		"Items":     tmplItems,
+		"Total":     o.TotalAmount.String(),
 	}
 
 	msg, err := s.templates.Render("order_confirmed", recipient.Email, ed)
@@ -486,13 +588,11 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 	q.Set("token", data.Token)
 	resetURL.RawQuery = q.Encode()
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"ResetURL":  resetURL.String(),
-			"ExpiresIn": "1 hour",
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"ResetURL":  resetURL.String(),
+		"ExpiresIn": "1 hour",
 	}
 
 	msg, err := s.templates.Render("password_reset", cust.Email, ed)
@@ -530,12 +630,10 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"VerifyURL": verifyURL,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"VerifyURL": verifyURL,
 	}
 
 	msg, err := s.templates.Render("email_verification", cust.Email, ed)
@@ -568,12 +666,10 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		return err
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"VerifyURL": data.VerifyURL,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"VerifyURL": data.VerifyURL,
 	}
 
 	msg, err := s.templates.Render("security_verification", cust.Email, ed)
@@ -616,13 +712,11 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		firstName = cust.FirstName
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": firstName,
-			"VerifyURL": verifyURL,
-			"NewEmail":  newEmail,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": firstName,
+		"VerifyURL": verifyURL,
+		"NewEmail":  newEmail,
 	}
 
 	msg, err := s.templates.Render("email_change_verification", newEmail, ed)
@@ -659,12 +753,10 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		firstName = cust.FirstName
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": firstName,
-			"NewEmail":  strings.TrimSpace(data.NewEmail),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": firstName,
+		"NewEmail":  strings.TrimSpace(data.NewEmail),
 	}
 
 	msg, err := s.templates.Render("email_change_notice", oldEmail, ed)
@@ -709,13 +801,11 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return err
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
 	}
 	if data.TrackingNumber != "" {
 		ed.Data["TrackingNumber"] = data.TrackingNumber
@@ -858,14 +948,12 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		s.log.Error("HandleVoucherIssued.pdf_render_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: render voucher PDF: %w", err)
 	}
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-			"Codes":     codeStrs,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
+		"Codes":     codeStrs,
 	}
 	msg, err := s.templates.Render("voucher_issued", recipient.Email, ed)
 	if err != nil {
@@ -966,7 +1054,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		return err
 	}
 
-	pdfBytes, err := s.pdfRenderer.Render(*inv)
+	pdfBytes, err := s.pdfRenderer.Render(*inv, s.loadInvoiceSeller(ctx))
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.pdf_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
 		return fmt.Errorf("notification: render invoice PDF: %w", err)
@@ -982,16 +1070,14 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		}
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":       data.OrderID,
-			"InvoiceNumber": data.InvoiceNumber,
-			"FirstName":     recipient.FirstName,
-			"Guest":         recipient.Guest,
-			"Items":         tmplItems,
-			"Total":         inv.TotalAmount().String(),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":       data.OrderID,
+		"InvoiceNumber": data.InvoiceNumber,
+		"FirstName":     recipient.FirstName,
+		"Guest":         recipient.Guest,
+		"Items":         tmplItems,
+		"Total":         inv.TotalAmount().String(),
 	}
 
 	msg, err := s.templates.Render("invoice_created", recipient.Email, ed)

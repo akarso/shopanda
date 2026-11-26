@@ -26,6 +26,11 @@ const DefaultRecoveryStaleAfter = 24 * time.Hour
 
 const recoveryBatchSize = 50
 
+// RecoveryBrand fills EmailData store name/address/logo for recovery mail.
+type RecoveryBrand interface {
+	BrandEmailData(ctx context.Context, storeURL string) mail.EmailData
+}
+
 // RecoveryHandler scans stale carts and enqueues recovery emails.
 type RecoveryHandler struct {
 	carts      domainCart.CartRepository
@@ -36,6 +41,7 @@ type RecoveryHandler struct {
 	queue      jobs.Queue
 	storeURL   string
 	settings   config.Repository
+	brand      RecoveryBrand
 	staleAfter time.Duration
 	log        logger.Logger
 }
@@ -49,6 +55,7 @@ type RecoveryHandlerConfig struct {
 	Templates  *mail.Templates
 	Queue      jobs.Queue
 	Settings   config.Repository
+	Brand      RecoveryBrand
 	StoreURL   string
 	StaleAfter time.Duration
 	Log        logger.Logger
@@ -90,6 +97,7 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		queue:      cfg.Queue,
 		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
 		settings:   cfg.Settings,
+		brand:      cfg.Brand,
 		staleAfter: staleAfter,
 		log:        cfg.Log,
 	}
@@ -172,15 +180,15 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart) e
 		cartURL = "/cart"
 	}
 
-	ed := mail.EmailData{
-		StoreName: "Shopanda",
-		StoreURL:  h.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"CartURL":   cartURL,
-			"Items":     items,
-			"ItemCount": c.TotalQuantity(),
-		},
+	ed := mail.EmailData{StoreURL: h.storeURL}
+	if h.brand != nil {
+		ed = h.brand.BrandEmailData(ctx, h.storeURL)
+	}
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"CartURL":   cartURL,
+		"Items":     items,
+		"ItemCount": c.TotalQuantity(),
 	}
 	msg, err := h.templates.Render("cart_recovery", email, ed)
 	if err != nil {

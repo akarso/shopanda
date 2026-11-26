@@ -468,6 +468,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithVisibilityFacts(rt.visibilityFacts, rt.visibilityOpts).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
+			WithStoreIdentity(rt.storeIdentitySvc).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
 			WithContentBlocks(rt.repos.contentBlockRepo, rt.blockResolver, rt.repos.pageRepo).
 			WithCart(rt.repos.variantRepo, rt.cartService).

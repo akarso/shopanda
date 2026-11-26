@@ -2,6 +2,7 @@ package invoicepdf_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -29,7 +30,7 @@ func TestRenderer_Render_Success(t *testing.T) {
 	r := invoicepdf.NewRenderer()
 	inv := testInvoice(t)
 
-	pdf, err := r.Render(inv)
+	pdf, err := r.Render(inv, invoice.SellerBlock{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -38,6 +39,35 @@ func TestRenderer_Render_Success(t *testing.T) {
 	}
 	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
 		t.Error("output does not start with PDF magic bytes")
+	}
+}
+
+func TestRenderer_Render_SellerBlockContainsNIP(t *testing.T) {
+	r := invoicepdf.NewRenderer()
+	inv := testInvoice(t)
+	seller := invoice.SellerBlock{
+		LegalName:    "Acme Sp. z o.o.",
+		AddressLines: []string{"Ul. Krotka 1", "00-001 Warszawa", "PL"},
+		Phone:        "+48 22 000 00 00",
+		Email:        "sales@acme.example",
+		TaxIDs: []invoice.SellerTaxLine{
+			{Label: "NIP", Value: "5252344022"},
+			{Label: "EU VAT", Value: "PL5252344022"},
+		},
+	}
+
+	pdf, err := r.Render(inv, seller)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
+		t.Fatal("missing PDF magic")
+	}
+	body := string(pdf)
+	for _, want := range []string{"5252344022", "NIP", "Acme Sp. z o.o.", "sales@acme.example"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PDF missing %q", want)
+		}
 	}
 }
 
@@ -60,7 +90,7 @@ func TestRenderer_Render_MultipleItems(t *testing.T) {
 	inv.SetInvoiceNumberFromDB(99)
 
 	r := invoicepdf.NewRenderer()
-	pdf, err := r.Render(inv)
+	pdf, err := r.Render(inv, invoice.SellerBlock{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -86,7 +116,7 @@ func TestRenderer_Render_ZeroTax(t *testing.T) {
 	inv.SetInvoiceNumberFromDB(1)
 
 	r := invoicepdf.NewRenderer()
-	pdf, err := r.Render(inv)
+	pdf, err := r.Render(inv, invoice.SellerBlock{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

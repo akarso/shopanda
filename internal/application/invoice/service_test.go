@@ -87,7 +87,7 @@ type fakeRenderer struct {
 	called bool
 }
 
-func (f *fakeRenderer) Render(domainInvoice.Invoice) ([]byte, error) {
+func (f *fakeRenderer) Render(_ domainInvoice.Invoice, _ domainInvoice.SellerBlock) ([]byte, error) {
 	f.called = true
 	return []byte("%PDF-fake"), nil
 }

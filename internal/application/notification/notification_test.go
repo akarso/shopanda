@@ -134,7 +134,7 @@ type mockPDFRenderer struct {
 	render func(inv domainInvoice.Invoice) ([]byte, error)
 }
 
-func (m *mockPDFRenderer) Render(inv domainInvoice.Invoice) ([]byte, error) {
+func (m *mockPDFRenderer) Render(inv domainInvoice.Invoice, _ domainInvoice.SellerBlock) ([]byte, error) {
 	if m.render != nil {
 		return m.render(inv)
 	}
