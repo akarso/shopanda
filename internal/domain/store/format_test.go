@@ -35,7 +35,7 @@ func TestAddressFormatDisplayAndLines(t *testing.T) {
 		t.Fatalf("FormatDisplay: %q", got)
 	}
 	lines := a.FormatLines()
-	if len(lines) != 5 || lines[0] != "Main 1" || lines[2] != "12-345 City" {
+	if len(lines) != 5 || lines[0] != "Main 1" || lines[2] != "Region" || lines[3] != "12-345 City" {
 		t.Fatalf("FormatLines: %#v", lines)
 	}
 	empty := store.NewAddressFromDB("s1", store.AddressRoleInvoice, "", "", "", "", "", "PL", "555")

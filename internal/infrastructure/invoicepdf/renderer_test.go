@@ -2,8 +2,11 @@ package invoicepdf_test
 
 import (
 	"bytes"
+	"compress/zlib"
+	"io"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -42,12 +45,12 @@ func TestRenderer_Render_Success(t *testing.T) {
 	}
 }
 
-func TestRenderer_Render_SellerBlockContainsNIP(t *testing.T) {
+func TestRenderer_Render_SellerBlockPolishUTF8(t *testing.T) {
 	r := invoicepdf.NewRenderer()
 	inv := testInvoice(t)
 	seller := invoice.SellerBlock{
-		LegalName:    "Acme Sp. z o.o.",
-		AddressLines: []string{"Ul. Krotka 1", "00-001 Warszawa", "PL"},
+		LegalName:    "Spółka Łódź Gdańsk Kraków",
+		AddressLines: []string{"Ul. Świętokrzyska 1", "00-001 Warszawa", "PL"},
 		Phone:        "+48 22 000 00 00",
 		Email:        "sales@acme.example",
 		TaxIDs: []invoice.SellerTaxLine{
@@ -63,10 +66,10 @@ func TestRenderer_Render_SellerBlockContainsNIP(t *testing.T) {
 	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
 		t.Fatal("missing PDF magic")
 	}
-	body := string(pdf)
-	for _, want := range []string{"5252344022", "NIP", "Acme Sp. z o.o.", "sales@acme.example"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("PDF missing %q", want)
+	text := extractUTF16PDFStrings(t, pdf)
+	for _, want := range []string{"Spółka", "Łódź", "Gdańsk", "Kraków", "Świętokrzyska", "5252344022", "NIP"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("extracted PDF text missing %q\n---\n%s\n---", want, text)
 		}
 	}
 }
@@ -123,4 +126,79 @@ func TestRenderer_Render_ZeroTax(t *testing.T) {
 	if !bytes.HasPrefix(pdf, []byte("%PDF-")) {
 		t.Error("output does not start with PDF magic bytes")
 	}
+}
+
+// extractUTF16PDFStrings inflates content streams and decodes fpdf UTF-8 font
+// Tj literals (UTF-16BE inside PDF strings), so assertions check drawable text.
+func extractUTF16PDFStrings(t *testing.T, pdf []byte) string {
+	t.Helper()
+	var out strings.Builder
+	rest := pdf
+	for {
+		idx := bytes.Index(rest, []byte("stream"))
+		if idx < 0 {
+			break
+		}
+		start := idx + len("stream")
+		if start < len(rest) && rest[start] == '\r' {
+			start++
+		}
+		if start < len(rest) && rest[start] == '\n' {
+			start++
+		}
+		end := bytes.Index(rest[start:], []byte("endstream"))
+		if end < 0 {
+			break
+		}
+		payload := rest[start : start+end]
+		rest = rest[start+end+len("endstream"):]
+		r, err := zlib.NewReader(bytes.NewReader(payload))
+		if err != nil {
+			continue
+		}
+		decoded, err := io.ReadAll(r)
+		_ = r.Close()
+		if err != nil || len(decoded) > 50_000 {
+			continue // skip font binary blobs
+		}
+		out.WriteString(decodePDFUTF16Literals(decoded))
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+func decodePDFUTF16Literals(stream []byte) string {
+	var b strings.Builder
+	i := 0
+	for i < len(stream) {
+		if stream[i] != '(' {
+			i++
+			continue
+		}
+		i++
+		var lit []byte
+		for i < len(stream) {
+			if stream[i] == ')' {
+				i++
+				break
+			}
+			if stream[i] == '\\' && i+1 < len(stream) {
+				i++
+				lit = append(lit, stream[i])
+				i++
+				continue
+			}
+			lit = append(lit, stream[i])
+			i++
+		}
+		if len(lit) >= 2 && len(lit)%2 == 0 && lit[0] == 0 {
+			u16 := make([]uint16, 0, len(lit)/2)
+			for j := 0; j+1 < len(lit); j += 2 {
+				u16 = append(u16, uint16(lit[j])<<8|uint16(lit[j+1]))
+			}
+			b.WriteString(string(utf16.Decode(u16)))
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
 }

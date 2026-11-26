@@ -2,6 +2,7 @@ package invoicepdf
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"strings"
 
@@ -10,10 +11,23 @@ import (
 	"github.com/akarso/shopanda/internal/domain/invoice"
 )
 
+//go:embed fonts/DejaVuSans.ttf
+var dejaVuSans []byte
+
+//go:embed fonts/DejaVuSans-Bold.ttf
+var dejaVuSansBold []byte
+
+const (
+	fontFamily = "DejaVu"
+	pageWidth  = 210.0 // A4 mm
+	leftMargin = 10.0
+	textWidth  = pageWidth - 2*leftMargin
+)
+
 // Compile-time check.
 var _ invoice.PDFRenderer = (*Renderer)(nil)
 
-// Renderer generates invoice PDFs using fpdf.
+// Renderer generates invoice PDFs using fpdf with an embedded UTF-8 font.
 type Renderer struct{}
 
 // NewRenderer creates a Renderer.
@@ -22,35 +36,39 @@ func NewRenderer() *Renderer {
 }
 
 // Render generates a single-page PDF for the given invoice.
-// An empty seller omits the seller identity block.
+// Seller must be the sealed snapshot from the invoice (may be empty).
 func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
-	pdf.SetCompression(false) // keep seller/tax text searchable in PDF bytes (tests + tools)
+	pdf.SetCompression(true)
 	pdf.SetAutoPageBreak(true, 20)
+	pdf.AddUTF8FontFromBytes(fontFamily, "", dejaVuSans)
+	pdf.AddUTF8FontFromBytes(fontFamily, "B", dejaVuSansBold)
+	if err := pdf.Error(); err != nil {
+		return nil, fmt.Errorf("invoicepdf: load font: %w", err)
+	}
 	pdf.AddPage()
 
-	// ── Header ──────────────────────────────────────────────────────
-	pdf.SetFont("Helvetica", "B", 20)
-	pdf.Cell(0, 10, "INVOICE")
-	pdf.Ln(12)
+	seller = seller.SanitizeForPDF()
 
-	// ── Seller block (store identity) ───────────────────────────────
+	// ── Header ──────────────────────────────────────────────────────
+	pdf.SetFont(fontFamily, "B", 20)
+	writeWrapped(pdf, "INVOICE", 10)
+	pdf.Ln(4)
+
+	// ── Seller block (sealed snapshot) ──────────────────────────────
 	if !seller.IsEmpty() {
-		pdf.SetFont("Helvetica", "B", 11)
-		pdf.Cell(0, 6, "Seller")
-		pdf.Ln(7)
-		pdf.SetFont("Helvetica", "", 10)
+		pdf.SetFont(fontFamily, "B", 11)
+		writeWrapped(pdf, "Seller", 6)
+		pdf.SetFont(fontFamily, "", 10)
 		if name := strings.TrimSpace(seller.LegalName); name != "" {
-			pdf.Cell(0, 5, name)
-			pdf.Ln(5)
+			writeWrapped(pdf, name, 5)
 		}
 		for _, line := range seller.AddressLines {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
-			pdf.Cell(0, 5, line)
-			pdf.Ln(5)
+			writeWrapped(pdf, line, 5)
 		}
 		for _, tax := range seller.TaxIDs {
 			value := strings.TrimSpace(tax.Value)
@@ -62,33 +80,27 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 			if label != "" {
 				text = label + ": " + value
 			}
-			pdf.Cell(0, 5, text)
-			pdf.Ln(5)
+			writeWrapped(pdf, text, 5)
 		}
 		if phone := strings.TrimSpace(seller.Phone); phone != "" {
-			pdf.Cell(0, 5, "Phone: "+phone)
-			pdf.Ln(5)
+			writeWrapped(pdf, "Phone: "+phone, 5)
 		}
 		if email := strings.TrimSpace(seller.Email); email != "" {
-			pdf.Cell(0, 5, "Email: "+email)
-			pdf.Ln(5)
+			writeWrapped(pdf, "Email: "+email, 5)
 		}
 		pdf.Ln(4)
 	}
 
 	// ── Metadata ────────────────────────────────────────────────────
-	pdf.SetFont("Helvetica", "", 10)
-	pdf.Cell(0, 6, fmt.Sprintf("Invoice #: %d", inv.InvoiceNumber()))
+	pdf.SetFont(fontFamily, "", 10)
+	writeWrapped(pdf, fmt.Sprintf("Invoice #: %d", inv.InvoiceNumber()), 6)
+	writeWrapped(pdf, fmt.Sprintf("Date: %s", inv.CreatedAt().Format("2006-01-02")), 6)
+	writeWrapped(pdf, fmt.Sprintf("Order: %s", inv.OrderID()), 6)
+	writeWrapped(pdf, fmt.Sprintf("Customer: %s", inv.CustomerID()), 6)
 	pdf.Ln(6)
-	pdf.Cell(0, 6, fmt.Sprintf("Date: %s", inv.CreatedAt().Format("2006-01-02")))
-	pdf.Ln(6)
-	pdf.Cell(0, 6, fmt.Sprintf("Order: %s", inv.OrderID()))
-	pdf.Ln(6)
-	pdf.Cell(0, 6, fmt.Sprintf("Customer: %s", inv.CustomerID()))
-	pdf.Ln(12)
 
 	// ── Items table header ──────────────────────────────────────────
-	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetFont(fontFamily, "B", 9)
 	pdf.CellFormat(60, 8, "Item", "1", 0, "", false, 0, "")
 	pdf.CellFormat(30, 8, "SKU", "1", 0, "", false, 0, "")
 	pdf.CellFormat(20, 8, "Qty", "1", 0, "C", false, 0, "")
@@ -97,15 +109,15 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	pdf.Ln(8)
 
 	// ── Items rows ──────────────────────────────────────────────────
-	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetFont(fontFamily, "", 9)
 	cur := inv.Currency()
 	for _, item := range inv.Items() {
 		lt, err := item.LineTotal()
 		if err != nil {
 			return nil, fmt.Errorf("invoicepdf: line total: %w", err)
 		}
-		pdf.CellFormat(60, 7, item.Name, "1", 0, "", false, 0, "")
-		pdf.CellFormat(30, 7, item.SKU, "1", 0, "", false, 0, "")
+		pdf.CellFormat(60, 7, truncateCell(item.Name, 40), "1", 0, "", false, 0, "")
+		pdf.CellFormat(30, 7, truncateCell(item.SKU, 18), "1", 0, "", false, 0, "")
 		pdf.CellFormat(20, 7, fmt.Sprintf("%d", item.Quantity), "1", 0, "C", false, 0, "")
 		pdf.CellFormat(35, 7, formatMoney(item.UnitPrice.Amount(), cur), "1", 0, "R", false, 0, "")
 		pdf.CellFormat(35, 7, formatMoney(lt.Amount(), cur), "1", 0, "R", false, 0, "")
@@ -114,7 +126,7 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 
 	// ── Totals ──────────────────────────────────────────────────────
 	pdf.Ln(5)
-	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetFont(fontFamily, "", 10)
 	const totalsX = 145.0
 
 	pdf.SetX(totalsX)
@@ -127,7 +139,7 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	pdf.CellFormat(25, 7, formatMoney(inv.TaxAmount().Amount(), cur), "", 0, "R", false, 0, "")
 	pdf.Ln(7)
 
-	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetFont(fontFamily, "B", 10)
 	pdf.SetX(totalsX)
 	pdf.CellFormat(20, 7, "Total:", "", 0, "R", false, 0, "")
 	pdf.CellFormat(25, 7, formatMoney(inv.TotalAmount().Amount(), cur), "", 0, "R", false, 0, "")
@@ -141,6 +153,22 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 		return nil, fmt.Errorf("invoicepdf: write: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+func writeWrapped(pdf *fpdf.Fpdf, text string, lineHt float64) {
+	pdf.MultiCell(textWidth, lineHt, text, "", "", false)
+}
+
+func truncateCell(s string, maxRunes int) string {
+	s = strings.TrimSpace(s)
+	if maxRunes <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return string(r[:maxRunes-1]) + "…"
 }
 
 // formatMoney formats an int64 minor-unit amount as "CUR major.minor".

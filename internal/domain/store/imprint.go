@@ -23,3 +23,11 @@ func ImprintPublicTaxType(code string) bool {
 	_, ok := imprintPublicTaxTypes[code]
 	return ok
 }
+
+// InvoiceSellerTaxType reports whether a tax identifier may appear on the
+// invoice PDF seller block. Same VAT-style allowlist as imprint — company
+// registration, EIN, Steuernummer, SIRET, KVK, CRN, and generic stay off the
+// customer PDF until explicitly opted in.
+func InvoiceSellerTaxType(code string) bool {
+	return ImprintPublicTaxType(code)
+}

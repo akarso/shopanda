@@ -14,21 +14,16 @@ import (
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
-
-// InvoiceSellerLoader resolves the PDF seller block (store identity).
-type InvoiceSellerLoader interface {
-	InvoiceSeller(ctx context.Context, storeID string) (domainInvoice.SellerBlock, error)
-}
 
 // InvoiceAdminHandler serves admin invoice list and PDF download endpoints.
 type InvoiceAdminHandler struct {
-	invoices     domainInvoice.InvoiceRepository
-	orders       order.OrderRepository
-	renderer     domainInvoice.PDFRenderer
-	storage      media.Storage
-	seller       InvoiceSellerLoader
-	defaultStore func(context.Context) (string, error)
+	invoices domainInvoice.InvoiceRepository
+	orders   order.OrderRepository
+	renderer domainInvoice.PDFRenderer
+	storage  media.Storage
+	log      logger.Logger
 }
 
 // NewInvoiceAdminHandler creates an InvoiceAdminHandler.
@@ -55,15 +50,9 @@ func NewInvoiceAdminHandler(
 	}
 }
 
-// WithSellerLoader wires store identity for on-the-fly PDF re-renders.
-func (h *InvoiceAdminHandler) WithSellerLoader(loader InvoiceSellerLoader) *InvoiceAdminHandler {
-	h.seller = loader
-	return h
-}
-
-// WithDefaultStoreLookup resolves the store id when regenerating a PDF.
-func (h *InvoiceAdminHandler) WithDefaultStoreLookup(fn func(context.Context) (string, error)) *InvoiceAdminHandler {
-	h.defaultStore = fn
+// WithLog attaches a logger for PDF re-render diagnostics.
+func (h *InvoiceAdminHandler) WithLog(log logger.Logger) *InvoiceAdminHandler {
+	h.log = log
 	return h
 }
 
@@ -167,20 +156,13 @@ func (h *InvoiceAdminHandler) loadPDFBytes(ctx context.Context, inv domainInvoic
 			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
 		}
 	}
-	return h.renderer.Render(inv, h.loadSeller(ctx))
-}
-
-func (h *InvoiceAdminHandler) loadSeller(ctx context.Context) domainInvoice.SellerBlock {
-	if h == nil || h.seller == nil || h.defaultStore == nil {
-		return domainInvoice.SellerBlock{}
+	// Re-render from sealed snapshot only — never live identity.
+	if h.log != nil {
+		h.log.Warn("invoice.admin.pdf_rerender", map[string]interface{}{
+			"invoice_id":     inv.ID(),
+			"invoice_number": inv.InvoiceNumber(),
+			"seller_empty":   inv.Seller().IsEmpty(),
+		})
 	}
-	storeID, err := h.defaultStore(ctx)
-	if err != nil || storeID == "" {
-		return domainInvoice.SellerBlock{}
-	}
-	seller, err := h.seller.InvoiceSeller(ctx, storeID)
-	if err != nil {
-		return domainInvoice.SellerBlock{}
-	}
-	return seller
+	return h.renderer.Render(inv, inv.Seller())
 }

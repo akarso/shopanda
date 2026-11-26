@@ -1011,7 +1011,6 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		storeID = s.ID
 	}
 	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
-	legalName, storeAddress, storePhone, taxIDLine, emailGeneral, storeHours := h.identityLayoutFields(r, storeID)
 	cspNonce := h.newCSPNonce()
 	styleCSS, customCSS, htmxJS := "/static/css/style.css", "/static/css/custom.css", "/static/js/htmx.min.js"
 	if e := h.theme(); e != nil {
@@ -1020,6 +1019,9 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		customCSS = themefs.StaticURL(roots, "css/custom.css")
 		htmxJS = themefs.StaticURL(roots, "js/htmx.min.js")
 	}
+	// LegalName / StoreAddress / TaxIDLine / … stay on the layout struct for
+	// PR-1231. Do not call LayoutFields here until the footer template exists —
+	// every SSR hit would otherwise pay for identity + address + tax queries.
 	return StorefrontLayoutData{
 		SiteName:            siteName,
 		SearchAction:        searchAction,
@@ -1046,12 +1048,6 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		Categories:          storefrontCategoryTree(categories),
 		WeeeFooterEnabled:   weeeFooterEnabled,
 		WeeeProducerReg:     weeeProducerReg,
-		LegalName:           legalName,
-		StoreAddress:        storeAddress,
-		StorePhone:          storePhone,
-		TaxIDLine:           taxIDLine,
-		EmailGeneral:        emailGeneral,
-		StoreHours:          storeHours,
 		EnableSearchSuggest: h.search != nil,
 		Assets:              h.resolveStorefrontAssets(r),
 		CSPEnabled:          h.cspEnabled && cspNonce != "",
@@ -1128,17 +1124,6 @@ func (h *StorefrontHandler) weeeFooterData(r *http.Request, storeID string) (ena
 		return false, ""
 	}
 	return true, reg
-}
-
-func (h *StorefrontHandler) identityLayoutFields(r *http.Request, storeID string) (legalName, address, phone, taxLine, email, hours string) {
-	if h.storeIdentity == nil || storeID == "" {
-		return "", "", "", "", "", ""
-	}
-	fields, err := h.storeIdentity.LayoutFields(r.Context(), storeID)
-	if err != nil {
-		return "", "", "", "", "", ""
-	}
-	return fields.LegalName, fields.StoreAddress, fields.StorePhone, fields.TaxIDLine, fields.EmailGeneral, fields.Hours
 }
 
 func (h *StorefrontHandler) storefrontAccountDisplayName(customerID, displayName string) string {

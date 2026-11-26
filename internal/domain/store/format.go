@@ -46,7 +46,7 @@ func (a *Address) FormatDisplay() string {
 }
 
 // FormatLines returns non-empty postal lines for invoice PDF seller blocks.
-// Order: line1, line2, "postcode city", region, country.
+// Order matches FormatDisplay parts: line1, line2, region, "postcode city", country.
 func (a *Address) FormatLines() []string {
 	if a == nil || a.IsEmpty() {
 		return nil
@@ -58,12 +58,12 @@ func (a *Address) FormatLines() []string {
 	if v := strings.TrimSpace(a.Line2); v != "" {
 		lines = append(lines, v)
 	}
+	if v := strings.TrimSpace(a.Region); v != "" {
+		lines = append(lines, v)
+	}
 	cityPart := strings.TrimSpace(strings.TrimSpace(a.Postcode) + " " + strings.TrimSpace(a.City))
 	if cityPart != "" {
 		lines = append(lines, cityPart)
-	}
-	if v := strings.TrimSpace(a.Region); v != "" {
-		lines = append(lines, v)
 	}
 	if v := strings.TrimSpace(a.Country); v != "" {
 		lines = append(lines, v)

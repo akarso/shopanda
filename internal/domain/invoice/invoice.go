@@ -37,6 +37,7 @@ type Invoice struct {
 	taxAmount      shared.Money
 	totalAmount    shared.Money
 	createdAt      time.Time
+	seller         SellerBlock // sealed at issue; empty for pre-PR-1205 rows
 }
 
 // NewInvoice creates an issued invoice with validation.
@@ -133,6 +134,19 @@ func (inv Invoice) TotalAmount() shared.Money { return inv.totalAmount }
 
 // CreatedAt returns the invoice creation timestamp.
 func (inv Invoice) CreatedAt() time.Time { return inv.createdAt }
+
+// Seller returns the sealed seller identity snapshot (may be empty).
+func (inv Invoice) Seller() SellerBlock { return inv.seller }
+
+// SetSellerSnapshot seals the seller block before Save (issue time only).
+func (inv *Invoice) SetSellerSnapshot(s SellerBlock) {
+	inv.seller = s.SanitizeForPDF()
+}
+
+// SetSellerSnapshotFromDB restores the seller snapshot when loading from persistence.
+func (inv *Invoice) SetSellerSnapshotFromDB(s SellerBlock) {
+	inv.seller = s
+}
 
 // NewInvoiceFromDB reconstructs an Invoice from persisted data.
 // Status must be set separately via SetStatusFromDB, and items via SetItemsFromDB.

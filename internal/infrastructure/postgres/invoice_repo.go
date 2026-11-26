@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,11 +38,12 @@ func hydrateInvoice(s invoiceScanner) (*invoice.Invoice, error) {
 	var id, orderID, customerID, status, currency string
 	var invoiceNumber, subtotalAmount, taxAmount, totalAmount int64
 	var createdAt time.Time
+	var sellerRaw []byte
 	err := s.Scan(
 		&id, &invoiceNumber, &orderID, &customerID,
 		&status, &currency,
 		&subtotalAmount, &taxAmount, &totalAmount,
-		&createdAt,
+		&createdAt, &sellerRaw,
 	)
 	if err != nil {
 		return nil, err
@@ -63,11 +65,27 @@ func hydrateInvoice(s invoiceScanner) (*invoice.Invoice, error) {
 	if err := inv.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
+	seller, err := decodeSellerSnapshot(sellerRaw)
+	if err != nil {
+		return nil, err
+	}
+	inv.SetSellerSnapshotFromDB(seller)
 	return &inv, nil
 }
 
+func decodeSellerSnapshot(raw []byte) (invoice.SellerBlock, error) {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
+		return invoice.SellerBlock{}, nil
+	}
+	var seller invoice.SellerBlock
+	if err := json.Unmarshal(raw, &seller); err != nil {
+		return invoice.SellerBlock{}, fmt.Errorf("invoice_repo: seller_snapshot: %w", err)
+	}
+	return seller, nil
+}
+
 const invoiceCols = `id, invoice_number, order_id, customer_id, status, currency,
-	subtotal_amount, tax_amount, total_amount, created_at`
+	subtotal_amount, tax_amount, total_amount, created_at, seller_snapshot`
 
 // FindByID returns an invoice with its items by ID.
 // Returns (nil, nil) when not found.
@@ -130,17 +148,21 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	}
 	defer tx.Rollback()
 
+	sellerJSON, err := json.Marshal(inv.Seller())
+	if err != nil {
+		return fmt.Errorf("invoice_repo: marshal seller_snapshot: %w", err)
+	}
 	const insertInvoice = `INSERT INTO invoices
 		(id, order_id, customer_id, status, currency,
-		 subtotal_amount, tax_amount, total_amount, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 subtotal_amount, tax_amount, total_amount, created_at, seller_snapshot)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING invoice_number`
 	var invoiceNumber int64
 	err = tx.QueryRowContext(ctx, insertInvoice,
 		inv.ID(), inv.OrderID(), inv.CustomerID(),
 		string(inv.Status()), inv.Currency(),
 		inv.SubtotalAmount().Amount(), inv.TaxAmount().Amount(), inv.TotalAmount().Amount(),
-		inv.CreatedAt(),
+		inv.CreatedAt(), sellerJSON,
 	).Scan(&invoiceNumber)
 	if err != nil {
 		return fmt.Errorf("invoice_repo: insert invoice: %w", err)

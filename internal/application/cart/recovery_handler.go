@@ -127,12 +127,17 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 		return nil
 	}
 
+	brand := mail.EmailData{StoreURL: h.storeURL}
+	if h.brand != nil {
+		brand = h.brand.BrandEmailData(ctx, h.storeURL)
+	}
+
 	sent := 0
 	for _, c := range candidates {
 		if c == nil || len(c.Items) == 0 || c.CustomerID == "" {
 			continue
 		}
-		if err := h.processCart(ctx, c); err != nil {
+		if err := h.processCart(ctx, c, brand); err != nil {
 			h.log.Error("cart.recovery.cart_failed", err, map[string]interface{}{
 				"cart_id":     c.ID,
 				"customer_id": c.CustomerID,
@@ -148,7 +153,7 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 	return nil
 }
 
-func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart) error {
+func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData) error {
 	cust, err := h.customers.FindByID(ctx, c.CustomerID)
 	if err != nil {
 		return fmt.Errorf("find customer: %w", err)
@@ -180,10 +185,8 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart) e
 		cartURL = "/cart"
 	}
 
-	ed := mail.EmailData{StoreURL: h.storeURL}
-	if h.brand != nil {
-		ed = h.brand.BrandEmailData(ctx, h.storeURL)
-	}
+	ed := brand
+	ed.StoreURL = h.storeURL
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"CartURL":   cartURL,

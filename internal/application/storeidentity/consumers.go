@@ -8,10 +8,10 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 )
 
-// InvoiceSeller builds the PDF seller block for a store.
-// Missing identity / addresses yield an empty block (callers omit the section).
-// Tax IDs include all persisted types (not only imprint-public); labels come
-// from the registry when known, otherwise the type code.
+// InvoiceSeller builds the PDF seller block for a store at invoice issue time.
+// Missing identity / addresses yield an empty block (caller seals empty).
+// Lookup / DB errors are returned — callers must not treat them as empty.
+// Tax IDs are filtered by store.InvoiceSellerTaxType (VAT-style only).
 func (s *Service) InvoiceSeller(ctx context.Context, storeID string) (invoice.SellerBlock, error) {
 	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
@@ -48,6 +48,9 @@ func (s *Service) InvoiceSeller(ctx context.Context, storeID string) (invoice.Se
 		}
 	}
 	for _, ti := range taxIDs {
+		if !store.InvoiceSellerTaxType(ti.Type) {
+			continue
+		}
 		value := strings.TrimSpace(ti.Value)
 		if value == "" {
 			continue
@@ -58,7 +61,7 @@ func (s *Service) InvoiceSeller(ctx context.Context, storeID string) (invoice.Se
 		}
 		out.TaxIDs = append(out.TaxIDs, invoice.SellerTaxLine{Label: label, Value: value})
 	}
-	return out, nil
+	return out.SanitizeForPDF(), nil
 }
 
 // FormattedGeneralAddress returns the display string for the general address,
@@ -86,26 +89,40 @@ type LayoutIdentityFields struct {
 	Hours        string
 }
 
-// LayoutFields builds footer/header identity fields from public identity.
+// LayoutFields builds footer/header identity fields without loading the invoice
+// address (unused by layout). Prefer caching at the call site once PR-1231
+// renders these fields.
 func (s *Service) LayoutFields(ctx context.Context, storeID string) (LayoutIdentityFields, error) {
-	pub, err := s.GetPublicIdentity(ctx, storeID)
+	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
 		return LayoutIdentityFields{}, err
 	}
-	out := LayoutIdentityFields{
-		LegalName:    strings.TrimSpace(pub.LegalName),
-		StorePhone:   strings.TrimSpace(pub.Phone),
-		EmailGeneral: strings.TrimSpace(pub.EmailGeneral),
-		Hours:        strings.TrimSpace(pub.Hours),
+	id, err := s.identity.GetIdentity(ctx, storeID)
+	if err != nil {
+		return LayoutIdentityFields{}, err
 	}
-	if pub.General != nil {
-		out.StoreAddress = store.FormatAddressDisplay(
-			pub.General.Line1, pub.General.Line2, pub.General.City,
-			pub.General.Region, pub.General.Postcode, pub.General.Country,
-		)
+	general, err := s.identity.GetAddress(ctx, storeID, store.AddressRoleGeneral)
+	if err != nil {
+		return LayoutIdentityFields{}, err
 	}
-	lines := make([]string, 0, len(pub.TaxIDs))
-	for _, ti := range pub.TaxIDs {
+	taxIDs, err := s.identity.ListTaxIdentifiers(ctx, storeID)
+	if err != nil {
+		return LayoutIdentityFields{}, err
+	}
+
+	out := LayoutIdentityFields{}
+	if id != nil {
+		out.LegalName = strings.TrimSpace(id.LegalName)
+		out.StorePhone = strings.TrimSpace(id.Phone)
+		out.EmailGeneral = strings.TrimSpace(id.EmailGeneral)
+		out.Hours = strings.TrimSpace(id.Hours)
+	}
+	out.StoreAddress = general.FormatDisplay()
+	lines := make([]string, 0, len(taxIDs))
+	for _, ti := range taxIDs {
+		if !store.ImprintPublicTaxType(ti.Type) {
+			continue
+		}
 		label := ti.Type
 		if t, ok := s.types.Get(ti.Type); ok && strings.TrimSpace(t.Label) != "" {
 			label = t.Label

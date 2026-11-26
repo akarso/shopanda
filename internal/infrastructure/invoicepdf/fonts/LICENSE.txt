@@ -1,0 +1,3 @@
+DejaVu fonts — Bitstream Vera Copyright + public domain changes by DejaVu
+contributors. See https://dejavu-fonts.github.io/ and the upstream LICENSE.
+Embedded here so invoice PDFs can render Polish/EU legal names (PR-1205).

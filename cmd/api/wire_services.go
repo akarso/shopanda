@@ -33,6 +33,7 @@ import (
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
+	invoiceapp "github.com/akarso/shopanda/internal/application/invoice"
 	jobsApp "github.com/akarso/shopanda/internal/application/jobs"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	mfaApp "github.com/akarso/shopanda/internal/application/mfa"
@@ -463,9 +464,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		return st.ID, nil
 	}
 
-	notifSvc := notification.New(mailTemplates, repos.customerRepo, repos.orderRepo, jobQueue, log,
+	// Media storage (resolve + bind so BoundMediaStorage matches this instance).
+	mediaStorage, err := resolveAndBindMediaStorage(pluginApp, cfg)
+	if err != nil {
+		return nil, err
+	}
+	invoicePDFReadable, _ := mediaStorage.(media.ReadableStorage)
+
+	notifOpts := []notification.Option{
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
-		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
+		notification.WithResetBaseURL(cfg.Server.PublicBaseURL + "/auth/reset-password"),
 		notification.WithInvoices(repos.invoiceRepo),
 		notification.WithPDFRenderer(invoicePDFRenderer),
 		notification.WithEmailDedupe(repos.notificationDedupeRepo),
@@ -485,13 +493,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 			}
 			return translation.PrimaryLanguage(st.Language), nil
 		}),
-	)
-
-	// Media storage (resolve + bind so BoundMediaStorage matches this instance).
-	mediaStorage, err := resolveAndBindMediaStorage(pluginApp, cfg)
-	if err != nil {
-		return nil, err
 	}
+	if invoicePDFReadable != nil {
+		notifOpts = append(notifOpts, notification.WithInvoicePDFStorage(invoicePDFReadable))
+	}
+	notifSvc := notification.New(mailTemplates, repos.customerRepo, repos.orderRepo, jobQueue, log, notifOpts...)
 
 	menuResolver := cmsApp.NewMenuResolver(repos.categoryRepo, repos.pageRepo)
 
@@ -1007,8 +1013,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithEventBus(bus).
 		WithShipmentStatusService(shipmentStatusService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage).
+		WithLog(log)
+	// Issue path seals seller_snapshot + stores PDF; HTTP generate surface is follow-up.
+	_ = invoiceapp.NewService(repos.orderRepo, repos.invoiceRepo, invoicePDFRenderer, mediaStorage, bus, log).
 		WithSellerLoader(storeIdentitySvc).
 		WithDefaultStoreLookup(defaultStoreID)
+
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
 	adminMFAHandler := admin.NewAdminMFAHandler(mfaService)

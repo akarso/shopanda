@@ -388,17 +388,29 @@ func TestService_InvoiceSellerAndLayoutFields(t *testing.T) {
 	if seller.LegalName != "Legal Co" || seller.Email != "sales@x.test" {
 		t.Fatalf("seller %#v", seller)
 	}
-	if len(seller.TaxIDs) != 2 {
-		t.Fatalf("invoice seller must include all tax IDs, got %#v", seller.TaxIDs)
+	if len(seller.TaxIDs) != 1 || seller.TaxIDs[0].Label != "NIP" || seller.TaxIDs[0].Value != "5252344022" {
+		t.Fatalf("invoice seller must be VAT-style only, got %#v", seller.TaxIDs)
 	}
-	foundNIP := false
-	for _, ti := range seller.TaxIDs {
-		if ti.Label == "NIP" && ti.Value == "5252344022" {
-			foundNIP = true
-		}
+
+	// Invoice address wins over general when it has postal content.
+	invoiceAddr, _ := store.NewAddress(st.ID, store.AddressRoleInvoice, "Invoice Rd", "", "Krakow", "", "30-001", "PL", "")
+	_ = mem.SaveAddress(context.Background(), invoiceAddr)
+	seller, err = svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !foundNIP {
-		t.Fatalf("missing NIP label %#v", seller.TaxIDs)
+	if len(seller.AddressLines) == 0 || seller.AddressLines[0] != "Invoice Rd" {
+		t.Fatalf("prefer invoice address %#v", seller.AddressLines)
+	}
+	seller.Email = "" // ensure PreferContactEmail covered above already
+	idty2, _ := store.NewIdentity(st.ID, "Legal Co", "+48111", "9-17", "general@x.test", "", "")
+	_ = mem.SaveIdentity(context.Background(), idty2)
+	seller, err = svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seller.Email != "general@x.test" {
+		t.Fatalf("sales empty → general email %#v", seller)
 	}
 
 	addr, err := svc.FormattedGeneralAddress(context.Background(), st.ID)

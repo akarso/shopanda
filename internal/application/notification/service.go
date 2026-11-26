@@ -18,6 +18,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/store"
@@ -73,7 +74,8 @@ type Service struct {
 	voucherPDF          domainvoucher.PDFRenderer
 	identity            *storeidentity.Service
 	stores              store.StoreRepository
-	config              legal.ConfigGetter // optional — interim store.logo for LogoURL
+	config              legal.ConfigGetter    // optional — interim store.logo for LogoURL
+	invoicePDF          media.ReadableStorage // optional — prefer sealed stored PDF over re-render
 }
 
 // Option configures optional Service fields.
@@ -141,8 +143,8 @@ func WithVoucherPDF(r domainvoucher.PDFRenderer) Option {
 	return func(s *Service) { s.voucherPDF = r }
 }
 
-// WithStoreIdentity fills EmailData brand fields and invoice PDF seller blocks
-// from store identity (PR-1205). Nil is a no-op.
+// WithStoreIdentity fills EmailData brand fields from store identity (PR-1205).
+// Nil is a no-op. Invoice PDF seller comes from the sealed invoice snapshot.
 func WithStoreIdentity(svc *storeidentity.Service, stores store.StoreRepository) Option {
 	return func(s *Service) {
 		s.identity = svc
@@ -155,13 +157,18 @@ func WithConfig(cfg legal.ConfigGetter) Option {
 	return func(s *Service) { s.config = cfg }
 }
 
+// WithInvoicePDFStorage prefers the sealed stored PDF for invoice emails.
+func WithInvoicePDFStorage(store media.ReadableStorage) Option {
+	return func(s *Service) { s.invoicePDF = store }
+}
+
 // baseEmailData starts every template payload with StoreURL plus brand fields
 // from the default store's identity (best-effort).
 func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
-	ed := mail.EmailData{StoreURL: s.storeURL}
 	if s == nil {
-		return ed
+		return mail.EmailData{}
 	}
+	ed := mail.EmailData{StoreURL: s.storeURL}
 	storeID, storeName := s.resolveDefaultStore(ctx)
 	ed.StoreName = storeName
 	if s.identity != nil && storeID != "" {
@@ -205,12 +212,11 @@ func (s *Service) logoURL(ctx context.Context, storeID string) string {
 		if err != nil || v == nil {
 			return ""
 		}
-		switch t := v.(type) {
-		case string:
-			return strings.TrimSpace(t)
-		default:
-			return strings.TrimSpace(fmt.Sprint(t))
+		t, ok := v.(string)
+		if !ok {
+			return ""
 		}
+		return strings.TrimSpace(t)
 	}
 	if storeID != "" {
 		if u := read(legal.ScopedConfigKey(storeID, "store.logo")); u != "" {
@@ -220,23 +226,23 @@ func (s *Service) logoURL(ctx context.Context, storeID string) string {
 	return read("store.logo")
 }
 
-func (s *Service) loadInvoiceSeller(ctx context.Context) invoice.SellerBlock {
-	if s == nil || s.identity == nil {
-		return invoice.SellerBlock{}
+// invoicePDFBytes prefers the sealed object in storage; otherwise re-renders
+// from the invoice's seller snapshot (never live identity).
+func (s *Service) invoicePDFBytes(ctx context.Context, inv invoice.Invoice) ([]byte, error) {
+	pdfPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
+	if s.invoicePDF != nil {
+		data, err := s.invoicePDF.Read(ctx, pdfPath)
+		if err == nil && len(data) > 0 {
+			return data, nil
+		}
+		if err != nil && !media.IsNotFound(err) {
+			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
+		}
 	}
-	storeID, _ := s.resolveDefaultStore(ctx)
-	if storeID == "" {
-		return invoice.SellerBlock{}
+	if s.pdfRenderer == nil {
+		return nil, fmt.Errorf("invoice pdf renderer not configured")
 	}
-	seller, err := s.identity.InvoiceSeller(ctx, storeID)
-	if err != nil {
-		s.log.Warn("notification: invoice seller failed", map[string]interface{}{
-			"store_id": storeID,
-			"error":    err.Error(),
-		})
-		return invoice.SellerBlock{}
-	}
-	return seller
+	return s.pdfRenderer.Render(inv, inv.Seller())
 }
 
 // orderDisplayLanguage resolves the sealed hook language once per email.
@@ -1054,10 +1060,10 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		return err
 	}
 
-	pdfBytes, err := s.pdfRenderer.Render(*inv, s.loadInvoiceSeller(ctx))
+	pdfBytes, err := s.invoicePDFBytes(ctx, *inv)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.pdf_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
-		return fmt.Errorf("notification: render invoice PDF: %w", err)
+		return fmt.Errorf("notification: invoice PDF: %w", err)
 	}
 
 	items := inv.Items()

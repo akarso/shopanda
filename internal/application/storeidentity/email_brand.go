@@ -2,7 +2,6 @@ package storeidentity
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/legal"
@@ -49,12 +48,11 @@ func logoURL(ctx context.Context, cfg legal.ConfigGetter, storeID string) string
 		if err != nil || v == nil {
 			return ""
 		}
-		switch t := v.(type) {
-		case string:
-			return strings.TrimSpace(t)
-		default:
-			return strings.TrimSpace(fmt.Sprint(t))
+		t, ok := v.(string)
+		if !ok {
+			return ""
 		}
+		return strings.TrimSpace(t)
 	}
 	if storeID != "" {
 		if u := read(legal.ScopedConfigKey(storeID, "store.logo")); u != "" {
