@@ -444,6 +444,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
+	emailLayout, err := loadFileEmailTemplates(mailTemplates, defaultEmailTemplatesDir, log)
+	if err != nil {
+		return nil, fmt.Errorf("email templates: %w", err)
+	}
 
 	invoicePDFRenderer := invoicepdf.NewRenderer()
 	voucherPDFRenderer := voucherpdf.NewRenderer()
@@ -483,6 +487,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithVoucherPDF(voucherPDFRenderer),
 		notification.WithStoreIdentity(storeIdentitySvc, repos.storeRepo),
 		notification.WithConfig(repos.configRepo),
+		notification.WithLayout(emailLayout),
 		notification.WithStoreLanguageLookup(func(ctx context.Context) (string, error) {
 			st, err := repos.storeRepo.FindDefault(ctx)
 			if err != nil {

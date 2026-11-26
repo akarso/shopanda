@@ -9,6 +9,12 @@ type TemplateLoader interface {
 	Load(name string) (subject, body string, err error)
 }
 
+// Layout wraps rendered inner HTML in shared branding chrome (_layout.html).
+// Nil layout means send the body unwrapped (builtins / tests).
+type Layout interface {
+	Wrap(body string, ed EmailData) (string, error)
+}
+
 // EmailData is the common data structure passed to every email template.
 // Templates access top-level fields directly (e.g. {{.StoreName}}) and
 // template-specific values via the Data map (e.g. {{.Data.OrderID}}).

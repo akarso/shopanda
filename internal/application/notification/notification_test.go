@@ -250,6 +250,47 @@ func TestHandleOrderPaid(t *testing.T) {
 	}
 }
 
+type stubLayout struct {
+	wrapped bool
+}
+
+func (s *stubLayout) Wrap(body string, ed mail.EmailData) (string, error) {
+	s.wrapped = true
+	return "<layout>" + body + "</layout>:" + ed.StoreName, nil
+}
+
+func TestHandleOrderPaid_WrapsLayout(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	layout := &stubLayout{}
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithLayout(layout))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if !layout.wrapped {
+		t.Fatal("expected layout.Wrap")
+	}
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if !strings.HasPrefix(body, "<layout>") || !strings.Contains(body, "</layout>") {
+		t.Fatalf("body not wrapped: %q", body)
+	}
+}
+
 func TestHandleOrderPaid_EnqueueFailureAllowsRetry(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)

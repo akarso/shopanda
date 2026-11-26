@@ -926,6 +926,10 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
+	emailLayout, err := loadFileEmailTemplates(mailTemplates, defaultEmailTemplatesDir, log)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("email templates: %w", err)
+	}
 	cartRepo, err := postgres.NewCartRepo(conn)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -962,6 +966,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		Variants:  variantRepo,
 		Products:  productRepo,
 		Templates: mailTemplates,
+		Layout:    emailLayout,
 		Queue:     jobQueue,
 		StoreURL:  cfg.Server.PublicBaseURL,
 		Settings:  configRepo,

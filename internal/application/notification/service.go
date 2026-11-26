@@ -61,6 +61,7 @@ type EmailDedupeStore interface {
 // via the job queue.
 type Service struct {
 	templates           *mail.Templates
+	layout              mail.Layout // optional — _layout.html chrome (PR-1210)
 	customers           customer.CustomerRepository
 	orders              order.OrderRepository
 	queue               jobs.Queue
@@ -164,6 +165,29 @@ func WithConfig(cfg legal.ConfigGetter) Option {
 // WithInvoicePDFStorage prefers the sealed stored PDF for invoice emails.
 func WithInvoicePDFStorage(store media.ReadableStorage) Option {
 	return func(s *Service) { s.invoicePDF = store }
+}
+
+// WithLayout wraps rendered bodies in shared email chrome (_layout.html).
+// Nil is a no-op (builtins / unit tests without file templates).
+func WithLayout(layout mail.Layout) Option {
+	return func(s *Service) { s.layout = layout }
+}
+
+// renderEmail renders a named template and optionally wraps with layout.
+func (s *Service) renderEmail(name, to string, ed mail.EmailData) (mail.Message, error) {
+	msg, err := s.templates.Render(name, to, ed)
+	if err != nil {
+		return mail.Message{}, err
+	}
+	if s == nil || s.layout == nil {
+		return msg, nil
+	}
+	wrapped, err := s.layout.Wrap(msg.Body, ed)
+	if err != nil {
+		return mail.Message{}, fmt.Errorf("notification: wrap layout %s: %w", name, err)
+	}
+	msg.Body = wrapped
+	return msg, nil
 }
 
 // baseEmailData starts every template payload with StoreURL plus brand fields
@@ -462,7 +486,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		"Total":     o.TotalAmount.String(),
 	}
 
-	msg, err := s.templates.Render("order_confirmed", recipient.Email, ed)
+	msg, err := s.renderEmail("order_confirmed", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleOrderPaid.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -605,7 +629,7 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 		"ExpiresIn": "1 hour",
 	}
 
-	msg, err := s.templates.Render("password_reset", cust.Email, ed)
+	msg, err := s.renderEmail("password_reset", cust.Email, ed)
 	if err != nil {
 		s.log.Error("HandlePasswordReset.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -646,7 +670,7 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		"VerifyURL": verifyURL,
 	}
 
-	msg, err := s.templates.Render("email_verification", cust.Email, ed)
+	msg, err := s.renderEmail("email_verification", cust.Email, ed)
 	if err != nil {
 		s.log.Error("HandleEmailVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -682,7 +706,7 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		"VerifyURL": data.VerifyURL,
 	}
 
-	msg, err := s.templates.Render("security_verification", cust.Email, ed)
+	msg, err := s.renderEmail("security_verification", cust.Email, ed)
 	if err != nil {
 		s.log.Error("HandleSecurityVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -729,7 +753,7 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		"NewEmail":  newEmail,
 	}
 
-	msg, err := s.templates.Render("email_change_verification", newEmail, ed)
+	msg, err := s.renderEmail("email_change_verification", newEmail, ed)
 	if err != nil {
 		s.log.Error("HandleEmailChangeRequested.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -769,7 +793,7 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		"NewEmail":  strings.TrimSpace(data.NewEmail),
 	}
 
-	msg, err := s.templates.Render("email_change_notice", oldEmail, ed)
+	msg, err := s.renderEmail("email_change_notice", oldEmail, ed)
 	if err != nil {
 		s.log.Error("HandleEmailChangeNotified.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -824,7 +848,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		ed.Data["Carrier"] = data.ProviderRef
 	}
 
-	msg, err := s.templates.Render("order_shipped", recipient.Email, ed)
+	msg, err := s.renderEmail("order_shipped", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleShipmentShipped.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "shipment_id": data.ShipmentID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -965,7 +989,7 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		"Guest":     recipient.Guest,
 		"Codes":     codeStrs,
 	}
-	msg, err := s.templates.Render("voucher_issued", recipient.Email, ed)
+	msg, err := s.renderEmail("voucher_issued", recipient.Email, ed)
 	if err != nil {
 		return fmt.Errorf("notification: render voucher template: %w", err)
 	}
@@ -1090,7 +1114,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		"Total":         inv.TotalAmount().String(),
 	}
 
-	msg, err := s.templates.Render("invoice_created", recipient.Email, ed)
+	msg, err := s.renderEmail("invoice_created", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.template_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
 		return fmt.Errorf("notification: render template: %w", err)

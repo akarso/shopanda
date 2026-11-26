@@ -24,11 +24,12 @@ RUN apk add --no-cache ca-certificates wget \
 # Application binary.
 COPY --from=builder /shopanda /usr/local/bin/shopanda
 
-# Migrations, config template, OpenAPI spec, and default theme.
+# Migrations, config template, OpenAPI spec, default theme, email templates.
 COPY migrations/            /app/migrations/
 COPY configs/config.example.yaml /app/configs/config.yaml
 COPY openapi.yaml           /app/openapi.yaml
 COPY themes/                /app/themes/
+COPY templates/emails/      /app/templates/emails/
 
 WORKDIR /app
 

@@ -38,6 +38,7 @@ type RecoveryHandler struct {
 	variants   catalog.VariantRepository
 	products   catalog.ProductRepository
 	templates  *mail.Templates
+	layout     mail.Layout
 	queue      jobs.Queue
 	storeURL   string
 	settings   config.Repository
@@ -53,6 +54,7 @@ type RecoveryHandlerConfig struct {
 	Variants   catalog.VariantRepository
 	Products   catalog.ProductRepository
 	Templates  *mail.Templates
+	Layout     mail.Layout // optional — _layout.html chrome (PR-1210)
 	Queue      jobs.Queue
 	Settings   config.Repository
 	Brand      RecoveryBrand
@@ -94,6 +96,7 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		variants:   cfg.Variants,
 		products:   cfg.Products,
 		templates:  cfg.Templates,
+		layout:     cfg.Layout,
 		queue:      cfg.Queue,
 		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
 		settings:   cfg.Settings,
@@ -196,6 +199,13 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	msg, err := h.templates.Render("cart_recovery", email, ed)
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
+	}
+	if h.layout != nil {
+		wrapped, wErr := h.layout.Wrap(msg.Body, ed)
+		if wErr != nil {
+			return fmt.Errorf("wrap layout: %w", wErr)
+		}
+		msg.Body = wrapped
 	}
 	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
 }

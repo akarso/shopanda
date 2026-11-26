@@ -24,6 +24,9 @@ type LayoutRenderer struct {
 	layout *template.Template
 }
 
+// Compile-time check: LayoutRenderer satisfies mail.Layout (PR-1210).
+var _ mail.Layout = (*LayoutRenderer)(nil)
+
 // NewLayoutRenderer parses _layout.html from dir.
 // If the layout file does not exist, Wrap returns the body unchanged.
 func NewLayoutRenderer(dir string) (*LayoutRenderer, error) {
