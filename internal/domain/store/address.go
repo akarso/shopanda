@@ -64,15 +64,15 @@ func roleErrorLabel(v string) string {
 
 // Address is a structured store address for one role.
 type Address struct {
-	StoreID  string
-	Role     AddressRole
-	Line1    string
-	Line2    string
-	City     string
-	Region   string
-	Postcode string
-	Country  string // ISO 3166-1 alpha-2 (ASCII A–Z)
-	Phone    string
+	StoreID  string      `json:"store_id"`
+	Role     AddressRole `json:"role"`
+	Line1    string      `json:"line1"`
+	Line2    string      `json:"line2"`
+	City     string      `json:"city"`
+	Region   string      `json:"region"`
+	Postcode string      `json:"postcode"`
+	Country  string      `json:"country"` // ISO 3166-1 alpha-2 (ASCII A–Z)
+	Phone    string      `json:"phone"`
 }
 
 // IsEmpty reports whether the address has no postal content for role fallback.

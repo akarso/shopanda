@@ -20,11 +20,11 @@ const (
 // TaxIdentifierTypeGeneric, which ApplicableTo always appends last); admin
 // "Add other" uses All() minus ApplicableTo.
 type TaxIdentifierType struct {
-	Code       string
-	Label      string
-	Countries  []string // ISO-2; empty = not country-matched (see ApplicableTo)
-	Region     string   // TaxIdentifierRegionEU | TaxIdentifierRegionUS | ""
-	FormatHint string
+	Code       string   `json:"code"`
+	Label      string   `json:"label"`
+	Countries  []string `json:"countries"` // ISO-2; empty = not country-matched (see ApplicableTo)
+	Region     string   `json:"region"`    // TaxIdentifierRegionEU | TaxIdentifierRegionUS | ""
+	FormatHint string   `json:"format_hint"`
 }
 
 // NewTaxIdentifierType validates and normalizes a type definition.

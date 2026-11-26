@@ -54,7 +54,7 @@ See [`specs/STORE_IDENTITY.md`](specs/STORE_IDENTITY.md).
 | --- | --- | --- |
 | PR-1200 | Identity domain | `Identity` (legal name, phone, hours, contact emails), `Address` + four roles, `TaxIdentifier`. No postgres yet. — **done** |
 | PR-1201 | Tax identifier type registry | Core catalog (`pl_nip`, `eu_vat`, `de_ustidnr`, `us_ein`, …) + `RegisterTaxIdentifierType` plugin port. — **done** |
-| PR-1202 | Persistence + admin/public API | Migration; store-scoped CRUD; backfill `store.address` into `general`; `GET` public identity for storefront/headless. |
+| PR-1202 | Persistence + admin/public API | Migration; store-scoped CRUD; backfill `store.address` into `general`; `GET` public identity for storefront/headless. — **done** |
 | PR-1203 | Store Information admin page | Settings → Store Information: legal name, phone, hours, three emails. Move those fields off Settings → General. |
 | PR-1204 | Address pages | Settings → Store Addresses: index of four roles + per-role structured form (Magento-like). |
 | PR-1205 | Consumers | Invoice PDF seller block; `EmailData` from identity; storefront layout + footer partial fields. |

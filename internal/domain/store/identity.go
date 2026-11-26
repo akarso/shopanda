@@ -33,14 +33,14 @@ const (
 // Empty LegalName is allowed for drafts; invoice/imprint consumers must treat
 // empty as missing (no domain-level required guard).
 type Identity struct {
-	StoreID      string
-	LegalName    string
-	Phone        string
-	Hours        string
-	EmailGeneral string
-	EmailSales   string
-	EmailSupport string
-	UpdatedAt    time.Time
+	StoreID      string    `json:"store_id"`
+	LegalName    string    `json:"legal_name"`
+	Phone        string    `json:"phone"`
+	Hours        string    `json:"hours"`
+	EmailGeneral string    `json:"email_general"`
+	EmailSales   string    `json:"email_sales"`
+	EmailSupport string    `json:"email_support"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // NewIdentity constructs a store identity. Emails may be empty; when set they
