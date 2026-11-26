@@ -61,6 +61,19 @@ func TestStorage_SaveAndURL(t *testing.T) {
 	}
 }
 
+func TestStorage_Head_ZeroLengthIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	s := mustLocal(t, dir, "/media")
+	path := filepath.Join(dir, "empty.pdf")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	err := s.Head(context.Background(), "empty.pdf")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestStorage_Delete(t *testing.T) {
 	dir := t.TempDir()
 	s := mustLocal(t, dir, "/media")

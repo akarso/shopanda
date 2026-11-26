@@ -23,6 +23,7 @@ import (
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -942,6 +943,19 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, nil, err
 	}
 	configRepo := postgres.NewConfigRepo(conn)
+	storeRepo, err := postgres.NewStoreRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	storeIdentityRepo, err := postgres.NewStoreIdentityRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	recoveryIdentity := storeidentity.NewService(
+		storeIdentityRepo,
+		storeRepo,
+		app.TaxIdentifierTypes(),
+	)
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
 		Carts:     cartRepo,
 		Customers: customerRepo,
@@ -951,7 +965,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		Queue:     jobQueue,
 		StoreURL:  cfg.Server.PublicBaseURL,
 		Settings:  configRepo,
-		Log:       log,
+		Brand: storeidentity.EmailBrandSource{
+			Identity: recoveryIdentity,
+			Stores:   storeRepo,
+			Config:   configRepo,
+		},
+		Log: log,
 	}))
 
 	auditLogRepo, err := postgres.NewAuditLogRepo(conn)

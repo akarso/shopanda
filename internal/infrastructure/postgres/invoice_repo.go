@@ -3,12 +3,15 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that InvoiceRepo implements invoice.InvoiceRepository.
@@ -37,11 +40,12 @@ func hydrateInvoice(s invoiceScanner) (*invoice.Invoice, error) {
 	var id, orderID, customerID, status, currency string
 	var invoiceNumber, subtotalAmount, taxAmount, totalAmount int64
 	var createdAt time.Time
+	var sellerRaw []byte
 	err := s.Scan(
 		&id, &invoiceNumber, &orderID, &customerID,
 		&status, &currency,
 		&subtotalAmount, &taxAmount, &totalAmount,
-		&createdAt,
+		&createdAt, &sellerRaw,
 	)
 	if err != nil {
 		return nil, err
@@ -63,11 +67,27 @@ func hydrateInvoice(s invoiceScanner) (*invoice.Invoice, error) {
 	if err := inv.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
+	seller, err := decodeSellerSnapshot(sellerRaw)
+	if err != nil {
+		return nil, err
+	}
+	inv.SetSellerSnapshotFromDB(seller)
 	return &inv, nil
 }
 
+func decodeSellerSnapshot(raw []byte) (invoice.SellerBlock, error) {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
+		return invoice.SellerBlock{}, nil
+	}
+	var seller invoice.SellerBlock
+	if err := json.Unmarshal(raw, &seller); err != nil {
+		return invoice.SellerBlock{}, fmt.Errorf("invoice_repo: seller_snapshot: %w", err)
+	}
+	return seller, nil
+}
+
 const invoiceCols = `id, invoice_number, order_id, customer_id, status, currency,
-	subtotal_amount, tax_amount, total_amount, created_at`
+	subtotal_amount, tax_amount, total_amount, created_at, seller_snapshot`
 
 // FindByID returns an invoice with its items by ID.
 // Returns (nil, nil) when not found.
@@ -118,8 +138,13 @@ func (r *InvoiceRepo) FindByOrderID(ctx context.Context, orderID string) (*invoi
 }
 
 // Save persists an invoice and its items (insert-only).
-// Assigns InvoiceNumber from the DB sequence.
 func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
+	return r.SavePreparing(ctx, inv, nil)
+}
+
+// SavePreparing inserts the invoice, assigns InvoiceNumber, runs beforeCommit
+// (e.g. PDF render) before commit, and rolls back if beforeCommit fails.
+func (r *InvoiceRepo) SavePreparing(ctx context.Context, inv *invoice.Invoice, beforeCommit func(*invoice.Invoice) error) error {
 	if inv == nil {
 		return fmt.Errorf("invoice_repo: save: invoice must not be nil")
 	}
@@ -130,21 +155,29 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	}
 	defer tx.Rollback()
 
+	sellerJSON, err := json.Marshal(inv.Seller())
+	if err != nil {
+		return fmt.Errorf("invoice_repo: marshal seller_snapshot: %w", err)
+	}
 	const insertInvoice = `INSERT INTO invoices
 		(id, order_id, customer_id, status, currency,
-		 subtotal_amount, tax_amount, total_amount, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 subtotal_amount, tax_amount, total_amount, created_at, seller_snapshot)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING invoice_number`
 	var invoiceNumber int64
 	err = tx.QueryRowContext(ctx, insertInvoice,
 		inv.ID(), inv.OrderID(), inv.CustomerID(),
 		string(inv.Status()), inv.Currency(),
 		inv.SubtotalAmount().Amount(), inv.TaxAmount().Amount(), inv.TotalAmount().Amount(),
-		inv.CreatedAt(),
+		inv.CreatedAt(), sellerJSON,
 	).Scan(&invoiceNumber)
 	if err != nil {
+		if mapped := mapInvoiceInsertError(err); mapped != nil {
+			return mapped
+		}
 		return fmt.Errorf("invoice_repo: insert invoice: %w", err)
 	}
+	inv.SetInvoiceNumberFromDB(invoiceNumber)
 
 	items := inv.Items()
 	if len(items) > 0 {
@@ -168,10 +201,63 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		}
 	}
 
+	if beforeCommit != nil {
+		if err := beforeCommit(inv); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("invoice_repo: commit: %w", err)
 	}
-	inv.SetInvoiceNumberFromDB(invoiceNumber)
+	return nil
+}
+
+// invoicesOrderIDUniq is the UNIQUE constraint on invoices.order_id.
+const invoicesOrderIDUniq = "invoices_order_id_key"
+
+// mapInvoiceInsertError maps order_id unique violations to Conflict so
+// concurrent order.paid can repair. Other 23505s (id, invoice_number) are
+// left unmapped so callers do not FindByOrderID and get a false empty row.
+func mapInvoiceInsertError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return nil
+	}
+	if pgErr.ConstraintName == invoicesOrderIDUniq {
+		return apperror.Conflict("invoice already exists for this order")
+	}
+	return nil
+}
+
+// Delete removes an invoice and its items so a failed PDF finalize can retry.
+func (r *InvoiceRepo) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("invoice_repo: delete: empty id")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invoice_items WHERE invoice_id = $1`, id); err != nil {
+		return fmt.Errorf("invoice_repo: delete items: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM invoices WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete invoice: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete rows: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("invoice_repo: delete: invoice %s not found", id)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("invoice_repo: delete commit: %w", err)
+	}
 	return nil
 }
 

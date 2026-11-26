@@ -15,6 +15,15 @@ type InvoiceRepository interface {
 	// Save persists an invoice and its items (insert-only).
 	// Assigns InvoiceNumber from the DB sequence.
 	Save(ctx context.Context, inv *Invoice) error
+
+	// SavePreparing inserts the invoice, assigns InvoiceNumber, then runs
+	// beforeCommit before committing. If beforeCommit fails the insert is
+	// rolled back (layout/render can reject without leaving a stuck row).
+	// A nil beforeCommit commits immediately after insert (same as Save).
+	SavePreparing(ctx context.Context, inv *Invoice, beforeCommit func(*Invoice) error) error
+
+	// Delete removes an invoice and its items.
+	Delete(ctx context.Context, id string) error
 }
 
 // CreditNoteRepository defines persistence operations for credit notes.

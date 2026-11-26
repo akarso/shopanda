@@ -57,7 +57,7 @@ See [`specs/STORE_IDENTITY.md`](specs/STORE_IDENTITY.md).
 | PR-1202 | Persistence + admin/public API | Migration; store-scoped CRUD; backfill `store.address` into `general`; `GET` public identity for storefront/headless. — **done** |
 | PR-1203 | Store Information admin page | Settings → Store Information: legal name, phone, hours, three emails. Move those fields off Settings → General. — **done** |
 | PR-1204 | Address pages | Settings → Store Addresses: index of four roles + per-role structured form (Magento-like). — **done** |
-| PR-1205 | Consumers | Invoice PDF seller block; `EmailData` from identity; storefront layout + footer partial fields. |
+| PR-1205 | Consumers | Invoice PDF seller block; `EmailData` from identity; storefront layout + footer partial fields. — **done** |
 
 **Out of scope for the track:** Peppol e-invoicing, per-country checksum validation (format hints only), GPSR auto-fill from legal name, Magento “sender identity” picker per email type.
 

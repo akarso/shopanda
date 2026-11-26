@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // InvoiceAdminHandler serves admin invoice list and PDF download endpoints.
@@ -22,6 +23,7 @@ type InvoiceAdminHandler struct {
 	orders   order.OrderRepository
 	renderer domainInvoice.PDFRenderer
 	storage  media.Storage
+	log      logger.Logger
 }
 
 // NewInvoiceAdminHandler creates an InvoiceAdminHandler.
@@ -46,6 +48,12 @@ func NewInvoiceAdminHandler(
 		renderer: renderer,
 		storage:  storage,
 	}
+}
+
+// WithLog attaches a logger for PDF re-render diagnostics.
+func (h *InvoiceAdminHandler) WithLog(log logger.Logger) *InvoiceAdminHandler {
+	h.log = log
+	return h
 }
 
 type invoiceSummaryResponse struct {
@@ -148,5 +156,13 @@ func (h *InvoiceAdminHandler) loadPDFBytes(ctx context.Context, inv domainInvoic
 			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
 		}
 	}
-	return h.renderer.Render(inv)
+	// Re-render from sealed snapshot only — never live identity.
+	if h.log != nil {
+		h.log.Warn("invoice.admin.pdf_rerender", map[string]interface{}{
+			"invoice_id":     inv.ID(),
+			"invoice_number": inv.InvoiceNumber(),
+			"seller_empty":   inv.Seller().IsEmpty(),
+		})
+	}
+	return h.renderer.Render(inv, inv.Seller())
 }

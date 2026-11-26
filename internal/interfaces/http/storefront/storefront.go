@@ -27,6 +27,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/hooks"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -47,51 +48,52 @@ import (
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
-	engine              *theme.Engine
-	engineMu            sync.RWMutex
-	repo                catalog.ProductRepository
-	cats                catalog.CategoryRepository
-	pdp                 *composition.Pipeline[composition.ProductContext]
-	plp                 *composition.Pipeline[composition.ListingContext]
-	search              search.SearchEngine
-	variants            catalog.VariantRepository
-	carts               *cartApp.Service
-	extensions          extensionApp.ValueAPI
-	orderLineHooks      *hooks.Registry
-	auth                *appAuth.Service
-	checkout            *checkoutApp.Service
-	orders              order.OrderRepository
-	returns             *returnsApp.Service
-	orderClaim          *orderApp.ClaimService
-	emailer             OrderClaimEmailer
-	orderLinker         OrderLinker
-	account             AccountDeleter
-	addresses           customer.AddressRepository
-	consents            legal.ConsentRepository
-	security            *storefrontAccountSecurityVerifier
-	shipping               []shipping.Provider
-	payments               *payment.ProviderRegistry
-	stripePublishableKey   string
-	publicBaseURL          string
-	checkoutFlashSecret    []byte
-	legalConfig            legal.ConfigGetter
-	menus               cms.MenuRepository
-	menuResolver        *cmsApp.MenuResolver
-	pages               cms.PageRepository
-	contentBlocks       cms.ContentBlockRepository
-	blockResolver       *cmsApp.BlockResolver
-	visibilityFacts     catalog.VisibilityFactsSource
-	visibilityOpts      catalog.VisibilityOptions
-	log                 logger.Logger
-	catNav              *localcache.Store[[]catalog.Category]
-	layeredNavAttrs     LayeredNavAttributeLister
-	advancedSearchAttrs AdvancedSearchAttributeLister
-	assets              *assetsApp.Registry
-	cspEnabled          bool
-	trustedProxies      []*net.IPNet
-	fpc                 *fpcConfig
-	fpcObs              *cacheapp.FPCObserver // set before or after WithFullPageCache
-	fpcMissingCatTags   sync.Once
+	engine               *theme.Engine
+	engineMu             sync.RWMutex
+	repo                 catalog.ProductRepository
+	cats                 catalog.CategoryRepository
+	pdp                  *composition.Pipeline[composition.ProductContext]
+	plp                  *composition.Pipeline[composition.ListingContext]
+	search               search.SearchEngine
+	variants             catalog.VariantRepository
+	carts                *cartApp.Service
+	extensions           extensionApp.ValueAPI
+	orderLineHooks       *hooks.Registry
+	auth                 *appAuth.Service
+	checkout             *checkoutApp.Service
+	orders               order.OrderRepository
+	returns              *returnsApp.Service
+	orderClaim           *orderApp.ClaimService
+	emailer              OrderClaimEmailer
+	orderLinker          OrderLinker
+	account              AccountDeleter
+	addresses            customer.AddressRepository
+	consents             legal.ConsentRepository
+	security             *storefrontAccountSecurityVerifier
+	shipping             []shipping.Provider
+	payments             *payment.ProviderRegistry
+	stripePublishableKey string
+	publicBaseURL        string
+	checkoutFlashSecret  []byte
+	legalConfig          legal.ConfigGetter
+	storeIdentity        *storeidentity.Service
+	menus                cms.MenuRepository
+	menuResolver         *cmsApp.MenuResolver
+	pages                cms.PageRepository
+	contentBlocks        cms.ContentBlockRepository
+	blockResolver        *cmsApp.BlockResolver
+	visibilityFacts      catalog.VisibilityFactsSource
+	visibilityOpts       catalog.VisibilityOptions
+	log                  logger.Logger
+	catNav               *localcache.Store[[]catalog.Category]
+	layeredNavAttrs      LayeredNavAttributeLister
+	advancedSearchAttrs  AdvancedSearchAttributeLister
+	assets               *assetsApp.Registry
+	cspEnabled           bool
+	trustedProxies       []*net.IPNet
+	fpc                  *fpcConfig
+	fpcObs               *cacheapp.FPCObserver // set before or after WithFullPageCache
+	fpcMissingCatTags    sync.Once
 }
 
 // categoryCacheKey is the sole entry catNav ever holds — one category
@@ -123,31 +125,38 @@ type StorefrontCategorySummary struct {
 }
 
 type StorefrontLayoutData struct {
-	SiteName            string
-	SearchAction        string
-	SearchQuery         string
-	CartURL             string
-	CartLabel           string
-	StyleCSSURL         string
-	CustomCSSURL        string
-	HtmxJSURL           string
-	EnableCart          bool
-	CSRFToken           string
-	UseFragments        bool // PR-1045: cacheable chrome holes (csrf/greeting/cart)
-	AccountURL          string
-	AccountLabel        string
-	AccountName         string
-	AccountLoginURL     string
-	AccountOrdersURL    string
-	AccountProfileURL   string
-	AccountSecurityURL  string
-	AccountLogoutURL    string
-	AccountSignedIn     bool
-	CurrentYear         int
-	Nav                 []StorefrontNavLink
-	Categories          []StorefrontCategoryNavItem
-	WeeeFooterEnabled   bool
-	WeeeProducerReg     string
+	SiteName           string
+	SearchAction       string
+	SearchQuery        string
+	CartURL            string
+	CartLabel          string
+	StyleCSSURL        string
+	CustomCSSURL       string
+	HtmxJSURL          string
+	EnableCart         bool
+	CSRFToken          string
+	UseFragments       bool // PR-1045: cacheable chrome holes (csrf/greeting/cart)
+	AccountURL         string
+	AccountLabel       string
+	AccountName        string
+	AccountLoginURL    string
+	AccountOrdersURL   string
+	AccountProfileURL  string
+	AccountSecurityURL string
+	AccountLogoutURL   string
+	AccountSignedIn    bool
+	CurrentYear        int
+	Nav                []StorefrontNavLink
+	Categories         []StorefrontCategoryNavItem
+	WeeeFooterEnabled  bool
+	WeeeProducerReg    string
+	// Store identity imprint fields (PR-1205). Theme footer render is PR-1231.
+	LegalName           string
+	StoreAddress        string
+	StorePhone          string
+	TaxIDLine           string
+	EmailGeneral        string
+	StoreHours          string
 	EnableSearchSuggest bool
 	Assets              StorefrontAssets
 	CSPEnabled          bool
@@ -378,6 +387,13 @@ func (h *StorefrontHandler) WithOrderLineHooks(reg *hooks.Registry) *StorefrontH
 // WithLegalConfig enables store-scoped legal/compliance settings on storefront pages.
 func (h *StorefrontHandler) WithLegalConfig(cfg legal.ConfigGetter) *StorefrontHandler {
 	h.legalConfig = cfg
+	return h
+}
+
+// WithStoreIdentity fills layout imprint fields from store identity (PR-1205).
+// Theme footer markup that renders them is Track D (PR-1231).
+func (h *StorefrontHandler) WithStoreIdentity(svc *storeidentity.Service) *StorefrontHandler {
+	h.storeIdentity = svc
 	return h
 }
 
@@ -1003,6 +1019,9 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		customCSS = themefs.StaticURL(roots, "css/custom.css")
 		htmxJS = themefs.StaticURL(roots, "js/htmx.min.js")
 	}
+	// LegalName / StoreAddress / TaxIDLine / … stay on the layout struct for
+	// PR-1231. Do not call LayoutFields here until the footer template exists —
+	// every SSR hit would otherwise pay for identity + address + tax queries.
 	return StorefrontLayoutData{
 		SiteName:            siteName,
 		SearchAction:        searchAction,

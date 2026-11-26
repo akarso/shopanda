@@ -45,6 +45,12 @@ func (r *invoiceHTTPRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 
 func (r *invoiceHTTPRepo) Save(context.Context, *domainInvoice.Invoice) error { return nil }
 
+func (r *invoiceHTTPRepo) SavePreparing(context.Context, *domainInvoice.Invoice, func(*domainInvoice.Invoice) error) error {
+	return nil
+}
+
+func (r *invoiceHTTPRepo) Delete(context.Context, string) error { return nil }
+
 type invoiceHTTPOrderRepo struct {
 	orders map[string]*order.Order
 }
@@ -88,12 +94,11 @@ func (r *invoiceHTTPOrderRepo) ListCreatedSince(context.Context, time.Time, stri
 	return nil, nil
 }
 
-
 type stubInvoicePDFRenderer struct {
 	data []byte
 }
 
-func (s *stubInvoicePDFRenderer) Render(domainInvoice.Invoice) ([]byte, error) {
+func (s *stubInvoicePDFRenderer) Render(_ domainInvoice.Invoice, _ domainInvoice.SellerBlock) ([]byte, error) {
 	if len(s.data) > 0 {
 		return s.data, nil
 	}

@@ -2,6 +2,7 @@ package storeidentity_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
@@ -359,5 +360,78 @@ func TestImprintPublicTaxType(t *testing.T) {
 		if !store.ImprintPublicTaxType(code) {
 			t.Fatalf("%q should be imprint-public", code)
 		}
+	}
+}
+
+func TestService_InvoiceSellerAndLayoutFields(t *testing.T) {
+	st := testStore()
+	mem := newMemIdentity()
+	idty, _ := store.NewIdentity(st.ID, "Legal Co", "+48111", "9-17", "general@x.test", "sales@x.test", "")
+	_ = mem.SaveIdentity(context.Background(), idty)
+	general, _ := store.NewAddress(st.ID, store.AddressRoleGeneral, "Street 1", "Apt 2", "City", "Region", "00-001", "PL", "")
+	_ = mem.SaveAddress(context.Background(), general)
+	nip, _ := store.NewTaxIdentifier(st.ID, "pl_nip", "5252344022")
+	_ = mem.UpsertTaxIdentifier(context.Background(), nip)
+	ein, _ := store.NewTaxIdentifier(st.ID, "us_ein", "12-3456789")
+	_ = mem.UpsertTaxIdentifier(context.Background(), ein)
+
+	svc := storeidentity.NewService(
+		mem,
+		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
+		store.DefaultTaxIdentifierTypeRegistry(),
+	)
+
+	seller, err := svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seller.LegalName != "Legal Co" || seller.Email != "sales@x.test" {
+		t.Fatalf("seller %#v", seller)
+	}
+	if len(seller.TaxIDs) != 1 || seller.TaxIDs[0].Label != "NIP" || seller.TaxIDs[0].Value != "5252344022" {
+		t.Fatalf("invoice seller must be VAT-style only, got %#v", seller.TaxIDs)
+	}
+
+	// Invoice address wins over general when it has postal content.
+	invoiceAddr, _ := store.NewAddress(st.ID, store.AddressRoleInvoice, "Invoice Rd", "", "Krakow", "", "30-001", "PL", "")
+	_ = mem.SaveAddress(context.Background(), invoiceAddr)
+	seller, err = svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seller.AddressLines) == 0 || seller.AddressLines[0] != "Invoice Rd" {
+		t.Fatalf("prefer invoice address %#v", seller.AddressLines)
+	}
+	seller.Email = "" // ensure PreferContactEmail covered above already
+	idty2, _ := store.NewIdentity(st.ID, "Legal Co", "+48111", "9-17", "general@x.test", "", "")
+	_ = mem.SaveIdentity(context.Background(), idty2)
+	seller, err = svc.InvoiceSeller(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seller.Email != "general@x.test" {
+		t.Fatalf("sales empty → general email %#v", seller)
+	}
+
+	addr, err := svc.FormattedGeneralAddress(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(addr, "Street 1") || !strings.Contains(addr, "00-001 City") {
+		t.Fatalf("formatted address %q", addr)
+	}
+
+	layout, err := svc.LayoutFields(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.LegalName != "Legal Co" || layout.EmailGeneral != "general@x.test" {
+		t.Fatalf("layout %#v", layout)
+	}
+	if !strings.Contains(layout.TaxIDLine, "NIP: 5252344022") {
+		t.Fatalf("tax line %q", layout.TaxIDLine)
+	}
+	if strings.Contains(layout.TaxIDLine, "EIN") || strings.Contains(layout.TaxIDLine, "12-3456789") {
+		t.Fatalf("layout must filter imprint-public only: %q", layout.TaxIDLine)
 	}
 }

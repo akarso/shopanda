@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -14,7 +15,6 @@ import (
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/hooks"
 	"github.com/akarso/shopanda/internal/application/notification"
-	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
@@ -25,6 +25,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // --- mocks ---
@@ -54,6 +55,27 @@ type mockQueue struct {
 	errOnce   error
 	ignoreID  bool // when true, do not conflict on duplicate job ids
 	enqueueFn func(ctx context.Context, job jobs.Job) error
+	details   map[string]*jobs.Detail
+	replaced  []jobs.Job
+}
+
+func (m *mockQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	if m.details == nil {
+		return nil, nil
+	}
+	return m.details[id], nil
+}
+
+func (m *mockQueue) Requeue(_ context.Context, id string, _ int, _ ...jobs.RequeueOption) error {
+	return nil
+}
+
+func (m *mockQueue) ReplaceFailed(_ context.Context, job jobs.Job) error {
+	m.replaced = append(m.replaced, job)
+	if m.details != nil {
+		m.details[job.ID] = &jobs.Detail{Summary: jobs.Summary{ID: job.ID, Status: jobs.StatusPending, Attempts: 0}}
+	}
+	return nil
 }
 
 func (m *mockQueue) Enqueue(ctx context.Context, job jobs.Job) error {
@@ -134,7 +156,7 @@ type mockPDFRenderer struct {
 	render func(inv domainInvoice.Invoice) ([]byte, error)
 }
 
-func (m *mockPDFRenderer) Render(inv domainInvoice.Invoice) ([]byte, error) {
+func (m *mockPDFRenderer) Render(inv domainInvoice.Invoice, _ domainInvoice.SellerBlock) ([]byte, error) {
 	if m.render != nil {
 		return m.render(inv)
 	}
@@ -1747,6 +1769,194 @@ func TestHandleInvoiceCreated(t *testing.T) {
 	}
 	if string(decoded) != "%PDF-test-content" {
 		t.Errorf("attachment data = %q", string(decoded))
+	}
+}
+
+func TestHandleInvoiceCreated_HealReplacesFailedJobPayload(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(2500, "EUR")
+	item, _ := domainInvoice.NewItem("var-1", "SKU-1", "Widget", 1, unitPrice)
+	inv, _ := domainInvoice.NewInvoice("inv-heal", "ord-heal", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
+	inv.SetInvoiceNumberFromDB(42)
+
+	q := &mockQueue{details: map[string]*jobs.Detail{}}
+	dedupe := &mockDedupe{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-heal", CustomerID: "cust-1"}, nil
+		},
+	}
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, id string) (*domainInvoice.Invoice, error) {
+			return &inv, nil
+		},
+	}
+	pdfN := 0
+	renderer := &mockPDFRenderer{
+		render: func(_ domainInvoice.Invoice) ([]byte, error) {
+			pdfN++
+			return []byte(fmt.Sprintf("%%PDF-heal-%d", pdfN)), nil
+		},
+	}
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
+		notification.WithInvoices(invRepo),
+		notification.WithPDFRenderer(renderer),
+		notification.WithEmailDedupe(dedupe),
+	)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:     "inv-heal",
+		InvoiceNumber: 42,
+		OrderID:       "ord-heal",
+		CustomerID:    "cust-1",
+		Currency:      "EUR",
+	})
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d", len(q.enqueued))
+	}
+	jobID := q.enqueued[0].ID
+	q.details[jobID] = &jobs.Detail{Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}}
+
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("heal: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("heal must keep stable id (no second enqueue), got %d", len(q.enqueued))
+	}
+	if len(q.replaced) != 1 || q.replaced[0].ID != jobID {
+		t.Fatalf("replaced = %#v, want job %s", q.replaced, jobID)
+	}
+	atts, _ := q.replaced[0].Payload["attachments"].([]map[string]interface{})
+	if len(atts) != 1 {
+		t.Fatalf("replaced attachments = %#v", q.replaced[0].Payload["attachments"])
+	}
+	dataStr, _ := atts[0]["data"].(string)
+	decoded, err := base64.StdEncoding.DecodeString(dataStr)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(decoded) != "%PDF-heal-2" {
+		t.Fatalf("replaced PDF = %q, want fresh heal-2 payload", decoded)
+	}
+}
+
+func TestHandleInvoiceCreated_HealMissingJobSurfaces(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(2500, "EUR")
+	item, _ := domainInvoice.NewItem("var-1", "SKU-1", "Widget", 1, unitPrice)
+	inv, _ := domainInvoice.NewInvoice("inv-miss", "ord-miss", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
+	inv.SetInvoiceNumberFromDB(7)
+
+	q := &mockQueue{details: map[string]*jobs.Detail{}}
+	dedupe := &mockDedupe{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-miss", CustomerID: "cust-1"}, nil
+		},
+	}
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, id string) (*domainInvoice.Invoice, error) {
+			return &inv, nil
+		},
+	}
+	renderer := &mockPDFRenderer{
+		render: func(_ domainInvoice.Invoice) ([]byte, error) {
+			return []byte("%PDF-miss"), nil
+		},
+	}
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
+		notification.WithInvoices(invRepo),
+		notification.WithPDFRenderer(renderer),
+		notification.WithEmailDedupe(dedupe),
+	)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:     "inv-miss",
+		InvoiceNumber: 7,
+		OrderID:       "ord-miss",
+		CustomerID:    "cust-1",
+		Currency:      "EUR",
+	})
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	jobID := q.enqueued[0].ID
+	// Job row gone (lost queue entry); claim still completed.
+	delete(q.byID, jobID)
+	err := svc.HandleInvoiceCreated(context.Background(), evt)
+	if err == nil || !strings.Contains(err.Error(), "not found for heal") {
+		t.Fatalf("err = %v, want not found for heal", err)
+	}
+	if len(q.replaced) != 0 {
+		t.Fatalf("ReplaceFailed must not run, replaced=%#v", q.replaced)
+	}
+	// Claim released → next republish can insert again under the same stable id.
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("retry after claim release: %v", err)
+	}
+	if len(q.enqueued) != 2 || q.enqueued[1].ID != jobID {
+		t.Fatalf("enqueued after recover = %#v, want second job %s", q.enqueued, jobID)
+	}
+}
+
+func TestHandleOrderPaid_FailedJobNotReplaced(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{details: map[string]*jobs.Detail{}, ignoreID: true}
+	dedupe := &mockDedupe{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+		},
+	}
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
+		notification.WithEmailDedupe(dedupe),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	jobID := q.enqueued[0].ID
+	q.details[jobID] = &jobs.Detail{Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}}
+
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("republish: %v", err)
+	}
+	if len(q.replaced) != 0 {
+		t.Fatalf("order_confirmed must not ReplaceFailed, replaced=%#v", q.replaced)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d, want 1", len(q.enqueued))
 	}
 }
 

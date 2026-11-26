@@ -153,22 +153,32 @@ func (s *Storage) SaveWithContentType(path string, file io.Reader, _ string) err
 		}
 	}
 
-	f, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
+	// Write to a sibling temp file, then rename over the key so a failed
+	// Close cannot leave a truncated object that Head would treat as sealed.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(full)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("localfs: create file: %w", err)
+		return fmt.Errorf("localfs: create temp: %w", err)
 	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
 
-	if _, err := io.Copy(f, file); err != nil {
-		f.Close()
-		os.Remove(full)
+	if _, err := io.Copy(tmp, file); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("localfs: write file: %w", err)
 	}
-
-	if err := f.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("localfs: close file: %w", err)
 	}
-	_ = os.Chmod(full, fileMode)
-
+	_ = os.Chmod(tmpName, fileMode)
+	if err := os.Rename(tmpName, full); err != nil {
+		return fmt.Errorf("localfs: rename: %w", err)
+	}
+	cleanup = false
 	return nil
 }
 
@@ -296,18 +306,22 @@ func (s *Storage) URL(path string) string {
 	return s.baseURL + "/" + filepath.ToSlash(rel)
 }
 
-// Head verifies the object exists (SignedURLStorage).
+// Head verifies the object exists and is non-empty (SignedURLStorage).
+// A zero-byte file is treated as missing so invoice repair can rewrite it.
 func (s *Storage) Head(_ context.Context, path string) error {
 	full, err := s.resolveSafePath(path)
 	if err != nil {
 		return err
 	}
-	_, err = os.Stat(full)
+	st, err := os.Stat(full)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("localfs: head %q: %w", path, os.ErrNotExist)
 		}
 		return fmt.Errorf("localfs: head %q: %w", path, err)
+	}
+	if st.Size() == 0 {
+		return fmt.Errorf("localfs: head %q: %w", path, os.ErrNotExist)
 	}
 	return nil
 }

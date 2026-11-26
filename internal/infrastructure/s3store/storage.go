@@ -23,6 +23,7 @@ import (
 var (
 	_ domainMedia.Storage          = (*Storage)(nil)
 	_ domainMedia.SignedURLStorage = (*Storage)(nil)
+	_ domainMedia.ReadableStorage  = (*Storage)(nil)
 )
 
 // maxTimeout is the per-operation context deadline.
@@ -50,6 +51,7 @@ type Config struct {
 // s3API is the subset of the S3 client we actually use—makes unit-testing easy.
 type s3API interface {
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 }
@@ -284,7 +286,38 @@ func (s *Storage) URL(path string) string {
 	return s.baseURL + "/" + strings.TrimLeft(path, "/")
 }
 
-// Head verifies the object exists (PR-1077: prove blob before claiming a download).
+// Read returns the object bytes (invoice PDF attach / admin download).
+func (s *Storage) Read(ctx context.Context, path string) ([]byte, error) {
+	key, err := validateKey(path)
+	if err != nil {
+		return nil, fmt.Errorf("s3store: invalid key %q: %w", path, err)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, maxTimeout)
+	defer cancel()
+
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		if isS3NotFound(err) {
+			return nil, fmt.Errorf("s3store: get %q: %w", key, os.ErrNotExist)
+		}
+		return nil, fmt.Errorf("s3store: get %q: %w", key, err)
+	}
+	defer out.Body.Close()
+	data, err := io.ReadAll(out.Body)
+	if err != nil {
+		return nil, fmt.Errorf("s3store: read body %q: %w", key, err)
+	}
+	return data, nil
+}
+
+// Head verifies the object exists and is non-empty (PR-1077 / invoice probe).
+// ContentLength 0 or nil is treated as missing so ensureIssued can rewrite the key.
 func (s *Storage) Head(ctx context.Context, path string) error {
 	key, err := validateKey(path)
 	if err != nil {
@@ -296,7 +329,7 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, maxTimeout)
 	defer cancel()
 
-	_, err = s.client.HeadObject(ctx, &s3.HeadObjectInput{
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -305,6 +338,9 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 			return fmt.Errorf("s3store: head %q: %w", key, os.ErrNotExist)
 		}
 		return fmt.Errorf("s3store: head %q: %w", key, err)
+	}
+	if out == nil || out.ContentLength == nil || *out.ContentLength == 0 {
+		return fmt.Errorf("s3store: head %q: %w", key, os.ErrNotExist)
 	}
 	return nil
 }

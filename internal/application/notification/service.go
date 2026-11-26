@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -12,12 +13,16 @@ import (
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/hooks"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	domainvoucher "github.com/akarso/shopanda/internal/domain/voucher"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -37,6 +42,9 @@ const KindOrderShipped = "order_shipped"
 
 // KindVoucherIssued is the notification_dedupe kind for voucher.issued emails.
 const KindVoucherIssued = "voucher_issued"
+
+// KindInvoiceCreated is the notification_dedupe kind for invoice.created emails.
+const KindInvoiceCreated = "invoice_created"
 
 // EmailDedupeStore claims one send per (subject_key, kind) so confirmation
 // dedupe does not depend on queue-driver job-id primary-key behavior.
@@ -68,6 +76,10 @@ type Service struct {
 	storeLanguageLookup func(context.Context) (string, error)
 	vouchers            domainvoucher.Repository
 	voucherPDF          domainvoucher.PDFRenderer
+	identity            *storeidentity.Service
+	stores              store.StoreRepository
+	config              legal.ConfigGetter    // optional — interim store.logo for LogoURL
+	invoicePDF          media.ReadableStorage // optional — prefer sealed stored PDF over re-render
 }
 
 // Option configures optional Service fields.
@@ -133,6 +145,108 @@ func WithVouchers(repo domainvoucher.Repository) Option {
 // WithVoucherPDF wires the voucher pack PDF renderer for email attachments.
 func WithVoucherPDF(r domainvoucher.PDFRenderer) Option {
 	return func(s *Service) { s.voucherPDF = r }
+}
+
+// WithStoreIdentity fills EmailData brand fields from store identity (PR-1205).
+// Nil is a no-op. Invoice PDF seller comes from the sealed invoice snapshot.
+func WithStoreIdentity(svc *storeidentity.Service, stores store.StoreRepository) Option {
+	return func(s *Service) {
+		s.identity = svc
+		s.stores = stores
+	}
+}
+
+// WithConfig enables interim LogoURL from store.logo until Site Identity (PR-1222).
+func WithConfig(cfg legal.ConfigGetter) Option {
+	return func(s *Service) { s.config = cfg }
+}
+
+// WithInvoicePDFStorage prefers the sealed stored PDF for invoice emails.
+func WithInvoicePDFStorage(store media.ReadableStorage) Option {
+	return func(s *Service) { s.invoicePDF = store }
+}
+
+// baseEmailData starts every template payload with StoreURL plus brand fields
+// from the default store's identity (best-effort).
+func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
+	if s == nil {
+		return mail.EmailData{}
+	}
+	ed := mail.EmailData{StoreURL: s.storeURL}
+	storeID, storeName := s.resolveDefaultStore(ctx)
+	ed.StoreName = storeName
+	if s.identity != nil && storeID != "" {
+		addr, err := s.identity.FormattedGeneralAddress(ctx, storeID)
+		if err != nil {
+			s.log.Warn("notification: identity address failed", map[string]interface{}{
+				"store_id": storeID,
+				"error":    err.Error(),
+			})
+		} else {
+			ed.StoreAddress = addr
+		}
+	}
+	ed.LogoURL = s.logoURL(ctx, storeID)
+	return ed
+}
+
+func (s *Service) resolveDefaultStore(ctx context.Context) (storeID, storeName string) {
+	if s == nil || s.stores == nil {
+		return "", ""
+	}
+	st, err := s.stores.FindDefault(ctx)
+	if err != nil {
+		s.log.Warn("notification: default store lookup failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return "", ""
+	}
+	if st == nil {
+		return "", ""
+	}
+	return st.ID, strings.TrimSpace(st.Name)
+}
+
+func (s *Service) logoURL(ctx context.Context, storeID string) string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	read := func(key string) string {
+		v, err := s.config.Get(ctx, key)
+		if err != nil || v == nil {
+			return ""
+		}
+		t, ok := v.(string)
+		if !ok {
+			return ""
+		}
+		return strings.TrimSpace(t)
+	}
+	if storeID != "" {
+		if u := read(legal.ScopedConfigKey(storeID, "store.logo")); u != "" {
+			return u
+		}
+	}
+	return read("store.logo")
+}
+
+// invoicePDFBytes prefers the sealed object in storage; otherwise re-renders
+// from the invoice's seller snapshot (never live identity).
+func (s *Service) invoicePDFBytes(ctx context.Context, inv invoice.Invoice) ([]byte, error) {
+	pdfPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
+	if s.invoicePDF != nil {
+		data, err := s.invoicePDF.Read(ctx, pdfPath)
+		if err == nil && len(data) > 0 {
+			return data, nil
+		}
+		if err != nil && !media.IsNotFound(err) {
+			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
+		}
+	}
+	if s.pdfRenderer == nil {
+		return nil, fmt.Errorf("invoice pdf renderer not configured")
+	}
+	return s.pdfRenderer.Render(inv, inv.Seller())
 }
 
 // orderDisplayLanguage resolves the sealed hook language once per email.
@@ -339,15 +453,13 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 	tmplItems := s.orderConfirmedItems(ctx, o)
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-			"Items":     tmplItems,
-			"Total":     o.TotalAmount.String(),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
+		"Items":     tmplItems,
+		"Total":     o.TotalAmount.String(),
 	}
 
 	msg, err := s.templates.Render("order_confirmed", recipient.Email, ed)
@@ -486,13 +598,11 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 	q.Set("token", data.Token)
 	resetURL.RawQuery = q.Encode()
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"ResetURL":  resetURL.String(),
-			"ExpiresIn": "1 hour",
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"ResetURL":  resetURL.String(),
+		"ExpiresIn": "1 hour",
 	}
 
 	msg, err := s.templates.Render("password_reset", cust.Email, ed)
@@ -530,12 +640,10 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"VerifyURL": verifyURL,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"VerifyURL": verifyURL,
 	}
 
 	msg, err := s.templates.Render("email_verification", cust.Email, ed)
@@ -568,12 +676,10 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		return err
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": cust.FirstName,
-			"VerifyURL": data.VerifyURL,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": cust.FirstName,
+		"VerifyURL": data.VerifyURL,
 	}
 
 	msg, err := s.templates.Render("security_verification", cust.Email, ed)
@@ -616,13 +722,11 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		firstName = cust.FirstName
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": firstName,
-			"VerifyURL": verifyURL,
-			"NewEmail":  newEmail,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": firstName,
+		"VerifyURL": verifyURL,
+		"NewEmail":  newEmail,
 	}
 
 	msg, err := s.templates.Render("email_change_verification", newEmail, ed)
@@ -659,12 +763,10 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		firstName = cust.FirstName
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"FirstName": firstName,
-			"NewEmail":  strings.TrimSpace(data.NewEmail),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"FirstName": firstName,
+		"NewEmail":  strings.TrimSpace(data.NewEmail),
 	}
 
 	msg, err := s.templates.Render("email_change_notice", oldEmail, ed)
@@ -709,13 +811,11 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return err
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
 	}
 	if data.TrackingNumber != "" {
 		ed.Data["TrackingNumber"] = data.TrackingNumber
@@ -858,14 +958,12 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		s.log.Error("HandleVoucherIssued.pdf_render_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: render voucher PDF: %w", err)
 	}
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":   data.OrderID,
-			"FirstName": recipient.FirstName,
-			"Guest":     recipient.Guest,
-			"Codes":     codeStrs,
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":   data.OrderID,
+		"FirstName": recipient.FirstName,
+		"Guest":     recipient.Guest,
+		"Codes":     codeStrs,
 	}
 	msg, err := s.templates.Render("voucher_issued", recipient.Email, ed)
 	if err != nil {
@@ -966,10 +1064,10 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		return err
 	}
 
-	pdfBytes, err := s.pdfRenderer.Render(*inv)
+	pdfBytes, err := s.invoicePDFBytes(ctx, *inv)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.pdf_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
-		return fmt.Errorf("notification: render invoice PDF: %w", err)
+		return fmt.Errorf("notification: invoice PDF: %w", err)
 	}
 
 	items := inv.Items()
@@ -982,16 +1080,14 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		}
 	}
 
-	ed := mail.EmailData{
-		StoreURL: s.storeURL,
-		Data: map[string]interface{}{
-			"OrderID":       data.OrderID,
-			"InvoiceNumber": data.InvoiceNumber,
-			"FirstName":     recipient.FirstName,
-			"Guest":         recipient.Guest,
-			"Items":         tmplItems,
-			"Total":         inv.TotalAmount().String(),
-		},
+	ed := s.baseEmailData(ctx)
+	ed.Data = map[string]interface{}{
+		"OrderID":       data.OrderID,
+		"InvoiceNumber": data.InvoiceNumber,
+		"FirstName":     recipient.FirstName,
+		"Guest":         recipient.Guest,
+		"Items":         tmplItems,
+		"Total":         inv.TotalAmount().String(),
 	}
 
 	msg, err := s.templates.Render("invoice_created", recipient.Email, ed)
@@ -1006,17 +1102,39 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		Data:        pdfBytes,
 	}}
 
-	return s.enqueueEmail(ctx, msg, "HandleInvoiceCreated", map[string]interface{}{
+	// Stable job id + dedupe so a repaired re-publish of invoice.created
+	// does not enqueue a second email when the first already succeeded.
+	return s.enqueueEmailOnce(ctx, msg, invoiceCreatedJobID(data.InvoiceID), "HandleInvoiceCreated", map[string]interface{}{
 		"invoice_id":  data.InvoiceID,
 		"order_id":    data.OrderID,
 		"customer_id": data.CustomerID,
 		"guest":       recipient.Guest,
-	})
+	}, data.InvoiceID, KindInvoiceCreated)
+}
+
+// invoiceCreatedJobID returns a stable UUID v5-shaped id for one invoice email.
+func invoiceCreatedJobID(invoiceID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.invoice_created:" + strings.TrimSpace(invoiceID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // enqueueEmail creates and enqueues an email.send job with a fresh id.
 func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler string, logFields map[string]interface{}) error {
 	return s.enqueueEmailOnce(ctx, msg, id.New(), handler, logFields, "", "")
+}
+
+// emailJobGetter is the optional introspection surface used to heal a
+// terminal-failed email.send after a completed dedupe claim (Postgres Reader).
+type emailJobGetter interface {
+	Get(ctx context.Context, id string) (*jobs.Detail, error)
+}
+
+// emailFailedReplacer replaces a failed email.send payload and re-pends it
+// with attempts=0 under the same stable id (Postgres JobQueue.ReplaceFailed).
+type emailFailedReplacer interface {
+	ReplaceFailed(ctx context.Context, job jobs.Job) error
 }
 
 // enqueueEmailOnce enqueues with a caller-supplied job id. When subjectKey and
@@ -1025,6 +1143,9 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 // the claim is marked completed so it is never reclaimed. Enqueue failure deletes
 // the claim so a later HandleOrderPaid can retry. Queue Conflict (duplicate job id)
 // remains a secondary success path for Postgres-backed queues.
+//
+// When the claim already exists (heal republish), a terminal-failed job for the
+// stable id is requeued instead of treating the claim as success.
 //
 // Claim release uses a detached timeout context so shutdown cancellation of the
 // request ctx cannot leave a pending claim without a job. Stuck pending claims
@@ -1039,12 +1160,47 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
 		}
 		if !inserted {
-			s.log.Info(handler+".email_already_enqueued", logFields)
-			return nil
+			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg, subjectKey, kind)
 		}
 		claimed = true
 	}
 
+	payload := emailJobPayload(msg)
+	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
+	if err != nil {
+		if claimed {
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
+		}
+		s.log.Error(handler+".job_create_failed", err, logFields)
+		return fmt.Errorf("notification: create job: %w", err)
+	}
+
+	if err := s.queue.Enqueue(ctx, job); err != nil {
+		logFields["job_id"] = job.ID
+		if apperror.Is(err, apperror.CodeConflict) {
+			// Job-id secondary dedupe: mark claim completed, then heal if failed.
+			if claimed {
+				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+			}
+			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg, subjectKey, kind)
+		}
+		if claimed {
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
+		}
+		s.log.Error(handler+".enqueue_failed", err, logFields)
+		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
+	}
+
+	if claimed {
+		s.completeDedupeClaim(subjectKey, kind, handler, logFields)
+	}
+	logFields["job_id"] = job.ID
+	logFields["job_type"] = JobTypeEmailSend
+	s.log.Info(handler+".email_enqueued", logFields)
+	return nil
+}
+
+func emailJobPayload(msg mail.Message) map[string]interface{} {
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
@@ -1061,40 +1217,69 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 		}
 		payload["attachments"] = atts
 	}
+	return payload
+}
 
-	job, err := jobs.NewJob(jobID, JobTypeEmailSend, payload)
-	if err != nil {
-		if claimed {
-			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
-		}
-		s.log.Error(handler+".job_create_failed", err, logFields)
-		return fmt.Errorf("notification: create job: %w", err)
+// healExistingEmailJob replaces a terminal-failed invoice email.send with a
+// fresh payload and resets attempts under the same stable id. Other dedupe
+// kinds only log (order confirmation / shipment must not reset attempts on
+// every order.paid republish). Pending/done jobs are left alone. A missing
+// invoice job releases the dedupe claim so the next republish can enqueue.
+func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message, subjectKey, kind string) error {
+	logFields = copyLogFields(logFields)
+	logFields["job_id"] = jobID
+	s.log.Info(handler+".email_already_enqueued", logFields)
+
+	if kind != KindInvoiceCreated {
+		return nil
 	}
-
-	if err := s.queue.Enqueue(ctx, job); err != nil {
-		logFields["job_id"] = job.ID
-		if apperror.Is(err, apperror.CodeConflict) {
-			// Job-id secondary dedupe: mark claim completed (already queued).
-			if claimed {
-				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
-			}
-			s.log.Info(handler+".email_already_enqueued", logFields)
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil
+	}
+	getter, ok := s.queue.(emailJobGetter)
+	if !ok {
+		return nil
+	}
+	detail, err := getter.Get(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("notification: get email job %s: %w", jobID, err)
+	}
+	if detail == nil {
+		s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
+		return fmt.Errorf("notification: email job %s not found for heal", jobID)
+	}
+	if detail.Status != jobs.StatusFailed {
+		return nil
+	}
+	replacer, ok := s.queue.(emailFailedReplacer)
+	if !ok {
+		return nil
+	}
+	job, err := jobs.NewJob(jobID, JobTypeEmailSend, emailJobPayload(msg))
+	if err != nil {
+		return fmt.Errorf("notification: rebuild email job %s: %w", jobID, err)
+	}
+	if err := replacer.ReplaceFailed(ctx, job); err != nil {
+		if errors.Is(err, jobs.ErrRequeueNotTerminal) {
 			return nil
 		}
-		if claimed {
+		if errors.Is(err, jobs.ErrRequeueNotFound) {
 			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
 		}
-		s.log.Error(handler+".enqueue_failed", err, logFields)
-		return fmt.Errorf("notification: enqueue email job %s: %w", job.ID, err)
+		s.log.Error(handler+".email_replace_failed", err, logFields)
+		return fmt.Errorf("notification: replace failed email job %s: %w", jobID, err)
 	}
-
-	if claimed {
-		s.completeDedupeClaim(subjectKey, kind, handler, logFields)
-	}
-	logFields["job_id"] = job.ID
-	logFields["job_type"] = JobTypeEmailSend
-	s.log.Info(handler+".email_enqueued", logFields)
+	s.log.Info(handler+".email_replaced", logFields)
 	return nil
+}
+
+func copyLogFields(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // releaseDedupeClaim deletes a claim using a bounded background context so a
