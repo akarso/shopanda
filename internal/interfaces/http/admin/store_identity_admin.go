@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
@@ -33,25 +34,6 @@ func NewStoreIdentityAdminHandlerWithAuditor(svc *storeidentity.Service, auditor
 		panic("StoreIdentityAdminHandler: nil auditor")
 	}
 	return &StoreIdentityAdminHandler{svc: svc, auditor: auditor}
-}
-
-type identityRequest struct {
-	LegalName    *string `json:"legal_name"`
-	Phone        *string `json:"phone"`
-	Hours        *string `json:"hours"`
-	EmailGeneral *string `json:"email_general"`
-	EmailSales   *string `json:"email_sales"`
-	EmailSupport *string `json:"email_support"`
-}
-
-type addressRequest struct {
-	Line1    *string `json:"line1"`
-	Line2    *string `json:"line2"`
-	City     *string `json:"city"`
-	Region   *string `json:"region"`
-	Postcode *string `json:"postcode"`
-	Country  *string `json:"country"`
-	Phone    *string `json:"phone"`
 }
 
 type taxIdentifierRequest struct {
@@ -92,6 +74,9 @@ func decodeStrict(r *http.Request, dst interface{}) error {
 	if err := dec.Decode(dst); err != nil {
 		return apperror.Validation("invalid request body")
 	}
+	if dec.More() {
+		return apperror.Validation("invalid request body")
+	}
 	return nil
 }
 
@@ -120,21 +105,17 @@ func (h *StoreIdentityAdminHandler) PutIdentity() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		var req identityRequest
-		if err := decodeStrict(r, &req); err != nil {
-			h.audit(r, "store_identity", storeID, nil, err)
+		var patch storeidentity.IdentityPatch
+		if err := decodeStrict(r, &patch); err != nil {
+			h.audit(r, "store_identity", storeID, map[string]interface{}{"store_id": storeID}, err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		id, err := h.svc.PatchIdentity(r.Context(), storeID, storeidentity.IdentityPatch{
-			LegalName:    req.LegalName,
-			Phone:        req.Phone,
-			Hours:        req.Hours,
-			EmailGeneral: req.EmailGeneral,
-			EmailSales:   req.EmailSales,
-			EmailSupport: req.EmailSupport,
-		})
-		h.audit(r, "store_identity", storeID, map[string]interface{}{"store_id": storeID}, err)
+		id, err := h.svc.PatchIdentity(r.Context(), storeID, patch)
+		h.audit(r, "store_identity", storeID, map[string]interface{}{
+			"store_id": storeID,
+			"fields":   patch.ChangedFields(),
+		}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -195,22 +176,18 @@ func (h *StoreIdentityAdminHandler) PutAddress() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
-		var req addressRequest
-		if err := decodeStrict(r, &req); err != nil {
+		var patch storeidentity.AddressPatch
+		if err := decodeStrict(r, &patch); err != nil {
 			h.audit(r, "store_address", storeID, map[string]interface{}{"role": string(role)}, err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		addr, err := h.svc.PatchAddress(r.Context(), storeID, role, storeidentity.AddressPatch{
-			Line1:    req.Line1,
-			Line2:    req.Line2,
-			City:     req.City,
-			Region:   req.Region,
-			Postcode: req.Postcode,
-			Country:  req.Country,
-			Phone:    req.Phone,
-		})
-		h.audit(r, "store_address", storeID, map[string]interface{}{"store_id": storeID, "role": string(role)}, err)
+		addr, err := h.svc.PatchAddress(r.Context(), storeID, role, patch)
+		h.audit(r, "store_address", storeID, map[string]interface{}{
+			"store_id": storeID,
+			"role":     string(role),
+			"fields":   patch.ChangedFields(),
+		}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -254,7 +231,11 @@ func (h *StoreIdentityAdminHandler) PutTaxIdentifier() http.HandlerFunc {
 			return
 		}
 		ti, err := h.svc.UpsertTaxIdentifier(r.Context(), storeID, req.Type, req.Value)
-		details := map[string]interface{}{"store_id": storeID, "type": strings.ToLower(strings.TrimSpace(req.Type))}
+		typ := strings.ToLower(strings.TrimSpace(req.Type))
+		if utf8.RuneCountInString(typ) > store.MaxTaxTypeLen {
+			typ = string([]rune(typ)[:store.MaxTaxTypeLen])
+		}
+		details := map[string]interface{}{"store_id": storeID, "type": typ, "fields": []string{"type", "value"}}
 		h.audit(r, "store_tax_identifier", storeID, details, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
@@ -272,11 +253,16 @@ func (h *StoreIdentityAdminHandler) DeleteTaxIdentifier() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		typ := r.URL.Query().Get("type")
+		typ := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+		auditType := typ
+		if utf8.RuneCountInString(auditType) > store.MaxTaxTypeLen {
+			auditType = string([]rune(auditType)[:store.MaxTaxTypeLen])
+		}
 		err = h.svc.DeleteTaxIdentifier(r.Context(), storeID, typ)
 		h.audit(r, "store_tax_identifier", storeID, map[string]interface{}{
 			"store_id": storeID,
-			"type":     strings.ToLower(strings.TrimSpace(typ)),
+			"type":     auditType,
+			"fields":   []string{"type"},
 			"op":       "delete",
 		}, err)
 		if err != nil {

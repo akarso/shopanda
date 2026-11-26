@@ -2,9 +2,11 @@ package storeidentity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -75,23 +77,64 @@ func (s *Service) GetIdentity(ctx context.Context, storeID string) (IdentityView
 	}, nil
 }
 
-// IdentityPatch is a partial identity update. Nil fields are left unchanged.
+// IdentityPatch is a partial identity update. Set=false leaves the field unchanged;
+// Set=true with empty Value clears it (JSON null or "").
 type IdentityPatch struct {
-	LegalName    *string
-	Phone        *string
-	Hours        *string
-	EmailGeneral *string
-	EmailSales   *string
-	EmailSupport *string
+	LegalName    OptionalString `json:"legal_name"`
+	Phone        OptionalString `json:"phone"`
+	Hours        OptionalString `json:"hours"`
+	EmailGeneral OptionalString `json:"email_general"`
+	EmailSales   OptionalString `json:"email_sales"`
+	EmailSupport OptionalString `json:"email_support"`
+}
+
+// OptionalString is a JSON string that distinguishes omitted, null, and set.
+type OptionalString struct {
+	Set   bool
+	Value string
+}
+
+// UnmarshalJSON marks the field present; null becomes "".
+func (o *OptionalString) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = ""
+		return nil
+	}
+	return json.Unmarshal(b, &o.Value)
 }
 
 // HasChanges reports whether any field is present.
 func (p IdentityPatch) HasChanges() bool {
-	return p.LegalName != nil || p.Phone != nil || p.Hours != nil ||
-		p.EmailGeneral != nil || p.EmailSales != nil || p.EmailSupport != nil
+	return p.LegalName.Set || p.Phone.Set || p.Hours.Set ||
+		p.EmailGeneral.Set || p.EmailSales.Set || p.EmailSupport.Set
 }
 
-// PatchIdentity merges patch onto the existing row (or empty draft) and saves.
+// ChangedFields returns JSON field names present in the patch (for audit).
+func (p IdentityPatch) ChangedFields() []string {
+	out := make([]string, 0, 6)
+	if p.LegalName.Set {
+		out = append(out, "legal_name")
+	}
+	if p.Phone.Set {
+		out = append(out, "phone")
+	}
+	if p.Hours.Set {
+		out = append(out, "hours")
+	}
+	if p.EmailGeneral.Set {
+		out = append(out, "email_general")
+	}
+	if p.EmailSales.Set {
+		out = append(out, "email_sales")
+	}
+	if p.EmailSupport.Set {
+		out = append(out, "email_support")
+	}
+	return out
+}
+
+// PatchIdentity merges patch onto the existing row under a row lock and saves.
 func (s *Service) PatchIdentity(ctx context.Context, storeID string, patch IdentityPatch) (IdentityView, error) {
 	if !patch.HasChanges() {
 		return IdentityView{}, apperror.Validation("at least one identity field is required")
@@ -100,38 +143,37 @@ func (s *Service) PatchIdentity(ctx context.Context, storeID string, patch Ident
 	if err != nil {
 		return IdentityView{}, err
 	}
-	cur, err := s.identity.GetIdentity(ctx, storeID)
+	id, err := s.identity.MutateIdentity(ctx, storeID, func(cur *store.Identity) (store.Identity, error) {
+		legal, phone, hours, eg, es, eu := "", "", "", "", "", ""
+		if cur != nil {
+			legal, phone, hours = cur.LegalName, cur.Phone, cur.Hours
+			eg, es, eu = cur.EmailGeneral, cur.EmailSales, cur.EmailSupport
+		}
+		if patch.LegalName.Set {
+			legal = patch.LegalName.Value
+		}
+		if patch.Phone.Set {
+			phone = patch.Phone.Value
+		}
+		if patch.Hours.Set {
+			hours = patch.Hours.Value
+		}
+		if patch.EmailGeneral.Set {
+			eg = patch.EmailGeneral.Value
+		}
+		if patch.EmailSales.Set {
+			es = patch.EmailSales.Value
+		}
+		if patch.EmailSupport.Set {
+			eu = patch.EmailSupport.Value
+		}
+		next, err := store.NewIdentity(storeID, legal, phone, hours, eg, es, eu)
+		if err != nil {
+			return store.Identity{}, apperror.Validation(err.Error())
+		}
+		return next, nil
+	})
 	if err != nil {
-		return IdentityView{}, err
-	}
-	legal, phone, hours, eg, es, eu := "", "", "", "", "", ""
-	if cur != nil {
-		legal, phone, hours = cur.LegalName, cur.Phone, cur.Hours
-		eg, es, eu = cur.EmailGeneral, cur.EmailSales, cur.EmailSupport
-	}
-	if patch.LegalName != nil {
-		legal = *patch.LegalName
-	}
-	if patch.Phone != nil {
-		phone = *patch.Phone
-	}
-	if patch.Hours != nil {
-		hours = *patch.Hours
-	}
-	if patch.EmailGeneral != nil {
-		eg = *patch.EmailGeneral
-	}
-	if patch.EmailSales != nil {
-		es = *patch.EmailSales
-	}
-	if patch.EmailSupport != nil {
-		eu = *patch.EmailSupport
-	}
-	id, err := store.NewIdentity(storeID, legal, phone, hours, eg, es, eu)
-	if err != nil {
-		return IdentityView{}, apperror.Validation(err.Error())
-	}
-	if err := s.identity.SaveIdentity(ctx, id); err != nil {
 		return IdentityView{}, err
 	}
 	updated := id.UpdatedAt
@@ -249,24 +291,51 @@ func (s *Service) ResolveReturns(ctx context.Context, storeID string) (*store.Ad
 	return cloneAddress(resolved), nil
 }
 
-// AddressPatch is a partial address update. Nil fields are left unchanged.
+// AddressPatch is a partial address update. Set=false leaves the field unchanged.
 type AddressPatch struct {
-	Line1    *string
-	Line2    *string
-	City     *string
-	Region   *string
-	Postcode *string
-	Country  *string
-	Phone    *string
+	Line1    OptionalString `json:"line1"`
+	Line2    OptionalString `json:"line2"`
+	City     OptionalString `json:"city"`
+	Region   OptionalString `json:"region"`
+	Postcode OptionalString `json:"postcode"`
+	Country  OptionalString `json:"country"`
+	Phone    OptionalString `json:"phone"`
 }
 
 // HasChanges reports whether any field is present.
 func (p AddressPatch) HasChanges() bool {
-	return p.Line1 != nil || p.Line2 != nil || p.City != nil || p.Region != nil ||
-		p.Postcode != nil || p.Country != nil || p.Phone != nil
+	return p.Line1.Set || p.Line2.Set || p.City.Set || p.Region.Set ||
+		p.Postcode.Set || p.Country.Set || p.Phone.Set
 }
 
-// PatchAddress merges patch onto the existing role row (or store-country draft).
+// ChangedFields returns JSON field names present in the patch (for audit).
+func (p AddressPatch) ChangedFields() []string {
+	out := make([]string, 0, 7)
+	if p.Line1.Set {
+		out = append(out, "line1")
+	}
+	if p.Line2.Set {
+		out = append(out, "line2")
+	}
+	if p.City.Set {
+		out = append(out, "city")
+	}
+	if p.Region.Set {
+		out = append(out, "region")
+	}
+	if p.Postcode.Set {
+		out = append(out, "postcode")
+	}
+	if p.Country.Set {
+		out = append(out, "country")
+	}
+	if p.Phone.Set {
+		out = append(out, "phone")
+	}
+	return out
+}
+
+// PatchAddress merges patch onto the existing role row under a row lock.
 func (s *Service) PatchAddress(ctx context.Context, storeID string, role store.AddressRole, patch AddressPatch) (AddressRecord, error) {
 	if !patch.HasChanges() {
 		return AddressRecord{}, apperror.Validation("at least one address field is required")
@@ -279,41 +348,40 @@ func (s *Service) PatchAddress(ctx context.Context, storeID string, role store.A
 	if err != nil {
 		return AddressRecord{}, apperror.Validation(err.Error())
 	}
-	cur, err := s.identity.GetAddress(ctx, st.ID, role)
+	addr, err := s.identity.MutateAddress(ctx, st.ID, role, func(cur *store.Address) (store.Address, error) {
+		line1, line2, city, region, postcode, country, phone := "", "", "", "", "", st.Country, ""
+		if cur != nil {
+			line1, line2, city = cur.Line1, cur.Line2, cur.City
+			region, postcode, country, phone = cur.Region, cur.Postcode, cur.Country, cur.Phone
+		}
+		if patch.Line1.Set {
+			line1 = patch.Line1.Value
+		}
+		if patch.Line2.Set {
+			line2 = patch.Line2.Value
+		}
+		if patch.City.Set {
+			city = patch.City.Value
+		}
+		if patch.Region.Set {
+			region = patch.Region.Value
+		}
+		if patch.Postcode.Set {
+			postcode = patch.Postcode.Value
+		}
+		if patch.Country.Set {
+			country = patch.Country.Value
+		}
+		if patch.Phone.Set {
+			phone = patch.Phone.Value
+		}
+		next, err := store.NewAddress(st.ID, role, line1, line2, city, region, postcode, country, phone)
+		if err != nil {
+			return store.Address{}, apperror.Validation(err.Error())
+		}
+		return next, nil
+	})
 	if err != nil {
-		return AddressRecord{}, err
-	}
-	line1, line2, city, region, postcode, country, phone := "", "", "", "", "", st.Country, ""
-	if cur != nil {
-		line1, line2, city = cur.Line1, cur.Line2, cur.City
-		region, postcode, country, phone = cur.Region, cur.Postcode, cur.Country, cur.Phone
-	}
-	if patch.Line1 != nil {
-		line1 = *patch.Line1
-	}
-	if patch.Line2 != nil {
-		line2 = *patch.Line2
-	}
-	if patch.City != nil {
-		city = *patch.City
-	}
-	if patch.Region != nil {
-		region = *patch.Region
-	}
-	if patch.Postcode != nil {
-		postcode = *patch.Postcode
-	}
-	if patch.Country != nil {
-		country = *patch.Country
-	}
-	if patch.Phone != nil {
-		phone = *patch.Phone
-	}
-	addr, err := store.NewAddress(st.ID, role, line1, line2, city, region, postcode, country, phone)
-	if err != nil {
-		return AddressRecord{}, apperror.Validation(err.Error())
-	}
-	if err := s.identity.SaveAddress(ctx, addr); err != nil {
 		return AddressRecord{}, err
 	}
 	return addressRecord(addr, true), nil
@@ -356,6 +424,9 @@ func (s *Service) DeleteTaxIdentifier(ctx context.Context, storeID, typ string) 
 	typ = strings.ToLower(strings.TrimSpace(typ))
 	if typ == "" {
 		return apperror.Validation("type must not be empty")
+	}
+	if utf8.RuneCountInString(typ) > store.MaxTaxTypeLen {
+		return apperror.Validation(fmt.Sprintf("type exceeds max length %d", store.MaxTaxTypeLen))
 	}
 	if !taxTypeTokenOK(typ) {
 		return apperror.Validation("type must be a snake token (e.g. pl_nip)")

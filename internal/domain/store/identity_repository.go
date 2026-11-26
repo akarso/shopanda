@@ -8,6 +8,9 @@ type IdentityRepository interface {
 	GetIdentity(ctx context.Context, storeID string) (*Identity, error)
 	// SaveIdentity upserts the identity row.
 	SaveIdentity(ctx context.Context, id Identity) error
+	// MutateIdentity locks the identity row (FOR UPDATE), applies fn to the
+	// current value (nil when missing), and saves the result in one transaction.
+	MutateIdentity(ctx context.Context, storeID string, fn func(current *Identity) (Identity, error)) (Identity, error)
 
 	// GetAddress returns one role address, or (nil, nil) when missing.
 	GetAddress(ctx context.Context, storeID string, role AddressRole) (*Address, error)
@@ -15,6 +18,9 @@ type IdentityRepository interface {
 	ListAddresses(ctx context.Context, storeID string) ([]Address, error)
 	// SaveAddress upserts one role address.
 	SaveAddress(ctx context.Context, addr Address) error
+	// MutateAddress locks the address row for role (FOR UPDATE), applies fn to
+	// the current value (nil when missing), and saves in one transaction.
+	MutateAddress(ctx context.Context, storeID string, role AddressRole, fn func(current *Address) (Address, error)) (Address, error)
 
 	// ListTaxIdentifiers returns all tax IDs for a store.
 	ListTaxIdentifiers(ctx context.Context, storeID string) ([]TaxIdentifier, error)

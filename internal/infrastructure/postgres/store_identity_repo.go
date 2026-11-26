@@ -74,8 +74,17 @@ FROM store_identities WHERE store_id = $1`
 	return store.NewIdentityFromDB(sid, legal, phone, hours, eg, es, eu, updatedAt), nil
 }
 
+type identityExec interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
 // SaveIdentity upserts the identity row.
 func (r *StoreIdentityRepo) SaveIdentity(ctx context.Context, id store.Identity) error {
+	return saveIdentity(ctx, r.db, id)
+}
+
+func saveIdentity(ctx context.Context, ex identityExec, id store.Identity) error {
 	const q = `
 INSERT INTO store_identities (
     store_id, legal_name, phone, hours, email_general, email_sales, email_support, updated_at
@@ -88,7 +97,7 @@ ON CONFLICT (store_id) DO UPDATE SET
     email_sales = EXCLUDED.email_sales,
     email_support = EXCLUDED.email_support,
     updated_at = EXCLUDED.updated_at`
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := ex.ExecContext(ctx, q,
 		id.StoreID, id.LegalName, id.Phone, id.Hours,
 		id.EmailGeneral, id.EmailSales, id.EmailSupport, id.UpdatedAt,
 	)
@@ -96,6 +105,62 @@ ON CONFLICT (store_id) DO UPDATE SET
 		return fmt.Errorf("store_identity_repo: save identity: %w", mapStoreIdentityExecError(err))
 	}
 	return nil
+}
+
+// MutateIdentity locks the identity row, applies fn, and saves in one transaction.
+func (r *StoreIdentityRepo) MutateIdentity(ctx context.Context, storeID string, fn func(current *store.Identity) (store.Identity, error)) (store.Identity, error) {
+	if storeID == "" {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: empty store id")
+	}
+	if fn == nil {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: nil fn")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Prove the store exists under the same tx before insert/upsert.
+	var exists string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM stores WHERE id = $1 FOR SHARE`, storeID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Identity{}, apperror.NotFound("store not found")
+	}
+	if err != nil {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: store: %w", err)
+	}
+
+	const q = `
+SELECT store_id, legal_name, phone, hours, email_general, email_sales, email_support, updated_at
+FROM store_identities WHERE store_id = $1 FOR UPDATE`
+	var (
+		sid, legal, phone, hours, eg, es, eu string
+		updatedAt                            time.Time
+	)
+	err = tx.QueryRowContext(ctx, q, storeID).Scan(
+		&sid, &legal, &phone, &hours, &eg, &es, &eu, &updatedAt,
+	)
+	var current *store.Identity
+	if errors.Is(err, sql.ErrNoRows) {
+		current = nil
+	} else if err != nil {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: lock: %w", err)
+	} else {
+		current = store.NewIdentityFromDB(sid, legal, phone, hours, eg, es, eu, updatedAt)
+	}
+
+	next, err := fn(current)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	if err := saveIdentity(ctx, tx, next); err != nil {
+		return store.Identity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return store.Identity{}, fmt.Errorf("store_identity_repo: mutate identity: commit: %w", err)
+	}
+	return next, nil
 }
 
 // GetAddress returns one role address, or (nil, nil) when missing.
@@ -162,6 +227,10 @@ FROM store_addresses WHERE store_id = $1 ORDER BY role`
 
 // SaveAddress upserts one role address.
 func (r *StoreIdentityRepo) SaveAddress(ctx context.Context, addr store.Address) error {
+	return saveAddress(ctx, r.db, addr)
+}
+
+func saveAddress(ctx context.Context, ex identityExec, addr store.Address) error {
 	const q = `
 INSERT INTO store_addresses (
     store_id, role, line1, line2, city, region, postcode, country, phone
@@ -174,7 +243,7 @@ ON CONFLICT (store_id, role) DO UPDATE SET
     postcode = EXCLUDED.postcode,
     country = EXCLUDED.country,
     phone = EXCLUDED.phone`
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := ex.ExecContext(ctx, q,
 		addr.StoreID, string(addr.Role),
 		addr.Line1, addr.Line2, addr.City, addr.Region, addr.Postcode, addr.Country, addr.Phone,
 	)
@@ -182,6 +251,64 @@ ON CONFLICT (store_id, role) DO UPDATE SET
 		return fmt.Errorf("store_identity_repo: save address: %w", mapStoreIdentityExecError(err))
 	}
 	return nil
+}
+
+// MutateAddress locks the address row for role, applies fn, and saves in one transaction.
+func (r *StoreIdentityRepo) MutateAddress(ctx context.Context, storeID string, role store.AddressRole, fn func(current *store.Address) (store.Address, error)) (store.Address, error) {
+	if storeID == "" {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: empty store id")
+	}
+	if fn == nil {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: nil fn")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM stores WHERE id = $1 FOR SHARE`, storeID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Address{}, apperror.NotFound("store not found")
+	}
+	if err != nil {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: store: %w", err)
+	}
+
+	const q = `
+SELECT store_id, role, line1, line2, city, region, postcode, country, phone
+FROM store_addresses WHERE store_id = $1 AND role = $2 FOR UPDATE`
+	var (
+		sid, roleStr, line1, line2, city, region, postcode, country, phone string
+	)
+	err = tx.QueryRowContext(ctx, q, storeID, string(role)).Scan(
+		&sid, &roleStr, &line1, &line2, &city, &region, &postcode, &country, &phone,
+	)
+	var current *store.Address
+	if errors.Is(err, sql.ErrNoRows) {
+		current = nil
+	} else if err != nil {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: lock: %w", err)
+	} else {
+		parsed, perr := store.ParseAddressRole(roleStr)
+		if perr != nil {
+			return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: %w", perr)
+		}
+		current = store.NewAddressFromDB(sid, parsed, line1, line2, city, region, postcode, country, phone)
+	}
+
+	next, err := fn(current)
+	if err != nil {
+		return store.Address{}, err
+	}
+	if err := saveAddress(ctx, tx, next); err != nil {
+		return store.Address{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return store.Address{}, fmt.Errorf("store_identity_repo: mutate address: commit: %w", err)
+	}
+	return next, nil
 }
 
 // ListTaxIdentifiers returns all tax IDs for a store.

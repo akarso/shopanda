@@ -41,6 +41,20 @@ func (m *identityMemRepo) SaveIdentity(_ context.Context, id store.Identity) err
 	m.identities[id.StoreID] = id
 	return nil
 }
+func (m *identityMemRepo) MutateIdentity(ctx context.Context, storeID string, fn func(current *store.Identity) (store.Identity, error)) (store.Identity, error) {
+	cur, err := m.GetIdentity(ctx, storeID)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	next, err := fn(cur)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	if err := m.SaveIdentity(ctx, next); err != nil {
+		return store.Identity{}, err
+	}
+	return next, nil
+}
 func (m *identityMemRepo) GetAddress(_ context.Context, storeID string, role store.AddressRole) (*store.Address, error) {
 	if a, ok := m.addresses[storeID+"|"+string(role)]; ok {
 		cp := a
@@ -60,6 +74,20 @@ func (m *identityMemRepo) ListAddresses(_ context.Context, storeID string) ([]st
 func (m *identityMemRepo) SaveAddress(_ context.Context, addr store.Address) error {
 	m.addresses[addr.StoreID+"|"+string(addr.Role)] = addr
 	return nil
+}
+func (m *identityMemRepo) MutateAddress(ctx context.Context, storeID string, role store.AddressRole, fn func(current *store.Address) (store.Address, error)) (store.Address, error) {
+	cur, err := m.GetAddress(ctx, storeID, role)
+	if err != nil {
+		return store.Address{}, err
+	}
+	next, err := fn(cur)
+	if err != nil {
+		return store.Address{}, err
+	}
+	if err := m.SaveAddress(ctx, next); err != nil {
+		return store.Address{}, err
+	}
+	return next, nil
 }
 func (m *identityMemRepo) ListTaxIdentifiers(_ context.Context, storeID string) ([]store.TaxIdentifier, error) {
 	out := []store.TaxIdentifier{}
@@ -187,5 +215,33 @@ func TestStoreIdentityAdmin_PutPartialAndUnknownField(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unknown field status=%d", rr.Code)
+	}
+
+	body = []byte(`{"legal_name":null}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/store-identity", bytes.NewReader(body))
+	req = withAdminStore(req, st.ID)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("null clear status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/store-identity", nil)
+	req = withAdminStore(req, st.ID)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.LegalName != "" || envelope.Data.EmailGeneral != "a@b.test" {
+		t.Fatalf("null clear %#v", envelope.Data)
+	}
+
+	body = []byte(`{"phone":"+482"}{"phone":"+483"}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/store-identity", bytes.NewReader(body))
+	req = withAdminStore(req, st.ID)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("trailing JSON status=%d", rr.Code)
 	}
 }

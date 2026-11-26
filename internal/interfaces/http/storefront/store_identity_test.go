@@ -25,6 +25,9 @@ func (m *pubIdentityRepo) GetIdentity(context.Context, string) (*store.Identity,
 	return m.id, nil
 }
 func (m *pubIdentityRepo) SaveIdentity(context.Context, store.Identity) error { return nil }
+func (m *pubIdentityRepo) MutateIdentity(_ context.Context, _ string, fn func(*store.Identity) (store.Identity, error)) (store.Identity, error) {
+	return fn(m.id)
+}
 func (m *pubIdentityRepo) GetAddress(_ context.Context, _ string, role store.AddressRole) (*store.Address, error) {
 	if role == store.AddressRoleGeneral {
 		return m.addr, nil
@@ -35,6 +38,9 @@ func (m *pubIdentityRepo) ListAddresses(context.Context, string) ([]store.Addres
 	return nil, nil
 }
 func (m *pubIdentityRepo) SaveAddress(context.Context, store.Address) error { return nil }
+func (m *pubIdentityRepo) MutateAddress(_ context.Context, _ string, _ store.AddressRole, fn func(*store.Address) (store.Address, error)) (store.Address, error) {
+	return fn(m.addr)
+}
 func (m *pubIdentityRepo) ListTaxIdentifiers(context.Context, string) ([]store.TaxIdentifier, error) {
 	if m.tax == nil {
 		return []store.TaxIdentifier{}, nil

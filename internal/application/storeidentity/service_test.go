@@ -41,6 +41,21 @@ func (m *memIdentityRepo) SaveIdentity(_ context.Context, id store.Identity) err
 	return nil
 }
 
+func (m *memIdentityRepo) MutateIdentity(ctx context.Context, storeID string, fn func(current *store.Identity) (store.Identity, error)) (store.Identity, error) {
+	cur, err := m.GetIdentity(ctx, storeID)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	next, err := fn(cur)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	if err := m.SaveIdentity(ctx, next); err != nil {
+		return store.Identity{}, err
+	}
+	return next, nil
+}
+
 func (m *memIdentityRepo) GetAddress(_ context.Context, storeID string, role store.AddressRole) (*store.Address, error) {
 	if a, ok := m.addresses[addrKey(storeID, role)]; ok {
 		cp := a
@@ -62,6 +77,21 @@ func (m *memIdentityRepo) ListAddresses(_ context.Context, storeID string) ([]st
 func (m *memIdentityRepo) SaveAddress(_ context.Context, addr store.Address) error {
 	m.addresses[addrKey(addr.StoreID, addr.Role)] = addr
 	return nil
+}
+
+func (m *memIdentityRepo) MutateAddress(ctx context.Context, storeID string, role store.AddressRole, fn func(current *store.Address) (store.Address, error)) (store.Address, error) {
+	cur, err := m.GetAddress(ctx, storeID, role)
+	if err != nil {
+		return store.Address{}, err
+	}
+	next, err := fn(cur)
+	if err != nil {
+		return store.Address{}, err
+	}
+	if err := m.SaveAddress(ctx, next); err != nil {
+		return store.Address{}, err
+	}
+	return next, nil
 }
 
 func (m *memIdentityRepo) ListTaxIdentifiers(_ context.Context, storeID string) ([]store.TaxIdentifier, error) {
@@ -114,7 +144,9 @@ func testStore() *store.Store {
 	return &s
 }
 
-func strPtr(s string) *string { return &s }
+func opt(s string) storeidentity.OptionalString {
+	return storeidentity.OptionalString{Set: true, Value: s}
+}
 
 func TestService_ListAddressesPlaceholders(t *testing.T) {
 	st := testStore()
@@ -148,7 +180,7 @@ func TestService_UnknownRole(t *testing.T) {
 		store.DefaultTaxIdentifierTypeRegistry(),
 	)
 	_, err := svc.PatchAddress(context.Background(), st.ID, store.AddressRole("warehouse"), storeidentity.AddressPatch{
-		Country: strPtr("PL"),
+		Country: opt("PL"),
 	})
 	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("err=%v", err)
@@ -160,15 +192,15 @@ func TestService_PatchIdentityOmitsUnchanged(t *testing.T) {
 	mem := newMemIdentity()
 	svc := storeidentity.NewService(mem, &memStoreRepo{byID: map[string]*store.Store{st.ID: st}}, store.DefaultTaxIdentifierTypeRegistry())
 	_, err := svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{
-		LegalName:    strPtr("Acme"),
-		Phone:        strPtr("+48111"),
-		EmailGeneral: strPtr("a@b.test"),
+		LegalName:    opt("Acme"),
+		Phone:        opt("+48111"),
+		EmailGeneral: opt("a@b.test"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{
-		LegalName: strPtr("Acme Sp. z o.o."),
+		LegalName: opt("Acme Sp. z o.o."),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +211,15 @@ func TestService_PatchIdentityOmitsUnchanged(t *testing.T) {
 	_, err = svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{})
 	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("empty patch err=%v", err)
+	}
+	got, err = svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{
+		Phone: opt(""), // clear
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Phone != "" || got.LegalName != "Acme Sp. z o.o." {
+		t.Fatalf("clear phone %#v", got)
 	}
 }
 
@@ -304,5 +345,19 @@ func TestImprintPublicTaxType(t *testing.T) {
 	}
 	if store.ImprintPublicTaxType("de_steuernummer") {
 		t.Fatal("steuernummer should be admin-only")
+	}
+	core := map[string]struct{}{}
+	for _, c := range store.CoreTaxIdentifierTypeCodes() {
+		core[c] = struct{}{}
+	}
+	for _, code := range []string{
+		"eu_vat", "pl_nip", "de_ustidnr", "fr_tva", "it_partita_iva", "es_nif", "nl_btw", "uk_vat",
+	} {
+		if _, ok := core[code]; !ok {
+			t.Fatalf("imprint code %q missing from CoreTaxIdentifierTypeCodes", code)
+		}
+		if !store.ImprintPublicTaxType(code) {
+			t.Fatalf("%q should be imprint-public", code)
+		}
 	}
 }

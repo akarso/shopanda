@@ -33,38 +33,63 @@ CREATE TABLE store_tax_identifiers (
 );
 
 -- Backfill general from config with the same precedence as resolveScopedValue:
--- store::{id}::store.address when set, else bare store.address.
--- Skip rows that would fail NewAddress (bad country, over-long, controls/bidi).
--- Keep SQL in sync with postgres.StoreAddressBackfillSQL.
-INSERT INTO store_addresses (store_id, role, line1, country)
-SELECT
-    c.store_id,
-    'general',
-    c.line1,
-    c.country
-FROM (
-    SELECT
-        s.id AS store_id,
-        COALESCE(
-            NULLIF(btrim(scoped.value #>> '{}'), ''),
-            NULLIF(btrim(bare.value #>> '{}'), '')
-        ) AS line1,
-        CASE
-            WHEN upper(btrim(s.country)) = 'UK' THEN 'GB'
-            ELSE upper(btrim(s.country))
-        END AS country
-    FROM stores s
-    LEFT JOIN config scoped
-      ON scoped.key = 'store::' || s.id || '::store.address'
-     AND jsonb_typeof(scoped.value) = 'string'
-    LEFT JOIN config bare
-      ON bare.key = 'store.address'
-     AND jsonb_typeof(bare.value) = 'string'
-) c
-WHERE c.line1 IS NOT NULL
-  AND char_length(c.line1) <= 255
-  AND c.country ~ '^[A-Z]{2}$'
-  -- Control chars ([[:cntrl:]]), NEL, bidi overrides/isolates, zero-width (match NewAddress)
-  AND c.line1 !~ '[[:cntrl:]]'
-  AND c.line1 !~ U&'[\0085\200B-\200D\202A-\202E\2066-\2069\FEFF]'
-ON CONFLICT (store_id, role) DO NOTHING;
+-- when the scoped key exists it wins (even if empty — do not fall back to bare);
+-- otherwise use bare store.address. Collapse textarea newlines to spaces before
+-- NewAddress-equivalent checks. Keep in sync with postgres.StoreAddressBackfillSQL.
+DO $backfill$
+DECLARE
+    rec record;
+    raw_line text;
+    line1 text;
+    country text;
+BEGIN
+    FOR rec IN
+        SELECT
+            s.id AS store_id,
+            s.country AS store_country,
+            (scoped.key IS NOT NULL) AS scoped_exists,
+            scoped.value #>> '{}' AS scoped_raw,
+            bare.value #>> '{}' AS bare_raw
+        FROM stores s
+        LEFT JOIN config scoped
+          ON scoped.key = 'store::' || s.id || '::store.address'
+         AND jsonb_typeof(scoped.value) = 'string'
+        LEFT JOIN config bare
+          ON bare.key = 'store.address'
+         AND jsonb_typeof(bare.value) = 'string'
+    LOOP
+        IF rec.scoped_exists THEN
+            raw_line := rec.scoped_raw;
+        ELSE
+            raw_line := rec.bare_raw;
+        END IF;
+
+        IF raw_line IS NULL THEN
+            CONTINUE;
+        END IF;
+
+        -- TAB, LF, CR, NEL, LS, PS → space (textarea / line-break soft normalize)
+        line1 := btrim(regexp_replace(raw_line, U&'[\0009\000A\000D\0085\2028\2029]+', ' ', 'g'));
+        IF line1 = '' THEN
+            CONTINUE;
+        END IF;
+
+        country := CASE
+            WHEN upper(btrim(rec.store_country)) = 'UK' THEN 'GB'
+            ELSE upper(btrim(rec.store_country))
+        END;
+
+        IF char_length(line1) > 255
+           OR country !~ '^[A-Z]{2}$'
+           OR line1 ~ '[[:cntrl:]]'
+           OR line1 ~ U&'[\200B-\200D\202A-\202E\2066-\2069\FEFF]' THEN
+            RAISE NOTICE 'store identity backfill skipped store_id=%', rec.store_id;
+            CONTINUE;
+        END IF;
+
+        INSERT INTO store_addresses (store_id, role, line1, country)
+        VALUES (rec.store_id, 'general', line1, country)
+        ON CONFLICT (store_id, role) DO NOTHING;
+    END LOOP;
+END
+$backfill$;
