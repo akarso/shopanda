@@ -46,6 +46,7 @@ func TestAdminHandler_StoreAddressesAdminUIScript(t *testing.T) {
 		"shouldRefetchAddressRoleAfterWrite",
 		"shouldApplyAddressFill",
 		"newAddressFillGate",
+		"addressRefetchPaintAction",
 		"shouldShowAddressWriteFeedback",
 		"fieldMaxLengths",
 	} {

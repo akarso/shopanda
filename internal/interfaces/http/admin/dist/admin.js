@@ -10107,32 +10107,59 @@
         var fill = storeAddressesFillGate.begin(storeID);
         return api("/admin/store-addresses/" + encodeURIComponent(role)).then(function (res) {
             var responseStoreID = res && res.data ? res.data.store_id : "";
-            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill) {
-                if (!storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)) {
-                    return;
-                }
-            } else if (!fill.acceptsResponse(adminScope.store_id, responseStoreID)) {
-                return;
-            }
+            var fillAccepted = storeAddressesUI && storeAddressesUI.shouldApplyAddressFill
+                ? storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)
+                : fill.acceptsResponse(adminScope.store_id, responseStoreID);
             var live = liveStoreAddressRoleForm(role);
-            if (!storeAddressFormIsReady(live)) {
+            var action = storeAddressesUI && storeAddressesUI.addressRefetchPaintAction
+                ? storeAddressesUI.addressRefetchPaintAction(
+                    fillAccepted,
+                    !!live,
+                    storeAddressFormIsReady(live),
+                    !!(res && res.error)
+                )
+                : (fillAccepted && live
+                    ? (storeAddressFormIsReady(live)
+                        ? ((res && res.error) ? "error-ready" : "fill")
+                        : ((res && res.error) ? "error-shell" : "build"))
+                    : "skip");
+            if (action === "skip") {
                 return;
             }
-            if (res && res.error) {
+            if (action === "error-ready" || action === "error-shell") {
                 setSettingsMessage("store-address-role-msg", "Saved, but reload failed: " + extractErrorMessage(res, "unknown error"), true);
+                if (action === "error-shell" && live) {
+                    live.innerHTML = "";
+                }
                 return;
             }
             var addr = (res && res.data) || {};
-            fillStoreAddressRoleForm(live, addr);
-            syncStoreAddressFallbackHint(live, role, addr);
+            if (action === "fill") {
+                fillStoreAddressRoleForm(live, addr);
+                syncStoreAddressFallbackHint(live, role, addr);
+                return;
+            }
+            // Remount left a Loading… shell: build the real form from this payload.
+            var meta = storeAddressesUI.roleMeta(role) || { role: role, label: role, blurb: "" };
+            var ticket = {
+                storeID: storeID,
+                isCurrent: function (currentStoreID) {
+                    return storeID === (currentStoreID || "");
+                }
+            };
+            renderStoreAddressRoleForm(null, role, meta, addr, ticket);
         }).catch(function (err) {
             if (!fill.isCurrent(adminScope.store_id)) {
                 return;
             }
-            if (!storeAddressFormIsReady(liveStoreAddressRoleForm(role))) {
+            var live = liveStoreAddressRoleForm(role);
+            if (!live) {
                 return;
             }
             setSettingsMessage("store-address-role-msg", "Saved, but reload failed: " + extractErrorMessage(err, "unknown error"), true);
+            if (!storeAddressFormIsReady(live)) {
+                live.innerHTML = "";
+            }
         });
     }
 

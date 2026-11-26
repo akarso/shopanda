@@ -202,6 +202,18 @@
         return !!gridConnected && storeScopeMatches(capturedStoreID, currentStoreID);
     }
 
+    // addressRefetchPaintAction decides how a post-write GET paints.
+    // "build" is for the remount loading shell (data-role set, no inputs yet).
+    function addressRefetchPaintAction(fillAccepted, hasLiveForm, formReady, hasError) {
+        if (!fillAccepted || !hasLiveForm) {
+            return "skip";
+        }
+        if (hasError) {
+            return formReady ? "error-ready" : "error-shell";
+        }
+        return formReady ? "fill" : "build";
+    }
+
     function firstValidationMessage(form) {
         if (!form) {
             return "Fix the highlighted fields before saving.";
@@ -305,6 +317,7 @@
         shouldRefetchAddressRoleAfterWrite: shouldRefetchAddressRoleAfterWrite,
         shouldShowAddressWriteFeedback: shouldShowAddressWriteFeedback,
         shouldRefreshAddressIndexAfterWrite: shouldRefreshAddressIndexAfterWrite,
+        addressRefetchPaintAction: addressRefetchPaintAction,
         firstValidationMessage: firstValidationMessage,
         applyAddressValues: applyAddressValues,
         buildAddressPutBody: buildAddressPutBody,

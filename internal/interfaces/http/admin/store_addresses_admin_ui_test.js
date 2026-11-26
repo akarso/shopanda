@@ -137,23 +137,74 @@ test("refetch fill applies only while captured store id is current", function ()
     assert.deepEqual(fills, ["paint-a"], "response store_id mismatch must drop");
 });
 
-test("later page GET does not overwrite an earlier refetch fill", function () {
+test("winning refetch builds inputs from loading shell", function () {
     const fillGate = ui.newAddressFillGate();
-    const paints = [];
-    function paint(ticket, currentStoreID, snapshot) {
-        if (!ui.shouldApplyAddressFill(ticket, currentStoreID, "store-a")) {
-            return;
-        }
-        paints.push(snapshot);
-    }
-
-    // Remount page GET starts first (pre-write).
+    // Remount page GET starts first (pre-write shell).
     const pageGet = fillGate.begin("store-a");
     // Post-write refetch starts second and must win.
     const refetch = fillGate.begin("store-a");
-    paint(refetch, "store-a", "post-write");
-    paint(pageGet, "store-a", "pre-write-late");
-    assert.deepEqual(paints, ["post-write"]);
+
+    // Shell: data-role set, no line1 input yet.
+    const shell = {
+        dataRole: "invoice",
+        elements: {}
+    };
+
+    function applyRefetch(ticket, form, addr) {
+        const fillOk = ui.shouldApplyAddressFill(ticket, "store-a", addr.store_id);
+        const formReady = !!(form.elements && form.elements.line1);
+        const action = ui.addressRefetchPaintAction(fillOk, !!form, formReady, false);
+        if (action === "skip") {
+            return action;
+        }
+        if (action === "build") {
+            form.elements = {
+                line1: { value: "" },
+                line2: { value: "" },
+                city: { value: "" },
+                region: { value: "" },
+                postcode: { value: "" },
+                country: { value: "" },
+                phone: { value: "" }
+            };
+            ui.applyAddressValues(form.elements, addr);
+            return action;
+        }
+        if (action === "fill") {
+            ui.applyAddressValues(form.elements, addr);
+            return action;
+        }
+        return action;
+    }
+
+    assert.equal(
+        applyRefetch(refetch, shell, { store_id: "store-a", line1: "Post-write St" }),
+        "build"
+    );
+    assert.ok(shell.elements.line1, "winning refetch must produce inputs");
+    assert.equal(shell.elements.line1.value, "Post-write St");
+
+    assert.equal(
+        applyRefetch(pageGet, shell, { store_id: "store-a", line1: "Pre-write St" }),
+        "skip",
+        "late page GET must not overwrite the refetch"
+    );
+    assert.equal(shell.elements.line1.value, "Post-write St");
+});
+
+test("addressRefetchPaintAction clears shell on error", function () {
+    assert.equal(ui.addressRefetchPaintAction(true, true, false, true), "error-shell");
+    assert.equal(ui.addressRefetchPaintAction(true, true, true, true), "error-ready");
+    assert.equal(ui.addressRefetchPaintAction(false, true, false, false), "skip");
+});
+
+test("indexByRole maps roles", function () {
+    const map = ui.indexByRole([
+        { role: "general", line1: "A" },
+        { role: "invoice", line1: "B" }
+    ]);
+    assert.equal(map.general.line1, "A");
+    assert.equal(map.invoice.line1, "B");
 });
 
 test("index refresh predicate requires connected grid and matching store", function () {
@@ -170,11 +221,13 @@ test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths",
     assert.match(indexSrc, /store_addresses_admin_ui\.js/);
     assert.match(adminSrc, /newAddressFillGate/);
     assert.match(adminSrc, /shouldApplyAddressFill/);
+    assert.match(adminSrc, /addressRefetchPaintAction/);
     assert.match(adminSrc, /shouldShowAddressWriteFeedback/);
     assert.match(adminSrc, /refreshStoreAddressesIndex/);
     assert.match(adminSrc, /novalidate/);
     assert.match(adminSrc, /firstValidationMessage/);
     assert.match(adminSrc, /section-store address-line1/);
+    assert.ok(adminSrc.indexOf("build") >= 0 || adminSrc.indexOf("Loading") >= 0);
     assert.ok(adminSrc.indexOf("/admin/store-addresses/") >= 0);
     assert.equal(adminSrc.indexOf("ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount"), -1);
 });
