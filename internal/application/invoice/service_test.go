@@ -559,12 +559,13 @@ func TestGenerateFromOrder_MissingDefaultStoreErrors(t *testing.T) {
 	}
 }
 
-func TestGenerateFromOrder_RenderFailureDeletesInvoice(t *testing.T) {
+func TestGenerateFromOrder_RenderFailureLeavesRowForRepair(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
 	invoices := &fakeInvoiceRepo{}
 	renderer := &fakeRenderer{err: fmt.Errorf("font boom")}
-	svc := newService(orders, invoices, renderer, &fakeStorage{})
+	storage := &fakeStorage{}
+	svc := newService(orders, invoices, renderer, storage)
 
 	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
 		OrderID:   "ord-1",
@@ -573,22 +574,26 @@ func TestGenerateFromOrder_RenderFailureDeletesInvoice(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected render error")
 	}
-	if len(invoices.deleted) != 1 {
-		t.Fatalf("deleted = %v, want one invoice id", invoices.deleted)
+	if len(invoices.deleted) != 0 {
+		t.Fatalf("must not delete row on render failure: %v", invoices.deleted)
 	}
-	if invoices.saved != nil {
-		t.Fatal("saved invoice must be cleared after rollback")
+	if invoices.saved == nil {
+		t.Fatal("row must remain for ensureIssued")
 	}
+
 	renderer.err = nil
 	if _, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
 		OrderID:   "ord-1",
 		TaxAmount: shared.MustNewMoney(380, "EUR"),
 	}); err != nil {
-		t.Fatalf("retry after render failure: %v", err)
+		t.Fatalf("repair after render failure: %v", err)
+	}
+	if len(storage.saved) == 0 {
+		t.Fatal("expected PDF stored on repair")
 	}
 }
 
-func TestGenerateFromOrder_StoreFailureDeletesObjectAndRow(t *testing.T) {
+func TestGenerateFromOrder_StoreFailureLeavesRowForRepair(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
 	invoices := &fakeInvoiceRepo{}
@@ -605,32 +610,62 @@ func TestGenerateFromOrder_StoreFailureDeletesObjectAndRow(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected store error")
 	}
-	if len(invoices.deleted) != 1 {
-		t.Fatalf("row deleted = %v", invoices.deleted)
+	if len(invoices.deleted) != 0 {
+		t.Fatalf("must not delete row on store failure: %v", invoices.deleted)
 	}
-	if len(storage.deleted) != 1 {
-		t.Fatalf("object deleted = %v, want pdf path cleanup", storage.deleted)
+	if invoices.saved == nil {
+		t.Fatal("row must remain for ensureIssued")
+	}
+
+	okStorage := &fakeStorage{}
+	svc = appInvoice.NewService(orders, invoices, &fakeRenderer{}, okStorage,
+		event.NewBus(logger.NewWithWriter(io.Discard, "error")),
+		logger.NewWithWriter(io.Discard, "error"),
+	)
+	if _, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	}); err != nil {
+		t.Fatalf("repair after store failure: %v", err)
+	}
+	if len(okStorage.saved) == 0 {
+		t.Fatal("expected PDF stored on repair")
 	}
 }
 
-func TestGenerateFromOrder_DeleteFailureSurfaces(t *testing.T) {
+func TestGenerateFromOrder_UnprobeableStorageErrors(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
-	invoices := &fakeInvoiceRepo{deleteErr: fmt.Errorf("fk hold")}
-	renderer := &fakeRenderer{err: fmt.Errorf("font boom")}
-	svc := newService(orders, invoices, renderer, &fakeStorage{})
-
+	existingInv, _ := domainInvoice.NewInvoice(
+		"inv-1", "ord-1", "cust-1", "EUR",
+		[]domainInvoice.Item{mustInvoiceItem(t)},
+		shared.MustNewMoney(380, "EUR"),
+	)
+	existingInv.SetInvoiceNumberFromDB(1)
+	invoices := &fakeInvoiceRepo{
+		byOrder: map[string]*domainInvoice.Invoice{"ord-1": &existingInv},
+		byID:    map[string]*domainInvoice.Invoice{"inv-1": &existingInv},
+	}
+	svc := appInvoice.NewService(orders, invoices, &fakeRenderer{}, probeBlindStorage{},
+		event.NewBus(logger.NewWithWriter(io.Discard, "error")),
+		logger.NewWithWriter(io.Discard, "error"),
+	)
 	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
 		OrderID:   "ord-1",
 		TaxAmount: shared.MustNewMoney(380, "EUR"),
 	})
-	if err == nil {
-		t.Fatal("expected combined rollback error")
-	}
-	if !strings.Contains(err.Error(), "rollback delete failed") {
-		t.Fatalf("error = %v, want rollback delete failed", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot probe") {
+		t.Fatalf("err = %v, want cannot probe", err)
 	}
 }
+
+// probeBlindStorage implements media.Storage without Read or Head.
+type probeBlindStorage struct{}
+
+func (probeBlindStorage) Name() string                 { return "blind" }
+func (probeBlindStorage) Save(string, io.Reader) error { return nil }
+func (probeBlindStorage) Delete(string) error          { return nil }
+func (probeBlindStorage) URL(string) string            { return "" }
 
 func TestHandleOrderPaid_IssuesAndRepairs(t *testing.T) {
 	ord := paidOrder(t)

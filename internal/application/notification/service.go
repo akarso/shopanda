@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -1124,12 +1125,21 @@ func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler st
 	return s.enqueueEmailOnce(ctx, msg, id.New(), handler, logFields, "", "")
 }
 
+// emailJobGetter is the optional introspection surface used to heal a
+// terminal-failed email.send after a completed dedupe claim (Postgres Reader).
+type emailJobGetter interface {
+	Get(ctx context.Context, id string) (*jobs.Detail, error)
+}
+
 // enqueueEmailOnce enqueues with a caller-supplied job id. When subjectKey and
 // kind are set and a dedupe store is wired, the store is claimed first (pending);
 // enqueue runs only on a new claim. After a successful enqueue (or queue Conflict),
 // the claim is marked completed so it is never reclaimed. Enqueue failure deletes
 // the claim so a later HandleOrderPaid can retry. Queue Conflict (duplicate job id)
 // remains a secondary success path for Postgres-backed queues.
+//
+// When the claim already exists (heal republish), a terminal-failed job for the
+// stable id is requeued instead of treating the claim as success.
 //
 // Claim release uses a detached timeout context so shutdown cancellation of the
 // request ctx cannot leave a pending claim without a job. Stuck pending claims
@@ -1144,8 +1154,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
 		}
 		if !inserted {
-			s.log.Info(handler+".email_already_enqueued", logFields)
-			return nil
+			return s.healExistingEmailJob(ctx, jobID, handler, logFields)
 		}
 		claimed = true
 	}
@@ -1179,12 +1188,11 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		logFields["job_id"] = job.ID
 		if apperror.Is(err, apperror.CodeConflict) {
-			// Job-id secondary dedupe: mark claim completed (already queued).
+			// Job-id secondary dedupe: mark claim completed, then heal if failed.
 			if claimed {
 				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
 			}
-			s.log.Info(handler+".email_already_enqueued", logFields)
-			return nil
+			return s.healExistingEmailJob(ctx, job.ID, handler, logFields)
 		}
 		if claimed {
 			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
@@ -1200,6 +1208,50 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 	logFields["job_type"] = JobTypeEmailSend
 	s.log.Info(handler+".email_enqueued", logFields)
 	return nil
+}
+
+// healExistingEmailJob requeues a terminal-failed email.send for a stable job
+// id when a heal republish hits an existing dedupe claim. Pending/done jobs
+// are left alone. Queues without Get (non-Postgres) skip the heal.
+func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}) error {
+	logFields = copyLogFields(logFields)
+	logFields["job_id"] = jobID
+	s.log.Info(handler+".email_already_enqueued", logFields)
+
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil
+	}
+	getter, ok := s.queue.(emailJobGetter)
+	if !ok {
+		return nil
+	}
+	detail, err := getter.Get(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("notification: get email job %s: %w", jobID, err)
+	}
+	if detail == nil || detail.Status != jobs.StatusFailed {
+		return nil
+	}
+	if err := s.queue.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal()); err != nil {
+		if errors.Is(err, jobs.ErrRequeueNotFound) ||
+			errors.Is(err, jobs.ErrRequeueNotTerminal) ||
+			errors.Is(err, jobs.ErrRequeueUnsupported) {
+			return nil
+		}
+		s.log.Error(handler+".email_requeue_failed", err, logFields)
+		return fmt.Errorf("notification: requeue failed email job %s: %w", jobID, err)
+	}
+	s.log.Info(handler+".email_requeued", logFields)
+	return nil
+}
+
+func copyLogFields(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // releaseDedupeClaim deletes a claim using a bounded background context so a

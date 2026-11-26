@@ -202,14 +202,21 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	return nil
 }
 
-// mapInvoiceInsertError maps unique violations on order_id (or id) to Conflict
-// so concurrent order.paid can repair instead of hard-failing.
+// invoicesOrderIDUniq is the UNIQUE constraint on invoices.order_id.
+const invoicesOrderIDUniq = "invoices_order_id_key"
+
+// mapInvoiceInsertError maps order_id unique violations to Conflict so
+// concurrent order.paid can repair. Other 23505s (id, invoice_number) are
+// left unmapped so callers do not FindByOrderID and get a false empty row.
 func mapInvoiceInsertError(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
 		return nil
 	}
-	return apperror.Conflict("invoice already exists for this order")
+	if pgErr.ConstraintName == invoicesOrderIDUniq {
+		return apperror.Conflict("invoice already exists for this order")
+	}
+	return nil
 }
 
 // Delete removes an invoice and its items so a failed PDF finalize can retry.

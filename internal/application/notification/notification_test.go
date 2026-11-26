@@ -14,7 +14,6 @@ import (
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/hooks"
 	"github.com/akarso/shopanda/internal/application/notification"
-	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
@@ -25,6 +24,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // --- mocks ---
@@ -54,6 +54,20 @@ type mockQueue struct {
 	errOnce   error
 	ignoreID  bool // when true, do not conflict on duplicate job ids
 	enqueueFn func(ctx context.Context, job jobs.Job) error
+	details   map[string]*jobs.Detail
+	requeued  []string
+}
+
+func (m *mockQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	if m.details == nil {
+		return nil, nil
+	}
+	return m.details[id], nil
+}
+
+func (m *mockQueue) Requeue(_ context.Context, id string, _ int, _ ...jobs.RequeueOption) error {
+	m.requeued = append(m.requeued, id)
+	return nil
 }
 
 func (m *mockQueue) Enqueue(ctx context.Context, job jobs.Job) error {
@@ -1747,6 +1761,72 @@ func TestHandleInvoiceCreated(t *testing.T) {
 	}
 	if string(decoded) != "%PDF-test-content" {
 		t.Errorf("attachment data = %q", string(decoded))
+	}
+}
+
+func TestHandleInvoiceCreated_HealRequeuesFailedJob(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(2500, "EUR")
+	item, _ := domainInvoice.NewItem("var-1", "SKU-1", "Widget", 1, unitPrice)
+	inv, _ := domainInvoice.NewInvoice("inv-heal", "ord-heal", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
+	inv.SetInvoiceNumberFromDB(42)
+
+	jobID := "" // filled after first send
+	q := &mockQueue{details: map[string]*jobs.Detail{}}
+	dedupe := &mockDedupe{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-heal", CustomerID: "cust-1"}, nil
+		},
+	}
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, id string) (*domainInvoice.Invoice, error) {
+			return &inv, nil
+		},
+	}
+	renderer := &mockPDFRenderer{
+		render: func(_ domainInvoice.Invoice) ([]byte, error) {
+			return []byte("%PDF-heal"), nil
+		},
+	}
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
+		notification.WithInvoices(invRepo),
+		notification.WithPDFRenderer(renderer),
+		notification.WithEmailDedupe(dedupe),
+	)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:     "inv-heal",
+		InvoiceNumber: 42,
+		OrderID:       "ord-heal",
+		CustomerID:    "cust-1",
+		Currency:      "EUR",
+	})
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("enqueued = %d", len(q.enqueued))
+	}
+	jobID = q.enqueued[0].ID
+	q.details[jobID] = &jobs.Detail{Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}}
+
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("heal: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("heal must not enqueue a second job, got %d", len(q.enqueued))
+	}
+	if len(q.requeued) != 1 || q.requeued[0] != jobID {
+		t.Fatalf("requeued = %v, want [%s]", q.requeued, jobID)
 	}
 }
 

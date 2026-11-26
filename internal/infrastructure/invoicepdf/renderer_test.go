@@ -149,6 +149,28 @@ func TestRenderer_Render_PageBreakKeepsRowAndTotals(t *testing.T) {
 	}
 }
 
+func TestRenderer_Render_RowTallerThanPageFails(t *testing.T) {
+	// Build a name that wraps to more lines than one page body can hold.
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		b.WriteString(fmt.Sprintf("word%d ", i))
+	}
+	price := shared.MustNewMoney(100, "EUR")
+	item, err := invoice.NewItem("v-1", "SKU", b.String(), 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	inv, err := invoice.NewInvoice("inv-tall", "ord-tall", "cust-1", "EUR", []invoice.Item{item}, shared.MustNewMoney(23, "EUR"))
+	if err != nil {
+		t.Fatalf("NewInvoice: %v", err)
+	}
+	inv.SetInvoiceNumberFromDB(1)
+	_, err = invoicepdf.NewRenderer().Render(inv, invoice.SellerBlock{})
+	if err == nil || !strings.Contains(err.Error(), "exceeds page body") {
+		t.Fatalf("err = %v, want exceeds page body", err)
+	}
+}
+
 func TestRenderer_Render_LongItemNameWraps(t *testing.T) {
 	longName := "Ręcznie szyte skórzane buty trekkingowe z membraną wodoodporną model Kraków-Gdańsk XL"
 	price := shared.MustNewMoney(1000, "EUR")

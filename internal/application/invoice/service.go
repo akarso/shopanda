@@ -97,7 +97,8 @@ type GenerateResult struct {
 
 // HandleOrderPaid issues an invoice when an order becomes paid.
 // An existing row is not treated as done: ensureIssued repairs a missing PDF
-// and re-publishes invoice.created (mail handler dedupes on a stable job id).
+// and re-publishes invoice.created (mail handler dedupes / requeues on a
+// stable job id).
 func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(order.OrderStatusChangedData)
 	if !ok {
@@ -123,9 +124,10 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 // GenerateFromOrder creates an invoice from a paid order, seals the seller
 // snapshot, renders a PDF, stores it, and publishes invoice.created.
-// If a row already exists (pre-check or UNIQUE race), it repairs PDF/storage
-// and re-publishes invoice.created. If render/storage fails after Save, the
-// invoice row is deleted so a cold retry can insert again.
+//
+// On render/storage failure the invoice row is left in place so a concurrent
+// repair (UNIQUE loser → ensureIssued) cannot lose the object to a Delete.
+// The next order.paid only runs ensureIssued.
 func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*GenerateResult, error) {
 	if input.OrderID == "" {
 		return nil, apperror.Validation("order id must not be empty")
@@ -182,7 +184,7 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 				return nil, fmt.Errorf("invoice: reload after conflict: %w", findErr)
 			}
 			if existing == nil {
-				return nil, fmt.Errorf("invoice: save conflict but no row for order %s", input.OrderID)
+				return nil, fmt.Errorf("invoice: order_id conflict but no row for order %s", input.OrderID)
 			}
 			return s.ensureIssued(ctx, existing)
 		}
@@ -192,10 +194,11 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 	pdfPath := invoicePDFPath(inv)
 	pdfBytes, err := s.renderer.Render(inv, inv.Seller())
 	if err != nil {
-		return nil, s.rollbackIssue(ctx, inv.ID(), "", "render", err)
+		// Leave the row: next order.paid / concurrent ensureIssued repairs.
+		return nil, fmt.Errorf("invoice: render pdf: %w", err)
 	}
 	if err := s.storage.Save(pdfPath, bytes.NewReader(pdfBytes)); err != nil {
-		return nil, s.rollbackIssue(ctx, inv.ID(), pdfPath, "store", err)
+		return nil, fmt.Errorf("invoice: store pdf: %w", err)
 	}
 
 	if err := s.publishCreated(ctx, &inv); err != nil {
@@ -214,7 +217,7 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 }
 
 // ensureIssued repairs a leftover invoice row: store PDF if missing, then
-// (re)publish invoice.created so the email path can run/dedupe.
+// (re)publish invoice.created so the email path can run/dedupe/requeue.
 func (s *Service) ensureIssued(ctx context.Context, inv *domainInvoice.Invoice) (*GenerateResult, error) {
 	if inv == nil {
 		return nil, fmt.Errorf("invoice: ensureIssued: nil invoice")
@@ -267,44 +270,31 @@ func invoicePDFPath(inv domainInvoice.Invoice) string {
 	return fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
 }
 
+// pdfStored reports whether the sealed PDF object exists. Uses Read or Head.
+// Storage that cannot probe returns an error — never "missing" (that would
+// force a re-PutObject on every later order.paid against S3).
 func (s *Service) pdfStored(ctx context.Context, path string) (bool, error) {
-	reader, ok := s.storage.(media.ReadableStorage)
-	if !ok {
-		// Cannot probe: treat as missing so repair re-writes the object.
-		return false, nil
-	}
-	data, err := reader.Read(ctx, path)
-	if err != nil {
-		if media.IsNotFound(err) {
-			return false, nil
+	if reader, ok := s.storage.(media.ReadableStorage); ok {
+		data, err := reader.Read(ctx, path)
+		if err != nil {
+			if media.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("invoice: read stored pdf: %w", err)
 		}
-		return false, fmt.Errorf("invoice: read stored pdf: %w", err)
+		return len(data) > 0, nil
 	}
-	return len(data) > 0, nil
-}
-
-// rollbackIssue removes a failed issue attempt. On store failure, deletes the
-// object first. If Delete of the row fails, that error is returned (wrapped
-// with the original cause) so a leftover row is not silently ignored.
-func (s *Service) rollbackIssue(ctx context.Context, invoiceID, pdfPath, stage string, cause error) error {
-	if pdfPath != "" {
-		if delErr := s.storage.Delete(pdfPath); delErr != nil && !media.IsNotFound(delErr) {
-			s.log.Warn("invoice.rollback_object_failed", map[string]interface{}{
-				"invoice_id": invoiceID,
-				"pdf_path":   pdfPath,
-				"stage":      stage,
-				"error":      delErr.Error(),
-			})
+	if headed, ok := s.storage.(media.SignedURLStorage); ok {
+		err := headed.Head(ctx, path)
+		if err != nil {
+			if media.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("invoice: head stored pdf: %w", err)
 		}
+		return true, nil
 	}
-	if err := s.invoices.Delete(ctx, invoiceID); err != nil {
-		s.log.Error("invoice.rollback_failed", err, map[string]interface{}{
-			"invoice_id": invoiceID,
-			"stage":      stage,
-		})
-		return fmt.Errorf("invoice: %s failed (%v); rollback delete failed: %w", stage, cause, err)
-	}
-	return fmt.Errorf("invoice: %s pdf: %w", stage, cause)
+	return false, fmt.Errorf("invoice: storage %T cannot probe PDF existence", s.storage)
 }
 
 func (s *Service) loadSeller(ctx context.Context) (domainInvoice.SellerBlock, error) {

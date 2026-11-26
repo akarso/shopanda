@@ -21,11 +21,14 @@ import (
 // Compile-time interface check.
 var _ media.Storage = (*Storage)(nil)
 var _ media.SignedURLStorage = (*Storage)(nil)
+var _ media.ReadableStorage = (*Storage)(nil)
 
 // --- mock S3 client ---
 
 type mockS3 struct {
 	putErr    error
+	getErr    error
+	getBody   []byte
 	deleteErr error
 	headErr   error
 	putKeys   []string
@@ -34,6 +37,7 @@ type mockS3 struct {
 	putACL    []string // ACL per call (empty string when omitted)
 	deleted   []string
 	headed    []string
+	got       []string
 }
 
 func (m *mockS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -63,6 +67,22 @@ func (m *mockS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*
 	return &s3.PutObjectOutput{}, nil
 }
 
+func (m *mockS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	key := ""
+	if in.Key != nil {
+		key = *in.Key
+	}
+	m.got = append(m.got, key)
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	body := m.getBody
+	if body == nil {
+		body = []byte("%PDF-mock")
+	}
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(body))}, nil
+}
+
 func (m *mockS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
 	if m.deleteErr != nil {
 		return nil, m.deleteErr
@@ -73,6 +93,26 @@ func (m *mockS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 	}
 	m.deleted = append(m.deleted, key)
 	return &s3.DeleteObjectOutput{}, nil
+}
+
+func TestStorage_Read(t *testing.T) {
+	m := &mockS3{getBody: []byte("%PDF-bytes")}
+	s := &Storage{client: m, bucket: "b", region: "r", baseURL: "https://cdn.example"}
+	got, err := s.Read(context.Background(), "invoices/inv-1/invoice-1.pdf")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(got) != "%PDF-bytes" {
+		t.Fatalf("body = %q", got)
+	}
+	if len(m.got) != 1 || m.got[0] != "invoices/inv-1/invoice-1.pdf" {
+		t.Fatalf("got keys = %v", m.got)
+	}
+	m.getErr = &s3types.NotFound{}
+	_, err = s.Read(context.Background(), "missing.pdf")
+	if !media.IsNotFound(err) {
+		t.Fatalf("missing err = %v, want IsNotFound", err)
+	}
 }
 
 func (m *mockS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
