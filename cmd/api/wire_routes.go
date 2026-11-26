@@ -62,6 +62,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		"/api/v1/account",
 		"/api/v1/auth",
 		"/api/v1/shipping",
+		"/api/v1/store",
 		"/api/v1/admin",
 	}
 	noCachePrefixes = append(noCachePrefixes, plugin.NoCachePathPrefixes(rt.pluginApp.PublicRoutes())...)
@@ -363,6 +364,16 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(rt.storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(rt.storeAdmin.Update()))
 
+	router.Handle("GET /api/v1/admin/store-identity", requireSettingsRead(rt.storeIdentityAdmin.GetIdentity()))
+	router.Handle("PUT /api/v1/admin/store-identity", requireSettingsWrite(rt.storeIdentityAdmin.PutIdentity()))
+	router.Handle("GET /api/v1/admin/store-addresses", requireSettingsRead(rt.storeIdentityAdmin.ListAddresses()))
+	router.Handle("GET /api/v1/admin/store-addresses/{role}", requireSettingsRead(rt.storeIdentityAdmin.GetAddress()))
+	router.Handle("PUT /api/v1/admin/store-addresses/{role}", requireSettingsWrite(rt.storeIdentityAdmin.PutAddress()))
+	router.Handle("GET /api/v1/admin/tax-identifiers", requireSettingsRead(rt.storeIdentityAdmin.ListTaxIdentifiers()))
+	router.Handle("PUT /api/v1/admin/tax-identifiers", requireSettingsWrite(rt.storeIdentityAdmin.PutTaxIdentifier()))
+	router.Handle("DELETE /api/v1/admin/tax-identifiers", requireSettingsWrite(rt.storeIdentityAdmin.DeleteTaxIdentifier()))
+	router.Handle("GET /api/v1/admin/tax-identifier-types", requireSettingsRead(rt.storeIdentityAdmin.ListTaxIdentifierTypes()))
+
 	// Plugin admin routes (permission-guarded; registered during plugin Init).
 	// Use TryHandle so a conflicting or malformed pattern fails startup instead of panicking.
 	for _, route := range rt.pluginApp.AdminRoutes() {
@@ -422,6 +433,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("DELETE /api/v1/account/addresses/{addressId}", requireAuth(addressHandler.Delete()))
 
 	// Shipping rates (behind RequireAuth — used during checkout).
+	router.Handle("GET /api/v1/store/identity", rt.storeIdentityHandler.Get())
 	router.Handle("GET /api/v1/shipping/rates", requireAuth(rt.shippingRates.List()))
 
 	// Payment webhook (public — called by external payment providers).

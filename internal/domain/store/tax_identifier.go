@@ -14,9 +14,9 @@ var taxTypePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // Value is a single-line field (same control rules as address lines); punctuation
 // is kept — "123-456" and "123456" stay distinct.
 type TaxIdentifier struct {
-	StoreID string
-	Type    string
-	Value   string
+	StoreID string `json:"store_id"`
+	Type    string `json:"type"`
+	Value   string `json:"value"`
 }
 
 // NewTaxIdentifier constructs a tax ID. Type must match ^[a-z][a-z0-9_]*$

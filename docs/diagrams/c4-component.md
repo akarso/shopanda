@@ -56,10 +56,13 @@ C4Component
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
             Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.StorefrontHTML — enabled and not mode=headless). Guest claim JSON is always mounted. Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
+            Component(storeIdentityAdmin, "StoreIdentityAdminHandler", "HTTP", "PR-1202: store identity, addresses, tax identifiers + types (admin, settings.*)")
+            Component(storeIdentityHandler, "StoreIdentityHandler", "HTTP", "PR-1202: public GET /api/v1/store/identity (legal/contact, general+invoice, imprint tax IDs only; private no-store + Vary Host; no SMTP)")
         }
 
         Boundary(application, "Application Layer (Use Cases)") {
             Component(authService, "AuthService", "Go", "Register, Login, Logout, JWT validation, password reset")
+            Component(storeIdentityService, "StoreIdentityService", "Go", "PR-1202: identity/address/tax CRUD, address placeholders, invoice→general and returns→origin→general read fallbacks, public view")
             Component(cartService, "CartService", "Go", "Cart management with pricing integration")
             Component(checkoutWorkflow, "CheckoutWorkflow", "Go", "6-step ordered flow: validate → price → reserve → order → ship → pay")
             Component(pricingPipeline, "PricingPipeline", "Go", "Step-based price calculation: BasePriceStep → plugin steps → FinalizeStep")
@@ -269,6 +272,9 @@ C4Component
     Rel(taxDomain, postgresRepos, "Tax rate queries")
     Rel(storeAdmin, postgresRepos, "Store CRUD")
     Rel(storeAdmin, eventBus, "Publishes store.created, store.updated")
+    Rel(storeIdentityAdmin, storeIdentityService, "Admin identity/address/tax API")
+    Rel(storeIdentityHandler, storeIdentityService, "Public identity GET")
+    Rel(storeIdentityService, postgresRepos, "store_identities / store_addresses / store_tax_identifiers")
 
     Rel(postgresRepos, postgres, "SQL queries", "pgx")
     Rel(postgresSearch, postgres, "Full-text search queries", "pgx")

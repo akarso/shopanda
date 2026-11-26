@@ -50,6 +50,7 @@ import (
 	shippingApp "github.com/akarso/shopanda/internal/application/shipping"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	voucherApp "github.com/akarso/shopanda/internal/application/voucher"
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
@@ -202,6 +203,8 @@ type serveRuntime struct {
 	extensionPortAdmin             *admin.ExtensionPortAdminHandler
 	inventoryAdmin                 *admin.InventoryAdminHandler
 	storeAdmin                     *admin.StoreAdminHandler
+	storeIdentityAdmin             *admin.StoreIdentityAdminHandler
+	storeIdentityHandler           *storefront.StoreIdentityHandler
 	auditLogAdmin                  *admin.AuditLogAdminHandler
 	webhookEndpointAdmin           *admin.WebhookEndpointAdminHandler
 	integrationIdempotencyAdmin    *admin.IntegrationIdempotencyAdminHandler
@@ -1128,6 +1131,13 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithTxStarter(conn)
 	inventoryAdmin.SetBus(bus) // PR-1036: stock adjustment → search index update
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
+	storeIdentitySvc := storeidentity.NewService(
+		repos.storeIdentityRepo,
+		repos.storeRepo,
+		pluginApp.TaxIdentifierTypes(),
+	)
+	storeIdentityAdmin := admin.NewStoreIdentityAdminHandlerWithAuditor(storeIdentitySvc, sharedAuditor)
+	storeIdentityHandler := storefront.NewStoreIdentityHandler(storeIdentitySvc)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
 	webhookService := webhookApp.NewService(repos.webhookEndpointRepo)
 	webhookEndpointAdmin := admin.NewWebhookEndpointAdminHandler(webhookService)
@@ -1289,6 +1299,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		extensionPortAdmin:             extensionPortAdmin,
 		inventoryAdmin:                 inventoryAdmin,
 		storeAdmin:                     storeAdmin,
+		storeIdentityAdmin:             storeIdentityAdmin,
+		storeIdentityHandler:           storeIdentityHandler,
 		auditLogAdmin:                  auditLogAdmin,
 		webhookEndpointAdmin:           webhookEndpointAdmin,
 		integrationIdempotencyAdmin:    integrationIdempotencyAdmin,
