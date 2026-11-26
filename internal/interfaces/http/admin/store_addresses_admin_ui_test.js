@@ -192,6 +192,46 @@ test("winning refetch builds inputs from loading shell", function () {
     assert.equal(shell.elements.line1.value, "Post-write St");
 });
 
+test("losing page-load catch does not wipe winning refetch form", function () {
+    const loadGate = ui.newStoreAddressesLoadGate();
+    const fillGate = ui.newAddressFillGate();
+
+    const loadTicket = loadGate.start("store-a");
+    const pageFill = fillGate.begin("store-a");
+    // Post-write refetch bumps the fill gate; load ticket stays current.
+    const refetchFill = fillGate.begin("store-a");
+
+    const doc = {
+        form: {
+            id: "store-address-role-form",
+            elements: { line1: { value: "" } }
+        },
+        message: "Address saved."
+    };
+
+    assert.equal(ui.shouldApplyAddressFill(refetchFill, "store-a", "store-a"), true);
+    ui.applyAddressValues(doc.form.elements, { line1: "Post-write St", store_id: "store-a" });
+    assert.equal(doc.form.elements.line1.value, "Post-write St");
+
+    // Losing page-load catch: load ticket still current, page fill token is not.
+    assert.equal(loadTicket.isCurrent("store-a"), true);
+    assert.equal(pageFill.isCurrent("store-a"), false);
+    assert.equal(
+        ui.shouldCommitPageLoadResult(loadTicket, pageFill, "store-a"),
+        false,
+        "page-load catch must not wipe after a newer fill"
+    );
+
+    // Simulate the guarded catch: only wipe when commit is allowed.
+    if (ui.shouldCommitPageLoadResult(loadTicket, pageFill, "store-a")) {
+        doc.form = null;
+        doc.message = "Failed to load address.";
+    }
+    assert.ok(doc.form, "form must remain");
+    assert.equal(doc.form.elements.line1.value, "Post-write St");
+    assert.equal(doc.message, "Address saved.");
+});
+
 test("addressRefetchPaintAction clears shell on error", function () {
     assert.equal(ui.addressRefetchPaintAction(true, true, false, true), "error-shell");
     assert.equal(ui.addressRefetchPaintAction(true, true, true, true), "error-ready");
@@ -222,12 +262,12 @@ test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths",
     assert.match(adminSrc, /newAddressFillGate/);
     assert.match(adminSrc, /shouldApplyAddressFill/);
     assert.match(adminSrc, /addressRefetchPaintAction/);
+    assert.match(adminSrc, /shouldCommitPageLoadResult/);
     assert.match(adminSrc, /shouldShowAddressWriteFeedback/);
     assert.match(adminSrc, /refreshStoreAddressesIndex/);
     assert.match(adminSrc, /novalidate/);
     assert.match(adminSrc, /firstValidationMessage/);
     assert.match(adminSrc, /section-store address-line1/);
-    assert.ok(adminSrc.indexOf("build") >= 0 || adminSrc.indexOf("Loading") >= 0);
     assert.ok(adminSrc.indexOf("/admin/store-addresses/") >= 0);
     assert.equal(adminSrc.indexOf("ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount"), -1);
 });

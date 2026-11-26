@@ -214,6 +214,22 @@
         return formReady ? "fill" : "build";
     }
 
+    // Page-load then/catch must not wipe DOM after a newer fill (post-write refetch)
+    // invalidated this page's fill token — the load ticket alone stays current.
+    function shouldCommitPageLoadResult(loadTicket, fillTicket, currentStoreID) {
+        if (!loadTicket || typeof loadTicket.isCurrent !== "function") {
+            return false;
+        }
+        if (!loadTicket.isCurrent(currentStoreID)) {
+            return false;
+        }
+        if (fillTicket && typeof fillTicket.isCurrent === "function" &&
+            !fillTicket.isCurrent(currentStoreID)) {
+            return false;
+        }
+        return true;
+    }
+
     function firstValidationMessage(form) {
         if (!form) {
             return "Fix the highlighted fields before saving.";
@@ -318,6 +334,7 @@
         shouldShowAddressWriteFeedback: shouldShowAddressWriteFeedback,
         shouldRefreshAddressIndexAfterWrite: shouldRefreshAddressIndexAfterWrite,
         addressRefetchPaintAction: addressRefetchPaintAction,
+        shouldCommitPageLoadResult: shouldCommitPageLoadResult,
         firstValidationMessage: firstValidationMessage,
         applyAddressValues: applyAddressValues,
         buildAddressPutBody: buildAddressPutBody,

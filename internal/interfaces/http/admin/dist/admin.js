@@ -10225,7 +10225,7 @@
             reqs.push(api("/admin/store-addresses"));
         }
         Promise.all(reqs).then(function (results) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
             var storesResponse = results[0];
@@ -10242,9 +10242,6 @@
                     '<p role="alert">Select a store in the header switcher to edit store addresses. Addresses are store-scoped; there is no global record.</p>';
                 return;
             }
-            if (fill && !fill.isCurrent(adminScope.store_id)) {
-                return;
-            }
 
             var addrResponse = results[1];
             if (addrResponse && addrResponse.error && addrResponse.error.code === "forbidden") {
@@ -10258,13 +10255,13 @@
             }
             var addresses = (addrResponse && addrResponse.data && addrResponse.data.addresses) || [];
             var responseStoreID = addresses[0] && addresses[0].store_id ? addresses[0].store_id : storeID;
-            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill &&
+            if (storeAddressesUI.shouldApplyAddressFill &&
                 !storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, responseStoreID)) {
                 return;
             }
             renderStoreAddressesIndexCards(addresses);
         }).catch(function (err) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
             container.innerHTML = '<h2>Store Addresses</h2><p role="alert">' + esc(extractErrorMessage(err, "Failed to load store addresses.")) + "</p>";
@@ -10321,7 +10318,7 @@
             reqs.push(api("/admin/store-addresses/" + encodeURIComponent(normalizedRole)));
         }
         Promise.all(reqs).then(function (results) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
             var storesResponse = results[0];
@@ -10336,9 +10333,6 @@
             if (!storeID) {
                 document.getElementById("store-address-role-form").innerHTML =
                     '<p role="alert">Select a store in the header switcher to edit this address.</p>';
-                return;
-            }
-            if (fill && !fill.isCurrent(adminScope.store_id)) {
                 return;
             }
 
@@ -10361,7 +10355,7 @@
                 country: (activeStore && activeStore.country) || "",
                 persisted: false
             };
-            if (storeAddressesUI && storeAddressesUI.shouldApplyAddressFill &&
+            if (storeAddressesUI.shouldApplyAddressFill &&
                 !storeAddressesUI.shouldApplyAddressFill(fill, adminScope.store_id, addr.store_id || storeID)) {
                 return;
             }
@@ -10370,7 +10364,7 @@
             }
             renderStoreAddressRoleForm(container, normalizedRole, meta, addr, ticket);
         }).catch(function (err) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
             container.innerHTML = '<h2>Store Address</h2><p role="alert">' + esc(extractErrorMessage(err, "Failed to load address.")) + "</p>";
