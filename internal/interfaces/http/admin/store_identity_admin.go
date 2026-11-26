@@ -5,42 +5,53 @@ import (
 	"net/http"
 	"strings"
 
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/store"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // StoreIdentityAdminHandler serves admin store-identity endpoints.
 type StoreIdentityAdminHandler struct {
-	svc *storeidentity.Service
+	svc     *storeidentity.Service
+	auditor *adminapp.Auditor
 }
 
-// NewStoreIdentityAdminHandler creates a StoreIdentityAdminHandler.
+// NewStoreIdentityAdminHandler creates a StoreIdentityAdminHandler with a default auditor.
 func NewStoreIdentityAdminHandler(svc *storeidentity.Service) *StoreIdentityAdminHandler {
+	return NewStoreIdentityAdminHandlerWithAuditor(svc, adminapp.NewAuditor(logger.New("info")))
+}
+
+// NewStoreIdentityAdminHandlerWithAuditor creates a StoreIdentityAdminHandler with a custom auditor.
+func NewStoreIdentityAdminHandlerWithAuditor(svc *storeidentity.Service, auditor *adminapp.Auditor) *StoreIdentityAdminHandler {
 	if svc == nil {
 		panic("StoreIdentityAdminHandler: nil service")
 	}
-	return &StoreIdentityAdminHandler{svc: svc}
+	if auditor == nil {
+		panic("StoreIdentityAdminHandler: nil auditor")
+	}
+	return &StoreIdentityAdminHandler{svc: svc, auditor: auditor}
 }
 
 type identityRequest struct {
-	LegalName    string `json:"legal_name"`
-	Phone        string `json:"phone"`
-	Hours        string `json:"hours"`
-	EmailGeneral string `json:"email_general"`
-	EmailSales   string `json:"email_sales"`
-	EmailSupport string `json:"email_support"`
+	LegalName    *string `json:"legal_name"`
+	Phone        *string `json:"phone"`
+	Hours        *string `json:"hours"`
+	EmailGeneral *string `json:"email_general"`
+	EmailSales   *string `json:"email_sales"`
+	EmailSupport *string `json:"email_support"`
 }
 
 type addressRequest struct {
-	Line1    string `json:"line1"`
-	Line2    string `json:"line2"`
-	City     string `json:"city"`
-	Region   string `json:"region"`
-	Postcode string `json:"postcode"`
-	Country  string `json:"country"`
-	Phone    string `json:"phone"`
+	Line1    *string `json:"line1"`
+	Line2    *string `json:"line2"`
+	City     *string `json:"city"`
+	Region   *string `json:"region"`
+	Postcode *string `json:"postcode"`
+	Country  *string `json:"country"`
+	Phone    *string `json:"phone"`
 }
 
 type taxIdentifierRequest struct {
@@ -54,6 +65,34 @@ func (h *StoreIdentityAdminHandler) scopeStoreID(r *http.Request) (string, error
 		return "", apperror.Validation("store scope required")
 	}
 	return id, nil
+}
+
+func (h *StoreIdentityAdminHandler) audit(r *http.Request, resourceType, resourceID string, details map[string]interface{}, err error) {
+	merged := mergeAuditDetails(details, fullAdminScopeDetailsFromRequest(r))
+	result := "success"
+	errMsg := ""
+	if err != nil {
+		result = "error"
+		errMsg = err.Error()
+	}
+	h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+		AdminID:      adminIDFromRequest(r),
+		Action:       adminapp.AuditSettingsChange,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Details:      merged,
+		Result:       result,
+		Error:        errMsg,
+	})
+}
+
+func decodeStrict(r *http.Request, dst interface{}) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return apperror.Validation("invalid request body")
+	}
+	return nil
 }
 
 // GetIdentity handles GET /api/v1/admin/store-identity.
@@ -73,7 +112,7 @@ func (h *StoreIdentityAdminHandler) GetIdentity() http.HandlerFunc {
 	}
 }
 
-// PutIdentity handles PUT /api/v1/admin/store-identity.
+// PutIdentity handles PUT /api/v1/admin/store-identity (partial update).
 func (h *StoreIdentityAdminHandler) PutIdentity() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		storeID, err := h.scopeStoreID(r)
@@ -82,11 +121,12 @@ func (h *StoreIdentityAdminHandler) PutIdentity() http.HandlerFunc {
 			return
 		}
 		var req identityRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid request body"))
+		if err := decodeStrict(r, &req); err != nil {
+			h.audit(r, "store_identity", storeID, nil, err)
+			httpshared.JSONError(w, err)
 			return
 		}
-		id, err := h.svc.SaveIdentity(r.Context(), storeID, storeidentity.IdentityInput{
+		id, err := h.svc.PatchIdentity(r.Context(), storeID, storeidentity.IdentityPatch{
 			LegalName:    req.LegalName,
 			Phone:        req.Phone,
 			Hours:        req.Hours,
@@ -94,6 +134,7 @@ func (h *StoreIdentityAdminHandler) PutIdentity() http.HandlerFunc {
 			EmailSales:   req.EmailSales,
 			EmailSupport: req.EmailSupport,
 		})
+		h.audit(r, "store_identity", storeID, map[string]interface{}{"store_id": storeID}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -141,7 +182,7 @@ func (h *StoreIdentityAdminHandler) GetAddress() http.HandlerFunc {
 	}
 }
 
-// PutAddress handles PUT /api/v1/admin/store-addresses/{role}.
+// PutAddress handles PUT /api/v1/admin/store-addresses/{role} (partial update).
 func (h *StoreIdentityAdminHandler) PutAddress() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		storeID, err := h.scopeStoreID(r)
@@ -155,11 +196,12 @@ func (h *StoreIdentityAdminHandler) PutAddress() http.HandlerFunc {
 			return
 		}
 		var req addressRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid request body"))
+		if err := decodeStrict(r, &req); err != nil {
+			h.audit(r, "store_address", storeID, map[string]interface{}{"role": string(role)}, err)
+			httpshared.JSONError(w, err)
 			return
 		}
-		addr, err := h.svc.SaveAddress(r.Context(), storeID, role, storeidentity.AddressInput{
+		addr, err := h.svc.PatchAddress(r.Context(), storeID, role, storeidentity.AddressPatch{
 			Line1:    req.Line1,
 			Line2:    req.Line2,
 			City:     req.City,
@@ -168,6 +210,7 @@ func (h *StoreIdentityAdminHandler) PutAddress() http.HandlerFunc {
 			Country:  req.Country,
 			Phone:    req.Phone,
 		})
+		h.audit(r, "store_address", storeID, map[string]interface{}{"store_id": storeID, "role": string(role)}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -205,11 +248,14 @@ func (h *StoreIdentityAdminHandler) PutTaxIdentifier() http.HandlerFunc {
 			return
 		}
 		var req taxIdentifierRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid request body"))
+		if err := decodeStrict(r, &req); err != nil {
+			h.audit(r, "store_tax_identifier", storeID, nil, err)
+			httpshared.JSONError(w, err)
 			return
 		}
 		ti, err := h.svc.UpsertTaxIdentifier(r.Context(), storeID, req.Type, req.Value)
+		details := map[string]interface{}{"store_id": storeID, "type": strings.ToLower(strings.TrimSpace(req.Type))}
+		h.audit(r, "store_tax_identifier", storeID, details, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -227,7 +273,13 @@ func (h *StoreIdentityAdminHandler) DeleteTaxIdentifier() http.HandlerFunc {
 			return
 		}
 		typ := r.URL.Query().Get("type")
-		if err := h.svc.DeleteTaxIdentifier(r.Context(), storeID, typ); err != nil {
+		err = h.svc.DeleteTaxIdentifier(r.Context(), storeID, typ)
+		h.audit(r, "store_tax_identifier", storeID, map[string]interface{}{
+			"store_id": storeID,
+			"type":     strings.ToLower(strings.TrimSpace(typ)),
+			"op":       "delete",
+		}, err)
+		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
@@ -238,7 +290,11 @@ func (h *StoreIdentityAdminHandler) DeleteTaxIdentifier() http.HandlerFunc {
 // ListTaxIdentifierTypes handles GET /api/v1/admin/tax-identifier-types?country=.
 func (h *StoreIdentityAdminHandler) ListTaxIdentifierTypes() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		types := h.svc.ListTaxIdentifierTypes(r.URL.Query().Get("country"))
+		types, err := h.svc.ListTaxIdentifierTypes(r.URL.Query().Get("country"))
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
 		if types == nil {
 			types = []store.TaxIdentifierType{}
 		}

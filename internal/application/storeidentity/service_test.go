@@ -12,7 +12,7 @@ import (
 
 type memIdentityRepo struct {
 	identities map[string]store.Identity
-	addresses  map[string]store.Address // key storeID|role
+	addresses  map[string]store.Address
 	tax        map[string]store.TaxIdentifier
 }
 
@@ -80,7 +80,11 @@ func (m *memIdentityRepo) UpsertTaxIdentifier(_ context.Context, ti store.TaxIde
 }
 
 func (m *memIdentityRepo) DeleteTaxIdentifier(_ context.Context, storeID, typ string) error {
-	delete(m.tax, storeID+"|"+typ)
+	key := storeID + "|" + typ
+	if _, ok := m.tax[key]; !ok {
+		return apperror.NotFound("tax identifier not found")
+	}
+	delete(m.tax, key)
 	return nil
 }
 
@@ -110,6 +114,8 @@ func testStore() *store.Store {
 	return &s
 }
 
+func strPtr(s string) *string { return &s }
+
 func TestService_ListAddressesPlaceholders(t *testing.T) {
 	st := testStore()
 	svc := storeidentity.NewService(
@@ -125,6 +131,9 @@ func TestService_ListAddressesPlaceholders(t *testing.T) {
 		t.Fatalf("len=%d", len(addrs))
 	}
 	for _, a := range addrs {
+		if a.Persisted {
+			t.Fatalf("want placeholder, got persisted %#v", a)
+		}
 		if a.Country != "PL" {
 			t.Fatalf("placeholder country %q", a.Country)
 		}
@@ -138,21 +147,56 @@ func TestService_UnknownRole(t *testing.T) {
 		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
 		store.DefaultTaxIdentifierTypeRegistry(),
 	)
-	_, err := svc.SaveAddress(context.Background(), st.ID, store.AddressRole("warehouse"), storeidentity.AddressInput{
-		Country: "PL",
+	_, err := svc.PatchAddress(context.Background(), st.ID, store.AddressRole("warehouse"), storeidentity.AddressPatch{
+		Country: strPtr("PL"),
 	})
 	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
-func TestService_PublicIdentityNoSMTP(t *testing.T) {
+func TestService_PatchIdentityOmitsUnchanged(t *testing.T) {
+	st := testStore()
+	mem := newMemIdentity()
+	svc := storeidentity.NewService(mem, &memStoreRepo{byID: map[string]*store.Store{st.ID: st}}, store.DefaultTaxIdentifierTypeRegistry())
+	_, err := svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{
+		LegalName:    strPtr("Acme"),
+		Phone:        strPtr("+48111"),
+		EmailGeneral: strPtr("a@b.test"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{
+		LegalName: strPtr("Acme Sp. z o.o."),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LegalName != "Acme Sp. z o.o." || got.Phone != "+48111" || got.EmailGeneral != "a@b.test" {
+		t.Fatalf("%#v", got)
+	}
+	_, err = svc.PatchIdentity(context.Background(), st.ID, storeidentity.IdentityPatch{})
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("empty patch err=%v", err)
+	}
+}
+
+func TestService_PublicIdentityInvoiceFallbackAndTaxFilter(t *testing.T) {
 	st := testStore()
 	mem := newMemIdentity()
 	idty, _ := store.NewIdentity(st.ID, "Legal Co", "+48", "9-17", "a@b.test", "s@b.test", "h@b.test")
 	_ = mem.SaveIdentity(context.Background(), idty)
 	addr, _ := store.NewAddress(st.ID, store.AddressRoleGeneral, "Street 1", "", "City", "", "00-001", "PL", "")
 	_ = mem.SaveAddress(context.Background(), addr)
+	phoneOnlyInvoice, _ := store.NewAddress(st.ID, store.AddressRoleInvoice, "", "", "", "", "", "PL", "+48999")
+	_ = mem.SaveAddress(context.Background(), phoneOnlyInvoice)
+	nip, _ := store.NewTaxIdentifier(st.ID, "pl_nip", "1234567890")
+	_ = mem.UpsertTaxIdentifier(context.Background(), nip)
+	ein, _ := store.NewTaxIdentifier(st.ID, "us_ein", "12-3456789")
+	_ = mem.UpsertTaxIdentifier(context.Background(), ein)
+	steuernummer, _ := store.NewTaxIdentifier(st.ID, "de_steuernummer", "123/456")
+	_ = mem.UpsertTaxIdentifier(context.Background(), steuernummer)
 
 	svc := storeidentity.NewService(
 		mem,
@@ -163,11 +207,28 @@ func TestService_PublicIdentityNoSMTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.LegalName != "Legal Co" || view.General == nil {
-		t.Fatalf("%#v", view)
+	if view.Invoice == nil || view.Invoice.Role != store.AddressRoleInvoice || view.Invoice.Line1 != "Street 1" {
+		t.Fatalf("invoice fallback %#v", view.Invoice)
 	}
-	if view.EmailGeneral != "a@b.test" {
-		t.Fatalf("email %q", view.EmailGeneral)
+	if view.General != nil && view.General == view.Invoice {
+		t.Fatal("general and invoice must be distinct pointers")
+	}
+	if len(view.TaxIDs) != 1 || view.TaxIDs[0].Type != "pl_nip" {
+		t.Fatalf("tax filter %#v", view.TaxIDs)
+	}
+}
+
+func TestService_ResolveReturns(t *testing.T) {
+	st := testStore()
+	mem := newMemIdentity()
+	general, _ := store.NewAddress(st.ID, store.AddressRoleGeneral, "Main", "", "City", "", "00-001", "PL", "")
+	origin, _ := store.NewAddress(st.ID, store.AddressRoleShippingOrigin, "Warehouse", "", "City", "", "00-002", "PL", "")
+	_ = mem.SaveAddress(context.Background(), general)
+	_ = mem.SaveAddress(context.Background(), origin)
+	svc := storeidentity.NewService(mem, &memStoreRepo{byID: map[string]*store.Store{st.ID: st}}, store.DefaultTaxIdentifierTypeRegistry())
+	got, err := svc.ResolveReturns(context.Background(), st.ID)
+	if err != nil || got == nil || got.Line1 != "Warehouse" {
+		t.Fatalf("got=%#v err=%v", got, err)
 	}
 }
 
@@ -181,5 +242,67 @@ func TestService_UpsertUnknownType(t *testing.T) {
 	_, err := svc.UpsertTaxIdentifier(context.Background(), st.ID, "not_a_real_type", "x")
 	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestService_DeleteTaxUnknown(t *testing.T) {
+	st := testStore()
+	svc := storeidentity.NewService(
+		newMemIdentity(),
+		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
+		store.DefaultTaxIdentifierTypeRegistry(),
+	)
+	err := svc.DeleteTaxIdentifier(context.Background(), st.ID, "pl_nip")
+	if err == nil || !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+	err = svc.DeleteTaxIdentifier(context.Background(), st.ID, "BAD TYPE")
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("bad token err=%v", err)
+	}
+}
+
+func TestService_ListTaxIdentifierTypesInvalidCountry(t *testing.T) {
+	st := testStore()
+	svc := storeidentity.NewService(
+		newMemIdentity(),
+		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
+		store.DefaultTaxIdentifierTypeRegistry(),
+	)
+	_, err := svc.ListTaxIdentifierTypes("12")
+	if err == nil || !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err=%v", err)
+	}
+	_, err = svc.ListTaxIdentifierTypes("uk")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestService_GetIdentityDraftOmitsUpdatedAt(t *testing.T) {
+	st := testStore()
+	svc := storeidentity.NewService(
+		newMemIdentity(),
+		&memStoreRepo{byID: map[string]*store.Store{st.ID: st}},
+		store.DefaultTaxIdentifierTypeRegistry(),
+	)
+	got, err := svc.GetIdentity(context.Background(), st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Persisted || got.UpdatedAt != nil {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestImprintPublicTaxType(t *testing.T) {
+	if !store.ImprintPublicTaxType("pl_nip") {
+		t.Fatal("pl_nip should be public")
+	}
+	if store.ImprintPublicTaxType("us_ein") {
+		t.Fatal("us_ein should be admin-only")
+	}
+	if store.ImprintPublicTaxType("de_steuernummer") {
+		t.Fatal("steuernummer should be admin-only")
 	}
 }

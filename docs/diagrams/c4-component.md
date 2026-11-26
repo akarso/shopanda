@@ -57,7 +57,7 @@ C4Component
             Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.StorefrontHTML — enabled and not mode=headless). Guest claim JSON is always mounted. Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
             Component(storeIdentityAdmin, "StoreIdentityAdminHandler", "HTTP", "PR-1202: store identity, addresses, tax identifiers + types (admin, settings.*)")
-            Component(storeIdentityHandler, "StoreIdentityHandler", "HTTP", "PR-1202: public GET /api/v1/store/identity (legal/contact, general+invoice addresses, tax IDs; no SMTP)")
+            Component(storeIdentityHandler, "StoreIdentityHandler", "HTTP", "PR-1202: public GET /api/v1/store/identity (legal/contact, general+invoice, imprint tax IDs only; private no-store + Vary Host; no SMTP)")
         }
 
         Boundary(application, "Application Layer (Use Cases)") {

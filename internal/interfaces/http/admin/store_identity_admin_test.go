@@ -12,6 +12,7 @@ import (
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -74,7 +75,11 @@ func (m *identityMemRepo) UpsertTaxIdentifier(_ context.Context, ti store.TaxIde
 	return nil
 }
 func (m *identityMemRepo) DeleteTaxIdentifier(_ context.Context, storeID, typ string) error {
-	delete(m.tax, storeID+"|"+typ)
+	key := storeID + "|" + typ
+	if _, ok := m.tax[key]; !ok {
+		return apperror.NotFound("tax identifier not found")
+	}
+	delete(m.tax, key)
 	return nil
 }
 
@@ -130,7 +135,7 @@ func TestStoreIdentityAdmin_UnknownRole422(t *testing.T) {
 	}
 }
 
-func TestStoreIdentityAdmin_PutAndGetIdentity(t *testing.T) {
+func TestStoreIdentityAdmin_PutPartialAndUnknownField(t *testing.T) {
 	st := identityTestStore(t)
 	svc := storeidentity.NewService(newIdentityMem(), &identityStoreRepo{st: st}, store.DefaultTaxIdentifierTypeRegistry())
 	h := admin.NewStoreIdentityAdminHandler(svc)
@@ -139,7 +144,7 @@ func TestStoreIdentityAdmin_PutAndGetIdentity(t *testing.T) {
 	mux.Handle("PUT /api/v1/admin/store-identity", h.PutIdentity())
 	mux.Handle("GET /api/v1/admin/store-identity", h.GetIdentity())
 
-	body := []byte(`{"legal_name":"Acme","email_general":"a@b.test"}`)
+	body := []byte(`{"legal_name":"Acme","email_general":"a@b.test","phone":"+481"}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/store-identity", bytes.NewReader(body))
 	req = withAdminStore(req, st.ID)
 	rr := httptest.NewRecorder()
@@ -148,21 +153,39 @@ func TestStoreIdentityAdmin_PutAndGetIdentity(t *testing.T) {
 		t.Fatalf("put status=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/store-identity", nil)
+	body = []byte(`{"legal_name":"Acme Sp. z o.o."}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/store-identity", bytes.NewReader(body))
 	req = withAdminStore(req, st.ID)
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("get status=%d", rr.Code)
+		t.Fatalf("partial put status=%d body=%s", rr.Code, rr.Body.String())
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/store-identity", nil)
+	req = withAdminStore(req, st.ID)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
 	var envelope struct {
-		Data store.Identity `json:"data"`
+		Data storeidentity.IdentityView `json:"data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
 	got := envelope.Data
-	if got.LegalName != "Acme" || got.EmailGeneral != "a@b.test" {
+	if got.LegalName != "Acme Sp. z o.o." || got.EmailGeneral != "a@b.test" || got.Phone != "+481" {
 		t.Fatalf("%#v body=%s", got, rr.Body.String())
+	}
+	if !got.Persisted || got.UpdatedAt == nil {
+		t.Fatalf("persisted markers %#v", got)
+	}
+
+	body = []byte(`{"legalName":"Nope"}`)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/store-identity", bytes.NewReader(body))
+	req = withAdminStore(req, st.ID)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown field status=%d", rr.Code)
 	}
 }

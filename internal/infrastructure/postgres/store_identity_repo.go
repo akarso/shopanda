@@ -40,7 +40,11 @@ func mapStoreIdentityExecError(err error) error {
 	case "23503":
 		return apperror.NotFound("store not found")
 	case "23514":
-		return apperror.Validation("store identity constraint violation")
+		msg := "store identity constraint violation"
+		if pgErr.ConstraintName != "" {
+			msg = "store identity constraint violation: " + pgErr.ConstraintName
+		}
+		return apperror.Validation(msg)
 	default:
 		return err
 	}
@@ -222,17 +226,24 @@ ON CONFLICT (store_id, type) DO UPDATE SET value = EXCLUDED.value`
 	return nil
 }
 
-// DeleteTaxIdentifier removes a type for the store (no-op if missing).
+// DeleteTaxIdentifier removes a type for the store.
 func (r *StoreIdentityRepo) DeleteTaxIdentifier(ctx context.Context, storeID, typ string) error {
 	if storeID == "" {
 		return fmt.Errorf("store_identity_repo: delete tax identifier: empty store id")
 	}
-	_, err := r.db.ExecContext(ctx,
+	res, err := r.db.ExecContext(ctx,
 		`DELETE FROM store_tax_identifiers WHERE store_id = $1 AND type = $2`,
 		storeID, typ,
 	)
 	if err != nil {
 		return fmt.Errorf("store_identity_repo: delete tax identifier: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store_identity_repo: delete tax identifier: rows affected: %w", err)
+	}
+	if n == 0 {
+		return apperror.NotFound("tax identifier not found")
 	}
 	return nil
 }

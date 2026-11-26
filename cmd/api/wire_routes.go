@@ -62,6 +62,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		"/api/v1/account",
 		"/api/v1/auth",
 		"/api/v1/shipping",
+		"/api/v1/store",
 		"/api/v1/admin",
 	}
 	noCachePrefixes = append(noCachePrefixes, plugin.NoCachePathPrefixes(rt.pluginApp.PublicRoutes())...)

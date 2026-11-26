@@ -1136,7 +1136,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		repos.storeRepo,
 		pluginApp.TaxIdentifierTypes(),
 	)
-	storeIdentityAdmin := admin.NewStoreIdentityAdminHandler(storeIdentitySvc)
+	storeIdentityAdmin := admin.NewStoreIdentityAdminHandlerWithAuditor(storeIdentitySvc, sharedAuditor)
 	storeIdentityHandler := storefront.NewStoreIdentityHandler(storeIdentitySvc)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
 	webhookService := webhookApp.NewService(repos.webhookEndpointRepo)

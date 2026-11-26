@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/store"
@@ -85,9 +86,9 @@ func TestStoreIdentityRepo_CRUD(t *testing.T) {
 	if err := repo.DeleteTaxIdentifier(ctx, s.ID, "pl_nip"); err != nil {
 		t.Fatalf("DeleteTaxIdentifier: %v", err)
 	}
-	tis, err = repo.ListTaxIdentifiers(ctx, s.ID)
-	if err != nil || len(tis) != 0 {
-		t.Fatalf("after delete: %#v err=%v", tis, err)
+	err = repo.DeleteTaxIdentifier(ctx, s.ID, "pl_nip")
+	if err == nil || !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("second delete: %v", err)
 	}
 }
 
@@ -113,57 +114,105 @@ func TestStoreIdentityRepo_BackfillFromConfig(t *testing.T) {
 	ensureProductsTable(t, db)
 	mustExec(t, db, "DELETE FROM store_addresses")
 	mustExec(t, db, "DELETE FROM stores")
-	mustExec(t, db, "DELETE FROM config WHERE key LIKE 'store::%::store.address'")
+	mustExec(t, db, "DELETE FROM config WHERE key = 'store.address' OR key LIKE 'store::%::store.address'")
 	t.Cleanup(func() {
 		mustExec(t, db, "DELETE FROM store_addresses")
 		mustExec(t, db, "DELETE FROM stores")
-		mustExec(t, db, "DELETE FROM config WHERE key LIKE 'store::%::store.address'")
+		mustExec(t, db, "DELETE FROM config WHERE key = 'store.address' OR key LIKE 'store::%::store.address'")
 	})
 
 	storeRepo, err := postgres.NewStoreRepo(db)
 	if err != nil {
 		t.Fatalf("NewStoreRepo: %v", err)
 	}
-	ctx := context.Background()
-	s, err := store.NewStore(id.New(), "bf-shop", "Backfill Shop", "PLN", "PL", "pl", "bf.example.com")
-	if err != nil {
-		t.Fatalf("NewStore: %v", err)
-	}
-	if err := storeRepo.Create(ctx, &s); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	key := "store::" + s.ID + "::store.address"
-	mustExec(t, db, `INSERT INTO config (key, value) VALUES ($1, to_jsonb($2::text))
-		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, key, "Legacy free-text address")
-
-	// Re-run the backfill statement from migration 117 (tables already exist).
-	mustExec(t, db, `
-INSERT INTO store_addresses (store_id, role, line1, country)
-SELECT
-    s.id,
-    'general',
-    left(btrim(c.value #>> '{}'), 255),
-    s.country
-FROM config c
-JOIN stores s
-  ON c.key = 'store::' || s.id || '::store.address'
-WHERE jsonb_typeof(c.value) = 'string'
-  AND btrim(c.value #>> '{}') <> ''
-ON CONFLICT (store_id, role) DO NOTHING`)
-
 	repo, err := postgres.NewStoreIdentityRepo(db)
 	if err != nil {
 		t.Fatalf("NewStoreIdentityRepo: %v", err)
 	}
-	addr, err := repo.GetAddress(ctx, s.ID, store.AddressRoleGeneral)
-	if err != nil || addr == nil {
-		t.Fatalf("GetAddress: %v %#v", err, addr)
+	ctx := context.Background()
+
+	// Bare key only (admin wrote without store scope).
+	bare, err := store.NewStore(id.New(), "bare-shop", "Bare Shop", "PLN", "PL", "pl", "bare.example.com")
+	if err != nil {
+		t.Fatalf("NewStore bare: %v", err)
 	}
-	if addr.Line1 != "Legacy free-text address" {
-		t.Fatalf("line1 = %q", addr.Line1)
+	if err := storeRepo.Create(ctx, &bare); err != nil {
+		t.Fatalf("Create bare: %v", err)
 	}
-	if addr.Country != "PL" {
-		t.Fatalf("country = %q", addr.Country)
+	mustExec(t, db, `INSERT INTO config (key, value) VALUES ('store.address', to_jsonb($1::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, "Bare free-text address")
+
+	// Scoped key wins over bare for this store.
+	scoped, err := store.NewStore(id.New(), "scoped-shop", "Scoped Shop", "PLN", "uk", "en", "scoped.example.com")
+	if err != nil {
+		// NewStore may already map UK→GB via NormalizeCountry — use GB then force UK in DB.
+		scoped, err = store.NewStore(id.New(), "scoped-shop", "Scoped Shop", "PLN", "GB", "en", "scoped.example.com")
+		if err != nil {
+			t.Fatalf("NewStore scoped: %v", err)
+		}
+	}
+	if err := storeRepo.Create(ctx, &scoped); err != nil {
+		t.Fatalf("Create scoped: %v", err)
+	}
+	mustExec(t, db, `UPDATE stores SET country = 'UK' WHERE id = $1`, scoped.ID)
+	mustExec(t, db, `INSERT INTO config (key, value) VALUES ($1, to_jsonb($2::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		"store::"+scoped.ID+"::store.address", "Scoped free-text address")
+
+	// Bad rows: newline, over-long, invalid country — must be skipped without failing the statement.
+	badNL, err := store.NewStore(id.New(), "bad-nl", "Bad NL", "PLN", "PL", "pl", "badnl.example.com")
+	if err != nil {
+		t.Fatalf("NewStore badNL: %v", err)
+	}
+	if err := storeRepo.Create(ctx, &badNL); err != nil {
+		t.Fatalf("Create badNL: %v", err)
+	}
+	mustExec(t, db, `INSERT INTO config (key, value) VALUES ($1, to_jsonb($2::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		"store::"+badNL.ID+"::store.address", "line1\nline2")
+
+	badLen, err := store.NewStore(id.New(), "bad-len", "Bad Len", "PLN", "PL", "pl", "badlen.example.com")
+	if err != nil {
+		t.Fatalf("NewStore badLen: %v", err)
+	}
+	if err := storeRepo.Create(ctx, &badLen); err != nil {
+		t.Fatalf("Create badLen: %v", err)
+	}
+	mustExec(t, db, `INSERT INTO config (key, value) VALUES ($1, to_jsonb($2::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		"store::"+badLen.ID+"::store.address", strings.Repeat("x", 256))
+
+	badCty, err := store.NewStore(id.New(), "bad-cty", "Bad Cty", "PLN", "PL", "pl", "badcty.example.com")
+	if err != nil {
+		t.Fatalf("NewStore badCty: %v", err)
+	}
+	if err := storeRepo.Create(ctx, &badCty); err != nil {
+		t.Fatalf("Create badCty: %v", err)
+	}
+	mustExec(t, db, `UPDATE stores SET country = 'Poland' WHERE id = $1`, badCty.ID)
+	mustExec(t, db, `INSERT INTO config (key, value) VALUES ($1, to_jsonb($2::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		"store::"+badCty.ID+"::store.address", "Some street")
+
+	mustExec(t, db, postgres.StoreAddressBackfillSQL)
+
+	addr, err := repo.GetAddress(ctx, bare.ID, store.AddressRoleGeneral)
+	if err != nil || addr == nil || addr.Line1 != "Bare free-text address" || addr.Country != "PL" {
+		t.Fatalf("bare backfill: %#v err=%v", addr, err)
+	}
+
+	addr, err = repo.GetAddress(ctx, scoped.ID, store.AddressRoleGeneral)
+	if err != nil || addr == nil || addr.Line1 != "Scoped free-text address" || addr.Country != "GB" {
+		t.Fatalf("scoped+UK backfill: %#v err=%v", addr, err)
+	}
+
+	for _, sid := range []string{badNL.ID, badLen.ID, badCty.ID} {
+		addr, err = repo.GetAddress(ctx, sid, store.AddressRoleGeneral)
+		if err != nil {
+			t.Fatalf("skip lookup %s: %v", sid, err)
+		}
+		if addr != nil {
+			t.Fatalf("expected skip for %s, got %#v", sid, addr)
+		}
 	}
 }

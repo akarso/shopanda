@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -34,54 +35,150 @@ func NewService(
 	return &Service{identity: identity, stores: stores, types: types}
 }
 
+// IdentityView is the admin identity payload.
+type IdentityView struct {
+	StoreID      string     `json:"store_id"`
+	LegalName    string     `json:"legal_name"`
+	Phone        string     `json:"phone"`
+	Hours        string     `json:"hours"`
+	EmailGeneral string     `json:"email_general"`
+	EmailSales   string     `json:"email_sales"`
+	EmailSupport string     `json:"email_support"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	Persisted    bool       `json:"persisted"`
+}
+
 // GetIdentity returns the persisted identity or an empty draft for the store.
-func (s *Service) GetIdentity(ctx context.Context, storeID string) (store.Identity, error) {
+func (s *Service) GetIdentity(ctx context.Context, storeID string) (IdentityView, error) {
 	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
-		return store.Identity{}, err
+		return IdentityView{}, err
 	}
 	id, err := s.identity.GetIdentity(ctx, storeID)
 	if err != nil {
-		return store.Identity{}, err
+		return IdentityView{}, err
 	}
 	if id == nil {
-		return store.Identity{StoreID: storeID}, nil
+		return IdentityView{StoreID: storeID, Persisted: false}, nil
 	}
-	return *id, nil
+	updated := id.UpdatedAt
+	return IdentityView{
+		StoreID:      id.StoreID,
+		LegalName:    id.LegalName,
+		Phone:        id.Phone,
+		Hours:        id.Hours,
+		EmailGeneral: id.EmailGeneral,
+		EmailSales:   id.EmailSales,
+		EmailSupport: id.EmailSupport,
+		UpdatedAt:    &updated,
+		Persisted:    true,
+	}, nil
 }
 
-// SaveIdentity validates and upserts identity fields.
-func (s *Service) SaveIdentity(ctx context.Context, storeID string, in IdentityInput) (store.Identity, error) {
+// IdentityPatch is a partial identity update. Nil fields are left unchanged.
+type IdentityPatch struct {
+	LegalName    *string
+	Phone        *string
+	Hours        *string
+	EmailGeneral *string
+	EmailSales   *string
+	EmailSupport *string
+}
+
+// HasChanges reports whether any field is present.
+func (p IdentityPatch) HasChanges() bool {
+	return p.LegalName != nil || p.Phone != nil || p.Hours != nil ||
+		p.EmailGeneral != nil || p.EmailSales != nil || p.EmailSupport != nil
+}
+
+// PatchIdentity merges patch onto the existing row (or empty draft) and saves.
+func (s *Service) PatchIdentity(ctx context.Context, storeID string, patch IdentityPatch) (IdentityView, error) {
+	if !patch.HasChanges() {
+		return IdentityView{}, apperror.Validation("at least one identity field is required")
+	}
 	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
-		return store.Identity{}, err
+		return IdentityView{}, err
 	}
-	id, err := store.NewIdentity(
-		storeID, in.LegalName, in.Phone, in.Hours,
-		in.EmailGeneral, in.EmailSales, in.EmailSupport,
-	)
+	cur, err := s.identity.GetIdentity(ctx, storeID)
 	if err != nil {
-		return store.Identity{}, apperror.Validation(err.Error())
+		return IdentityView{}, err
+	}
+	legal, phone, hours, eg, es, eu := "", "", "", "", "", ""
+	if cur != nil {
+		legal, phone, hours = cur.LegalName, cur.Phone, cur.Hours
+		eg, es, eu = cur.EmailGeneral, cur.EmailSales, cur.EmailSupport
+	}
+	if patch.LegalName != nil {
+		legal = *patch.LegalName
+	}
+	if patch.Phone != nil {
+		phone = *patch.Phone
+	}
+	if patch.Hours != nil {
+		hours = *patch.Hours
+	}
+	if patch.EmailGeneral != nil {
+		eg = *patch.EmailGeneral
+	}
+	if patch.EmailSales != nil {
+		es = *patch.EmailSales
+	}
+	if patch.EmailSupport != nil {
+		eu = *patch.EmailSupport
+	}
+	id, err := store.NewIdentity(storeID, legal, phone, hours, eg, es, eu)
+	if err != nil {
+		return IdentityView{}, apperror.Validation(err.Error())
 	}
 	if err := s.identity.SaveIdentity(ctx, id); err != nil {
-		return store.Identity{}, err
+		return IdentityView{}, err
 	}
-	return id, nil
+	updated := id.UpdatedAt
+	return IdentityView{
+		StoreID:      id.StoreID,
+		LegalName:    id.LegalName,
+		Phone:        id.Phone,
+		Hours:        id.Hours,
+		EmailGeneral: id.EmailGeneral,
+		EmailSales:   id.EmailSales,
+		EmailSupport: id.EmailSupport,
+		UpdatedAt:    &updated,
+		Persisted:    true,
+	}, nil
 }
 
-// IdentityInput is the writable identity payload.
-type IdentityInput struct {
-	LegalName    string
-	Phone        string
-	Hours        string
-	EmailGeneral string
-	EmailSales   string
-	EmailSupport string
+// AddressRecord is one admin address row (persisted or placeholder).
+type AddressRecord struct {
+	StoreID   string            `json:"store_id"`
+	Role      store.AddressRole `json:"role"`
+	Line1     string            `json:"line1"`
+	Line2     string            `json:"line2"`
+	City      string            `json:"city"`
+	Region    string            `json:"region"`
+	Postcode  string            `json:"postcode"`
+	Country   string            `json:"country"`
+	Phone     string            `json:"phone"`
+	Persisted bool              `json:"persisted"`
+}
+
+func addressRecord(a store.Address, persisted bool) AddressRecord {
+	return AddressRecord{
+		StoreID:   a.StoreID,
+		Role:      a.Role,
+		Line1:     a.Line1,
+		Line2:     a.Line2,
+		City:      a.City,
+		Region:    a.Region,
+		Postcode:  a.Postcode,
+		Country:   a.Country,
+		Phone:     a.Phone,
+		Persisted: persisted,
+	}
 }
 
 // ListAddresses returns all roles with placeholders for missing rows.
-// Placeholder country is the store's commerce country.
-func (s *Service) ListAddresses(ctx context.Context, storeID string) ([]store.Address, error) {
+func (s *Service) ListAddresses(ctx context.Context, storeID string) ([]AddressRecord, error) {
 	st, err := s.loadStore(ctx, storeID)
 	if err != nil {
 		return nil, err
@@ -94,73 +191,132 @@ func (s *Service) ListAddresses(ctx context.Context, storeID string) ([]store.Ad
 	for _, a := range persisted {
 		byRole[a.Role] = a
 	}
-	out := make([]store.Address, 0, len(store.AllAddressRoles()))
+	out := make([]AddressRecord, 0, len(store.AllAddressRoles()))
 	for _, role := range store.AllAddressRoles() {
 		if a, ok := byRole[role]; ok {
-			out = append(out, a)
+			out = append(out, addressRecord(a, true))
 			continue
 		}
-		out = append(out, store.Address{
-			StoreID: st.ID,
-			Role:    role,
-			Country: st.Country,
+		out = append(out, AddressRecord{
+			StoreID:   st.ID,
+			Role:      role,
+			Country:   st.Country,
+			Persisted: false,
 		})
 	}
 	return out, nil
 }
 
-// GetAddress returns one role, or a placeholder when missing.
-func (s *Service) GetAddress(ctx context.Context, storeID string, role store.AddressRole) (store.Address, error) {
+// GetAddress returns one role, or a placeholder when missing (no role fallback).
+func (s *Service) GetAddress(ctx context.Context, storeID string, role store.AddressRole) (AddressRecord, error) {
 	st, err := s.loadStore(ctx, storeID)
 	if err != nil {
-		return store.Address{}, err
+		return AddressRecord{}, err
 	}
 	role, err = store.ParseAddressRole(string(role))
 	if err != nil {
-		return store.Address{}, apperror.Validation(err.Error())
+		return AddressRecord{}, apperror.Validation(err.Error())
 	}
 	a, err := s.identity.GetAddress(ctx, st.ID, role)
 	if err != nil {
-		return store.Address{}, err
+		return AddressRecord{}, err
 	}
 	if a == nil {
-		return store.Address{StoreID: st.ID, Role: role, Country: st.Country}, nil
+		return AddressRecord{StoreID: st.ID, Role: role, Country: st.Country, Persisted: false}, nil
 	}
-	return *a, nil
+	return addressRecord(*a, true), nil
 }
 
-// AddressInput is the writable address payload (role comes from the path).
-type AddressInput struct {
-	Line1    string
-	Line2    string
-	City     string
-	Region   string
-	Postcode string
-	Country  string
-	Phone    string
-}
-
-// SaveAddress validates and upserts one role address.
-func (s *Service) SaveAddress(ctx context.Context, storeID string, role store.AddressRole, in AddressInput) (store.Address, error) {
+// ResolveReturns loads returns → shipping_origin → general (postal content).
+func (s *Service) ResolveReturns(ctx context.Context, storeID string) (*store.Address, error) {
 	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
-		return store.Address{}, err
+		return nil, err
+	}
+	returnsAddr, err := s.identity.GetAddress(ctx, storeID, store.AddressRoleReturns)
+	if err != nil {
+		return nil, err
+	}
+	origin, err := s.identity.GetAddress(ctx, storeID, store.AddressRoleShippingOrigin)
+	if err != nil {
+		return nil, err
+	}
+	general, err := s.identity.GetAddress(ctx, storeID, store.AddressRoleGeneral)
+	if err != nil {
+		return nil, err
+	}
+	resolved := store.ResolveReturnsAddress(returnsAddr, origin, general)
+	return cloneAddress(resolved), nil
+}
+
+// AddressPatch is a partial address update. Nil fields are left unchanged.
+type AddressPatch struct {
+	Line1    *string
+	Line2    *string
+	City     *string
+	Region   *string
+	Postcode *string
+	Country  *string
+	Phone    *string
+}
+
+// HasChanges reports whether any field is present.
+func (p AddressPatch) HasChanges() bool {
+	return p.Line1 != nil || p.Line2 != nil || p.City != nil || p.Region != nil ||
+		p.Postcode != nil || p.Country != nil || p.Phone != nil
+}
+
+// PatchAddress merges patch onto the existing role row (or store-country draft).
+func (s *Service) PatchAddress(ctx context.Context, storeID string, role store.AddressRole, patch AddressPatch) (AddressRecord, error) {
+	if !patch.HasChanges() {
+		return AddressRecord{}, apperror.Validation("at least one address field is required")
+	}
+	st, err := s.loadStore(ctx, storeID)
+	if err != nil {
+		return AddressRecord{}, err
 	}
 	role, err = store.ParseAddressRole(string(role))
 	if err != nil {
-		return store.Address{}, apperror.Validation(err.Error())
+		return AddressRecord{}, apperror.Validation(err.Error())
 	}
-	addr, err := store.NewAddress(
-		storeID, role,
-		in.Line1, in.Line2, in.City, in.Region, in.Postcode, in.Country, in.Phone,
-	)
+	cur, err := s.identity.GetAddress(ctx, st.ID, role)
 	if err != nil {
-		return store.Address{}, apperror.Validation(err.Error())
+		return AddressRecord{}, err
+	}
+	line1, line2, city, region, postcode, country, phone := "", "", "", "", "", st.Country, ""
+	if cur != nil {
+		line1, line2, city = cur.Line1, cur.Line2, cur.City
+		region, postcode, country, phone = cur.Region, cur.Postcode, cur.Country, cur.Phone
+	}
+	if patch.Line1 != nil {
+		line1 = *patch.Line1
+	}
+	if patch.Line2 != nil {
+		line2 = *patch.Line2
+	}
+	if patch.City != nil {
+		city = *patch.City
+	}
+	if patch.Region != nil {
+		region = *patch.Region
+	}
+	if patch.Postcode != nil {
+		postcode = *patch.Postcode
+	}
+	if patch.Country != nil {
+		country = *patch.Country
+	}
+	if patch.Phone != nil {
+		phone = *patch.Phone
+	}
+	addr, err := store.NewAddress(st.ID, role, line1, line2, city, region, postcode, country, phone)
+	if err != nil {
+		return AddressRecord{}, apperror.Validation(err.Error())
 	}
 	if err := s.identity.SaveAddress(ctx, addr); err != nil {
-		return store.Address{}, err
+		return AddressRecord{}, err
 	}
-	return addr, nil
+	return addressRecord(addr, true), nil
 }
 
 // ListTaxIdentifiers returns every tax ID for the store.
@@ -191,7 +347,7 @@ func (s *Service) UpsertTaxIdentifier(ctx context.Context, storeID, typ, value s
 	return ti, nil
 }
 
-// DeleteTaxIdentifier removes one type for the store.
+// DeleteTaxIdentifier removes one type for the store (NotFound if missing).
 func (s *Service) DeleteTaxIdentifier(ctx context.Context, storeID, typ string) error {
 	storeID, err := s.requireStore(ctx, storeID)
 	if err != nil {
@@ -201,30 +357,68 @@ func (s *Service) DeleteTaxIdentifier(ctx context.Context, storeID, typ string) 
 	if typ == "" {
 		return apperror.Validation("type must not be empty")
 	}
+	if !taxTypeTokenOK(typ) {
+		return apperror.Validation("type must be a snake token (e.g. pl_nip)")
+	}
 	return s.identity.DeleteTaxIdentifier(ctx, storeID, typ)
 }
 
+func taxTypeTokenOK(typ string) bool {
+	if typ == "" || typ[0] < 'a' || typ[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(typ); i++ {
+		c := typ[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ListTaxIdentifierTypes returns registry types, optionally filtered by country.
-// When country is empty, returns All(). When set, returns ApplicableTo(country).
-func (s *Service) ListTaxIdentifierTypes(country string) []store.TaxIdentifierType {
+// Empty country returns All(). Invalid country is a validation error.
+func (s *Service) ListTaxIdentifierTypes(country string) ([]store.TaxIdentifierType, error) {
 	country = strings.TrimSpace(country)
 	if country == "" {
-		return s.types.All()
+		return s.types.All(), nil
 	}
-	return s.types.ApplicableTo(country)
+	if _, err := store.NormalizeCountry(country); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
+	return s.types.ApplicableTo(country), nil
+}
+
+// PublicAddress is the storefront address DTO (no store_id).
+type PublicAddress struct {
+	Role     store.AddressRole `json:"role"`
+	Line1    string            `json:"line1"`
+	Line2    string            `json:"line2"`
+	City     string            `json:"city"`
+	Region   string            `json:"region"`
+	Postcode string            `json:"postcode"`
+	Country  string            `json:"country"`
+	Phone    string            `json:"phone"`
+}
+
+// PublicTaxID is an imprint-safe tax identifier (no store_id).
+type PublicTaxID struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
 }
 
 // PublicIdentity is the storefront/headless payload (no SMTP secrets).
 type PublicIdentity struct {
-	LegalName    string                `json:"legal_name"`
-	Phone        string                `json:"phone"`
-	Hours        string                `json:"hours"`
-	EmailGeneral string                `json:"email_general"`
-	EmailSales   string                `json:"email_sales"`
-	EmailSupport string                `json:"email_support"`
-	General      *store.Address        `json:"general,omitempty"`
-	Invoice      *store.Address        `json:"invoice,omitempty"`
-	TaxIDs       []store.TaxIdentifier `json:"tax_identifiers"`
+	LegalName    string         `json:"legal_name"`
+	Phone        string         `json:"phone"`
+	Hours        string         `json:"hours"`
+	EmailGeneral string         `json:"email_general"`
+	EmailSales   string         `json:"email_sales"`
+	EmailSupport string         `json:"email_support"`
+	General      *PublicAddress `json:"general,omitempty"`
+	Invoice      *PublicAddress `json:"invoice,omitempty"`
+	TaxIDs       []PublicTaxID  `json:"tax_identifiers"`
 }
 
 // GetPublicIdentity builds the public view for the current store.
@@ -250,10 +444,7 @@ func (s *Service) GetPublicIdentity(ctx context.Context, storeID string) (Public
 	if err != nil {
 		return PublicIdentity{}, err
 	}
-	if taxIDs == nil {
-		taxIDs = []store.TaxIdentifier{}
-	}
-	out := PublicIdentity{TaxIDs: taxIDs}
+	out := PublicIdentity{TaxIDs: make([]PublicTaxID, 0)}
 	if id != nil {
 		out.LegalName = id.LegalName
 		out.Phone = id.Phone
@@ -263,12 +454,43 @@ func (s *Service) GetPublicIdentity(ctx context.Context, storeID string) (Public
 		out.EmailSupport = id.EmailSupport
 	}
 	if general != nil && !general.IsEmpty() {
-		out.General = general
+		out.General = toPublicAddress(general, store.AddressRoleGeneral)
 	}
 	if resolvedInvoice != nil {
-		out.Invoice = resolvedInvoice
+		// Always advertise role=invoice on a copy (even when falling back to general).
+		out.Invoice = toPublicAddress(resolvedInvoice, store.AddressRoleInvoice)
+	}
+	for _, ti := range taxIDs {
+		if !store.ImprintPublicTaxType(ti.Type) {
+			continue
+		}
+		out.TaxIDs = append(out.TaxIDs, PublicTaxID{Type: ti.Type, Value: ti.Value})
 	}
 	return out, nil
+}
+
+func toPublicAddress(a *store.Address, role store.AddressRole) *PublicAddress {
+	if a == nil {
+		return nil
+	}
+	return &PublicAddress{
+		Role:     role,
+		Line1:    a.Line1,
+		Line2:    a.Line2,
+		City:     a.City,
+		Region:   a.Region,
+		Postcode: a.Postcode,
+		Country:  a.Country,
+		Phone:    a.Phone,
+	}
+}
+
+func cloneAddress(a *store.Address) *store.Address {
+	if a == nil {
+		return nil
+	}
+	cp := *a
+	return &cp
 }
 
 func (s *Service) requireStore(ctx context.Context, storeID string) (string, error) {

@@ -20,6 +20,7 @@ type IdentityRepository interface {
 	ListTaxIdentifiers(ctx context.Context, storeID string) ([]TaxIdentifier, error)
 	// UpsertTaxIdentifier inserts or updates by (store_id, type).
 	UpsertTaxIdentifier(ctx context.Context, ti TaxIdentifier) error
-	// DeleteTaxIdentifier removes a type for the store (no-op if missing).
+	// DeleteTaxIdentifier removes a type for the store.
+	// Returns apperror.NotFound when no row matched.
 	DeleteTaxIdentifier(ctx context.Context, storeID, typ string) error
 }

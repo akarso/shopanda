@@ -26,6 +26,10 @@ func NewStoreIdentityHandler(svc *storeidentity.Service) *StoreIdentityHandler {
 // Get handles GET /api/v1/store/identity.
 func (h *StoreIdentityHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Host-scoped legal data must not be shared across caches keyed only on path.
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Vary", "Host")
+
 		st := store.FromContext(r.Context())
 		if st == nil || strings.TrimSpace(st.ID) == "" {
 			httpshared.JSONError(w, apperror.NotFound("store not found"))
