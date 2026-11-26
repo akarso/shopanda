@@ -175,6 +175,7 @@ func TestNormalizeCountry(t *testing.T) {
 		{"valid uppercase", "DE", "DE", false},
 		{"valid lowercase", "us", "US", false},
 		{"trims whitespace", " de ", "DE", false},
+		{"uk to gb", "uk", "GB", false},
 		{"empty", "", "", true},
 		{"whitespace only", "  ", "", true},
 		{"too short", "D", "", true},

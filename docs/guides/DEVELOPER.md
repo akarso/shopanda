@@ -237,6 +237,7 @@ modules and their own sibling packages) — never `internal/*`. `plugins/plugin_
 - `RegisterPricingStep`, `RegisterCheckoutStep`, `RegisterCompositionStep` (accept `extapi.*Step`
   implementations)
 - `RegisterTaxCalculator`, `RegisterMailSender` — replace the matching core port
+- `RegisterTaxIdentifierType` — extend the store tax/company ID catalog (PR-1201; duplicate codes fail closed; registry freezes after `InitAll`). For every EU store pass `Countries: extapi.EUMemberCountries()` (`Region` is grouping only)
 - `RegisterPublicRoute`, `RegisterAdminRoute`, `RegisterPermission`
 - `RegisterConfig` — admin-editable settings (string/int/bool) for this plugin
 - `Slots(registrant)`, `Hooks(registrant)` — storefront slots and hook registration

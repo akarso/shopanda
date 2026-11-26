@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -137,6 +138,18 @@ func (h *appHost) RegisterCompositionStep(pipeline string, step any) {
 
 func (h *appHost) RegisterTaxCalculator(calc extapi.TaxCalculator) {
 	h.app.RegisterTaxCalculator(AdaptTaxCalculator(calc))
+}
+
+func (h *appHost) RegisterTaxIdentifierType(t extapi.TaxIdentifierType) error {
+	// Pass through to App.Register → registry.Register, which runs
+	// NewTaxIdentifierType before the duplicate check (case-canonical codes).
+	return h.app.RegisterTaxIdentifierType(store.TaxIdentifierType{
+		Code:       t.Code,
+		Label:      t.Label,
+		Countries:  t.Countries,
+		Region:     t.Region,
+		FormatHint: t.FormatHint,
+	})
 }
 
 func (h *appHost) RegisterMailSender(sender extapi.MailSender) {

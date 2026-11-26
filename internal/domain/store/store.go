@@ -36,8 +36,10 @@ func NormalizeCurrency(v string) (string, error) {
 }
 
 // NormalizeCountry trims whitespace, uppercases, and validates a 2-letter
-// ISO 3166-1 alpha-2 code (ASCII A–Z only). Same letter rule as
-// order.ValidateDestinationCountry; membership in the real ISO list is not checked.
+// ISO 3166-1 alpha-2 code (ASCII A–Z only). Membership in the real ISO list
+// is not checked. "UK" is canonicalized to "GB" (same rule as
+// order.ValidateDestinationCountry) so store records, addresses, tax-ID
+// ApplicableTo, and checkout destinations agree.
 func NormalizeCountry(v string) (string, error) {
 	v = strings.ToUpper(strings.TrimSpace(v))
 	if v == "" {
@@ -50,6 +52,9 @@ func NormalizeCountry(v string) (string, error) {
 		if r < 'A' || r > 'Z' {
 			return "", errors.New("store country must be a 2-letter ISO code")
 		}
+	}
+	if v == "UK" {
+		return "GB", nil
 	}
 	return v, nil
 }

@@ -227,6 +227,7 @@ func (r *Registry) InitAllContext(ctx context.Context, app *App) InitSummary {
 	app.WarnUnownedPluginOnlyFields()
 	app.setCurrentPluginName("")
 	app.FreezePluginNeeds()
+	app.FreezeTaxIdentifierTypes()
 	return summary
 }
 

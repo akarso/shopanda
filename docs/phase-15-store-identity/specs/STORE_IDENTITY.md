@@ -83,7 +83,7 @@ Plugin port: `app.RegisterTaxIdentifierType(IdentifierType)`. Duplicate codes re
 | `us_ein` | EIN | US | US |
 | `generic` | Tax ID | (other) | — |
 
-Admin: types where `Countries` contains the store country, plus region matches (e.g. `eu_vat` for any EU store), plus an **Add other** list. v1 validates **non-empty** and optional max length. **Checksums are out of scope** (follow-up).
+Admin: types where `Countries` contains the store country (e.g. `eu_vat` lists all EU ISO-2 codes), plus an **Add other** list (`All()` minus applicable; `generic` is always applicable). `Region` is grouping only — it does not widen `ApplicableTo`. Plugins that need every EU store must pass `extapi.EUMemberCountries()` in `Countries`. v1 validates **non-empty** and optional max length. **Checksums are out of scope** (follow-up).
 
 GPSR manufacturer name/contact stay on `legal.gpsr_*`. Do not auto-copy `legal_name` (hidden magic).
 

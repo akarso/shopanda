@@ -32,6 +32,9 @@ type Host interface {
 
 	// RegisterTaxCalculator replaces the core tax calculation port.
 	RegisterTaxCalculator(calc extapi.TaxCalculator)
+	// RegisterTaxIdentifierType adds a tax/company ID type to the in-process
+	// catalog (PR-1201). Duplicate codes fail closed.
+	RegisterTaxIdentifierType(t extapi.TaxIdentifierType) error
 	// RegisterMailSender replaces the core mail delivery port.
 	RegisterMailSender(sender extapi.MailSender)
 

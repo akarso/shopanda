@@ -260,6 +260,43 @@ func TestStoreAdmin_Update_NormalizesCurrencyAndCountry(t *testing.T) {
 	}
 }
 
+func TestStoreAdmin_Update_UKCanonicalizesToGB(t *testing.T) {
+	now := time.Now()
+	existing := store.NewStoreFromDB("s-1", "uk", "UK Store", "GBP", "GB", "en", "", false, now, now)
+
+	var updated *store.Store
+	repo := &mockStoreAdminRepo{
+		findByIDFn: func(_ context.Context, id string) (*store.Store, error) {
+			if id == "s-1" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+		updateFn: func(_ context.Context, s *store.Store) error {
+			updated = s
+			return nil
+		},
+	}
+	h := admin.NewStoreAdminHandler(repo, storeAdminBus())
+	mux := newStoreAdminRouter(h)
+
+	body := `{"country":"uk"}`
+	req := httptest.NewRequest("PUT", "/api/v1/admin/stores/s-1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d\nbody: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil {
+		t.Fatal("repo.Update was not called")
+	}
+	if updated.Country != "GB" {
+		t.Errorf("Country = %q, want GB (UK canonicalized)", updated.Country)
+	}
+}
+
 func TestStoreAdmin_Update_NormalizesLanguage(t *testing.T) {
 	now := time.Now()
 	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "de", "", false, now, now)
