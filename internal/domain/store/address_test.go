@@ -27,11 +27,19 @@ func TestParseAddressRole_ErrorSanitized(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if strings.Contains(err.Error(), "\n") {
-		t.Fatalf("error must not contain raw newline: %q", err.Error())
+	// roleErrorLabel replaces the newline with '?'; not merely fmt %q escaping.
+	if !strings.Contains(err.Error(), `invalid role "general?Bcc: x"`) {
+		t.Fatalf("error = %q, want general?Bcc replacement", err.Error())
 	}
-	if !strings.Contains(err.Error(), "invalid role") {
-		t.Fatalf("error = %q", err.Error())
+
+	long := strings.Repeat("z", store.MaxAddressRoleLen+2000)
+	_, err = store.ParseAddressRole(long)
+	if err == nil {
+		t.Fatal("expected error for unknown long role")
+	}
+	want := `invalid role "` + strings.Repeat("z", store.MaxAddressRoleLen) + `"`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want truncated to %d runes", err.Error(), store.MaxAddressRoleLen)
 	}
 }
 
@@ -136,6 +144,8 @@ func TestNewAddress_Validation(t *testing.T) {
 		{name: "newline line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "a\nb", country: "PL", want: "line breaks or control"},
 		{name: "ls line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "a\u2028b", country: "PL", want: "line breaks or control"},
 		{name: "nul line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "a\x00b", country: "PL", want: "line breaks or control"},
+		{name: "zwsp line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "\u200b", country: "PL", want: "line breaks or control"},
+		{name: "bidi line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: "a\u202eb", country: "PL", want: "line breaks or control"},
 		{name: "long line1", storeID: "s-1", role: store.AddressRoleGeneral, line1: strings.Repeat("x", store.MaxAddressLineLen+1), country: "PL", want: "max length"},
 	}
 	for _, tt := range tests {

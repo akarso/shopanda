@@ -43,8 +43,8 @@ func ParseAddressRole(v string) (AddressRole, error) {
 	return "", fmt.Errorf("store address: invalid role %q", roleErrorLabel(trimmed))
 }
 
-// roleErrorLabel caps length and replaces controls so error text cannot smuggle
-// newlines or header-injection bytes into logs.
+// roleErrorLabel caps length and replaces disallowed controls/format chars with
+// '?' so error text cannot smuggle newlines or header-injection bytes into logs.
 func roleErrorLabel(v string) string {
 	var b strings.Builder
 	n := 0
@@ -52,10 +52,9 @@ func roleErrorLabel(v string) string {
 		if n >= MaxAddressRoleLen {
 			break
 		}
-		switch {
-		case r < 0x20, r == 0x7F, r == 0x85, r == 0x2028, r == 0x2029:
+		if isDisallowedLineControl(r) || isDisallowedFormatChar(r) {
 			b.WriteByte('?')
-		default:
+		} else {
 			b.WriteRune(r)
 		}
 		n++

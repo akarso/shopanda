@@ -184,6 +184,8 @@ func TestNewIdentity_Validation(t *testing.T) {
 		{name: "ls legal", sid: "s-1", legal: "Acme\u2028Ltd", want: "line breaks or control"},
 		{name: "vt legal", sid: "s-1", legal: "Acme\vLtd", want: "line breaks or control"},
 		{name: "nul legal", sid: "s-1", legal: "Acme\x00Ltd", want: "line breaks or control"},
+		{name: "zwsp legal", sid: "s-1", legal: "Acme\u200bLtd", want: "line breaks or control"},
+		{name: "bidi legal", sid: "s-1", legal: "Acme\u202eLtd", want: "line breaks or control"},
 		{name: "long legal", sid: "s-1", legal: long, want: "max length"},
 	}
 	for _, tt := range tests {
@@ -214,16 +216,21 @@ func TestNewIdentityFromDB_UnvalidatedRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNewIdentity_HoursAllowsNewline(t *testing.T) {
-	id, err := store.NewIdentity("s-1", "Acme", "", "Mon–Fri\n9–17", "", "", "")
+func TestNewIdentity_HoursAllowsCRLFOnly(t *testing.T) {
+	id, err := store.NewIdentity("s-1", "Acme", "", "Mon–Fri\n9–17\r\nSat", "", "", "")
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
-	if !strings.Contains(id.Hours, "\n") {
+	if !strings.Contains(id.Hours, "\n") || !strings.Contains(id.Hours, "\r") {
 		t.Fatalf("hours = %q", id.Hours)
 	}
 	if utf8.RuneCountInString(id.Hours) == 0 {
 		t.Fatal("empty hours")
+	}
+	for _, bad := range []string{"Mon\x00Fri", "Mon\vFri", "Mon\u2028Fri", "Mon\u200bFri"} {
+		if _, err := store.NewIdentity("s-1", "Acme", "", bad, "", "", ""); err == nil {
+			t.Fatalf("expected reject for hours %q", bad)
+		}
 	}
 }
 

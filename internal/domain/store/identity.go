@@ -143,28 +143,57 @@ func normalizeOptionalEmail(v string) (string, error) {
 	return out, nil
 }
 
-// hasDisallowedLineControl reports C0 controls and Unicode line breaks that
-// must not appear in single-line seller-block fields.
+// isDisallowedLineControl reports C0 controls and Unicode line breaks.
+func isDisallowedLineControl(r rune) bool {
+	switch {
+	case r == 0 || r == '\n' || r == '\r' || r == '\v' || r == '\f':
+		return true
+	case r == 0x85 || r == 0x2028 || r == 0x2029: // NEL, LS, PS
+		return true
+	case r < 0x20: // remaining C0 (incl. TAB)
+		return true
+	case r == 0x7F: // DEL
+		return true
+	}
+	return false
+}
+
+// isDisallowedFormatChar reports bidi overrides/isolates and zero-width format
+// chars that can spoof a blank postal line (U+200B is not TrimSpace whitespace).
+func isDisallowedFormatChar(r rune) bool {
+	switch r {
+	case 0x200B, 0x200C, 0x200D, 0xFEFF: // ZWSP, ZWNJ, ZWJ, BOM
+		return true
+	case 0x202A, 0x202B, 0x202C, 0x202D, 0x202E: // bidi embedding/overrides
+		return true
+	case 0x2066, 0x2067, 0x2068, 0x2069: // bidi isolates
+		return true
+	}
+	return false
+}
+
 func hasDisallowedLineControl(v string) bool {
 	for _, r := range v {
-		switch {
-		case r == 0 || r == '\n' || r == '\r' || r == '\v' || r == '\f':
-			return true
-		case r == 0x85 || r == 0x2028 || r == 0x2029: // NEL, LS, PS
-			return true
-		case r < 0x20: // remaining C0 (incl. TAB)
-			return true
-		case r == 0x7F: // DEL
+		if isDisallowedLineControl(r) {
 			return true
 		}
 	}
 	return false
 }
 
-// normalizeSingleLine trims, rejects line breaks / C0 controls / NUL, and caps length.
+func hasDisallowedFormatChar(v string) bool {
+	for _, r := range v {
+		if isDisallowedFormatChar(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeSingleLine trims, rejects line breaks / C0 / format chars, and caps length.
 func normalizeSingleLine(v string, max int, field string) (string, error) {
 	v = strings.TrimSpace(v)
-	if hasDisallowedLineControl(v) {
+	if hasDisallowedLineControl(v) || hasDisallowedFormatChar(v) {
 		return "", fmt.Errorf("%s must not contain line breaks or control characters", field)
 	}
 	if utf8.RuneCountInString(v) > max {
@@ -173,9 +202,18 @@ func normalizeSingleLine(v string, max int, field string) (string, error) {
 	return v, nil
 }
 
-// normalizeBounded trims and caps length; newlines are allowed (e.g. hours).
+// normalizeBounded trims and caps length. Hours may contain \n/\r; other controls
+// and format chars match normalizeSingleLine.
 func normalizeBounded(v string, max int, field string) (string, error) {
 	v = strings.TrimSpace(v)
+	for _, r := range v {
+		if r == '\n' || r == '\r' {
+			continue
+		}
+		if isDisallowedLineControl(r) || isDisallowedFormatChar(r) {
+			return "", fmt.Errorf("%s must not contain line breaks or control characters", field)
+		}
+	}
 	if utf8.RuneCountInString(v) > max {
 		return "", fmt.Errorf("%s exceeds max length %d", field, max)
 	}
