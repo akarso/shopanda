@@ -178,6 +178,18 @@ func TestRenderer_Render_TallRowSplitsAcrossPages(t *testing.T) {
 	if strings.Count(text, "Unit Price") < 2 {
 		t.Errorf("expected repeated header across pages\n%s", text)
 	}
+	// Amounts stay on the first fragment only; continuation must not look like a second priced line.
+	// (Subtotal is also EUR 1.00 — assert the qty+unit+line cluster once.)
+	if n := strings.Count(text, "1 EUR 1.00 EUR 1.00"); n != 1 {
+		t.Errorf("priced first fragment count = %d, want 1\n%s", n, text)
+	}
+	contIdx := strings.LastIndex(text, "Unit Price")
+	if contIdx < 0 {
+		t.Fatal("missing continued-page header")
+	}
+	if strings.Contains(text[contIdx:], "1 EUR 1.00 EUR 1.00") {
+		t.Errorf("continuation page must not redraw qty/amounts\n%s", text[contIdx:])
+	}
 }
 
 func TestRenderer_Render_LongItemNameWraps(t *testing.T) {

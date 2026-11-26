@@ -99,8 +99,9 @@ func (f *fakeInvoiceRepo) SavePreparing(_ context.Context, inv *domainInvoice.In
 	inv.SetInvoiceNumberFromDB(f.seq)
 	if beforeCommit != nil {
 		if err := beforeCommit(inv); err != nil {
-			// Roll back in-memory insert (mirrors DB rollback).
-			f.seq--
+			// Drop the in-memory row so FindByOrderID stays empty. Postgres
+			// rolls back the INSERT but nextval still burns a sequence value;
+			// this fake does not model that gap.
 			inv.SetInvoiceNumberFromDB(0)
 			return err
 		}

@@ -316,7 +316,8 @@ func (s *Storage) Read(ctx context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
-// Head verifies the object exists (PR-1077: prove blob before claiming a download).
+// Head verifies the object exists and is non-empty (PR-1077 / invoice probe).
+// ContentLength 0 is treated as missing so ensureIssued can rewrite the key.
 func (s *Storage) Head(ctx context.Context, path string) error {
 	key, err := validateKey(path)
 	if err != nil {
@@ -328,7 +329,7 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, maxTimeout)
 	defer cancel()
 
-	_, err = s.client.HeadObject(ctx, &s3.HeadObjectInput{
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -337,6 +338,9 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 			return fmt.Errorf("s3store: head %q: %w", key, os.ErrNotExist)
 		}
 		return fmt.Errorf("s3store: head %q: %w", key, err)
+	}
+	if out != nil && out.ContentLength != nil && *out.ContentLength == 0 {
+		return fmt.Errorf("s3store: head %q: %w", key, os.ErrNotExist)
 	}
 	return nil
 }

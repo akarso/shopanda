@@ -31,6 +31,7 @@ type mockS3 struct {
 	getBody   []byte
 	deleteErr error
 	headErr   error
+	headZero  bool // ContentLength 0 → Head treats as missing
 	putKeys   []string
 	putCT     []string // Content-Type per call
 	putCC     []string // Cache-Control per call
@@ -95,6 +96,15 @@ func (m *mockS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 	return &s3.DeleteObjectOutput{}, nil
 }
 
+func TestStorage_Head_ZeroLengthIsMissing(t *testing.T) {
+	m := &mockS3{headZero: true}
+	s := &Storage{client: m, bucket: "b", region: "r", baseURL: "https://cdn.example"}
+	err := s.Head(context.Background(), "invoices/inv-1/invoice-1.pdf")
+	if !media.IsNotFound(err) {
+		t.Fatalf("err = %v, want IsNotFound", err)
+	}
+}
+
 func TestStorage_Read(t *testing.T) {
 	m := &mockS3{getBody: []byte("%PDF-bytes")}
 	s := &Storage{client: m, bucket: "b", region: "r", baseURL: "https://cdn.example"}
@@ -124,7 +134,11 @@ func (m *mockS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func
 	if m.headErr != nil {
 		return nil, m.headErr
 	}
-	return &s3.HeadObjectOutput{}, nil
+	cl := int64(1)
+	if m.headZero {
+		cl = 0
+	}
+	return &s3.HeadObjectOutput{ContentLength: &cl}, nil
 }
 
 type mockPresigner struct {

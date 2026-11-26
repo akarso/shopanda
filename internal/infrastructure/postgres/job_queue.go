@@ -445,11 +445,14 @@ func (q *JobQueue) Retry(ctx context.Context, id string) error {
 		})
 }
 
-// ReplaceFailed writes a new payload onto a failed job, resets attempts to 0,
-// and re-pends it under the same id (heal path for stable email.send jobs).
+// ReplaceFailed writes a new payload onto a failed email.send job, resets
+// attempts to 0, and re-pends it under the same id (invoice email heal).
 func (q *JobQueue) ReplaceFailed(ctx context.Context, job jobs.Job) error {
 	if jobIDUnusable(job.ID) {
 		return jobs.ErrRequeueNotFound
+	}
+	if job.Type != "" && job.Type != "email.send" {
+		return fmt.Errorf("job_queue: replace failed: type must be email.send")
 	}
 	payload, err := json.Marshal(job.Payload)
 	if err != nil {
@@ -459,7 +462,7 @@ func (q *JobQueue) ReplaceFailed(ctx context.Context, job jobs.Job) error {
 		UPDATE jobs
 		SET payload = $2, status = 'pending', attempts = 0, run_at = NOW(),
 		    updated_at = NOW(), last_error = NULL
-		WHERE id = $1 AND status = 'failed'`, job.ID, payload)
+		WHERE id = $1 AND status = 'failed' AND type = 'email.send'`, job.ID, payload)
 	if err != nil {
 		return fmt.Errorf("job_queue: replace failed: %w", err)
 	}
@@ -468,6 +471,13 @@ func (q *JobQueue) ReplaceFailed(ctx context.Context, job jobs.Job) error {
 		return fmt.Errorf("job_queue: replace failed rows: %w", err)
 	}
 	if n == 0 {
+		detail, getErr := q.Get(ctx, job.ID)
+		if getErr != nil {
+			return fmt.Errorf("job_queue: replace failed lookup: %w", getErr)
+		}
+		if detail == nil {
+			return jobs.ErrRequeueNotFound
+		}
 		return jobs.ErrRequeueNotTerminal
 	}
 	return nil

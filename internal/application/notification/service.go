@@ -1160,7 +1160,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
 		}
 		if !inserted {
-			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg)
+			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg, kind)
 		}
 		claimed = true
 	}
@@ -1182,7 +1182,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			if claimed {
 				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
 			}
-			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg)
+			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg, kind)
 		}
 		if claimed {
 			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
@@ -1220,14 +1220,18 @@ func emailJobPayload(msg mail.Message) map[string]interface{} {
 	return payload
 }
 
-// healExistingEmailJob replaces a terminal-failed email.send with a fresh
-// payload (e.g. repaired PDF) and resets attempts under the same stable id.
-// Pending/done jobs are left alone. Queues without Get/ReplaceFailed skip.
-func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message) error {
+// healExistingEmailJob replaces a terminal-failed invoice email.send with a
+// fresh payload and resets attempts under the same stable id. Other dedupe
+// kinds only log (order confirmation / shipment must not reset attempts on
+// every order.paid republish). Pending/done jobs are left alone.
+func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message, kind string) error {
 	logFields = copyLogFields(logFields)
 	logFields["job_id"] = jobID
 	s.log.Info(handler+".email_already_enqueued", logFields)
 
+	if kind != KindInvoiceCreated {
+		return nil
+	}
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return nil
@@ -1240,7 +1244,10 @@ func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler strin
 	if err != nil {
 		return fmt.Errorf("notification: get email job %s: %w", jobID, err)
 	}
-	if detail == nil || detail.Status != jobs.StatusFailed {
+	if detail == nil {
+		return fmt.Errorf("notification: email job %s not found for heal", jobID)
+	}
+	if detail.Status != jobs.StatusFailed {
 		return nil
 	}
 	replacer, ok := s.queue.(emailFailedReplacer)
@@ -1252,8 +1259,7 @@ func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler strin
 		return fmt.Errorf("notification: rebuild email job %s: %w", jobID, err)
 	}
 	if err := replacer.ReplaceFailed(ctx, job); err != nil {
-		if errors.Is(err, jobs.ErrRequeueNotFound) ||
-			errors.Is(err, jobs.ErrRequeueNotTerminal) {
+		if errors.Is(err, jobs.ErrRequeueNotTerminal) {
 			return nil
 		}
 		s.log.Error(handler+".email_replace_failed", err, logFields)

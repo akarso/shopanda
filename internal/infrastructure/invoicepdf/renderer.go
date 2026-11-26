@@ -206,8 +206,8 @@ func ensureSpace(pdf *fpdf.Fpdf, need float64) error {
 	return nil
 }
 
-// writeItemRow draws one invoice line, splitting a too-tall name/SKU across
-// pages instead of failing the document.
+// writeItemRow draws one invoice line. Quantity and amounts stay on the first
+// fragment only; overflow continues as name/SKU text (not a second priced row).
 func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTotal string) error {
 	name = strings.TrimSpace(name)
 	sku = strings.TrimSpace(sku)
@@ -248,7 +248,6 @@ func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTota
 			chunk = remain
 		}
 		chunkH := float64(chunk) * rowLine
-		// If this chunk needs a header on a new page, reserve header+chunk.
 		if y+chunkH > pageBottom(pdf) {
 			if err := ensureSpace(pdf, headerH+chunkH); err != nil {
 				return err
@@ -259,14 +258,12 @@ func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTota
 
 		nameChunk := sliceLines(nameLines, offset, chunk)
 		skuChunk := sliceLines(skuLines, offset, chunk)
-		qtyStr, unitStr, totalStr := "", "", ""
 		if first {
-			qtyStr = fmt.Sprintf("%d", qty)
-			unitStr = unitPrice
-			totalStr = lineTotal
+			drawItemChunk(pdf, nameChunk, skuChunk, fmt.Sprintf("%d", qty), unitPrice, lineTotal, chunkH)
 			first = false
+		} else {
+			drawItemContinuation(pdf, nameChunk, skuChunk, chunkH)
 		}
-		drawItemChunk(pdf, nameChunk, skuChunk, qtyStr, unitStr, totalStr, chunkH)
 		offset += chunk
 	}
 	return nil
@@ -306,6 +303,23 @@ func drawItemChunk(pdf *fpdf.Fpdf, nameLines, skuLines []string, qty, unitPrice,
 	pdf.CellFormat(colQty, rowH, qty, "", 0, "C", false, 0, "")
 	pdf.CellFormat(colUnit, rowH, unitPrice, "", 0, "R", false, 0, "")
 	pdf.CellFormat(colTotal, rowH, lineTotal, "", 0, "R", false, 0, "")
+	pdf.SetXY(x, y+rowH)
+}
+
+// drawItemContinuation continues a wrapped name/SKU without empty amount cells
+// (those would look like another line item).
+func drawItemContinuation(pdf *fpdf.Fpdf, nameLines, skuLines []string, rowH float64) {
+	x, y := pdf.GetXY()
+	pdf.Rect(x, y, colName, rowH, "D")
+	pdf.Rect(x+colName, y, colSKU, rowH, "D")
+	for i, line := range nameLines {
+		pdf.SetXY(x+1, y+float64(i)*rowLine)
+		pdf.CellFormat(colName-2, rowLine, line, "", 0, "", false, 0, "")
+	}
+	for i, line := range skuLines {
+		pdf.SetXY(x+colName+1, y+float64(i)*rowLine)
+		pdf.CellFormat(colSKU-2, rowLine, line, "", 0, "", false, 0, "")
+	}
 	pdf.SetXY(x, y+rowH)
 }
 
