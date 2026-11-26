@@ -216,6 +216,7 @@ test("losing page-load catch does not wipe winning refetch form", function () {
     // Losing page-load catch: load ticket still current, page fill token is not.
     assert.equal(loadTicket.isCurrent("store-a"), true);
     assert.equal(pageFill.isCurrent("store-a"), false);
+    assert.equal(ui.pageLoadPaintAction(loadTicket, pageFill, "store-a"), "banner");
     assert.equal(
         ui.shouldCommitPageLoadResult(loadTicket, pageFill, "store-a"),
         false,
@@ -230,6 +231,68 @@ test("losing page-load catch does not wipe winning refetch form", function () {
     assert.ok(doc.form, "form must remain");
     assert.equal(doc.form.elements.line1.value, "Post-write St");
     assert.equal(doc.message, "Address saved.");
+});
+
+test("stale fill page-load then still paints scope banner", function () {
+    const loadGate = ui.newStoreAddressesLoadGate();
+    const fillGate = ui.newAddressFillGate();
+
+    const loadTicket = loadGate.start("store-a");
+    const pageFill = fillGate.begin("store-a");
+    fillGate.begin("store-a"); // winning refetch
+
+    assert.equal(ui.pageLoadPaintAction(loadTicket, pageFill, "store-a"), "banner");
+    assert.equal(ui.pageLoadPaintAction(loadTicket, null, "store-a"), "commit");
+    assert.equal(ui.pageLoadPaintAction({ isCurrent: function () { return false; } }, pageFill, "store-a"), "skip");
+
+    const store = { id: "store-a", name: "Main Warehouse", country: "US" };
+    const doc = {
+        banner: "",
+        form: { elements: { line1: { value: "Post-write St" } } },
+        wiped: false
+    };
+
+    // Mirror admin.js then: skip → nothing; banner → scope only; commit → form.
+    function applyPageLoadThen(paint, storesPayload) {
+        if (paint === "skip") {
+            return;
+        }
+        if (storesPayload && storesPayload.error && storesPayload.error.code === "forbidden") {
+            if (paint !== "commit") {
+                return;
+            }
+            doc.wiped = true;
+            doc.form = null;
+            return;
+        }
+        const activeStore = storesPayload && storesPayload.store;
+        doc.banner = ui.scopeBannerCopy(activeStore, "store-a").text;
+        if (paint === "banner") {
+            return;
+        }
+        doc.wiped = true;
+        doc.form = null;
+    }
+
+    applyPageLoadThen(
+        ui.pageLoadPaintAction(loadTicket, pageFill, "store-a"),
+        { store: store }
+    );
+    assert.match(doc.banner, /Main Warehouse/);
+    assert.match(doc.banner, /US/);
+    assert.ok(doc.form, "form must remain when fill is stale");
+    assert.equal(doc.form.elements.line1.value, "Post-write St");
+    assert.equal(doc.wiped, false);
+
+    // Forbidden stores must not wipe either when fill is stale.
+    doc.banner = "kept";
+    applyPageLoadThen(
+        ui.pageLoadPaintAction(loadTicket, pageFill, "store-a"),
+        { error: { code: "forbidden" } }
+    );
+    assert.equal(doc.banner, "kept");
+    assert.ok(doc.form);
+    assert.equal(doc.wiped, false);
 });
 
 test("addressRefetchPaintAction clears shell on error", function () {
@@ -262,7 +325,10 @@ test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths",
     assert.match(adminSrc, /newAddressFillGate/);
     assert.match(adminSrc, /shouldApplyAddressFill/);
     assert.match(adminSrc, /addressRefetchPaintAction/);
+    assert.match(adminSrc, /pageLoadPaintAction/);
     assert.match(adminSrc, /shouldCommitPageLoadResult/);
+    assert.match(adminSrc, /paint === "banner"/);
+    assert.match(adminSrc, /paint !== "commit"/);
     assert.match(adminSrc, /shouldShowAddressWriteFeedback/);
     assert.match(adminSrc, /refreshStoreAddressesIndex/);
     assert.match(adminSrc, /novalidate/);
@@ -270,4 +336,13 @@ test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths",
     assert.match(adminSrc, /section-store address-line1/);
     assert.ok(adminSrc.indexOf("/admin/store-addresses/") >= 0);
     assert.equal(adminSrc.indexOf("ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount"), -1);
+
+    // Index then/catch must null-check storeAddressesUI before pageLoadPaintAction.
+    const indexFn = adminSrc.indexOf("function renderStoreAddressesIndexPage");
+    const roleFn = adminSrc.indexOf("function renderStoreAddressRolePage");
+    assert.ok(indexFn >= 0 && roleFn > indexFn);
+    const indexBody = adminSrc.slice(indexFn, roleFn);
+    assert.match(indexBody, /if \(!storeAddressesUI\)/);
+    assert.match(indexBody, /pageLoadPaintAction/);
+    assert.match(indexBody, /renderStoreAddressesScopeBanner/);
 });

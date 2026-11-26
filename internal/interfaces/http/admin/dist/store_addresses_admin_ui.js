@@ -214,20 +214,27 @@
         return formReady ? "fill" : "build";
     }
 
-    // Page-load then/catch must not wipe DOM after a newer fill (post-write refetch)
-    // invalidated this page's fill token — the load ticket alone stays current.
-    function shouldCommitPageLoadResult(loadTicket, fillTicket, currentStoreID) {
+    // Page-load then/catch disposition after remount races:
+    //   "skip"   — load ticket stale → touch nothing
+    //   "banner" — load current, fill stale → scope banner only (no form/grid wipe)
+    //   "commit" — both current → full paint / catch may replace container
+    function pageLoadPaintAction(loadTicket, fillTicket, currentStoreID) {
         if (!loadTicket || typeof loadTicket.isCurrent !== "function") {
-            return false;
+            return "skip";
         }
         if (!loadTicket.isCurrent(currentStoreID)) {
-            return false;
+            return "skip";
         }
         if (fillTicket && typeof fillTicket.isCurrent === "function" &&
             !fillTicket.isCurrent(currentStoreID)) {
-            return false;
+            return "banner";
         }
-        return true;
+        return "commit";
+    }
+
+    // True only when page-load may replace form/grid/container (catch + full then).
+    function shouldCommitPageLoadResult(loadTicket, fillTicket, currentStoreID) {
+        return pageLoadPaintAction(loadTicket, fillTicket, currentStoreID) === "commit";
     }
 
     function firstValidationMessage(form) {
@@ -334,6 +341,7 @@
         shouldShowAddressWriteFeedback: shouldShowAddressWriteFeedback,
         shouldRefreshAddressIndexAfterWrite: shouldRefreshAddressIndexAfterWrite,
         addressRefetchPaintAction: addressRefetchPaintAction,
+        pageLoadPaintAction: pageLoadPaintAction,
         shouldCommitPageLoadResult: shouldCommitPageLoadResult,
         firstValidationMessage: firstValidationMessage,
         applyAddressValues: applyAddressValues,

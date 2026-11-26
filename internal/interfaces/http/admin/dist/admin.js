@@ -10225,17 +10225,29 @@
             reqs.push(api("/admin/store-addresses"));
         }
         Promise.all(reqs).then(function (results) {
-            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
+            if (!storeAddressesUI) {
+                return;
+            }
+            var paint = storeAddressesUI.pageLoadPaintAction
+                ? storeAddressesUI.pageLoadPaintAction(ticket, fill, adminScope.store_id)
+                : (ticket.isCurrent(adminScope.store_id) ? "commit" : "skip");
+            if (paint === "skip") {
                 return;
             }
             var storesResponse = results[0];
             if (storesResponse && storesResponse.error && storesResponse.error.code === "forbidden") {
+                if (paint !== "commit") {
+                    return;
+                }
                 container.innerHTML = '<h2>Store Addresses</h2><p role="alert">Your account does not have settings access.</p>';
                 return;
             }
             var stores = normalizeStores(storesResponse && storesResponse.data && storesResponse.data.stores);
             var activeStore = findStoreByID(stores, storeID);
             renderStoreAddressesScopeBanner(activeStore, storeID);
+            if (paint === "banner") {
+                return;
+            }
 
             if (!storeID) {
                 document.getElementById("store-addresses-grid").innerHTML =
@@ -10261,6 +10273,13 @@
             }
             renderStoreAddressesIndexCards(addresses);
         }).catch(function (err) {
+            if (!storeAddressesUI) {
+                if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                container.innerHTML = '<h2>Store Addresses</h2><p role="alert">' + esc(extractErrorMessage(err, "Failed to load store addresses.")) + "</p>";
+                return;
+            }
             if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
@@ -10318,17 +10337,29 @@
             reqs.push(api("/admin/store-addresses/" + encodeURIComponent(normalizedRole)));
         }
         Promise.all(reqs).then(function (results) {
-            if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
+            if (!storeAddressesUI) {
+                return;
+            }
+            var paint = storeAddressesUI.pageLoadPaintAction
+                ? storeAddressesUI.pageLoadPaintAction(ticket, fill, adminScope.store_id)
+                : (ticket.isCurrent(adminScope.store_id) ? "commit" : "skip");
+            if (paint === "skip") {
                 return;
             }
             var storesResponse = results[0];
             if (storesResponse && storesResponse.error && storesResponse.error.code === "forbidden") {
+                if (paint !== "commit") {
+                    return;
+                }
                 container.innerHTML = '<h2>Store Address</h2><p role="alert">Your account does not have settings access.</p>';
                 return;
             }
             var stores = normalizeStores(storesResponse && storesResponse.data && storesResponse.data.stores);
             var activeStore = findStoreByID(stores, storeID);
             renderStoreAddressesScopeBanner(activeStore, storeID);
+            if (paint === "banner") {
+                return;
+            }
 
             if (!storeID) {
                 document.getElementById("store-address-role-form").innerHTML =
@@ -10364,6 +10395,13 @@
             }
             renderStoreAddressRoleForm(container, normalizedRole, meta, addr, ticket);
         }).catch(function (err) {
+            if (!storeAddressesUI) {
+                if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                container.innerHTML = '<h2>Store Address</h2><p role="alert">' + esc(extractErrorMessage(err, "Failed to load address.")) + "</p>";
+                return;
+            }
             if (!storeAddressesUI.shouldCommitPageLoadResult(ticket, fill, adminScope.store_id)) {
                 return;
             }
