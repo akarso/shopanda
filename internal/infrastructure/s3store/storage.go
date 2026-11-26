@@ -317,7 +317,7 @@ func (s *Storage) Read(ctx context.Context, path string) ([]byte, error) {
 }
 
 // Head verifies the object exists and is non-empty (PR-1077 / invoice probe).
-// ContentLength 0 is treated as missing so ensureIssued can rewrite the key.
+// ContentLength 0 or nil is treated as missing so ensureIssued can rewrite the key.
 func (s *Storage) Head(ctx context.Context, path string) error {
 	key, err := validateKey(path)
 	if err != nil {
@@ -339,7 +339,7 @@ func (s *Storage) Head(ctx context.Context, path string) error {
 		}
 		return fmt.Errorf("s3store: head %q: %w", key, err)
 	}
-	if out != nil && out.ContentLength != nil && *out.ContentLength == 0 {
+	if out == nil || out.ContentLength == nil || *out.ContentLength == 0 {
 		return fmt.Errorf("s3store: head %q: %w", key, os.ErrNotExist)
 	}
 	return nil

@@ -32,6 +32,7 @@ type mockS3 struct {
 	deleteErr error
 	headErr   error
 	headZero  bool // ContentLength 0 → Head treats as missing
+	headNil   bool // omit ContentLength → Head treats as missing
 	putKeys   []string
 	putCT     []string // Content-Type per call
 	putCC     []string // Cache-Control per call
@@ -105,6 +106,15 @@ func TestStorage_Head_ZeroLengthIsMissing(t *testing.T) {
 	}
 }
 
+func TestStorage_Head_NilContentLengthIsMissing(t *testing.T) {
+	m := &mockS3{headNil: true}
+	s := &Storage{client: m, bucket: "b", region: "r", baseURL: "https://cdn.example"}
+	err := s.Head(context.Background(), "invoices/inv-1/invoice-1.pdf")
+	if !media.IsNotFound(err) {
+		t.Fatalf("err = %v, want IsNotFound", err)
+	}
+}
+
 func TestStorage_Read(t *testing.T) {
 	m := &mockS3{getBody: []byte("%PDF-bytes")}
 	s := &Storage{client: m, bucket: "b", region: "r", baseURL: "https://cdn.example"}
@@ -133,6 +143,9 @@ func (m *mockS3) HeadObject(_ context.Context, in *s3.HeadObjectInput, _ ...func
 	m.headed = append(m.headed, key)
 	if m.headErr != nil {
 		return nil, m.headErr
+	}
+	if m.headNil {
+		return &s3.HeadObjectOutput{}, nil
 	}
 	cl := int64(1)
 	if m.headZero {

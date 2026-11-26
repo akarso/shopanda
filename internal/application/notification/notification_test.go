@@ -1861,7 +1861,7 @@ func TestHandleInvoiceCreated_HealMissingJobSurfaces(t *testing.T) {
 	inv, _ := domainInvoice.NewInvoice("inv-miss", "ord-miss", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
 	inv.SetInvoiceNumberFromDB(7)
 
-	q := &mockQueue{details: map[string]*jobs.Detail{}, ignoreID: true}
+	q := &mockQueue{details: map[string]*jobs.Detail{}}
 	dedupe := &mockDedupe{}
 	custRepo := &mockCustomerRepo{
 		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
@@ -1899,13 +1899,22 @@ func TestHandleInvoiceCreated_HealMissingJobSurfaces(t *testing.T) {
 	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	// Claim exists, job id conflicts, but Get returns nil → heal must surface, not swallow.
+	jobID := q.enqueued[0].ID
+	// Job row gone (lost queue entry); claim still completed.
+	delete(q.byID, jobID)
 	err := svc.HandleInvoiceCreated(context.Background(), evt)
 	if err == nil || !strings.Contains(err.Error(), "not found for heal") {
 		t.Fatalf("err = %v, want not found for heal", err)
 	}
 	if len(q.replaced) != 0 {
 		t.Fatalf("ReplaceFailed must not run, replaced=%#v", q.replaced)
+	}
+	// Claim released → next republish can insert again under the same stable id.
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("retry after claim release: %v", err)
+	}
+	if len(q.enqueued) != 2 || q.enqueued[1].ID != jobID {
+		t.Fatalf("enqueued after recover = %#v, want second job %s", q.enqueued, jobID)
 	}
 }
 

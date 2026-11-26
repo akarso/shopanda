@@ -1160,7 +1160,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			return fmt.Errorf("notification: claim dedupe %s/%s: %w", subjectKey, kind, err)
 		}
 		if !inserted {
-			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg, kind)
+			return s.healExistingEmailJob(ctx, jobID, handler, logFields, msg, subjectKey, kind)
 		}
 		claimed = true
 	}
@@ -1182,7 +1182,7 @@ func (s *Service) enqueueEmailOnce(ctx context.Context, msg mail.Message, jobID,
 			if claimed {
 				s.completeDedupeClaim(subjectKey, kind, handler, logFields)
 			}
-			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg, kind)
+			return s.healExistingEmailJob(ctx, job.ID, handler, logFields, msg, subjectKey, kind)
 		}
 		if claimed {
 			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
@@ -1223,8 +1223,9 @@ func emailJobPayload(msg mail.Message) map[string]interface{} {
 // healExistingEmailJob replaces a terminal-failed invoice email.send with a
 // fresh payload and resets attempts under the same stable id. Other dedupe
 // kinds only log (order confirmation / shipment must not reset attempts on
-// every order.paid republish). Pending/done jobs are left alone.
-func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message, kind string) error {
+// every order.paid republish). Pending/done jobs are left alone. A missing
+// invoice job releases the dedupe claim so the next republish can enqueue.
+func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler string, logFields map[string]interface{}, msg mail.Message, subjectKey, kind string) error {
 	logFields = copyLogFields(logFields)
 	logFields["job_id"] = jobID
 	s.log.Info(handler+".email_already_enqueued", logFields)
@@ -1245,6 +1246,7 @@ func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler strin
 		return fmt.Errorf("notification: get email job %s: %w", jobID, err)
 	}
 	if detail == nil {
+		s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
 		return fmt.Errorf("notification: email job %s not found for heal", jobID)
 	}
 	if detail.Status != jobs.StatusFailed {
@@ -1261,6 +1263,9 @@ func (s *Service) healExistingEmailJob(ctx context.Context, jobID, handler strin
 	if err := replacer.ReplaceFailed(ctx, job); err != nil {
 		if errors.Is(err, jobs.ErrRequeueNotTerminal) {
 			return nil
+		}
+		if errors.Is(err, jobs.ErrRequeueNotFound) {
+			s.releaseDedupeClaim(subjectKey, kind, handler, logFields)
 		}
 		s.log.Error(handler+".email_replace_failed", err, logFields)
 		return fmt.Errorf("notification: replace failed email job %s: %w", jobID, err)

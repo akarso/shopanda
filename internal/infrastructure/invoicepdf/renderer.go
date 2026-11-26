@@ -306,12 +306,16 @@ func drawItemChunk(pdf *fpdf.Fpdf, nameLines, skuLines []string, qty, unitPrice,
 	pdf.SetXY(x, y+rowH)
 }
 
-// drawItemContinuation continues a wrapped name/SKU without empty amount cells
-// (those would look like another line item).
+// drawItemContinuation continues a wrapped name/SKU under the same line. Amount
+// columns are empty borders so the header grid stays closed, without qty/prices
+// that would read as a second line item.
 func drawItemContinuation(pdf *fpdf.Fpdf, nameLines, skuLines []string, rowH float64) {
 	x, y := pdf.GetXY()
 	pdf.Rect(x, y, colName, rowH, "D")
 	pdf.Rect(x+colName, y, colSKU, rowH, "D")
+	pdf.Rect(x+colName+colSKU, y, colQty, rowH, "D")
+	pdf.Rect(x+colName+colSKU+colQty, y, colUnit, rowH, "D")
+	pdf.Rect(x+colName+colSKU+colQty+colUnit, y, colTotal, rowH, "D")
 	for i, line := range nameLines {
 		pdf.SetXY(x+1, y+float64(i)*rowLine)
 		pdf.CellFormat(colName-2, rowLine, line, "", 0, "", false, 0, "")
