@@ -113,6 +113,11 @@ func TestTaxIdentifierTypeRegistry_Freeze(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "frozen") {
 		t.Fatalf("frozen register = %v", err)
 	}
+	// Bad payload after freeze must still surface as frozen, not validation.
+	err = r.Register(store.TaxIdentifierType{Code: "bad code", Label: ""})
+	if err == nil || !strings.Contains(err.Error(), "frozen") {
+		t.Fatalf("frozen+invalid = %v, want frozen", err)
+	}
 }
 
 func TestTaxIdentifierTypeRegistry_AllOrderAndCopy(t *testing.T) {
@@ -126,9 +131,28 @@ func TestTaxIdentifierTypeRegistry_AllOrderAndCopy(t *testing.T) {
 }
 
 func TestEUMemberCountries_MatchExtapi(t *testing.T) {
-	if !reflect.DeepEqual(store.EUMemberCountries(), extapi.EUMemberCountries()) {
-		t.Fatalf("store vs extapi EU lists diverge:\nstore=%v\nextapi=%v",
-			store.EUMemberCountries(), extapi.EUMemberCountries())
+	storeEU := store.EUMemberCountries()
+	extEU := extapi.EUMemberCountries()
+	if !reflect.DeepEqual(storeEU, extEU) {
+		t.Fatalf("store vs extapi EU lists diverge:\nstore=%v\nextapi=%v", storeEU, extEU)
+	}
+	if len(storeEU) != 27 {
+		t.Fatalf("EU member count = %d, want 27", len(storeEU))
+	}
+	required := []string{"PL", "DE", "FR", "GR", "IT", "ES", "NL"}
+	set := make(map[string]struct{}, len(storeEU))
+	for _, c := range storeEU {
+		set[c] = struct{}{}
+	}
+	for _, c := range required {
+		if _, ok := set[c]; !ok {
+			t.Fatalf("missing EU member %q", c)
+		}
+	}
+	for _, bad := range []string{"UK", "EL", "GB", "US"} {
+		if _, ok := set[bad]; ok {
+			t.Fatalf("%q must not be in EU member list", bad)
+		}
 	}
 }
 

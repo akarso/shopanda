@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
@@ -50,7 +51,23 @@ func TestHost_RegisterTaxIdentifierType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := app.TaxIdentifierTypes().Get("eu_wide"); !ok {
+	reg := app.TaxIdentifierTypes()
+	if _, ok := reg.Get("eu_wide"); !ok {
 		t.Fatal("eu_wide missing")
 	}
+	if !hasTaxCode(reg.ApplicableTo("FR"), "eu_wide") {
+		t.Fatal("eu_wide must apply in FR")
+	}
+	if hasTaxCode(reg.ApplicableTo("US"), "eu_wide") {
+		t.Fatal("eu_wide must not apply in US")
+	}
+}
+
+func hasTaxCode(types []store.TaxIdentifierType, code string) bool {
+	for _, tt := range types {
+		if tt.Code == code {
+			return true
+		}
+	}
+	return false
 }

@@ -164,7 +164,9 @@ func (o *Order) SetTaxSnapshot(destinationCountry string, taxAmount shared.Money
 	return nil
 }
 
-// ValidateDestinationCountry normalizes and validates an ISO 3166-1 alpha-2 code.
+// ValidateDestinationCountry normalizes and validates an ISO 3166-1 alpha-2 code
+// (ASCII A–Z). "UK" is canonicalized to "GB", matching store.NormalizeCountry,
+// so OSS destination grouping and tax-ID ApplicableTo see the same country.
 func ValidateDestinationCountry(code string) (string, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if code == "" {
@@ -177,6 +179,9 @@ func ValidateDestinationCountry(code string) (string, error) {
 		if r < 'A' || r > 'Z' {
 			return "", errors.New("order: destination country must be a 2-letter ISO code")
 		}
+	}
+	if code == "UK" {
+		return "GB", nil
 	}
 	return code, nil
 }

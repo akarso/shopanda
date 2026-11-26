@@ -48,18 +48,20 @@ func (r *TaxIdentifierTypeRegistry) Frozen() bool {
 
 // Register validates/normalizes t (same rules as NewTaxIdentifierType), then
 // adds it. Duplicate Code (after normalize) and post-Freeze calls fail closed.
+// Frozen is checked before validation so a bad payload after InitAll surfaces
+// as frozen, not as a validation error.
 func (r *TaxIdentifierTypeRegistry) Register(t TaxIdentifierType) error {
 	if r == nil {
 		return fmt.Errorf("store tax identifier type registry: nil registry")
-	}
-	normalized, err := NewTaxIdentifierType(t.Code, t.Label, t.Countries, t.Region, t.FormatHint)
-	if err != nil {
-		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.frozen {
 		return fmt.Errorf("store tax identifier type registry: frozen")
+	}
+	normalized, err := NewTaxIdentifierType(t.Code, t.Label, t.Countries, t.Region, t.FormatHint)
+	if err != nil {
+		return err
 	}
 	if _, exists := r.byCode[normalized.Code]; exists {
 		return fmt.Errorf("store tax identifier type registry: duplicate code %q", normalized.Code)
