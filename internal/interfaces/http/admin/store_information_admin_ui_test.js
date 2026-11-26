@@ -87,7 +87,7 @@ test("older tax panel load does not paint after newer start", function () {
     const gate = ui.newTaxPanelLoadGate();
     const paints = [];
     function paint(ticket, snapshot) {
-        if (!ticket.isCurrent()) {
+        if (!ui.shouldPaintTaxPanel(ticket)) {
             return;
         }
         paints.push(snapshot);
@@ -103,6 +103,29 @@ test("older tax panel load does not paint after newer start", function () {
     paint(newer, { taxIDs: ["stale-again"] });
     paint(newest, { taxIDs: ["latest"] });
     assert.deepEqual(paints, [{ taxIDs: ["new-vat"] }, { taxIDs: ["latest"] }]);
+});
+
+test("slow earlier tax list GET does not paint after a newer refresh start", function () {
+    // Models refreshTaxIdentifiersPanel: start() before list GET, then paint
+    // only if that ticket is still current when the list callback runs.
+    const gate = ui.newTaxPanelLoadGate();
+    const paints = [];
+    function onListResolved(ticket, snapshot) {
+        if (!ui.shouldPaintTaxPanel(ticket)) {
+            return;
+        }
+        paints.push(snapshot);
+    }
+
+    const firstRefresh = gate.start(); // before first list GET
+    const secondRefresh = gate.start(); // overlapping save/delete refresh
+    // Second list returns first and paints.
+    onListResolved(secondRefresh, { taxIDs: ["after-second-write"] });
+    // First list returns late — must not overwrite.
+    onListResolved(firstRefresh, { taxIDs: ["stale-first-write"] });
+    assert.deepEqual(paints, [{ taxIDs: ["after-second-write"] }]);
+    assert.equal(ui.shouldPaintTaxPanel(firstRefresh), false);
+    assert.equal(ui.shouldPaintTaxPanel(secondRefresh), true);
 });
 
 test("sidebarLinkIsActive exact-matches /admin/settings", function () {
@@ -219,6 +242,11 @@ test("admin.js wires Store Information route and omits address/logo config keys 
     assert.match(adminSrc, /applyIdentityValues/);
     assert.match(adminSrc, /applyGeneralStoreValues/);
     assert.match(adminSrc, /sidebarLinkIsActive/);
-    // refreshTaxIdentifiersPanel must await the type-list paint.
+    // refreshTaxIdentifiersPanel must claim the gate before the list GET and await type-list paint.
+    assert.match(adminSrc, /var panelTicket = storeInfoTaxPanelGate\.start\(\);\s*\n\s*return api\('\/admin\/tax-identifiers'\)/);
+    assert.match(adminSrc, /panelTicket: panelTicket/);
     assert.match(adminSrc, /return loadAndRenderTaxIdentifiersPanel/);
+    // loadAndRender must not start a new gate ticket (would reintroduce list-GET races).
+    assert.equal((adminSrc.match(/function loadAndRenderTaxIdentifiersPanel[\s\S]*?function refreshTaxIdentifiersPanel/) || [""])[0]
+        .indexOf("storeInfoTaxPanelGate.start()"), -1);
 });

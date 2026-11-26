@@ -39,6 +39,7 @@ func TestAdminHandler_StoreInformationAdminUIScript(t *testing.T) {
 		"ShopandaStoreInformationAdminUI",
 		"newStoreInfoLoadGate",
 		"newTaxPanelLoadGate",
+		"shouldPaintTaxPanel",
 		"shouldApplyWriteResult",
 		"headerContextChangeRequiresRemount",
 		"escAttr",

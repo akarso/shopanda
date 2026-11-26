@@ -33,8 +33,9 @@
         };
     }
 
-    // newTaxPanelLoadGate sequences type-list + panel paints so an older
-    // in-flight refresh cannot overwrite a newer tax snapshot.
+    // newTaxPanelLoadGate sequences tax panel refreshes. Call start() before
+    // GET /admin/tax-identifiers (not after it resolves). A slow earlier list
+    // response must keep its old ticket so it cannot paint over a newer refresh.
     function newTaxPanelLoadGate() {
         var seq = 0;
         return {
@@ -49,6 +50,12 @@
                 };
             }
         };
+    }
+
+    // shouldPaintTaxPanel mirrors the list-GET callback guard: drop when a
+    // newer refresh already called start().
+    function shouldPaintTaxPanel(panelTicket) {
+        return !!(panelTicket && typeof panelTicket.isCurrent === "function" && panelTicket.isCurrent());
     }
 
     function storeScopeMatches(capturedStoreID, currentStoreID) {
@@ -228,6 +235,7 @@
         escAttr: escAttr,
         newStoreInfoLoadGate: newStoreInfoLoadGate,
         newTaxPanelLoadGate: newTaxPanelLoadGate,
+        shouldPaintTaxPanel: shouldPaintTaxPanel,
         storeScopeMatches: storeScopeMatches,
         shouldApplyWriteResult: shouldApplyWriteResult,
         headerContextChangeRequiresRemount: headerContextChangeRequiresRemount,

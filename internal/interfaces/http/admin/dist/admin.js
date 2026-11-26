@@ -9497,8 +9497,14 @@
                 setSettingsMessage('store-identity-msg', extractErrorMessage(err, 'Failed to load store identity.'), true);
             });
 
+            // Start the tax panel gate before the list GET so a slow response
+            // cannot become "newest" after a later refresh already painted.
+            var initialTaxPanelTicket = storeInfoTaxPanelGate.start();
             api('/admin/tax-identifiers').then(function (taxResponse) {
                 if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                if (!initialTaxPanelTicket.isCurrent()) {
                     return;
                 }
                 if (taxResponse && taxResponse.error && taxResponse.error.code === 'forbidden') {
@@ -9511,9 +9517,14 @@
                 }
                 var taxIDs = normalizeTaxIdentifiers(taxResponse && taxResponse.data && taxResponse.data.tax_identifiers);
                 var country = (activeStore && activeStore.country) || '';
-                return loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket);
+                return loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket, {
+                    panelTicket: initialTaxPanelTicket
+                });
             }).catch(function (err) {
                 if (!ticket.isCurrent(adminScope.store_id)) {
+                    return;
+                }
+                if (!initialTaxPanelTicket.isCurrent()) {
                     return;
                 }
                 setSettingsMessage('store-tax-msg', extractErrorMessage(err, 'Failed to load tax identifiers.'), true);
@@ -9645,9 +9656,14 @@
         });
     }
 
+    // panelTicket must be created with storeInfoTaxPanelGate.start() before the
+    // tax-identifiers list GET. Never start() here after that list returns.
     function loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, pageTicket, opts) {
         opts = opts || {};
-        var panelTicket = storeInfoTaxPanelGate.start();
+        var panelTicket = opts.panelTicket;
+        if (!panelTicket) {
+            return Promise.resolve();
+        }
         var countryQ = country ? ('?country=' + encodeURIComponent(country)) : '';
         return Promise.all([
             api('/admin/tax-identifier-types' + countryQ),
@@ -9679,12 +9695,15 @@
             var applicableRaw = countryFilterFailed
                 ? []
                 : normalizeTaxIdentifierTypes(countryRes && countryRes.data && countryRes.data.types);
-            if (countryFilterFailed && !opts.preserveMessage && !opts.successMessage) {
-                setSettingsMessage(
-                    'store-tax-msg',
-                    'Could not filter types by store country (' + extractErrorMessage(countryRes, 'validation error') + '). Showing all types.',
-                    true
-                );
+            if (countryFilterFailed) {
+                var filterMsg = 'Could not filter types by store country (' +
+                    extractErrorMessage(countryRes, 'validation error') +
+                    '). Showing all types.';
+                if (opts.successMessage) {
+                    setSettingsMessage('store-tax-msg', opts.successMessage + ' ' + filterMsg, true);
+                } else if (!opts.preserveMessage) {
+                    setSettingsMessage('store-tax-msg', filterMsg, true);
+                }
             }
             var parts = storeInfoUI && storeInfoUI.partitionTaxTypes
                 ? storeInfoUI.partitionTaxTypes(allTypes, applicableRaw, countryFilterFailed)
@@ -9721,8 +9740,14 @@
     }
 
     function refreshTaxIdentifiersPanel(container, country, pageTicket, successMessage) {
+        // Claim the panel sequence before the list GET so a slow earlier list
+        // cannot start() later and paint over this refresh.
+        var panelTicket = storeInfoTaxPanelGate.start();
         return api('/admin/tax-identifiers').then(function (taxResponse) {
             if (!storeInfoScopeMatches(pageTicket.storeID)) {
+                return;
+            }
+            if (!panelTicket.isCurrent()) {
                 return;
             }
             if (taxResponse && taxResponse.error) {
@@ -9737,10 +9762,14 @@
             return loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, pageTicket, {
                 afterWrite: true,
                 preserveMessage: !!successMessage,
-                successMessage: successMessage || ""
+                successMessage: successMessage || "",
+                panelTicket: panelTicket
             });
         }).catch(function (err) {
             if (!storeInfoScopeMatches(pageTicket.storeID)) {
+                return;
+            }
+            if (!panelTicket.isCurrent()) {
                 return;
             }
             setSettingsMessage('store-tax-msg', storeInfoSuccessReloadMessage(successMessage, extractErrorMessage(err, 'unknown error')), true);
