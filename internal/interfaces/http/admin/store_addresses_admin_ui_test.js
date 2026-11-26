@@ -252,7 +252,7 @@ test("stale fill page-load then still paints scope banner", function () {
         wiped: false
     };
 
-    // Mirror admin.js then: skip → nothing; banner → scope only; commit → form.
+    // Mirror admin.js then: skip → nothing; banner → scope only when stores ok; commit → form.
     function applyPageLoadThen(paint, storesPayload) {
         if (paint === "skip") {
             return;
@@ -265,8 +265,10 @@ test("stale fill page-load then still paints scope banner", function () {
             doc.form = null;
             return;
         }
-        const activeStore = storesPayload && storesPayload.store;
-        doc.banner = ui.scopeBannerCopy(activeStore, "store-a").text;
+        if (!(storesPayload && storesPayload.error)) {
+            const activeStore = storesPayload && storesPayload.store;
+            doc.banner = ui.scopeBannerCopy(activeStore, "store-a").text;
+        }
         if (paint === "banner") {
             return;
         }
@@ -291,6 +293,16 @@ test("stale fill page-load then still paints scope banner", function () {
         { error: { code: "forbidden" } }
     );
     assert.equal(doc.banner, "kept");
+    assert.ok(doc.form);
+    assert.equal(doc.wiped, false);
+
+    // Non-forbidden stores failure leaves the banner empty on the banner path.
+    doc.banner = "";
+    applyPageLoadThen(
+        ui.pageLoadPaintAction(loadTicket, pageFill, "store-a"),
+        { error: { code: "internal", message: "boom" } }
+    );
+    assert.equal(doc.banner, "");
     assert.ok(doc.form);
     assert.equal(doc.wiped, false);
 });
@@ -337,12 +349,15 @@ test("admin.js wires Store Addresses fill gate, novalidate, and feedback paths",
     assert.ok(adminSrc.indexOf("/admin/store-addresses/") >= 0);
     assert.equal(adminSrc.indexOf("ShopandaStoreAddressesAdminUI.headerContextChangeRequiresRemount"), -1);
 
-    // Index then/catch must null-check storeAddressesUI before pageLoadPaintAction.
+    // Index bails with a visible failure when the helper is missing (same pattern as role).
     const indexFn = adminSrc.indexOf("function renderStoreAddressesIndexPage");
     const roleFn = adminSrc.indexOf("function renderStoreAddressRolePage");
     assert.ok(indexFn >= 0 && roleFn > indexFn);
     const indexBody = adminSrc.slice(indexFn, roleFn);
     assert.match(indexBody, /if \(!storeAddressesUI\)/);
+    assert.match(indexBody, /Store Addresses UI is unavailable/);
     assert.match(indexBody, /pageLoadPaintAction/);
+    assert.match(indexBody, /!\(storesResponse && storesResponse\.error\)/);
     assert.match(indexBody, /renderStoreAddressesScopeBanner/);
+    assert.match(adminSrc, /Store Addresses UI is unavailable/);
 });
