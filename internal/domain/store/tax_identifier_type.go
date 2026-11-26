@@ -15,10 +15,14 @@ const (
 
 // TaxIdentifierType describes one registry entry (NIP, EU VAT, EIN, …).
 // Code is a snake token matching TaxIdentifier.Type.
+// Region is admin grouping only — ApplicableTo matches Countries, not Region.
+// Empty Countries means the type is not country-applicable (except
+// TaxIdentifierTypeGeneric, which ApplicableTo always appends last); admin
+// "Add other" uses All() minus ApplicableTo.
 type TaxIdentifierType struct {
 	Code       string
 	Label      string
-	Countries  []string // ISO-2; empty = "Other" / generic bucket
+	Countries  []string // ISO-2; empty = not country-matched (see ApplicableTo)
 	Region     string   // TaxIdentifierRegionEU | TaxIdentifierRegionUS | ""
 	FormatHint string
 }

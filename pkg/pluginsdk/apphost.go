@@ -141,11 +141,15 @@ func (h *appHost) RegisterTaxCalculator(calc extapi.TaxCalculator) {
 }
 
 func (h *appHost) RegisterTaxIdentifierType(t extapi.TaxIdentifierType) error {
-	dt, err := store.NewTaxIdentifierType(t.Code, t.Label, t.Countries, t.Region, t.FormatHint)
-	if err != nil {
-		return err
-	}
-	return h.app.RegisterTaxIdentifierType(dt)
+	// Pass through to App.Register → registry.Register, which runs
+	// NewTaxIdentifierType before the duplicate check (case-canonical codes).
+	return h.app.RegisterTaxIdentifierType(store.TaxIdentifierType{
+		Code:       t.Code,
+		Label:      t.Label,
+		Countries:  t.Countries,
+		Region:     t.Region,
+		FormatHint: t.FormatHint,
+	})
 }
 
 func (h *appHost) RegisterMailSender(sender extapi.MailSender) {

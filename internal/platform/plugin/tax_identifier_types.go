@@ -16,7 +16,8 @@ func (a *App) ensureTaxIdentifierTypes() *store.TaxIdentifierTypeRegistry {
 }
 
 // RegisterTaxIdentifierType adds a plugin tax/company identifier type.
-// Duplicate codes fail closed (error). Core catalog is seeded on first use.
+// The registry normalizes the type (snake code, ISO countries, region allow-list)
+// before the duplicate check. Duplicate codes and post-Freeze calls fail closed.
 func (a *App) RegisterTaxIdentifierType(t store.TaxIdentifierType) error {
 	if a == nil {
 		return fmt.Errorf("plugin: nil app")
@@ -25,10 +26,18 @@ func (a *App) RegisterTaxIdentifierType(t store.TaxIdentifierType) error {
 }
 
 // TaxIdentifierTypes returns the in-process tax identifier type registry
-// (core catalog + plugin registrations).
+// (core catalog + plugin registrations). Panics on a nil App.
 func (a *App) TaxIdentifierTypes() *store.TaxIdentifierTypeRegistry {
 	if a == nil {
-		return store.DefaultTaxIdentifierTypeRegistry()
+		panic("plugin: TaxIdentifierTypes: nil app")
 	}
 	return a.ensureTaxIdentifierTypes()
+}
+
+// FreezeTaxIdentifierTypes seals plugin tax-ID type registration after InitAll.
+func (a *App) FreezeTaxIdentifierTypes() {
+	if a == nil {
+		return
+	}
+	a.ensureTaxIdentifierTypes().Freeze()
 }

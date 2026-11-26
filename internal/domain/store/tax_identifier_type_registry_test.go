@@ -1,10 +1,12 @@
 package store_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 func codesOf(types []store.TaxIdentifierType) []string {
@@ -15,73 +17,118 @@ func codesOf(types []store.TaxIdentifierType) []string {
 	return out
 }
 
-func hasCode(types []store.TaxIdentifierType, code string) bool {
-	for _, t := range types {
-		if t.Code == code {
-			return true
-		}
-	}
-	return false
-}
-
 func TestDefaultTaxIdentifierTypeRegistry_ApplicableTo(t *testing.T) {
 	r := store.DefaultTaxIdentifierTypeRegistry()
 
-	pl := r.ApplicableTo("pl")
-	if !hasCode(pl, "pl_nip") || !hasCode(pl, "eu_vat") {
-		t.Fatalf("PL applicable = %v, want pl_nip + eu_vat", codesOf(pl))
+	tests := []struct {
+		country string
+		want    []string
+	}{
+		{"PL", []string{"eu_vat", "pl_nip", store.TaxIdentifierTypeGeneric}},
+		{"pl", []string{"eu_vat", "pl_nip", store.TaxIdentifierTypeGeneric}},
+		{"DE", []string{"eu_vat", "de_ustidnr", "de_steuernummer", store.TaxIdentifierTypeGeneric}},
+		{"FR", []string{"eu_vat", "fr_siret", "fr_tva", store.TaxIdentifierTypeGeneric}},
+		{"GB", []string{"uk_vat", "uk_crn", store.TaxIdentifierTypeGeneric}},
+		{"UK", []string{"uk_vat", "uk_crn", store.TaxIdentifierTypeGeneric}}, // UK→GB
+		{"US", []string{"us_ein", store.TaxIdentifierTypeGeneric}},
+		{"XX", []string{store.TaxIdentifierTypeGeneric}},
+		{"", []string{store.TaxIdentifierTypeGeneric}},
+		{"12", []string{store.TaxIdentifierTypeGeneric}},
 	}
-	if !hasCode(pl, "generic") {
-		t.Fatalf("PL applicable missing generic: %v", codesOf(pl))
-	}
-
-	us := r.ApplicableTo("US")
-	if !hasCode(us, "us_ein") {
-		t.Fatalf("US applicable = %v, want us_ein", codesOf(us))
-	}
-	if hasCode(us, "pl_nip") {
-		t.Fatalf("US must not see pl_nip: %v", codesOf(us))
-	}
-
-	xx := r.ApplicableTo("XX") // valid ISO letters, not in catalog countries
-	if len(xx) != 1 || xx[0].Code != "generic" {
-		t.Fatalf("unknown country applicable = %v, want [generic]", codesOf(xx))
-	}
-
-	bad := r.ApplicableTo("12")
-	if len(bad) != 1 || bad[0].Code != "generic" {
-		t.Fatalf("invalid country applicable = %v, want [generic]", codesOf(bad))
+	for _, tt := range tests {
+		t.Run(tt.country, func(t *testing.T) {
+			got := codesOf(r.ApplicableTo(tt.country))
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("ApplicableTo(%q) = %v, want %v", tt.country, got, tt.want)
+			}
+		})
 	}
 }
 
-func TestTaxIdentifierTypeRegistry_RegisterDuplicate(t *testing.T) {
+func TestDefaultTaxIdentifierTypeRegistry_CoreCodes(t *testing.T) {
+	r := store.DefaultTaxIdentifierTypeRegistry()
+	got := codesOf(r.All())
+	want := store.CoreTaxIdentifierTypeCodes()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("All codes = %v, want %v", got, want)
+	}
+}
+
+func TestTaxIdentifierTypeRegistry_GetCanonical(t *testing.T) {
+	r := store.DefaultTaxIdentifierTypeRegistry()
+	t1, ok := r.Get("PL_NIP")
+	if !ok || t1.Code != "pl_nip" {
+		t.Fatalf("Get(PL_NIP) = (%v, %v)", t1, ok)
+	}
+	t2, ok := r.Get("  Eu_Vat ")
+	if !ok || t2.Code != "eu_vat" {
+		t.Fatalf("Get(Eu_Vat) = (%v, %v)", t2, ok)
+	}
+}
+
+func TestTaxIdentifierTypeRegistry_RegisterNormalizesBeforeDuplicate(t *testing.T) {
+	r := store.DefaultTaxIdentifierTypeRegistry()
+	err := r.Register(store.TaxIdentifierType{
+		Code: "EU_VAT", Label: "Dup", Countries: []string{"pl"}, Region: "eu",
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate of eu_vat, got %v", err)
+	}
+}
+
+func TestTaxIdentifierTypeRegistry_RegisterRawStructNormalized(t *testing.T) {
 	r := store.NewTaxIdentifierTypeRegistry()
-	t1, err := store.NewTaxIdentifierType("custom_vat", "Custom", []string{"PL"}, store.TaxIdentifierRegionEU, "")
+	err := r.Register(store.TaxIdentifierType{
+		Code: "Custom_VAT", Label: " Custom ", Countries: []string{"pl"}, Region: "eu",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Register(t1); err != nil {
-		t.Fatal(err)
+	got, ok := r.Get("custom_vat")
+	if !ok || got.Code != "custom_vat" || got.Countries[0] != "PL" || got.Region != store.TaxIdentifierRegionEU {
+		t.Fatalf("normalized = %+v", got)
 	}
-	err = r.Register(t1)
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("duplicate error = %v", err)
+	if !codesEqual(codesOf(r.ApplicableTo("PL")), []string{"custom_vat"}) {
+		// no generic seeded
+		t.Fatalf("ApplicableTo PL = %v", codesOf(r.ApplicableTo("PL")))
+	}
+}
+
+func codesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestTaxIdentifierTypeRegistry_Freeze(t *testing.T) {
+	r := store.NewTaxIdentifierTypeRegistry()
+	r.Freeze()
+	err := r.Register(store.TaxIdentifierType{Code: "x", Label: "X"})
+	if err == nil || !strings.Contains(err.Error(), "frozen") {
+		t.Fatalf("frozen register = %v", err)
 	}
 }
 
 func TestTaxIdentifierTypeRegistry_AllOrderAndCopy(t *testing.T) {
 	r := store.DefaultTaxIdentifierTypeRegistry()
 	all := r.All()
-	if len(all) < 14 {
-		t.Fatalf("core catalog len = %d", len(all))
-	}
-	if all[0].Code != "eu_vat" || all[len(all)-1].Code != "generic" {
-		t.Fatalf("order: first=%q last=%q", all[0].Code, all[len(all)-1].Code)
-	}
 	all[0].Countries[0] = "ZZ"
 	again, ok := r.Get("eu_vat")
 	if !ok || again.Countries[0] == "ZZ" {
 		t.Fatal("All/Get must return copies")
+	}
+}
+
+func TestEUMemberCountries_MatchExtapi(t *testing.T) {
+	if !reflect.DeepEqual(store.EUMemberCountries(), extapi.EUMemberCountries()) {
+		t.Fatalf("store vs extapi EU lists diverge:\nstore=%v\nextapi=%v",
+			store.EUMemberCountries(), extapi.EUMemberCountries())
 	}
 }
 
