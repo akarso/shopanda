@@ -128,8 +128,12 @@ func TestLoadDir(t *testing.T) {
 	registry := mail.NewTemplates()
 	loader := NewFileLoader(dir)
 
-	if err := LoadDir(registry, loader); err != nil {
+	names, err := LoadDir(registry, loader)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("names = %v, want 2", names)
 	}
 
 	// Verify both templates were registered
@@ -159,13 +163,36 @@ func TestLoadDir_SkipsNonHTML(t *testing.T) {
 	registry := mail.NewTemplates()
 	loader := NewFileLoader(dir)
 
-	if err := LoadDir(registry, loader); err != nil {
+	names, err := LoadDir(registry, loader)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(names) != 1 || names[0] != "order" {
+		t.Fatalf("names = %v, want [order]", names)
 	}
 
 	// order should be registered, readme.txt ignored
 	if _, err := registry.Render("order", "x@x.com", nil); err != nil {
 		t.Errorf("order template should exist: %v", err)
+	}
+}
+
+func TestLoadDir_ParseError(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplate(t, dir, "broken.html",
+		"<!-- Subject: Broken -->\n<p>{{</p>")
+
+	registry := mail.NewTemplates()
+	loader := NewFileLoader(dir)
+	_, err := LoadDir(registry, loader)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "parse template broken") {
+		t.Fatalf("err = %v, want parse template broken", err)
+	}
+	if _, renderErr := registry.Render("broken", "x@x.com", nil); renderErr == nil {
+		t.Fatal("broken template must not be registered")
 	}
 }
 
@@ -256,7 +283,7 @@ func TestLoadDir_OverwritesPreviousRegistration(t *testing.T) {
 	registry.Register("override_me", "Hardcoded Subject", "<p>Hardcoded Body</p>")
 
 	loader := NewFileLoader(dir)
-	if err := LoadDir(registry, loader); err != nil {
+	if _, err := LoadDir(registry, loader); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

@@ -200,12 +200,9 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}
-	if h.layout != nil {
-		wrapped, wErr := h.layout.Wrap(msg.Body, ed)
-		if wErr != nil {
-			return fmt.Errorf("wrap layout: %w", wErr)
-		}
-		msg.Body = wrapped
+	msg, err = mail.ApplyLayout(h.layout, msg, ed)
+	if err != nil {
+		return fmt.Errorf("wrap layout: %w", err)
 	}
 	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
 }

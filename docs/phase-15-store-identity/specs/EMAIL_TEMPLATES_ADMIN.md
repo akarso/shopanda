@@ -16,12 +16,12 @@ Fill `EmailData` on every send path:
 
 | Field | Source (after Track A 1205) | Until 1205 |
 | --- | --- | --- |
-| `StoreName` | `store.Name` | `store.Name` (cart recovery today hardcodes `"Shopanda"` — fix here) |
+| `StoreName` | `store.Name` | `store.Name` (cart recovery uses identity brand; no `"Shopanda"` hardcode) |
 | `StoreURL` | store domain | as today |
 | `LogoURL` | Site identity logo, else `store.logo` | `store.logo` |
 | `StoreAddress` | formatted `general` address | `store.address` |
 
-Guest order-claim mail in `cmd/api` becomes a named template, not an ad-hoc `mail.Message`.
+Guest order-claim mail in `cmd/api` becomes a named template in **PR-1211**, not in PR-1210.
 
 ## 2. File set
 

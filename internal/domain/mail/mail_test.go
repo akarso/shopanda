@@ -26,6 +26,28 @@ func TestTemplates_Register_PanicsBadTemplate(t *testing.T) {
 	tmpl.Register("bad", "subj", "{{.Broken")
 }
 
+func TestTemplates_TryRegister_ParseError(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	err := tmpl.TryRegister("bad", "subj", "{{")
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if _, renderErr := tmpl.Render("bad", "a@b.com", nil); renderErr == nil {
+		t.Fatal("failed TryRegister must not leave a registry entry")
+	}
+}
+
+func TestApplyLayout_NilNoop(t *testing.T) {
+	msg := mail.Message{Body: "<p>x</p>"}
+	got, err := mail.ApplyLayout(nil, msg, mail.EmailData{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body != msg.Body {
+		t.Fatalf("body = %q", got.Body)
+	}
+}
+
 func TestTemplates_Render(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	tmpl.Register("welcome", "Welcome {{.Name}}", "<h1>Hello {{.Name}}</h1>")

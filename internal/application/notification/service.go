@@ -179,14 +179,10 @@ func (s *Service) renderEmail(name, to string, ed mail.EmailData) (mail.Message,
 	if err != nil {
 		return mail.Message{}, err
 	}
-	if s == nil || s.layout == nil {
-		return msg, nil
-	}
-	wrapped, err := s.layout.Wrap(msg.Body, ed)
+	msg, err = mail.ApplyLayout(s.layout, msg, ed)
 	if err != nil {
 		return mail.Message{}, fmt.Errorf("notification: wrap layout %s: %w", name, err)
 	}
-	msg.Body = wrapped
 	return msg, nil
 }
 
@@ -196,7 +192,7 @@ func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
 	if s == nil {
 		return mail.EmailData{}
 	}
-	ed := mail.EmailData{StoreURL: s.storeURL}
+	ed := mail.EmailData{StoreURL: strings.TrimRight(strings.TrimSpace(s.storeURL), "/")}
 	storeID, storeName := s.resolveDefaultStore(ctx)
 	ed.StoreName = storeName
 	if s.identity != nil && storeID != "" {

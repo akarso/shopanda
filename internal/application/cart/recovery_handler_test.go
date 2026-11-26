@@ -2,6 +2,8 @@ package cart_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,6 +271,99 @@ func TestRecoveryHandler_Handle_SkipsWhenDisabled(t *testing.T) {
 	}
 	if len(carts.marked) != 0 {
 		t.Fatalf("expected no cart marks when disabled, got %v", carts.marked)
+	}
+}
+
+type recoveryLayout struct {
+	err error
+}
+
+func (r recoveryLayout) Wrap(body string, _ mail.EmailData) (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
+	return "<layout>" + body + "</layout>", nil
+}
+
+func TestRecoveryHandler_Handle_WrapsLayout(t *testing.T) {
+	c, err := domainCart.NewCart("cart-layout", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Layout:    recoveryLayout{},
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued = %d", len(queue.enqueued))
+	}
+	body, _ := queue.enqueued[0].Payload["body"].(string)
+	if !strings.HasPrefix(body, "<layout>") || !strings.Contains(body, "</layout>") {
+		t.Fatalf("body not wrapped: %q", body)
+	}
+}
+
+func TestRecoveryHandler_Handle_WrapErrorSkipsEnqueue(t *testing.T) {
+	c, err := domainCart.NewCart("cart-wrap-err", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Layout:    recoveryLayout{err: errors.New("wrap boom")},
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("wrap error must skip enqueue, got %d", len(queue.enqueued))
 	}
 }
 

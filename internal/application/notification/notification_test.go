@@ -291,6 +291,37 @@ func TestHandleOrderPaid_WrapsLayout(t *testing.T) {
 	}
 }
 
+type errLayout struct{ err error }
+
+func (e errLayout) Wrap(string, mail.EmailData) (string, error) { return "", e.err }
+
+func TestHandleOrderPaid_WrapErrorSkipsEnqueue(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q, notification.WithLayout(errLayout{err: errors.New("wrap boom")}))
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err == nil {
+		t.Fatal("expected wrap error")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("wrap error must skip enqueue, got %d", len(q.enqueued))
+	}
+}
+
 func TestHandleOrderPaid_EnqueueFailureAllowsRetry(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)

@@ -11,13 +11,14 @@ import (
 
 // LoadDir reads all .html templates from the loader's directory
 // (excluding _layout.html and other _-prefixed partials) and registers
-// them in the Templates registry.
+// them in the Templates registry via TryRegister (parse errors return).
 // Existing templates with the same name are overwritten.
-func LoadDir(t *mail.Templates, loader *FileLoader) error {
+// names lists templates that replaced or added registry entries.
+func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) {
 	dir := loader.Dir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("email: read dir %s: %w", dir, err)
+		return nil, fmt.Errorf("email: read dir %s: %w", dir, err)
 	}
 
 	for _, e := range entries {
@@ -33,32 +34,26 @@ func LoadDir(t *mail.Templates, loader *FileLoader) error {
 		}
 
 		tmplName := strings.TrimSuffix(name, ".html")
-		subject, body, err := loader.Load(tmplName)
-		if err != nil {
-			return fmt.Errorf("email: load template %s: %w", tmplName, err)
+		subject, body, loadErr := loader.Load(tmplName)
+		if loadErr != nil {
+			return names, fmt.Errorf("email: load template %s: %w", tmplName, loadErr)
 		}
-		t.Register(tmplName, subject, body)
+		if regErr := t.TryRegister(tmplName, subject, body); regErr != nil {
+			return names, fmt.Errorf("email: parse template %s: %w", tmplName, regErr)
+		}
+		names = append(names, tmplName)
 	}
-	return nil
+	return names, nil
 }
 
 // RenderEmail renders a named template and wraps the result in the layout.
 // If lr is nil, no layout wrapping is applied.
-func RenderEmail(t *mail.Templates, lr *LayoutRenderer, name, to string, data mail.EmailData) (mail.Message, error) {
+func RenderEmail(t *mail.Templates, lr mail.Layout, name, to string, data mail.EmailData) (mail.Message, error) {
 	msg, err := t.Render(name, to, data)
 	if err != nil {
 		return mail.Message{}, err
 	}
-
-	if lr != nil {
-		wrapped, wErr := lr.Wrap(msg.Body, data)
-		if wErr != nil {
-			return mail.Message{}, wErr
-		}
-		msg.Body = wrapped
-	}
-
-	return msg, nil
+	return mail.ApplyLayout(lr, msg, data)
 }
 
 // Setup initialises both a FileLoader and LayoutRenderer from the given

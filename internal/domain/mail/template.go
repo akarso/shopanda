@@ -19,20 +19,31 @@ func NewTemplates() *Templates {
 }
 
 // Register adds a named template. The body is parsed as html/template.
-// Panics if name is empty or body fails to parse.
+// Panics if name is empty or body/subject fails to parse.
+// Prefer TryRegister when loading untrusted file templates (PR-1210).
 func (t *Templates) Register(name, subject, body string) {
+	if err := t.TryRegister(name, subject, body); err != nil {
+		panic(err.Error())
+	}
+}
+
+// TryRegister adds a named template and returns a parse error instead of
+// panicking. Subject and body are both parsed before the registry is updated.
+func (t *Templates) TryRegister(name, subject, body string) error {
 	if name == "" {
-		panic("mail.Templates.Register: name must not be empty")
+		return fmt.Errorf("mail.Templates.Register: name must not be empty")
 	}
 	tmpl, err := template.New(name).Parse(body)
 	if err != nil {
-		panic(fmt.Sprintf("mail.Templates.Register(%q): %v", name, err))
+		return fmt.Errorf("mail: parse body %q: %w", name, err)
+	}
+	if _, err := tmpl.New(name + ".subject").Parse(subject); err != nil {
+		return fmt.Errorf("mail: parse subject %q: %w", name, err)
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.tmpls[name] = tmpl
-	// Store subject template alongside using a sub-template.
-	_ = template.Must(tmpl.New(name + ".subject").Parse(subject))
+	return nil
 }
 
 // Render builds a Message by executing the named template with the given data.
