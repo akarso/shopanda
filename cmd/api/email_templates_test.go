@@ -103,6 +103,82 @@ func TestLoadFileEmailTemplates_NotDirFails(t *testing.T) {
 	}
 }
 
+func TestLoadFileEmailTemplates_EmptyAbsKeepsBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "_layout.html"), []byte("<html>{{.Body}}</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	lr, err := loadFileEmailTemplates(tmpl, dir, logger.NewWithWriter(io.Discard, "error"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if lr != nil {
+		t.Fatal("empty body dir must not load layout as success")
+	}
+	msg, err := tmpl.Render("order_confirmed", "a@example.com", mail.EmailData{
+		Data: map[string]interface{}{"OrderID": "ord-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg.Subject, "Confirmation") {
+		t.Fatalf("builtin subject missing: %q", msg.Subject)
+	}
+}
+
+func TestLoadFileEmailTemplates_EmptyRelativeFallsThrough(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty", "templates", "emails")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(root, "full")
+	if err := os.MkdirAll(filepath.Join(full, "templates", "emails"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "<!-- Subject: FALLTHROUGH {{.Data.OrderID}} -->\n<p>fallthrough-body</p>\n"
+	if err := os.WriteFile(filepath.Join(full, "templates", "emails", "order_confirmed.html"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(full, "templates", "emails", "_layout.html"), []byte("<html>{{.Body}}</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := emailTemplatesFallbackRoots
+	emailTemplatesFallbackRoots = []string{full}
+	defer func() { emailTemplatesFallbackRoots = prev }()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(root, "empty")); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	lr, err := loadFileEmailTemplates(tmpl, defaultEmailTemplatesDir, logger.NewWithWriter(io.Discard, "error"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if lr == nil {
+		t.Fatal("expected layout from fallback root")
+	}
+	msg, err := tmpl.Render("order_confirmed", "a@example.com", mail.EmailData{
+		Data: map[string]interface{}{"OrderID": "ord-9"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Subject != "FALLTHROUGH ord-9" {
+		t.Fatalf("subject = %q, want fallthrough override", msg.Subject)
+	}
+}
+
 func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 	dir := filepath.Join("..", "..", "templates", "emails")
 	if _, err := os.Stat(dir); err != nil {
@@ -149,6 +225,12 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 			},
 		},
 	}
+	fileOnly := map[string]string{
+		"order_confirmed": "We'll notify you when your order ships.",
+		"order_shipped":   "Your order is on its way!",
+		"password_reset":  "Reset Password",
+		"invoice_created": "is attached as a PDF",
+	}
 	for name, ed := range samples {
 		msg, renderErr := tmpl.Render(name, "a@example.com", ed)
 		if renderErr != nil {
@@ -156,6 +238,9 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		}
 		if strings.TrimSpace(msg.Subject) == "" {
 			t.Fatalf("%s empty subject", name)
+		}
+		if needle := fileOnly[name]; needle != "" && !strings.Contains(msg.Body, needle) {
+			t.Fatalf("%s missing file-only body %q (LoadDir may not have overwritten)\n%s", name, needle, msg.Body)
 		}
 		wrapped, wrapErr := mail.ApplyLayout(lr, msg, ed)
 		if wrapErr != nil {

@@ -365,6 +365,9 @@ func TestRecoveryHandler_Handle_WrapErrorSkipsEnqueue(t *testing.T) {
 	if len(queue.enqueued) != 0 {
 		t.Fatalf("wrap error must skip enqueue, got %d", len(queue.enqueued))
 	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("wrap error must leave cart unmarked, got %v", carts.marked)
+	}
 }
 
 func TestRecoveryHandler_PanicsOnNilCarts(t *testing.T) {

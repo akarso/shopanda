@@ -16,13 +16,13 @@
 <body>
   <div class="container">
     <div class="header">
-      {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.StoreName}}" width="180" height="48" style="max-height:48px;max-width:180px;width:auto;height:auto;">{{else}}<strong>{{.StoreName}}</strong>{{end}}
+      {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.StoreName}}" width="180" style="max-height:48px;height:auto;max-width:180px;">{{else}}{{if .StoreName}}<strong>{{.StoreName}}</strong>{{end}}{{end}}
     </div>
     <div class="content">
       {{.Body}}
     </div>
     <div class="footer">
-      <p>{{.StoreName}}{{if .StoreAddress}} — {{.StoreAddress}}{{end}}</p>
+      <p style="white-space:pre-line;margin:0;">{{if and .StoreName .StoreAddress}}{{.StoreName}} — {{.StoreAddress}}{{else if .StoreName}}{{.StoreName}}{{else}}{{.StoreAddress}}{{end}}</p>
     </div>
   </div>
 </body>

@@ -196,6 +196,32 @@ func TestLoadDir_ParseError(t *testing.T) {
 	}
 }
 
+func TestLoadDir_ParseErrorLeavesPriorUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplate(t, dir, "ok.html",
+		"<!-- Subject: OK -->\n<p>ok-body</p>")
+	writeTemplate(t, dir, "broken.html",
+		"<!-- Subject: Broken -->\n<p>{{</p>")
+
+	registry := mail.NewTemplates()
+	registry.Register("ok", "builtin-ok", "<p>builtin</p>")
+	loader := NewFileLoader(dir)
+	_, err := LoadDir(registry, loader)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	msg, renderErr := registry.Render("ok", "x@x.com", nil)
+	if renderErr != nil {
+		t.Fatalf("ok render: %v", renderErr)
+	}
+	if msg.Subject != "builtin-ok" || msg.Body != "<p>builtin</p>" {
+		t.Fatalf("ok must stay builtin after failed LoadDir, got subject=%q body=%q", msg.Subject, msg.Body)
+	}
+	if _, renderErr := registry.Render("broken", "x@x.com", nil); renderErr == nil {
+		t.Fatal("broken must not be registered")
+	}
+}
+
 // --- RenderEmail tests ---
 
 func TestRenderEmail_WithLayout(t *testing.T) {

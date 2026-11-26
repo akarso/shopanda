@@ -171,14 +171,6 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		return nil
 	}
 
-	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if !marked {
-		return nil
-	}
-
 	items, err := h.recoveryItems(ctx, c)
 	if err != nil {
 		return err
@@ -203,6 +195,15 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	msg, err = mail.ApplyLayout(h.layout, msg, ed)
 	if err != nil {
 		return fmt.Errorf("wrap layout: %w", err)
+	}
+	// Claim only after render/wrap succeed so a layout failure can retry.
+	// Claim still runs before enqueue so concurrent workers do not double-send.
+	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !marked {
+		return nil
 	}
 	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
 }
