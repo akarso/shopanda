@@ -42,6 +42,9 @@ const KindOrderShipped = "order_shipped"
 // KindVoucherIssued is the notification_dedupe kind for voucher.issued emails.
 const KindVoucherIssued = "voucher_issued"
 
+// KindInvoiceCreated is the notification_dedupe kind for invoice.created emails.
+const KindInvoiceCreated = "invoice_created"
+
 // EmailDedupeStore claims one send per (subject_key, kind) so confirmation
 // dedupe does not depend on queue-driver job-id primary-key behavior.
 type EmailDedupeStore interface {
@@ -1098,12 +1101,22 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		Data:        pdfBytes,
 	}}
 
-	return s.enqueueEmail(ctx, msg, "HandleInvoiceCreated", map[string]interface{}{
+	// Stable job id + dedupe so a repaired re-publish of invoice.created
+	// does not enqueue a second email when the first already succeeded.
+	return s.enqueueEmailOnce(ctx, msg, invoiceCreatedJobID(data.InvoiceID), "HandleInvoiceCreated", map[string]interface{}{
 		"invoice_id":  data.InvoiceID,
 		"order_id":    data.OrderID,
 		"customer_id": data.CustomerID,
 		"guest":       recipient.Guest,
-	})
+	}, data.InvoiceID, KindInvoiceCreated)
+}
+
+// invoiceCreatedJobID returns a stable UUID v5-shaped id for one invoice email.
+func invoiceCreatedJobID(invoiceID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.invoice_created:" + strings.TrimSpace(invoiceID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
 // enqueueEmail creates and enqueues an email.send job with a fresh id.

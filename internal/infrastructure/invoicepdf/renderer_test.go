@@ -3,6 +3,7 @@ package invoicepdf_test
 import (
 	"bytes"
 	"compress/zlib"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -102,6 +103,49 @@ func TestRenderer_Render_MultipleItems(t *testing.T) {
 	}
 	if len(pdf) < 100 {
 		t.Errorf("PDF suspiciously small: %d bytes", len(pdf))
+	}
+}
+
+func TestRenderer_Render_PageBreakKeepsRowAndTotals(t *testing.T) {
+	price := shared.MustNewMoney(100, "EUR")
+	items := make([]invoice.Item, 0, 40)
+	for i := 0; i < 40; i++ {
+		name := fmt.Sprintf("Wrapped product line %02d with a long Polish name Kraków Gdańsk Spółka enough to wrap", i)
+		item, err := invoice.NewItem(fmt.Sprintf("v-%d", i), fmt.Sprintf("SKU-%02d", i), name, 1, price)
+		if err != nil {
+			t.Fatalf("NewItem %d: %v", i, err)
+		}
+		items = append(items, item)
+	}
+	tax := shared.MustNewMoney(920, "EUR")
+	inv, err := invoice.NewInvoice("inv-pages", "ord-pages", "cust-1", "EUR", items, tax)
+	if err != nil {
+		t.Fatalf("NewInvoice: %v", err)
+	}
+	inv.SetInvoiceNumberFromDB(55)
+
+	pdf, err := invoicepdf.NewRenderer().Render(inv, invoice.SellerBlock{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := extractUTF16PDFStrings(t, pdf)
+	if !strings.Contains(text, "Wrapped product line 00") {
+		t.Errorf("missing first row\n%s", text)
+	}
+	if !strings.Contains(text, "Wrapped product line 39") {
+		t.Errorf("missing last row after page break\n%s", text)
+	}
+	if !strings.Contains(text, "Kraków") || !strings.Contains(text, "Spółka") {
+		t.Errorf("wrapped name glyphs missing\n%s", text)
+	}
+	for _, want := range []string{"Subtotal", "Tax", "Total"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("totals missing %q\n%s", want, text)
+		}
+	}
+	// Table header should repeat on later pages.
+	if strings.Count(text, "Unit Price") < 2 {
+		t.Errorf("expected repeated table header across pages; Unit Price count too low\n%s", text)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -60,13 +63,14 @@ func (f *fakeOrderRepo) ListCreatedSince(context.Context, time.Time, string, int
 	return nil, nil
 }
 
-
 type fakeInvoiceRepo struct {
-	saved   *domainInvoice.Invoice
-	byOrder map[string]*domainInvoice.Invoice
-	byID    map[string]*domainInvoice.Invoice
-	seq     int64
-	deleted []string
+	saved     *domainInvoice.Invoice
+	byOrder   map[string]*domainInvoice.Invoice
+	byID      map[string]*domainInvoice.Invoice
+	seq       int64
+	deleted   []string
+	saveErr   error
+	deleteErr error
 }
 
 func (f *fakeInvoiceRepo) FindByID(_ context.Context, id string) (*domainInvoice.Invoice, error) {
@@ -85,6 +89,9 @@ func (f *fakeInvoiceRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 	return nil, nil
 }
 func (f *fakeInvoiceRepo) Save(_ context.Context, inv *domainInvoice.Invoice) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
 	f.seq++
 	inv.SetInvoiceNumberFromDB(f.seq)
 	cp := *inv
@@ -100,6 +107,9 @@ func (f *fakeInvoiceRepo) Save(_ context.Context, inv *domainInvoice.Invoice) er
 	return nil
 }
 func (f *fakeInvoiceRepo) Delete(_ context.Context, id string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deleted = append(f.deleted, id)
 	if f.byID != nil {
 		delete(f.byID, id)
@@ -152,7 +162,8 @@ func (f *failingStorage) Save(string, io.Reader) error {
 }
 
 type fakeStorage struct {
-	saved map[string][]byte
+	saved   map[string][]byte
+	deleted []string
 }
 
 func (f *fakeStorage) Name() string { return "fake" }
@@ -164,8 +175,24 @@ func (f *fakeStorage) Save(path string, file io.Reader) error {
 	f.saved[path] = b
 	return nil
 }
-func (f *fakeStorage) Delete(string) error    { return nil }
+func (f *fakeStorage) Delete(path string) error {
+	f.deleted = append(f.deleted, path)
+	if f.saved != nil {
+		delete(f.saved, path)
+	}
+	return nil
+}
 func (f *fakeStorage) URL(path string) string { return "http://fake/" + path }
+func (f *fakeStorage) Read(_ context.Context, path string) ([]byte, error) {
+	if f.saved == nil {
+		return nil, os.ErrNotExist
+	}
+	b, ok := f.saved[path]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return b, nil
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -329,28 +356,103 @@ func TestGenerateFromOrder_OrderNotPaid(t *testing.T) {
 	}
 }
 
-func TestGenerateFromOrder_InvoiceAlreadyExists(t *testing.T) {
+func TestGenerateFromOrder_ExistingRepairsMissingPDFAndPublishes(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
 
-	// Pre-create an invoice for this order.
 	existingInv, _ := domainInvoice.NewInvoice(
 		"inv-1", "ord-1", "cust-1", "EUR",
 		[]domainInvoice.Item{mustInvoiceItem(t)},
 		shared.MustNewMoney(380, "EUR"),
 	)
+	existingInv.SetInvoiceNumberFromDB(7)
+	existingInv.SetSellerSnapshot(domainInvoice.SellerBlock{LegalName: "Acme"})
 	invoices := &fakeInvoiceRepo{
 		byOrder: map[string]*domainInvoice.Invoice{"ord-1": &existingInv},
+		byID:    map[string]*domainInvoice.Invoice{"inv-1": &existingInv},
 	}
-	svc := newService(orders, invoices, &fakeRenderer{}, &fakeStorage{})
-
-	tax := shared.MustNewMoney(380, "EUR")
-	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
-		OrderID:   "ord-1",
-		TaxAmount: tax,
+	renderer := &fakeRenderer{}
+	storage := &fakeStorage{}
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	var published int
+	bus.On(domainInvoice.EventInvoiceCreated, func(context.Context, event.Event) error {
+		published++
+		return nil
 	})
-	if err == nil {
-		t.Fatal("expected error for duplicate invoice")
+	svc := appInvoice.NewService(orders, invoices, renderer, storage, bus, log)
+
+	result, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("GenerateFromOrder repair: %v", err)
+	}
+	if !renderer.called {
+		t.Fatal("expected repair to render PDF from sealed seller")
+	}
+	if renderer.seller.LegalName != "Acme" {
+		t.Errorf("repair seller = %#v", renderer.seller)
+	}
+	wantPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", existingInv.ID(), existingInv.InvoiceNumber())
+	if result.PDFPath != wantPath {
+		t.Errorf("PDFPath = %q, want %q", result.PDFPath, wantPath)
+	}
+	if _, ok := storage.saved[wantPath]; !ok {
+		t.Fatalf("PDF not stored at %q", wantPath)
+	}
+	if published != 1 {
+		t.Fatalf("published invoice.created = %d, want 1", published)
+	}
+
+	// Second call: PDF present — still re-publishes (mail dedupes).
+	renderer.called = false
+	if _, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	}); err != nil {
+		t.Fatalf("second GenerateFromOrder: %v", err)
+	}
+	if renderer.called {
+		t.Fatal("must not re-render when PDF already stored")
+	}
+	if published != 2 {
+		t.Fatalf("published invoice.created = %d, want 2", published)
+	}
+}
+
+func TestGenerateFromOrder_SaveConflictRepairs(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+
+	existingInv, _ := domainInvoice.NewInvoice(
+		"inv-race", "ord-1", "cust-1", "EUR",
+		[]domainInvoice.Item{mustInvoiceItem(t)},
+		shared.MustNewMoney(380, "EUR"),
+	)
+	existingInv.SetInvoiceNumberFromDB(3)
+	invoices := &fakeInvoiceRepo{
+		saveErr: apperror.Conflict("invoice already exists for this order"),
+		byOrder: map[string]*domainInvoice.Invoice{"ord-1": &existingInv},
+		byID:    map[string]*domainInvoice.Invoice{"inv-race": &existingInv},
+	}
+	storage := &fakeStorage{}
+	svc := newService(orders, invoices, &fakeRenderer{}, storage)
+
+	result, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("Save conflict repair: %v", err)
+	}
+	wantPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", existingInv.ID(), existingInv.InvoiceNumber())
+	if result.PDFPath != wantPath {
+		t.Errorf("PDFPath = %q", result.PDFPath)
+	}
+	if _, ok := storage.saved[wantPath]; !ok {
+		t.Fatal("expected repaired PDF stored")
 	}
 }
 
@@ -477,7 +579,6 @@ func TestGenerateFromOrder_RenderFailureDeletesInvoice(t *testing.T) {
 	if invoices.saved != nil {
 		t.Fatal("saved invoice must be cleared after rollback")
 	}
-	// Retry must not hit conflict.
 	renderer.err = nil
 	if _, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
 		OrderID:   "ord-1",
@@ -487,11 +588,63 @@ func TestGenerateFromOrder_RenderFailureDeletesInvoice(t *testing.T) {
 	}
 }
 
-func TestHandleOrderPaid_IssuesInvoice(t *testing.T) {
+func TestGenerateFromOrder_StoreFailureDeletesObjectAndRow(t *testing.T) {
 	ord := paidOrder(t)
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
 	invoices := &fakeInvoiceRepo{}
-	svc := newService(orders, invoices, &fakeRenderer{}, &fakeStorage{})
+	storage := &failingStorage{err: fmt.Errorf("disk full")}
+	svc := appInvoice.NewService(orders, invoices, &fakeRenderer{}, storage,
+		event.NewBus(logger.NewWithWriter(io.Discard, "error")),
+		logger.NewWithWriter(io.Discard, "error"),
+	)
+
+	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err == nil {
+		t.Fatal("expected store error")
+	}
+	if len(invoices.deleted) != 1 {
+		t.Fatalf("row deleted = %v", invoices.deleted)
+	}
+	if len(storage.deleted) != 1 {
+		t.Fatalf("object deleted = %v, want pdf path cleanup", storage.deleted)
+	}
+}
+
+func TestGenerateFromOrder_DeleteFailureSurfaces(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{deleteErr: fmt.Errorf("fk hold")}
+	renderer := &fakeRenderer{err: fmt.Errorf("font boom")}
+	svc := newService(orders, invoices, renderer, &fakeStorage{})
+
+	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err == nil {
+		t.Fatal("expected combined rollback error")
+	}
+	if !strings.Contains(err.Error(), "rollback delete failed") {
+		t.Fatalf("error = %v, want rollback delete failed", err)
+	}
+}
+
+func TestHandleOrderPaid_IssuesAndRepairs(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	storage := &fakeStorage{}
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	var published int
+	bus.On(domainInvoice.EventInvoiceCreated, func(context.Context, event.Event) error {
+		published++
+		return nil
+	})
+	svc := appInvoice.NewService(orders, invoices, &fakeRenderer{}, storage, bus, log)
 
 	evt := event.New(order.EventOrderPaid, "test", order.OrderStatusChangedData{
 		OrderID:   "ord-1",
@@ -504,8 +657,22 @@ func TestHandleOrderPaid_IssuesInvoice(t *testing.T) {
 	if invoices.saved == nil {
 		t.Fatal("expected invoice saved from order.paid")
 	}
-	// Second delivery is idempotent.
+	if published != 1 {
+		t.Fatalf("published = %d", published)
+	}
+
+	for path := range storage.saved {
+		delete(storage.saved, path)
+	}
+	renderer := &fakeRenderer{}
+	svc = appInvoice.NewService(orders, invoices, renderer, storage, bus, log)
 	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
-		t.Fatalf("second HandleOrderPaid: %v", err)
+		t.Fatalf("second HandleOrderPaid repair: %v", err)
+	}
+	if !renderer.called {
+		t.Fatal("expected PDF repair on second order.paid")
+	}
+	if published != 2 {
+		t.Fatalf("published after repair = %d, want 2", published)
 	}
 }

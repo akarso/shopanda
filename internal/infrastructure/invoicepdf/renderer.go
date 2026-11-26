@@ -18,10 +18,11 @@ var dejaVuSans []byte
 var dejaVuSansBold []byte
 
 const (
-	fontFamily = "DejaVu"
-	pageWidth  = 210.0 // A4 mm
-	leftMargin = 10.0
-	textWidth  = pageWidth - 2*leftMargin
+	fontFamily  = "DejaVu"
+	pageWidth   = 210.0 // A4 mm
+	leftMargin  = 10.0
+	textWidth   = pageWidth - 2*leftMargin
+	breakMargin = 20.0
 )
 
 // Compile-time check.
@@ -35,12 +36,13 @@ func NewRenderer() *Renderer {
 	return &Renderer{}
 }
 
-// Render generates a single-page PDF for the given invoice.
+// Render generates a PDF for the given invoice (may span pages).
 // Seller must be the sealed snapshot from the invoice (may be empty).
 func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetCompression(true)
-	pdf.SetAutoPageBreak(true, 20)
+	// Manual page breaks for item rows; keep a footer margin for totals.
+	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddUTF8FontFromBytes(fontFamily, "", dejaVuSans)
 	pdf.AddUTF8FontFromBytes(fontFamily, "B", dejaVuSansBold)
 	if err := pdf.Error(); err != nil {
@@ -99,14 +101,7 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	writeWrapped(pdf, fmt.Sprintf("Customer: %s", inv.CustomerID()), 6)
 	pdf.Ln(6)
 
-	// ── Items table header ──────────────────────────────────────────
-	pdf.SetFont(fontFamily, "B", 9)
-	pdf.CellFormat(60, 8, "Item", "1", 0, "", false, 0, "")
-	pdf.CellFormat(30, 8, "SKU", "1", 0, "", false, 0, "")
-	pdf.CellFormat(20, 8, "Qty", "1", 0, "C", false, 0, "")
-	pdf.CellFormat(35, 8, "Unit Price", "1", 0, "R", false, 0, "")
-	pdf.CellFormat(35, 8, "Total", "1", 0, "R", false, 0, "")
-	pdf.Ln(8)
+	writeTableHeader(pdf)
 
 	// ── Items rows ──────────────────────────────────────────────────
 	pdf.SetFont(fontFamily, "", 9)
@@ -120,6 +115,7 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 	}
 
 	// ── Totals ──────────────────────────────────────────────────────
+	ensureSpace(pdf, 5+7*3)
 	pdf.Ln(5)
 	pdf.SetFont(fontFamily, "", 10)
 	const totalsX = 145.0
@@ -161,9 +157,33 @@ const (
 	colUnit  = 35.0
 	colTotal = 35.0
 	rowLine  = 5.0
+	headerH  = 8.0
 )
 
-// writeItemRow draws one invoice line with wrapped name/SKU (no truncation).
+func writeTableHeader(pdf *fpdf.Fpdf) {
+	pdf.SetFont(fontFamily, "B", 9)
+	pdf.CellFormat(colName, headerH, "Item", "1", 0, "", false, 0, "")
+	pdf.CellFormat(colSKU, headerH, "SKU", "1", 0, "", false, 0, "")
+	pdf.CellFormat(colQty, headerH, "Qty", "1", 0, "C", false, 0, "")
+	pdf.CellFormat(colUnit, headerH, "Unit Price", "1", 0, "R", false, 0, "")
+	pdf.CellFormat(colTotal, headerH, "Total", "1", 0, "R", false, 0, "")
+	pdf.Ln(headerH)
+}
+
+func pageBottom(pdf *fpdf.Fpdf) float64 {
+	_, pageH := pdf.GetPageSize()
+	return pageH - breakMargin
+}
+
+func ensureSpace(pdf *fpdf.Fpdf, need float64) {
+	_, y := pdf.GetXY()
+	if y+need <= pageBottom(pdf) {
+		return
+	}
+	pdf.AddPage()
+}
+
+// writeItemRow draws one invoice line with wrapped name/SKU on a single page.
 func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTotal string) {
 	name = strings.TrimSpace(name)
 	sku = strings.TrimSpace(sku)
@@ -178,8 +198,15 @@ func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTota
 		nameLines = []string{""}
 	}
 	rowH := float64(n) * rowLine
-	x, y := pdf.GetXY()
 
+	_, y := pdf.GetXY()
+	if y+rowH > pageBottom(pdf) {
+		pdf.AddPage()
+		writeTableHeader(pdf)
+		pdf.SetFont(fontFamily, "", 9)
+	}
+
+	x, y := pdf.GetXY()
 	pdf.Rect(x, y, colName, rowH, "D")
 	pdf.Rect(x+colName, y, colSKU, rowH, "D")
 	pdf.Rect(x+colName+colSKU, y, colQty, rowH, "D")

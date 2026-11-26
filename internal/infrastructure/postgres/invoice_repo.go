@@ -10,6 +10,8 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that InvoiceRepo implements invoice.InvoiceRepository.
@@ -165,6 +167,9 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		inv.CreatedAt(), sellerJSON,
 	).Scan(&invoiceNumber)
 	if err != nil {
+		if mapped := mapInvoiceInsertError(err); mapped != nil {
+			return mapped
+		}
 		return fmt.Errorf("invoice_repo: insert invoice: %w", err)
 	}
 
@@ -195,6 +200,16 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	}
 	inv.SetInvoiceNumberFromDB(invoiceNumber)
 	return nil
+}
+
+// mapInvoiceInsertError maps unique violations on order_id (or id) to Conflict
+// so concurrent order.paid can repair instead of hard-failing.
+func mapInvoiceInsertError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return nil
+	}
+	return apperror.Conflict("invoice already exists for this order")
 }
 
 // Delete removes an invoice and its items so a failed PDF finalize can retry.
