@@ -105,6 +105,40 @@ func TestRenderer_Render_MultipleItems(t *testing.T) {
 	}
 }
 
+func TestRenderer_Render_LongItemNameWraps(t *testing.T) {
+	longName := "Ręcznie szyte skórzane buty trekkingowe z membraną wodoodporną model Kraków-Gdańsk XL"
+	price := shared.MustNewMoney(1000, "EUR")
+	item, err := invoice.NewItem("v-1", "SKU-LONG-PRODUCT-CODE-001", longName, 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	tax := shared.MustNewMoney(230, "EUR")
+	inv, err := invoice.NewInvoice("inv-long", "ord-long", "cust-1", "EUR", []invoice.Item{item}, tax)
+	if err != nil {
+		t.Fatalf("NewInvoice: %v", err)
+	}
+	inv.SetInvoiceNumberFromDB(7)
+
+	pdf, err := invoicepdf.NewRenderer().Render(inv, invoice.SellerBlock{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	text := extractUTF16PDFStrings(t, pdf)
+	for _, want := range []string{"Ręcznie", "Kraków", "Gdańsk", "SKU-LONG-PROD", "UCT-CODE-001"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("extracted PDF text missing %q (truncation?)\n---\n%s\n---", want, text)
+		}
+	}
+	// Wrapped SKU may insert a space at the break; compact before asserting full code.
+	compact := strings.ReplaceAll(text, " ", "")
+	if !strings.Contains(compact, "SKU-LONG-PRODUCT-CODE-001") {
+		t.Errorf("full SKU missing after wrap\n---\n%s\n---", text)
+	}
+	if strings.Contains(text, "…") {
+		t.Error("PDF must not truncate item names with ellipsis")
+	}
+}
+
 func TestRenderer_Render_ZeroTax(t *testing.T) {
 	price := shared.MustNewMoney(500, "USD")
 	item, err := invoice.NewItem("v-1", "SKU-1", "Widget", 1, price)

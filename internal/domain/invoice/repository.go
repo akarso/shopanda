@@ -15,6 +15,10 @@ type InvoiceRepository interface {
 	// Save persists an invoice and its items (insert-only).
 	// Assigns InvoiceNumber from the DB sequence.
 	Save(ctx context.Context, inv *Invoice) error
+
+	// Delete removes an invoice and its items. Used to roll back a failed
+	// PDF render/storage so GenerateFromOrder can retry the same order.
+	Delete(ctx context.Context, id string) error
 }
 
 // CreditNoteRepository defines persistence operations for credit notes.

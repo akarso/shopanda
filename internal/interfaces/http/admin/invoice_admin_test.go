@@ -45,6 +45,8 @@ func (r *invoiceHTTPRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 
 func (r *invoiceHTTPRepo) Save(context.Context, *domainInvoice.Invoice) error { return nil }
 
+func (r *invoiceHTTPRepo) Delete(context.Context, string) error { return nil }
+
 type invoiceHTTPOrderRepo struct {
 	orders map[string]*order.Order
 }

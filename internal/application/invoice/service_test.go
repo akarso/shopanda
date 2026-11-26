@@ -64,10 +64,18 @@ func (f *fakeOrderRepo) ListCreatedSince(context.Context, time.Time, string, int
 type fakeInvoiceRepo struct {
 	saved   *domainInvoice.Invoice
 	byOrder map[string]*domainInvoice.Invoice
+	byID    map[string]*domainInvoice.Invoice
 	seq     int64
+	deleted []string
 }
 
-func (f *fakeInvoiceRepo) FindByID(context.Context, string) (*domainInvoice.Invoice, error) {
+func (f *fakeInvoiceRepo) FindByID(_ context.Context, id string) (*domainInvoice.Invoice, error) {
+	if f.byID != nil {
+		return f.byID[id], nil
+	}
+	if f.saved != nil && f.saved.ID() == id {
+		return f.saved, nil
+	}
 	return nil, nil
 }
 func (f *fakeInvoiceRepo) FindByOrderID(_ context.Context, orderID string) (*domainInvoice.Invoice, error) {
@@ -79,17 +87,68 @@ func (f *fakeInvoiceRepo) FindByOrderID(_ context.Context, orderID string) (*dom
 func (f *fakeInvoiceRepo) Save(_ context.Context, inv *domainInvoice.Invoice) error {
 	f.seq++
 	inv.SetInvoiceNumberFromDB(f.seq)
-	f.saved = inv
+	cp := *inv
+	f.saved = &cp
+	if f.byID == nil {
+		f.byID = make(map[string]*domainInvoice.Invoice)
+	}
+	f.byID[inv.ID()] = &cp
+	if f.byOrder == nil {
+		f.byOrder = make(map[string]*domainInvoice.Invoice)
+	}
+	f.byOrder[inv.OrderID()] = &cp
+	return nil
+}
+func (f *fakeInvoiceRepo) Delete(_ context.Context, id string) error {
+	f.deleted = append(f.deleted, id)
+	if f.byID != nil {
+		delete(f.byID, id)
+	}
+	if f.saved != nil && f.saved.ID() == id {
+		if f.byOrder != nil {
+			delete(f.byOrder, f.saved.OrderID())
+		}
+		f.saved = nil
+	}
 	return nil
 }
 
 type fakeRenderer struct {
 	called bool
+	err    error
+	seller domainInvoice.SellerBlock
 }
 
-func (f *fakeRenderer) Render(_ domainInvoice.Invoice, _ domainInvoice.SellerBlock) ([]byte, error) {
+func (f *fakeRenderer) Render(_ domainInvoice.Invoice, seller domainInvoice.SellerBlock) ([]byte, error) {
 	f.called = true
+	f.seller = seller
+	if f.err != nil {
+		return nil, f.err
+	}
 	return []byte("%PDF-fake"), nil
+}
+
+type fakeSellerLoader struct {
+	block domainInvoice.SellerBlock
+	err   error
+	calls int
+}
+
+func (f *fakeSellerLoader) InvoiceSeller(context.Context, string) (domainInvoice.SellerBlock, error) {
+	f.calls++
+	if f.err != nil {
+		return domainInvoice.SellerBlock{}, f.err
+	}
+	return f.block, nil
+}
+
+type failingStorage struct {
+	fakeStorage
+	err error
+}
+
+func (f *failingStorage) Save(string, io.Reader) error {
+	return f.err
 }
 
 type fakeStorage struct {
@@ -310,4 +369,143 @@ func storageKeys(s *fakeStorage) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func TestGenerateFromOrder_SealsSellerSnapshot(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	renderer := &fakeRenderer{}
+	loader := &fakeSellerLoader{
+		block: domainInvoice.SellerBlock{
+			LegalName: "Spółka\nŁódź",
+			TaxIDs:    []domainInvoice.SellerTaxLine{{Label: "NIP", Value: "5252344022"}},
+		},
+	}
+	svc := newService(orders, invoices, renderer, &fakeStorage{}).
+		WithSellerLoader(loader).
+		WithDefaultStoreLookup(func(context.Context) (string, error) { return "store-1", nil })
+
+	result, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("GenerateFromOrder: %v", err)
+	}
+	if loader.calls != 1 {
+		t.Fatalf("loader calls = %d, want 1", loader.calls)
+	}
+	got := result.Invoice.Seller()
+	// SetSellerSnapshot sanitizes CR/LF before seal.
+	if got.LegalName != "Spółka Łódź" {
+		t.Errorf("saved LegalName = %q, want sanitized Polish name", got.LegalName)
+	}
+	if renderer.seller.LegalName != "Spółka Łódź" {
+		t.Errorf("render seller LegalName = %q", renderer.seller.LegalName)
+	}
+	if invoices.saved == nil || invoices.saved.Seller().LegalName != "Spółka Łódź" {
+		t.Fatal("repo saved invoice missing seller snapshot")
+	}
+	if len(got.TaxIDs) != 1 || got.TaxIDs[0].Value != "5252344022" {
+		t.Errorf("TaxIDs = %#v", got.TaxIDs)
+	}
+}
+
+func TestGenerateFromOrder_SellerLoaderErrorSkipsSave(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	renderer := &fakeRenderer{}
+	loader := &fakeSellerLoader{err: fmt.Errorf("db down")}
+	svc := newService(orders, invoices, renderer, &fakeStorage{}).
+		WithSellerLoader(loader).
+		WithDefaultStoreLookup(func(context.Context) (string, error) { return "store-1", nil })
+
+	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err == nil {
+		t.Fatal("expected seller loader error")
+	}
+	if invoices.saved != nil {
+		t.Fatal("Save must not run when InvoiceSeller fails")
+	}
+	if renderer.called {
+		t.Fatal("renderer must not run when InvoiceSeller fails")
+	}
+}
+
+func TestGenerateFromOrder_MissingDefaultStoreErrors(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	svc := newService(orders, invoices, &fakeRenderer{}, &fakeStorage{}).
+		WithSellerLoader(&fakeSellerLoader{}).
+		WithDefaultStoreLookup(func(context.Context) (string, error) { return "", nil })
+
+	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err == nil {
+		t.Fatal("expected error when default store id is empty")
+	}
+	if invoices.saved != nil {
+		t.Fatal("Save must not run without a store")
+	}
+}
+
+func TestGenerateFromOrder_RenderFailureDeletesInvoice(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	renderer := &fakeRenderer{err: fmt.Errorf("font boom")}
+	svc := newService(orders, invoices, renderer, &fakeStorage{})
+
+	_, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err == nil {
+		t.Fatal("expected render error")
+	}
+	if len(invoices.deleted) != 1 {
+		t.Fatalf("deleted = %v, want one invoice id", invoices.deleted)
+	}
+	if invoices.saved != nil {
+		t.Fatal("saved invoice must be cleared after rollback")
+	}
+	// Retry must not hit conflict.
+	renderer.err = nil
+	if _, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-1",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	}); err != nil {
+		t.Fatalf("retry after render failure: %v", err)
+	}
+}
+
+func TestHandleOrderPaid_IssuesInvoice(t *testing.T) {
+	ord := paidOrder(t)
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": ord}}
+	invoices := &fakeInvoiceRepo{}
+	svc := newService(orders, invoices, &fakeRenderer{}, &fakeStorage{})
+
+	evt := event.New(order.EventOrderPaid, "test", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "confirmed",
+		NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if invoices.saved == nil {
+		t.Fatal("expected invoice saved from order.paid")
+	}
+	// Second delivery is idempotent.
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("second HandleOrderPaid: %v", err)
+	}
 }

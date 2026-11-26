@@ -252,3 +252,56 @@ func TestInvoiceRepo_MultipleItems(t *testing.T) {
 		t.Fatalf("Items: got %d, want 2", len(got.Items()))
 	}
 }
+
+func TestInvoiceRepo_SellerSnapshotRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
+
+	repo, err := postgres.NewInvoiceRepo(db)
+	if err != nil {
+		t.Fatalf("NewInvoiceRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	inv := mustNewInvoice(t, seedOrderForInvoice(t, db))
+	// Persist raw (including newline) the way a pre-sanitize row might look;
+	// issue path sanitizes via SetSellerSnapshot before Save.
+	inv.SetSellerSnapshotFromDB(invoice.SellerBlock{
+		LegalName:    "Spółka\nŁódź",
+		AddressLines: []string{"Ul. Świętokrzyska 1"},
+		TaxIDs:       []invoice.SellerTaxLine{{Label: "NIP", Value: "5252344022"}},
+	})
+	if err := repo.Save(ctx, &inv); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, inv.ID())
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByID returned nil")
+	}
+	seller := got.Seller()
+	if seller.LegalName != "Spółka\nŁódź" {
+		t.Errorf("LegalName = %q, want newline preserved in JSONB", seller.LegalName)
+	}
+	if len(seller.AddressLines) != 1 || seller.AddressLines[0] != "Ul. Świętokrzyska 1" {
+		t.Errorf("AddressLines = %#v", seller.AddressLines)
+	}
+	if len(seller.TaxIDs) != 1 || seller.TaxIDs[0].Value != "5252344022" {
+		t.Errorf("TaxIDs = %#v", seller.TaxIDs)
+	}
+
+	if err := repo.Delete(ctx, inv.ID()); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	gone, err := repo.FindByID(ctx, inv.ID())
+	if err != nil {
+		t.Fatalf("FindByID after delete: %v", err)
+	}
+	if gone != nil {
+		t.Fatal("expected nil after Delete")
+	}
+}

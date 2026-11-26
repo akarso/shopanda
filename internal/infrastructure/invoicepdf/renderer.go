@@ -116,12 +116,7 @@ func (r *Renderer) Render(inv invoice.Invoice, seller invoice.SellerBlock) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("invoicepdf: line total: %w", err)
 		}
-		pdf.CellFormat(60, 7, truncateCell(item.Name, 40), "1", 0, "", false, 0, "")
-		pdf.CellFormat(30, 7, truncateCell(item.SKU, 18), "1", 0, "", false, 0, "")
-		pdf.CellFormat(20, 7, fmt.Sprintf("%d", item.Quantity), "1", 0, "C", false, 0, "")
-		pdf.CellFormat(35, 7, formatMoney(item.UnitPrice.Amount(), cur), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(35, 7, formatMoney(lt.Amount(), cur), "1", 0, "R", false, 0, "")
-		pdf.Ln(7)
+		writeItemRow(pdf, item.Name, item.SKU, item.Quantity, formatMoney(item.UnitPrice.Amount(), cur), formatMoney(lt.Amount(), cur))
 	}
 
 	// ── Totals ──────────────────────────────────────────────────────
@@ -159,16 +154,51 @@ func writeWrapped(pdf *fpdf.Fpdf, text string, lineHt float64) {
 	pdf.MultiCell(textWidth, lineHt, text, "", "", false)
 }
 
-func truncateCell(s string, maxRunes int) string {
-	s = strings.TrimSpace(s)
-	if maxRunes <= 0 {
-		return s
+const (
+	colName  = 60.0
+	colSKU   = 30.0
+	colQty   = 20.0
+	colUnit  = 35.0
+	colTotal = 35.0
+	rowLine  = 5.0
+)
+
+// writeItemRow draws one invoice line with wrapped name/SKU (no truncation).
+func writeItemRow(pdf *fpdf.Fpdf, name, sku string, qty int, unitPrice, lineTotal string) {
+	name = strings.TrimSpace(name)
+	sku = strings.TrimSpace(sku)
+	nameLines := pdf.SplitText(name, colName-1)
+	skuLines := pdf.SplitText(sku, colSKU-1)
+	n := len(nameLines)
+	if len(skuLines) > n {
+		n = len(skuLines)
 	}
-	r := []rune(s)
-	if len(r) <= maxRunes {
-		return s
+	if n < 1 {
+		n = 1
+		nameLines = []string{""}
 	}
-	return string(r[:maxRunes-1]) + "…"
+	rowH := float64(n) * rowLine
+	x, y := pdf.GetXY()
+
+	pdf.Rect(x, y, colName, rowH, "D")
+	pdf.Rect(x+colName, y, colSKU, rowH, "D")
+	pdf.Rect(x+colName+colSKU, y, colQty, rowH, "D")
+	pdf.Rect(x+colName+colSKU+colQty, y, colUnit, rowH, "D")
+	pdf.Rect(x+colName+colSKU+colQty+colUnit, y, colTotal, rowH, "D")
+
+	for i, line := range nameLines {
+		pdf.SetXY(x+1, y+float64(i)*rowLine)
+		pdf.CellFormat(colName-2, rowLine, line, "", 0, "", false, 0, "")
+	}
+	for i, line := range skuLines {
+		pdf.SetXY(x+colName+1, y+float64(i)*rowLine)
+		pdf.CellFormat(colSKU-2, rowLine, line, "", 0, "", false, 0, "")
+	}
+	pdf.SetXY(x+colName+colSKU, y)
+	pdf.CellFormat(colQty, rowH, fmt.Sprintf("%d", qty), "", 0, "C", false, 0, "")
+	pdf.CellFormat(colUnit, rowH, unitPrice, "", 0, "R", false, 0, "")
+	pdf.CellFormat(colTotal, rowH, lineTotal, "", 0, "R", false, 0, "")
+	pdf.SetXY(x, y+rowH)
 }
 
 // formatMoney formats an int64 minor-unit amount as "CUR major.minor".

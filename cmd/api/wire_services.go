@@ -1014,10 +1014,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithShipmentStatusService(shipmentStatusService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage).
 		WithLog(log)
-	// Issue path seals seller_snapshot + stores PDF; HTTP generate surface is follow-up.
-	_ = invoiceapp.NewService(repos.orderRepo, repos.invoiceRepo, invoicePDFRenderer, mediaStorage, bus, log).
+	invoiceSvc := invoiceapp.NewService(repos.orderRepo, repos.invoiceRepo, invoicePDFRenderer, mediaStorage, bus, log).
 		WithSellerLoader(storeIdentitySvc).
 		WithDefaultStoreLookup(defaultStoreID)
+	// Seal seller_snapshot + store PDF on order.paid; invoice.created → email attachment.
+	bus.OnAsync(order.EventOrderPaid, invoiceSvc.HandleOrderPaid)
 
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)

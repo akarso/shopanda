@@ -197,6 +197,37 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	return nil
 }
 
+// Delete removes an invoice and its items so a failed PDF finalize can retry.
+func (r *InvoiceRepo) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("invoice_repo: delete: empty id")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM invoice_items WHERE invoice_id = $1`, id); err != nil {
+		return fmt.Errorf("invoice_repo: delete items: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM invoices WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete invoice: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("invoice_repo: delete rows: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("invoice_repo: delete: invoice %s not found", id)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("invoice_repo: delete commit: %w", err)
+	}
+	return nil
+}
+
 // loadItems fetches all items for an invoice.
 func (r *InvoiceRepo) loadItems(ctx context.Context, invoiceID string) ([]invoice.Item, error) {
 	const q = `SELECT variant_id, sku, name, quantity, unit_price, currency

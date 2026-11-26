@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/media"
@@ -94,8 +95,42 @@ type GenerateResult struct {
 	PDFPath string
 }
 
+// HandleOrderPaid issues an invoice when an order becomes paid.
+// Duplicate invoices (already issued) are treated as success so the bus
+// handler is idempotent under at-least-once delivery.
+func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(order.OrderStatusChangedData)
+	if !ok {
+		return fmt.Errorf("invoice: unexpected event data type %T", evt.Data)
+	}
+	orderID := strings.TrimSpace(data.OrderID)
+	if orderID == "" {
+		return fmt.Errorf("invoice: order.paid missing order id")
+	}
+	ord, err := s.orders.FindByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("invoice: find order: %w", err)
+	}
+	if ord == nil {
+		return apperror.NotFound("order not found")
+	}
+	_, err = s.GenerateFromOrder(ctx, GenerateInput{
+		OrderID:   orderID,
+		TaxAmount: ord.TaxAmount,
+	})
+	if err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // GenerateFromOrder creates an invoice from a paid order, seals the seller
 // snapshot, renders a PDF, stores it, and publishes invoice.created.
+// If render or storage fails after Save, the invoice row is deleted so a
+// retry can issue the same order again.
 func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*GenerateResult, error) {
 	if input.OrderID == "" {
 		return nil, apperror.Validation("order id must not be empty")
@@ -152,11 +187,13 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 
 	pdfBytes, err := s.renderer.Render(inv, inv.Seller())
 	if err != nil {
+		s.rollbackIssue(ctx, inv.ID(), "render")
 		return nil, fmt.Errorf("invoice: render pdf: %w", err)
 	}
 
 	pdfPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
 	if err := s.storage.Save(pdfPath, bytes.NewReader(pdfBytes)); err != nil {
+		s.rollbackIssue(ctx, inv.ID(), "store")
 		return nil, fmt.Errorf("invoice: store pdf: %w", err)
 	}
 
@@ -186,19 +223,29 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 	return &GenerateResult{Invoice: &inv, PDFPath: pdfPath}, nil
 }
 
+func (s *Service) rollbackIssue(ctx context.Context, invoiceID, stage string) {
+	if err := s.invoices.Delete(ctx, invoiceID); err != nil {
+		s.log.Error("invoice.rollback_failed", err, map[string]interface{}{
+			"invoice_id": invoiceID,
+			"stage":      stage,
+		})
+	}
+}
+
 func (s *Service) loadSeller(ctx context.Context) (domainInvoice.SellerBlock, error) {
 	if s == nil || s.seller == nil {
+		// No identity wiring (unit tests without store identity): empty block.
 		return domainInvoice.SellerBlock{}, nil
 	}
 	if s.defaultStore == nil {
-		return domainInvoice.SellerBlock{}, nil
+		return domainInvoice.SellerBlock{}, fmt.Errorf("invoice: default store lookup not configured")
 	}
 	storeID, err := s.defaultStore(ctx)
 	if err != nil {
 		return domainInvoice.SellerBlock{}, fmt.Errorf("invoice: default store lookup: %w", err)
 	}
-	if storeID == "" {
-		return domainInvoice.SellerBlock{}, nil
+	if strings.TrimSpace(storeID) == "" {
+		return domainInvoice.SellerBlock{}, fmt.Errorf("invoice: no default store")
 	}
 	seller, err := s.seller.InvoiceSeller(ctx, storeID)
 	if err != nil {
