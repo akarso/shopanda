@@ -4609,14 +4609,26 @@
         languageSelect.addEventListener("change", function () {
             adminScope.language = languageSelect.value;
             saveAdminScope();
-            handleRoute();
+            if (headerContextChangeRequiresRemount(location.pathname)) {
+                handleRoute();
+            }
         });
 
         currencySelect.addEventListener("change", function () {
             adminScope.currency = currencySelect.value;
             saveAdminScope();
-            handleRoute();
+            if (headerContextChangeRequiresRemount(location.pathname)) {
+                handleRoute();
+            }
         });
+    }
+
+    function headerContextChangeRequiresRemount(path) {
+        if (typeof ShopandaStoreInformationAdminUI !== "undefined" &&
+            ShopandaStoreInformationAdminUI.headerContextChangeRequiresRemount) {
+            return ShopandaStoreInformationAdminUI.headerContextChangeRequiresRemount(path);
+        }
+        return path !== "/admin/settings/store-information";
     }
 
     function navigateTo(path) {
@@ -9351,12 +9363,33 @@
                 };
             }
         };
+    var storeInfoTaxPanelGate = storeInfoUI && storeInfoUI.newTaxPanelLoadGate
+        ? storeInfoUI.newTaxPanelLoadGate()
+        : {
+            start: function () {
+                return { isCurrent: function () { return true; } };
+            }
+        };
 
     function storeInfoEscAttr(s) {
         if (storeInfoUI && storeInfoUI.escAttr) {
             return storeInfoUI.escAttr(s);
         }
         return esc(s);
+    }
+
+    function storeInfoScopeMatches(capturedStoreID) {
+        if (storeInfoUI && storeInfoUI.shouldApplyWriteResult) {
+            return storeInfoUI.shouldApplyWriteResult(capturedStoreID, adminScope.store_id);
+        }
+        return (capturedStoreID || "") === (adminScope.store_id || "");
+    }
+
+    function storeInfoSuccessReloadMessage(successMessage, errorMessage) {
+        if (storeInfoUI && storeInfoUI.composeSuccessReloadMessage) {
+            return storeInfoUI.composeSuccessReloadMessage(successMessage, errorMessage);
+        }
+        return (successMessage ? successMessage + " " : "") + "Reload failed: " + (errorMessage || "unknown error");
     }
 
     function normalizeTaxIdentifierTypes(raw) {
@@ -9400,14 +9433,14 @@
         return out;
     }
 
-    function renderStoreInfoScopeBanner(store) {
+    function renderStoreInfoScopeBanner(store, storeID) {
         var banner = document.getElementById("store-info-scope-banner");
         if (!banner) {
             return;
         }
         var copy = storeInfoUI && storeInfoUI.scopeBannerCopy
-            ? storeInfoUI.scopeBannerCopy(store)
-            : { text: store ? ("Editing store: " + (store.name || store.id)) : "Select a store." };
+            ? storeInfoUI.scopeBannerCopy(store, storeID)
+            : { text: store ? ("Editing store: " + (store.name || store.id)) : (storeID ? ("Editing store id " + storeID) : "Select a store.") };
         banner.innerHTML = "<p><strong>" + esc(copy.text) + "</strong></p>";
     }
 
@@ -9433,7 +9466,7 @@
             var stores = normalizeStores(storesResponse && storesResponse.data && storesResponse.data.stores);
             var storeID = ticket.storeID;
             var activeStore = findStoreByID(stores, storeID);
-            renderStoreInfoScopeBanner(activeStore);
+            renderStoreInfoScopeBanner(activeStore, storeID);
 
             if (!storeID) {
                 var grid = container.querySelector('.settings-grid');
@@ -9478,7 +9511,7 @@
                 }
                 var taxIDs = normalizeTaxIdentifiers(taxResponse && taxResponse.data && taxResponse.data.tax_identifiers);
                 var country = (activeStore && activeStore.country) || '';
-                loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket);
+                return loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket);
             }).catch(function (err) {
                 if (!ticket.isCurrent(adminScope.store_id)) {
                     return;
@@ -9523,9 +9556,14 @@
         form.elements.email_support.value = (identity && identity.email_support) || "";
     }
 
-    function refreshStoreIdentityForm(ticket) {
+    function refreshStoreIdentityForm(ticket, opts) {
+        opts = opts || {};
         return api('/admin/store-identity').then(function (res) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(ticket.storeID)) {
+                return;
+            }
+            // Initial loads require the page ticket; post-write refreshes may outlive a same-store remount.
+            if (!opts.afterWrite && !ticket.isCurrent(adminScope.store_id)) {
                 return;
             }
             if (res && res.error) {
@@ -9537,7 +9575,10 @@
                 fillStoreIdentityForm(form, (res && res.data) || {});
             }
         }).catch(function (err) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(ticket.storeID)) {
+                return;
+            }
+            if (!opts.afterWrite && !ticket.isCurrent(adminScope.store_id)) {
                 return;
             }
             setSettingsMessage('store-identity-msg', 'Saved, but reload failed: ' + extractErrorMessage(err, 'unknown error'), true);
@@ -9562,7 +9603,8 @@
 
         form.addEventListener('submit', function (e) {
             e.preventDefault();
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            // Cancel only on store switch — same-store generation bumps must not drop the write.
+            if (!storeInfoScopeMatches(ticket.storeID)) {
                 setSettingsMessage('store-identity-msg', 'Store scope changed; save cancelled.', true);
                 return;
             }
@@ -9576,7 +9618,7 @@
                 email_support: form.elements.email_support.value
             };
             withButtonBusy(btn, 'Saving…', function () {
-                if (!ticket.isCurrent(adminScope.store_id)) {
+                if (!storeInfoScopeMatches(ticket.storeID)) {
                     setSettingsMessage('store-identity-msg', 'Store scope changed; save cancelled.', true);
                     return Promise.resolve();
                 }
@@ -9584,7 +9626,7 @@
                     method: 'PUT',
                     body: JSON.stringify(payload)
                 }).then(function (res) {
-                    if (!ticket.isCurrent(adminScope.store_id)) {
+                    if (!storeInfoScopeMatches(ticket.storeID)) {
                         return;
                     }
                     if (res && res.error) {
@@ -9592,9 +9634,9 @@
                         return;
                     }
                     setSettingsMessage('store-identity-msg', 'Store information saved.', false);
-                    return refreshStoreIdentityForm(ticket);
+                    return refreshStoreIdentityForm(ticket, { afterWrite: true });
                 }).catch(function (err) {
-                    if (!ticket.isCurrent(adminScope.store_id)) {
+                    if (!storeInfoScopeMatches(ticket.storeID)) {
                         return;
                     }
                     setSettingsMessage('store-identity-msg', extractErrorMessage(err, 'Failed to save store information.'), true);
@@ -9603,20 +9645,33 @@
         });
     }
 
-    function loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket, opts) {
+    function loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, pageTicket, opts) {
         opts = opts || {};
+        var panelTicket = storeInfoTaxPanelGate.start();
         var countryQ = country ? ('?country=' + encodeURIComponent(country)) : '';
-        Promise.all([
+        return Promise.all([
             api('/admin/tax-identifier-types' + countryQ),
             api('/admin/tax-identifier-types')
         ]).then(function (results) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(pageTicket.storeID)) {
+                return;
+            }
+            // Page loads require the page ticket; post-write refreshes only need store + panel seq.
+            if (!opts.afterWrite && !pageTicket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (!panelTicket.isCurrent()) {
                 return;
             }
             var countryRes = results[0];
             var allRes = results[1];
             if (allRes && allRes.error) {
-                setSettingsMessage('store-tax-msg', extractErrorMessage(allRes, 'Failed to load tax identifier types.'), true);
+                var typeErr = extractErrorMessage(allRes, 'Failed to load tax identifier types.');
+                if (opts.successMessage) {
+                    setSettingsMessage('store-tax-msg', storeInfoSuccessReloadMessage(opts.successMessage, typeErr), true);
+                } else {
+                    setSettingsMessage('store-tax-msg', typeErr, true);
+                }
                 return;
             }
             var allTypes = normalizeTaxIdentifierTypes(allRes && allRes.data && allRes.data.types);
@@ -9624,7 +9679,7 @@
             var applicableRaw = countryFilterFailed
                 ? []
                 : normalizeTaxIdentifierTypes(countryRes && countryRes.data && countryRes.data.types);
-            if (countryFilterFailed && !opts.preserveMessage) {
+            if (countryFilterFailed && !opts.preserveMessage && !opts.successMessage) {
                 setSettingsMessage(
                     'store-tax-msg',
                     'Could not filter types by store country (' + extractErrorMessage(countryRes, 'validation error') + '). Showing all types.',
@@ -9645,34 +9700,50 @@
                     }
                 }
             }
-            renderTaxIdentifiersPanel(container, taxIDs, parts.applicable, parts.other, allTypes, country, ticket);
+            renderTaxIdentifiersPanel(container, taxIDs, parts.applicable, parts.other, allTypes, country, pageTicket);
         }).catch(function (err) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(pageTicket.storeID)) {
                 return;
             }
-            setSettingsMessage('store-tax-msg', extractErrorMessage(err, 'Failed to load tax identifier types.'), true);
+            if (!opts.afterWrite && !pageTicket.isCurrent(adminScope.store_id)) {
+                return;
+            }
+            if (!panelTicket.isCurrent()) {
+                return;
+            }
+            var catchErr = extractErrorMessage(err, 'Failed to load tax identifier types.');
+            if (opts.successMessage) {
+                setSettingsMessage('store-tax-msg', storeInfoSuccessReloadMessage(opts.successMessage, catchErr), true);
+            } else {
+                setSettingsMessage('store-tax-msg', catchErr, true);
+            }
         });
     }
 
-    function refreshTaxIdentifiersPanel(container, country, ticket, successMessage) {
+    function refreshTaxIdentifiersPanel(container, country, pageTicket, successMessage) {
         return api('/admin/tax-identifiers').then(function (taxResponse) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(pageTicket.storeID)) {
                 return;
             }
             if (taxResponse && taxResponse.error) {
-                setSettingsMessage('store-tax-msg', (successMessage ? successMessage + ' ' : '') + 'Reload failed: ' + extractErrorMessage(taxResponse, 'unknown error'), true);
+                setSettingsMessage('store-tax-msg', storeInfoSuccessReloadMessage(successMessage, extractErrorMessage(taxResponse, 'unknown error')), true);
                 return;
             }
             if (successMessage) {
                 setSettingsMessage('store-tax-msg', successMessage, false);
             }
             var taxIDs = normalizeTaxIdentifiers(taxResponse && taxResponse.data && taxResponse.data.tax_identifiers);
-            loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, ticket, { preserveMessage: !!successMessage });
+            // Return the type-list promise so withButtonBusy stays locked until the panel paints.
+            return loadAndRenderTaxIdentifiersPanel(container, taxIDs, country, pageTicket, {
+                afterWrite: true,
+                preserveMessage: !!successMessage,
+                successMessage: successMessage || ""
+            });
         }).catch(function (err) {
-            if (!ticket.isCurrent(adminScope.store_id)) {
+            if (!storeInfoScopeMatches(pageTicket.storeID)) {
                 return;
             }
-            setSettingsMessage('store-tax-msg', (successMessage ? successMessage + ' ' : '') + 'Reload failed: ' + extractErrorMessage(err, 'unknown error'), true);
+            setSettingsMessage('store-tax-msg', storeInfoSuccessReloadMessage(successMessage, extractErrorMessage(err, 'unknown error')), true);
         });
     }
 
@@ -9739,7 +9810,7 @@
 
             form.addEventListener('submit', function (e) {
                 e.preventDefault();
-                if (!ticket.isCurrent(adminScope.store_id)) {
+                if (!storeInfoScopeMatches(ticket.storeID)) {
                     setSettingsMessage('store-tax-msg', 'Store scope changed; save cancelled.', true);
                     return;
                 }
@@ -9755,7 +9826,7 @@
                     }
                 }
                 withButtonBusy(submitBtn, 'Saving…', function () {
-                    if (!ticket.isCurrent(adminScope.store_id)) {
+                    if (!storeInfoScopeMatches(ticket.storeID)) {
                         setSettingsMessage('store-tax-msg', 'Store scope changed; save cancelled.', true);
                         return Promise.resolve();
                     }
@@ -9763,7 +9834,7 @@
                         method: 'PUT',
                         body: JSON.stringify({ type: typ, value: value })
                     }).then(function (res) {
-                        if (!ticket.isCurrent(adminScope.store_id)) {
+                        if (!storeInfoScopeMatches(ticket.storeID)) {
                             return;
                         }
                         if (res && res.error) {
@@ -9772,7 +9843,7 @@
                         }
                         return refreshTaxIdentifiersPanel(container, country, ticket, 'Tax identifier saved.');
                     }).catch(function (err) {
-                        if (!ticket.isCurrent(adminScope.store_id)) {
+                        if (!storeInfoScopeMatches(ticket.storeID)) {
                             return;
                         }
                         setSettingsMessage('store-tax-msg', extractErrorMessage(err, 'Failed to save tax identifier.'), true);
@@ -9788,18 +9859,18 @@
                 if (!typ || !window.confirm('Delete tax identifier ' + typ + '?')) {
                     return;
                 }
-                if (!ticket.isCurrent(adminScope.store_id)) {
+                if (!storeInfoScopeMatches(ticket.storeID)) {
                     setSettingsMessage('store-tax-msg', 'Store scope changed; delete cancelled.', true);
                     return;
                 }
                 var delBtn = evt.currentTarget;
                 withButtonBusy(delBtn, 'Deleting…', function () {
-                    if (!ticket.isCurrent(adminScope.store_id)) {
+                    if (!storeInfoScopeMatches(ticket.storeID)) {
                         setSettingsMessage('store-tax-msg', 'Store scope changed; delete cancelled.', true);
                         return Promise.resolve();
                     }
                     return apiDelete('/admin/tax-identifiers?type=' + encodeURIComponent(typ)).then(function (res) {
-                        if (!ticket.isCurrent(adminScope.store_id)) {
+                        if (!storeInfoScopeMatches(ticket.storeID)) {
                             return;
                         }
                         if (res && res.error) {
@@ -9808,7 +9879,7 @@
                         }
                         return refreshTaxIdentifiersPanel(container, country, ticket, 'Tax identifier deleted.');
                     }).catch(function (err) {
-                        if (!ticket.isCurrent(adminScope.store_id)) {
+                        if (!storeInfoScopeMatches(ticket.storeID)) {
                             return;
                         }
                         setSettingsMessage('store-tax-msg', extractErrorMessage(err, 'Failed to delete tax identifier.'), true);
@@ -10550,14 +10621,33 @@
             : 'No store selected in the header; editing the primary/default store.';
         form.innerHTML = '' +
             '<p class="settings-scope-note">Store code, name, domain, country, language, and currency. Legal contact fields are on <a href="/admin/settings/store-information" data-link>Store Information</a>. ' + esc(scopeNote) + '</p>' +
-            '<label>Code<input name="code" value="' + esc(store ? store.code : '') + '" required></label>' +
-            '<label>Name<input name="name" value="' + esc(store ? store.name : '') + '" required></label>' +
-            '<label>Domain / URL<input name="domain" value="' + esc(store ? store.domain : '') + '"></label>' +
-            '<label>Country<input name="country" value="' + esc(store ? store.country : '') + '" required></label>' +
-            '<label>Language<input name="language" value="' + esc(store ? store.language : '') + '" required></label>' +
-            '<label>Currency<input name="currency" value="' + esc(store ? store.currency : '') + '" required></label>' +
-            '<label><input type="checkbox" name="is_default" ' + (store && store.is_default ? 'checked' : '') + '> Default store</label>' +
+            '<label>Code<input name="code" required></label>' +
+            '<label>Name<input name="name" required></label>' +
+            '<label>Domain / URL<input name="domain"></label>' +
+            '<label>Country<input name="country" required></label>' +
+            '<label>Language<input name="language" required></label>' +
+            '<label>Currency<input name="currency" required></label>' +
+            '<label><input type="checkbox" name="is_default"> Default store</label>' +
             '<button type="submit">Save Store</button>';
+        if (storeInfoUI && storeInfoUI.applyGeneralStoreValues) {
+            storeInfoUI.applyGeneralStoreValues({
+                code: form.elements.code,
+                name: form.elements.name,
+                domain: form.elements.domain,
+                country: form.elements.country,
+                language: form.elements.language,
+                currency: form.elements.currency,
+                is_default: form.elements.is_default
+            }, store || {});
+        } else if (store) {
+            form.elements.code.value = store.code || "";
+            form.elements.name.value = store.name || "";
+            form.elements.domain.value = store.domain || "";
+            form.elements.country.value = store.country || "";
+            form.elements.language.value = store.language || "";
+            form.elements.currency.value = store.currency || "";
+            form.elements.is_default.checked = !!store.is_default;
+        }
 
         form.addEventListener('submit', function (e) {
             e.preventDefault();

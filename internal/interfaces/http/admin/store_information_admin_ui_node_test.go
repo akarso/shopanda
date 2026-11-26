@@ -38,9 +38,13 @@ func TestAdminHandler_StoreInformationAdminUIScript(t *testing.T) {
 	for _, expected := range []string{
 		"ShopandaStoreInformationAdminUI",
 		"newStoreInfoLoadGate",
+		"newTaxPanelLoadGate",
+		"shouldApplyWriteResult",
+		"headerContextChangeRequiresRemount",
 		"escAttr",
 		"sidebarLinkIsActive",
 		"applyIdentityValues",
+		"applyGeneralStoreValues",
 		"buildGeneralStorePutBody",
 	} {
 		if !strings.Contains(body, expected) {

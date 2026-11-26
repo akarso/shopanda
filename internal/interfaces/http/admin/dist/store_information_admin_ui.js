@@ -1,5 +1,5 @@
 // store_information_admin_ui.js — Store Information admin helpers (PR-1203 CR).
-// Load gate + attribute escaping + tax upsert helpers. No DOM required for tests.
+// Load gates + attribute escaping + tax upsert helpers. No DOM required for tests.
 (function (root) {
     "use strict";
 
@@ -13,8 +13,8 @@
             .replace(/>/g, "&gt;");
     }
 
-    // newStoreInfoLoadGate drops stale callbacks after a newer load starts
-    // or when the header store id no longer matches the capture at start.
+    // newStoreInfoLoadGate drops stale page-load callbacks after a newer load
+    // starts or when the header store id no longer matches the capture at start.
     function newStoreInfoLoadGate() {
         var seq = 0;
         return {
@@ -31,6 +31,40 @@
                 };
             }
         };
+    }
+
+    // newTaxPanelLoadGate sequences type-list + panel paints so an older
+    // in-flight refresh cannot overwrite a newer tax snapshot.
+    function newTaxPanelLoadGate() {
+        var seq = 0;
+        return {
+            start: function () {
+                seq += 1;
+                var id = seq;
+                return {
+                    generation: id,
+                    isCurrent: function () {
+                        return id === seq;
+                    }
+                };
+            }
+        };
+    }
+
+    function storeScopeMatches(capturedStoreID, currentStoreID) {
+        return (capturedStoreID || "") === (currentStoreID || "");
+    }
+
+    // Write responses must apply when the store id still matches, even if a
+    // same-store remount bumped the page generation (e.g. language change).
+    function shouldApplyWriteResult(capturedStoreID, currentStoreID) {
+        return storeScopeMatches(capturedStoreID, currentStoreID);
+    }
+
+    // Language/currency do not affect Store Information payloads; remounting
+    // mid-save drops the write callback and can refetch pre-write rows.
+    function headerContextChangeRequiresRemount(path) {
+        return path !== "/admin/settings/store-information";
     }
 
     function sidebarLinkIsActive(href, currentPath) {
@@ -129,11 +163,57 @@
         }
     }
 
-    function scopeBannerCopy(store) {
-        if (!store) {
+    function applyGeneralStoreValues(targets, store) {
+        store = store || {};
+        if (!targets) {
+            return;
+        }
+        if (targets.code) {
+            targets.code.value = store.code || "";
+        }
+        if (targets.name) {
+            targets.name.value = store.name || "";
+        }
+        if (targets.domain) {
+            targets.domain.value = store.domain || "";
+        }
+        if (targets.country) {
+            targets.country.value = store.country || "";
+        }
+        if (targets.language) {
+            targets.language.value = store.language || "";
+        }
+        if (targets.currency) {
+            targets.currency.value = store.currency || "";
+        }
+        if (targets.is_default) {
+            targets.is_default.checked = !!store.is_default;
+        }
+    }
+
+    function composeSuccessReloadMessage(successMessage, errorMessage) {
+        var success = successMessage ? String(successMessage) : "";
+        var err = errorMessage ? String(errorMessage) : "unknown error";
+        if (success) {
+            return success + " Reload failed: " + err;
+        }
+        return "Reload failed: " + err;
+    }
+
+    // store may be null when the header id is missing from /admin/stores.
+    // Pass storeID so an unknown id is not shown as "no store selected".
+    function scopeBannerCopy(store, storeID) {
+        var id = storeID || (store && store.id) || "";
+        if (!store && !id) {
             return {
                 kind: "empty",
                 text: "No store selected. Store information has no global record. Select a store in the header switcher."
+            };
+        }
+        if (!store && id) {
+            return {
+                kind: "unknown",
+                text: "Editing store id " + id + " (not in the store list). Identity and tax IDs still save to this store scope; there is no global fallback."
             };
         }
         var name = store.name || store.code || store.id || "store";
@@ -147,6 +227,10 @@
     var api = {
         escAttr: escAttr,
         newStoreInfoLoadGate: newStoreInfoLoadGate,
+        newTaxPanelLoadGate: newTaxPanelLoadGate,
+        storeScopeMatches: storeScopeMatches,
+        shouldApplyWriteResult: shouldApplyWriteResult,
+        headerContextChangeRequiresRemount: headerContextChangeRequiresRemount,
         sidebarLinkIsActive: sidebarLinkIsActive,
         existingTaxValue: existingTaxValue,
         taxSubmitLabel: taxSubmitLabel,
@@ -154,6 +238,8 @@
         partitionTaxTypes: partitionTaxTypes,
         buildGeneralStorePutBody: buildGeneralStorePutBody,
         applyIdentityValues: applyIdentityValues,
+        applyGeneralStoreValues: applyGeneralStoreValues,
+        composeSuccessReloadMessage: composeSuccessReloadMessage,
         scopeBannerCopy: scopeBannerCopy
     };
 
