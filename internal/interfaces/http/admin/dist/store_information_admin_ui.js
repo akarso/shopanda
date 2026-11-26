@@ -207,6 +207,16 @@
         return "Reload failed: " + err;
     }
 
+    // setTaxPanelActionsLocked disables save + delete (+ form fields) for the
+    // whole in-flight write so a DELETE cannot race a PUT and recreate a row.
+    function setTaxPanelActionsLocked(controls, locked) {
+        for (var i = 0; i < (controls || []).length; i++) {
+            if (controls[i]) {
+                controls[i].disabled = !!locked;
+            }
+        }
+    }
+
     // store may be null when the header id is missing from /admin/stores.
     // Pass storeID so an unknown id is not shown as "no store selected".
     function scopeBannerCopy(store, storeID) {
@@ -248,6 +258,7 @@
         applyIdentityValues: applyIdentityValues,
         applyGeneralStoreValues: applyGeneralStoreValues,
         composeSuccessReloadMessage: composeSuccessReloadMessage,
+        setTaxPanelActionsLocked: setTaxPanelActionsLocked,
         scopeBannerCopy: scopeBannerCopy
     };
 

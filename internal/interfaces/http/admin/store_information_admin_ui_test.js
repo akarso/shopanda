@@ -212,6 +212,21 @@ test("composeSuccessReloadMessage keeps success text on type-list failure", func
     );
 });
 
+test("setTaxPanelActionsLocked disables save and delete controls together", function () {
+    const save = { disabled: false };
+    const delA = { disabled: false };
+    const delB = { disabled: false };
+    const type = { disabled: false };
+    ui.setTaxPanelActionsLocked([save, delA, delB, type], true);
+    assert.equal(save.disabled, true);
+    assert.equal(delA.disabled, true);
+    assert.equal(delB.disabled, true);
+    assert.equal(type.disabled, true);
+    ui.setTaxPanelActionsLocked([save, delA, delB, type], false);
+    assert.equal(save.disabled, false);
+    assert.equal(delA.disabled, false);
+});
+
 test("admin.js wires Store Information route and omits address/logo config keys on General submit", function () {
     const adminSrc = fs.readFileSync(path.join(__dirname, "dist", "admin.js"), "utf8");
     const indexSrc = fs.readFileSync(path.join(__dirname, "dist", "index.html"), "utf8");
@@ -249,4 +264,8 @@ test("admin.js wires Store Information route and omits address/logo config keys 
     // loadAndRender must not start a new gate ticket (would reintroduce list-GET races).
     assert.equal((adminSrc.match(/function loadAndRenderTaxIdentifiersPanel[\s\S]*?function refreshTaxIdentifiersPanel/) || [""])[0]
         .indexOf("storeInfoTaxPanelGate.start()"), -1);
+    // Tax save/delete must lock the whole panel (not only the clicked button).
+    assert.match(adminSrc, /withStoreTaxPanelBusy/);
+    assert.match(adminSrc, /data-tax-busy/);
+    assert.match(adminSrc, /setTaxPanelActionsLocked/);
 });

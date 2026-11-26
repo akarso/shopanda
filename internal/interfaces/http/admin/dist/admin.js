@@ -9813,6 +9813,64 @@
             '</form>';
         panel.innerHTML = html;
 
+        function storeTaxPanelActionControls() {
+            var out = [];
+            var dels = panel.querySelectorAll('[data-tax-delete]');
+            for (var di = 0; di < dels.length; di++) {
+                out.push(dels[di]);
+            }
+            var taxForm = panel.querySelector('#store-tax-form');
+            if (taxForm) {
+                if (taxForm.elements.type) {
+                    out.push(taxForm.elements.type);
+                }
+                if (taxForm.elements.value) {
+                    out.push(taxForm.elements.value);
+                }
+                var submit = taxForm.querySelector('button[type="submit"]');
+                if (submit) {
+                    out.push(submit);
+                }
+            }
+            return out;
+        }
+
+        function lockStoreTaxPanelActions(locked) {
+            if (storeInfoUI && storeInfoUI.setTaxPanelActionsLocked) {
+                storeInfoUI.setTaxPanelActionsLocked(storeTaxPanelActionControls(), locked);
+                return;
+            }
+            var controls = storeTaxPanelActionControls();
+            for (var ci = 0; ci < controls.length; ci++) {
+                controls[ci].disabled = !!locked;
+            }
+        }
+
+        // Lock every tax action for the whole write so Save PUT and Delete cannot cross.
+        function withStoreTaxPanelBusy(activeBtn, busyLabel, startAction) {
+            if (!panel || panel.getAttribute('data-tax-busy') === '1') {
+                return;
+            }
+            panel.setAttribute('data-tax-busy', '1');
+            var originalLabel = activeBtn ? activeBtn.textContent : '';
+            lockStoreTaxPanelActions(true);
+            if (activeBtn) {
+                activeBtn.textContent = busyLabel;
+            }
+            var restore = function () {
+                // Successful refresh replaces the panel; skip unlock on a detached node.
+                if (!panel.parentNode) {
+                    return;
+                }
+                panel.removeAttribute('data-tax-busy');
+                if (activeBtn) {
+                    activeBtn.textContent = originalLabel;
+                }
+                lockStoreTaxPanelActions(false);
+            };
+            Promise.resolve().then(startAction).then(restore, restore);
+        }
+
         var form = document.getElementById('store-tax-form');
         if (form) {
             var typeSelect = form.elements.type;
@@ -9828,7 +9886,7 @@
                 } else {
                     valueInput.value = "";
                 }
-                if (submitBtn) {
+                if (submitBtn && panel.getAttribute('data-tax-busy') !== '1') {
                     submitBtn.textContent = storeInfoUI && storeInfoUI.taxSubmitLabel
                         ? storeInfoUI.taxSubmitLabel(existing)
                         : (existing != null ? "Replace tax ID" : "Save tax ID");
@@ -9854,10 +9912,10 @@
                         return;
                     }
                 }
-                withButtonBusy(submitBtn, 'Saving…', function () {
+                withStoreTaxPanelBusy(submitBtn, 'Saving…', function () {
                     if (!storeInfoScopeMatches(ticket.storeID)) {
                         setSettingsMessage('store-tax-msg', 'Store scope changed; save cancelled.', true);
-                        return Promise.resolve();
+                        return;
                     }
                     return api('/admin/tax-identifiers', {
                         method: 'PUT',
@@ -9893,10 +9951,10 @@
                     return;
                 }
                 var delBtn = evt.currentTarget;
-                withButtonBusy(delBtn, 'Deleting…', function () {
+                withStoreTaxPanelBusy(delBtn, 'Deleting…', function () {
                     if (!storeInfoScopeMatches(ticket.storeID)) {
                         setSettingsMessage('store-tax-msg', 'Store scope changed; delete cancelled.', true);
-                        return Promise.resolve();
+                        return;
                     }
                     return apiDelete('/admin/tax-identifiers?type=' + encodeURIComponent(typ)).then(function (res) {
                         if (!storeInfoScopeMatches(ticket.storeID)) {

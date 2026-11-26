@@ -46,6 +46,7 @@ func TestAdminHandler_StoreInformationAdminUIScript(t *testing.T) {
 		"sidebarLinkIsActive",
 		"applyIdentityValues",
 		"applyGeneralStoreValues",
+		"setTaxPanelActionsLocked",
 		"buildGeneralStorePutBody",
 	} {
 		if !strings.Contains(body, expected) {
