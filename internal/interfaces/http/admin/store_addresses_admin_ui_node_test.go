@@ -42,6 +42,9 @@ func TestAdminHandler_StoreAddressesAdminUIScript(t *testing.T) {
 		"fallbackHintForRole",
 		"buildAddressPutBody",
 		"addressIsEmpty",
+		"shouldMutateAddressRolePage",
+		"shouldRefetchAddressRoleAfterWrite",
+		"fieldMaxLengths",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected %q in store_addresses_admin_ui.js", expected)

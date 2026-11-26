@@ -10,6 +10,16 @@
         { role: "returns", label: "Returns", blurb: "RMA / return label address." }
     ];
 
+    var FIELD_MAX = {
+        line1: 255,
+        line2: 255,
+        city: 255,
+        region: 255,
+        postcode: 64,
+        country: 2,
+        phone: 64
+    };
+
     function addressRoles() {
         return ADDRESS_ROLES.slice();
     }
@@ -28,6 +38,18 @@
         return roleMeta(role) != null;
     }
 
+    function fieldMaxLengths() {
+        return {
+            line1: FIELD_MAX.line1,
+            line2: FIELD_MAX.line2,
+            city: FIELD_MAX.city,
+            region: FIELD_MAX.region,
+            postcode: FIELD_MAX.postcode,
+            country: FIELD_MAX.country,
+            phone: FIELD_MAX.phone
+        };
+    }
+
     // Mirrors domain Address.IsEmpty (postal content; country/phone ignored).
     function addressIsEmpty(addr) {
         if (!addr) {
@@ -41,14 +63,18 @@
     }
 
     function fallbackHintForRole(role, addr) {
+        var code = String(role || "").toLowerCase();
         if (!addressIsEmpty(addr)) {
             return "";
         }
-        if (role === "invoice") {
-            return "Empty — invoice consumers will use the general address.";
+        var phoneNote = addr && String(addr.phone || "").trim()
+            ? " Phone is stored, but postal fields are empty so fallback still applies."
+            : "";
+        if (code === "invoice") {
+            return "Empty — invoice consumers will use the general address." + phoneNote;
         }
-        if (role === "returns") {
-            return "Empty — returns will use shipping origin, then general.";
+        if (code === "returns") {
+            return "Empty — returns will use shipping origin, then general." + phoneNote;
         }
         return "";
     }
@@ -60,6 +86,12 @@
         var parts = [];
         if (addr.line1) {
             parts.push(String(addr.line1));
+        }
+        if (addr.line2) {
+            parts.push(String(addr.line2));
+        }
+        if (addr.region) {
+            parts.push(String(addr.region));
         }
         if (addr.city || addr.postcode) {
             parts.push([addr.postcode, addr.city].filter(Boolean).join(" ").trim());
@@ -74,6 +106,7 @@
         return String(s == null ? "" : s)
             .replace(/&/g, "&amp;")
             .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
     }
@@ -100,18 +133,24 @@
         return (capturedStoreID || "") === (currentStoreID || "");
     }
 
-    function shouldApplyWriteResult(capturedStoreID, currentStoreID) {
-        return storeScopeMatches(capturedStoreID, currentStoreID);
+    // Message/fill only when this page generation still owns the live role form.
+    function shouldMutateAddressRolePage(ticket, currentStoreID, liveFormRole, writeRole) {
+        if (!ticket || typeof ticket.isCurrent !== "function") {
+            return false;
+        }
+        if (!ticket.isCurrent(currentStoreID)) {
+            return false;
+        }
+        return String(liveFormRole || "") === String(writeRole || "");
     }
 
-    function headerContextChangeRequiresRemount(path) {
-        if (path === "/admin/settings/store-addresses") {
+    // Refetch into the live form when the store still matches and this role is on screen
+    // (including after a same-store remount that bumped generation).
+    function shouldRefetchAddressRoleAfterWrite(capturedStoreID, currentStoreID, liveFormRole, writeRole) {
+        if (!storeScopeMatches(capturedStoreID, currentStoreID)) {
             return false;
         }
-        if (path && path.indexOf("/admin/settings/store-addresses/") === 0) {
-            return false;
-        }
-        return true;
+        return String(liveFormRole || "") === String(writeRole || "");
     }
 
     function applyAddressValues(targets, addr) {
@@ -142,16 +181,17 @@
         }
     }
 
+    // Always include every key, including "" clears — AddressPatch treats omitted as unchanged.
     function buildAddressPutBody(fields) {
         fields = fields || {};
         return {
-            line1: fields.line1 || "",
-            line2: fields.line2 || "",
-            city: fields.city || "",
-            region: fields.region || "",
-            postcode: fields.postcode || "",
-            country: fields.country || "",
-            phone: fields.phone || ""
+            line1: fields.line1 == null ? "" : String(fields.line1),
+            line2: fields.line2 == null ? "" : String(fields.line2),
+            city: fields.city == null ? "" : String(fields.city),
+            region: fields.region == null ? "" : String(fields.region),
+            postcode: fields.postcode == null ? "" : String(fields.postcode),
+            country: fields.country == null ? "" : String(fields.country),
+            phone: fields.phone == null ? "" : String(fields.phone)
         };
     }
 
@@ -192,14 +232,15 @@
         addressRoles: addressRoles,
         roleMeta: roleMeta,
         isValidAddressRole: isValidAddressRole,
+        fieldMaxLengths: fieldMaxLengths,
         addressIsEmpty: addressIsEmpty,
         fallbackHintForRole: fallbackHintForRole,
         formatAddressSummary: formatAddressSummary,
         escAttr: escAttr,
         newStoreAddressesLoadGate: newStoreAddressesLoadGate,
         storeScopeMatches: storeScopeMatches,
-        shouldApplyWriteResult: shouldApplyWriteResult,
-        headerContextChangeRequiresRemount: headerContextChangeRequiresRemount,
+        shouldMutateAddressRolePage: shouldMutateAddressRolePage,
+        shouldRefetchAddressRoleAfterWrite: shouldRefetchAddressRoleAfterWrite,
         applyAddressValues: applyAddressValues,
         buildAddressPutBody: buildAddressPutBody,
         scopeBannerCopy: scopeBannerCopy,
