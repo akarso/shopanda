@@ -179,6 +179,9 @@ func TestNormalizeCountry(t *testing.T) {
 		{"whitespace only", "  ", "", true},
 		{"too short", "D", "", true},
 		{"too long", "DEU", "", true},
+		{"digits", "12", "", true},
+		{"alnum", "A1", "", true},
+		{"two-byte rune", "Å", "", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
