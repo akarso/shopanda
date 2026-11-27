@@ -27,7 +27,15 @@ import (
 const storefrontSecurityVerifyCookieName = "shopanda_storefront_security_verify"
 
 const defaultStorefrontAccountSecurityTTL = 10 * time.Minute
-const defaultStorefrontSecurityEmailTokenTTL = 30 * time.Minute
+
+// DefaultSecurityEmailTokenTTL is the email-link / claim-token lifetime when
+// no absolute store base URL is configured (orderClaimToken ExpiresAt).
+const DefaultSecurityEmailTokenTTL = 30 * time.Minute
+
+// OrderClaimEmailTokenTTL is the claim-token lifetime when PublicBaseURL is
+// set (same value passed to WithAccountSecurityEmailLinks and claim mail).
+const OrderClaimEmailTokenTTL = 45 * time.Minute
+
 const defaultStorefrontSecurityEmailLinkCooldown = time.Minute
 const defaultStorefrontSecurityFreshSessionTTL = 5 * time.Minute
 
@@ -100,7 +108,7 @@ func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *sto
 		secret:            []byte("storefront-security:" + secret),
 		storeBaseURL:      "",
 		ttl:               ttl,
-		emailTokenTTL:     defaultStorefrontSecurityEmailTokenTTL,
+		emailTokenTTL:     DefaultSecurityEmailTokenTTL,
 		emailLinkCooldown: defaultStorefrontSecurityEmailLinkCooldown,
 		freshSessionTTL:   defaultStorefrontSecurityFreshSessionTTL,
 		lastEmailLinks:    make(map[string]time.Time),

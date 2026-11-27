@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -160,6 +161,11 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 }
 
 func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData) error {
+	base, err := absoluteRecoveryStoreURL(h.storeURL)
+	if err != nil {
+		return err
+	}
+
 	cust, err := h.customers.FindByID(ctx, c.CustomerID)
 	if err != nil {
 		return fmt.Errorf("find customer: %w", err)
@@ -177,10 +183,6 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	items, err := h.recoveryItems(ctx, c)
 	if err != nil {
 		return err
-	}
-	base := strings.TrimRight(strings.TrimSpace(h.storeURL), "/")
-	if base == "" {
-		return fmt.Errorf("cart recovery: store URL required for absolute cart link")
 	}
 	cartURL := base + "/cart"
 
@@ -276,6 +278,25 @@ func formatRecoveryMoney(m shared.Money) string {
 		amount = -amount
 	}
 	return fmt.Sprintf("%s%s %d.%02d", sign, m.Currency(), amount/100, amount%100)
+}
+
+// absoluteRecoveryStoreURL requires an http(s) absolute origin with a host.
+func absoluteRecoveryStoreURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("cart recovery: store URL required for absolute cart link")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("cart recovery: invalid store URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("cart recovery: store URL must be http(s), got %q", u.Scheme)
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return "", fmt.Errorf("cart recovery: store URL missing host")
+	}
+	return strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/"), nil
 }
 
 // recoveryJobGetter is optional introspection for Conflict handling.

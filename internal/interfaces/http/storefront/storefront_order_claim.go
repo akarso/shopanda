@@ -125,7 +125,8 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 		}
 
 		// Failures past this point are logged but still answered with the
-		// generic message to keep the response shape constant.
+		// generic message to keep the response shape constant (no account
+		// enumeration). Timeouts/failures are not treated as a completed send.
 		emailSent := false
 		if len(orders) > 0 {
 			claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
@@ -133,10 +134,13 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 				h.log.Error("storefront.order_claim.token_failed", err, map[string]interface{}{
 					"path": r.URL.Path,
 				})
-			} else if err := h.emailer.SendClaimEmail(r.Context(), contactEmail, claimToken); err != nil {
-				h.log.Error("storefront.order_claim.email_failed", err, map[string]interface{}{
-					"path": r.URL.Path,
-				})
+			} else if err := h.sendClaimEmailWithRetry(r.Context(), contactEmail, claimToken); err != nil {
+				fields := map[string]interface{}{"path": r.URL.Path}
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+					h.log.Error("storefront.order_claim.email_timeout", err, fields)
+				} else {
+					h.log.Error("storefront.order_claim.email_failed", err, fields)
+				}
 			} else {
 				emailSent = true
 			}
@@ -150,6 +154,30 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 			"message": "If any orders exist for this email, a claim link has been sent.",
 		})
 	}
+}
+
+const claimEmailSendAttempts = 2
+
+func (h *StorefrontHandler) sendClaimEmailWithRetry(ctx context.Context, contactEmail, claimToken string) error {
+	var last error
+	for attempt := 1; attempt <= claimEmailSendAttempts; attempt++ {
+		last = h.emailer.SendClaimEmail(ctx, contactEmail, claimToken)
+		if last == nil {
+			return nil
+		}
+		if errors.Is(last, context.Canceled) {
+			return last
+		}
+		if attempt < claimEmailSendAttempts && ctx.Err() == nil {
+			h.log.Warn("storefront.order_claim.email_retry", map[string]interface{}{
+				"attempt": attempt,
+				"error":   last.Error(),
+			})
+			continue
+		}
+		break
+	}
+	return last
 }
 
 // AccountOrdersClaim handles GET and POST /account/orders/claim.

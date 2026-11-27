@@ -647,9 +647,16 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
 	claimService := orderApp.NewClaimService(rt.repos.orderRepo)
-	claimTTL := 10 * time.Minute
+	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
+		WithVouchers(rt.voucherService).
+		WithTxStarter(rt.db)
+	sf = sf.
+		WithOrderClaim(claimService).
+		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
+		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
 	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-		claimTTL = 45 * time.Minute
+		// Same TTL orderClaimToken writes into ExpiresAt and claim mail advertises.
+		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
 	}
 	claimEmailer := storefrontOrderClaimEmailer{
 		mailer:    rt.mailer,
@@ -662,18 +669,7 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 			Stores:   rt.repos.storeRepo,
 			Config:   rt.repos.configRepo,
 		},
-		tokenTTL: claimTTL,
+		tokenTTL: sf.SecurityEmailTokenTTL(),
 	}
-	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
-		WithVouchers(rt.voucherService).
-		WithTxStarter(rt.db)
-	sf = sf.
-		WithOrderClaim(claimService).
-		WithOrderClaimEmailer(claimEmailer).
-		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
-		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
-	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, claimTTL)
-	}
-	return sf
+	return sf.WithOrderClaimEmailer(claimEmailer)
 }

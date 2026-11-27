@@ -559,6 +559,15 @@ func (h *StorefrontHandler) WithAccountSecurityEmailLinks(storeBaseURL string, e
 	return h
 }
 
+// SecurityEmailTokenTTL returns the lifetime orderClaimToken writes into
+// ExpiresAt (and that claim mail should advertise).
+func (h *StorefrontHandler) SecurityEmailTokenTTL() time.Duration {
+	if h == nil || h.security == nil || h.security.emailTokenTTL <= 0 {
+		return DefaultSecurityEmailTokenTTL
+	}
+	return h.security.emailTokenTTL
+}
+
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
 	return h.withFullPageCache(cacheapp.RouteHome, func(w http.ResponseWriter, r *http.Request) {

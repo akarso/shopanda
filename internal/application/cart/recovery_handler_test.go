@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +19,27 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/infrastructure/email"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
+
+func loadRecoveryFileTemplates(t *testing.T) (*mail.Templates, mail.Layout) {
+	t.Helper()
+	dir := filepath.Join("..", "..", "..", "templates", "emails")
+	if _, err := os.Stat(filepath.Join(dir, "cart_recovery.html")); err != nil {
+		t.Skipf("repo cart_recovery.html unavailable: %v", err)
+	}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	loader, layout, _, err := email.Setup(dir)
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	if _, err := email.LoadDir(templates, loader); err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	return templates, layout
+}
 
 type recoveryCartRepo struct {
 	domainCart.CartRepository
@@ -317,7 +338,21 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 			Status:    customer.StatusActive,
 		},
 	}}
-	h, queue := testRecoveryHandler(t, carts, customers)
+	templates, layout := loadRecoveryFileTemplates(t)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Layout:    layout,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
 
 	err = h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType})
 	if err != nil {
@@ -334,6 +369,9 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 		t.Errorf("payload to = %v, want buyer@example.com", got)
 	}
 	body, _ := job.Payload["body"].(string)
+	if !strings.Contains(body, `class="cart-recovery-items"`) {
+		t.Fatalf("body missing file cart table: %s", body)
+	}
 	if !strings.Contains(body, "https://shop.example/cart") {
 		t.Fatalf("body missing absolute cart URL: %s", body)
 	}
@@ -343,7 +381,10 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 	if !strings.Contains(body, "EUR 19.99") {
 		t.Fatalf("body missing major-unit unit price, got: %s", body)
 	}
-	if strings.Contains(body, "1999 EUR") {
+	if !strings.Contains(body, "EUR 39.98") {
+		t.Fatalf("body missing major-unit line total, got: %s", body)
+	}
+	if strings.Contains(body, "1999 EUR") || strings.Contains(body, "3998 EUR") {
 		t.Fatalf("body still has minor-unit money: %s", body)
 	}
 	if len(carts.marked) != 1 || carts.marked[0] != "cart-1" {
@@ -352,43 +393,47 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 }
 
 func TestRecoveryHandler_Handle_EmptyStoreURLSkipsSend(t *testing.T) {
-	c, err := domainCart.NewCart("cart-empty-url", "EUR")
-	if err != nil {
-		t.Fatalf("NewCart: %v", err)
-	}
-	if err := c.SetCustomerID("cust-1"); err != nil {
-		t.Fatalf("SetCustomerID: %v", err)
-	}
-	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
-		t.Fatalf("AddItem: %v", err)
-	}
-	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
-	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
-		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
-	}}
-	templates := mail.NewTemplates()
-	notification.RegisterTemplates(templates)
-	queue := &recoveryQueue{}
-	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
-		Carts:     carts,
-		Customers: customers,
-		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
-			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
-		}},
-		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
-		Templates: templates,
-		Queue:     queue,
-		StoreURL:  "",
-		Log:       &recoveryLogger{},
-	})
-	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if len(queue.enqueued) != 0 {
-		t.Fatalf("empty store URL must not enqueue, got %d", len(queue.enqueued))
-	}
-	if len(carts.marked) != 0 {
-		t.Fatalf("empty store URL must not mark, got %v", carts.marked)
+	for _, storeURL := range []string{"", "not-a-url", "/relative", "ftp://shop.example"} {
+		t.Run(storeURL, func(t *testing.T) {
+			c, err := domainCart.NewCart("cart-bad-url", "EUR")
+			if err != nil {
+				t.Fatalf("NewCart: %v", err)
+			}
+			if err := c.SetCustomerID("cust-1"); err != nil {
+				t.Fatalf("SetCustomerID: %v", err)
+			}
+			if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+				t.Fatalf("AddItem: %v", err)
+			}
+			carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+			customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+				"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+			}}
+			templates := mail.NewTemplates()
+			notification.RegisterTemplates(templates)
+			queue := &recoveryQueue{}
+			h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+				Carts:     carts,
+				Customers: customers,
+				Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+					"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+				}},
+				Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+				Templates: templates,
+				Queue:     queue,
+				StoreURL:  storeURL,
+				Log:       &recoveryLogger{},
+			})
+			if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			if len(queue.enqueued) != 0 {
+				t.Fatalf("bad store URL %q must not enqueue, got %d", storeURL, len(queue.enqueued))
+			}
+			if len(carts.marked) != 0 {
+				t.Fatalf("bad store URL %q must not mark, got %v", storeURL, carts.marked)
+			}
+		})
 	}
 }
 

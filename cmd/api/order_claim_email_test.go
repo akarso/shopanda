@@ -74,6 +74,9 @@ func TestStorefrontOrderClaimEmailer_RendersOrderClaim(t *testing.T) {
 	if !strings.Contains(stub.last.Body, `href="https://shop.example/account/orders/claim?claim_token=tok-1"`) {
 		t.Fatalf("body missing href with token: %s", stub.last.Body)
 	}
+	if !strings.Contains(stub.last.Body, `background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;`) {
+		t.Fatalf("body missing file-only button style: %s", stub.last.Body)
+	}
 	if !strings.Contains(stub.last.Body, "Or copy this link:") {
 		t.Fatalf("body missing copy-paste URL label: %s", stub.last.Body)
 	}

@@ -47,6 +47,7 @@ import (
 	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"gopkg.in/yaml.v3"
 )
@@ -925,7 +926,7 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 
 func formatClaimTokenTTL(d time.Duration) string {
 	if d <= 0 {
-		d = 10 * time.Minute
+		d = storefront.DefaultSecurityEmailTokenTTL
 	}
 	mins := int(d.Round(time.Minute) / time.Minute)
 	if mins < 1 {

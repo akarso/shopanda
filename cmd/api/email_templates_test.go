@@ -282,15 +282,15 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		"email_verification":        "Confirm this email address for your account by clicking the button below",
 		"security_verification":     "Confirm access to your account security settings by clicking the button below",
 		"email_change_verification": "until you confirm this change",
-		"email_change_notice":       "from your account security settings",
+		"email_change_notice":       "Open account security settings",
 		"cart_recovery":             `class="cart-recovery-items"`,
-		"order_claim":               "Or copy this link:",
+		"order_claim":               `background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;`,
 	}
 	actionHrefs := map[string]string{
 		"email_verification":        `href="https://shop.example/verify-email"`,
 		"security_verification":     `href="https://shop.example/verify-security"`,
 		"email_change_verification": `href="https://shop.example/verify-email-change"`,
-		"email_change_notice":       `href="https://shop.example/account"`,
+		"email_change_notice":       `href="https://shop.example/account/security"`,
 		"cart_recovery":             `href="https://shop.example/cart"`,
 		"order_claim":               `href="https://shop.example/account/orders/claim?claim_token=tok"`,
 		"password_reset":            `href="https://shop.example/reset"`,
