@@ -2,6 +2,7 @@ package cart
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	"github.com/akarso/shopanda/internal/application/notification"
@@ -196,16 +197,22 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return fmt.Errorf("wrap layout: %w", err)
 	}
-	// Claim only after render/wrap succeed so a layout failure can retry.
-	// Claim still runs before enqueue so concurrent workers do not double-send.
+	// Enqueue first (stable job id). Mark only after success so a queue blip
+	// leaves the cart scannable. Conflict on the job id means already queued.
+	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
+		return err
+	}
 	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
 	if err != nil {
 		return err
 	}
 	if !marked {
-		return nil
+		h.log.Info("cart.recovery.mark_lost_race", map[string]interface{}{
+			"cart_id":     c.ID,
+			"customer_id": c.CustomerID,
+		})
 	}
-	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
+	return nil
 }
 
 func (h *RecoveryHandler) terminalSkipRecovery(ctx context.Context, cartID string) {
@@ -252,11 +259,20 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 		"subject": msg.Subject,
 		"body":    msg.Body,
 	}
-	job, err := jobs.NewJob(id.New(), notification.JobTypeEmailSend, payload)
+	jobID := cartRecoveryJobID(cartID)
+	job, err := jobs.NewJob(jobID, notification.JobTypeEmailSend, payload)
 	if err != nil {
 		return fmt.Errorf("create email job: %w", err)
 	}
 	if err := h.queue.Enqueue(ctx, job); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			h.log.Info("cart.recovery.email_already_enqueued", map[string]interface{}{
+				"cart_id":     cartID,
+				"customer_id": customerID,
+				"job_id":      job.ID,
+			})
+			return nil
+		}
 		return fmt.Errorf("enqueue email job: %w", err)
 	}
 	h.log.Info("cart.recovery.email_enqueued", map[string]interface{}{
@@ -265,4 +281,13 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 		"job_id":      job.ID,
 	})
 	return nil
+}
+
+// cartRecoveryJobID returns a stable UUID v5-shaped id for one recovery email
+// per cart (sha1 of a fixed namespace + cart id).
+func cartRecoveryJobID(cartID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.cart_recovery:" + strings.TrimSpace(cartID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
+	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }

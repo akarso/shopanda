@@ -27,23 +27,42 @@ func (t *Templates) Register(name, subject, body string) {
 	}
 }
 
-// TryRegister adds a named template and returns a parse error instead of
-// panicking. Subject and body are both parsed before the registry is updated.
-func (t *Templates) TryRegister(name, subject, body string) error {
+// ParseNamed parses subject + body without touching a registry.
+func ParseNamed(name, subject, body string) (*template.Template, error) {
 	if name == "" {
-		return fmt.Errorf("mail.Templates.Register: name must not be empty")
+		return nil, fmt.Errorf("mail.Templates.Register: name must not be empty")
 	}
 	tmpl, err := template.New(name).Parse(body)
 	if err != nil {
-		return fmt.Errorf("mail: parse body %q: %w", name, err)
+		return nil, fmt.Errorf("mail: parse body %q: %w", name, err)
 	}
 	if _, err := tmpl.New(name + ".subject").Parse(subject); err != nil {
-		return fmt.Errorf("mail: parse subject %q: %w", name, err)
+		return nil, fmt.Errorf("mail: parse subject %q: %w", name, err)
+	}
+	return tmpl, nil
+}
+
+// TryRegister adds a named template and returns a parse error instead of
+// panicking. Subject and body are both parsed before the registry is updated.
+func (t *Templates) TryRegister(name, subject, body string) error {
+	tmpl, err := ParseNamed(name, subject, body)
+	if err != nil {
+		return err
+	}
+	t.PutAll(map[string]*template.Template{name: tmpl})
+	return nil
+}
+
+// PutAll stores already-parsed templates under one lock (LoadDir atomic apply).
+func (t *Templates) PutAll(entries map[string]*template.Template) {
+	if len(entries) == 0 {
+		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.tmpls[name] = tmpl
-	return nil
+	for name, tmpl := range entries {
+		t.tmpls[name] = tmpl
+	}
 }
 
 // Render builds a Message by executing the named template with the given data.

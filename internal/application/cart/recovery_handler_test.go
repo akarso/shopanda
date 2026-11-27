@@ -72,9 +72,15 @@ func (s *recoveryProductRepo) FindByID(_ context.Context, id string) (*catalog.P
 type recoveryQueue struct {
 	jobs.Queue
 	enqueued []jobs.Job
+	errOnce  error
 }
 
 func (s *recoveryQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	if s.errOnce != nil {
+		err := s.errOnce
+		s.errOnce = nil
+		return err
+	}
 	s.enqueued = append(s.enqueued, job)
 	return nil
 }
@@ -206,7 +212,7 @@ func TestRecoveryHandler_Handle_SkipsInactiveCustomer(t *testing.T) {
 	}
 }
 
-func TestRecoveryHandler_Handle_SkipsAlreadyClaimedCart(t *testing.T) {
+func TestRecoveryHandler_Handle_MarkRaceAfterEnqueue(t *testing.T) {
 	c, err := domainCart.NewCart("cart-3", "EUR")
 	if err != nil {
 		t.Fatalf("NewCart: %v", err)
@@ -233,11 +239,52 @@ func TestRecoveryHandler_Handle_SkipsAlreadyClaimedCart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if len(queue.enqueued) != 0 {
-		t.Fatalf("expected no email jobs when claim fails, got %d", len(queue.enqueued))
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueue-then-mark: expect job even when mark loses race, got %d", len(queue.enqueued))
 	}
 	if len(carts.marked) != 0 {
-		t.Fatalf("expected no mark when claim fails, got %v", carts.marked)
+		t.Fatalf("expected no mark when claim loses race, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_EnqueueErrorLeavesUnmarked(t *testing.T) {
+	c, err := domainCart.NewCart("cart-enq-err", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{errOnce: errors.New("queue down")}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("enqueue error must leave queue empty, got %d", len(queue.enqueued))
+	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("enqueue error must leave cart unmarked, got %v", carts.marked)
 	}
 }
 

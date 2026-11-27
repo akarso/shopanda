@@ -22,7 +22,7 @@
       {{.Body}}
     </div>
     <div class="footer">
-      <p style="white-space:pre-line;margin:0;">{{if and .StoreName .StoreAddress}}{{.StoreName}} — {{.StoreAddress}}{{else if .StoreName}}{{.StoreName}}{{else}}{{.StoreAddress}}{{end}}</p>
+      {{if or .StoreName .StoreAddress}}<p style="white-space:pre-line;margin:0;">{{if and .StoreName .StoreAddress}}{{.StoreName}} — {{.StoreAddress}}{{else if .StoreName}}{{.StoreName}}{{else}}{{.StoreAddress}}{{end}}</p>{{end}}
     </div>
   </div>
 </body>

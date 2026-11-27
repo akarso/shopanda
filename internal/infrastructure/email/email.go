@@ -10,16 +10,12 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 )
 
-type pendingTemplate struct {
-	name, subject, body string
-}
-
 // LoadDir reads all .html templates from the loader's directory
 // (excluding _layout.html and other _-prefixed partials) and registers
-// them in the Templates registry via TryRegister (parse errors return).
-// Existing templates with the same name are overwritten.
-// All files are parsed before any registry write so a late failure leaves
-// the destination registry unchanged.
+// them in the Templates registry. Existing names are overwritten.
+// Every file is parsed with mail.ParseNamed before any registry write;
+// PutAll applies the whole set under one lock so a parse failure leaves
+// the destination unchanged.
 // names lists templates that replaced or added registry entries.
 func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) {
 	dir := loader.Dir()
@@ -28,7 +24,7 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		return nil, fmt.Errorf("email: read dir %s: %w", dir, err)
 	}
 
-	pending := make([]pendingTemplate, 0, len(entries))
+	parsed := make(map[string]*template.Template, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -46,30 +42,16 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		if loadErr != nil {
 			return nil, fmt.Errorf("email: load template %s: %w", tmplName, loadErr)
 		}
-		if parseErr := parseEmailTemplate(tmplName, subject, body); parseErr != nil {
+		tmpl, parseErr := mail.ParseNamed(tmplName, subject, body)
+		if parseErr != nil {
 			return nil, fmt.Errorf("email: parse template %s: %w", tmplName, parseErr)
 		}
-		pending = append(pending, pendingTemplate{name: tmplName, subject: subject, body: body})
+		parsed[tmplName] = tmpl
+		names = append(names, tmplName)
 	}
 
-	for _, p := range pending {
-		if regErr := t.TryRegister(p.name, p.subject, p.body); regErr != nil {
-			return names, fmt.Errorf("email: parse template %s: %w", p.name, regErr)
-		}
-		names = append(names, p.name)
-	}
+	t.PutAll(parsed)
 	return names, nil
-}
-
-func parseEmailTemplate(name, subject, body string) error {
-	tmpl, err := template.New(name).Parse(body)
-	if err != nil {
-		return fmt.Errorf("mail: parse body %q: %w", name, err)
-	}
-	if _, err := tmpl.New(name + ".subject").Parse(subject); err != nil {
-		return fmt.Errorf("mail: parse subject %q: %w", name, err)
-	}
-	return nil
 }
 
 // CountBodyTemplates returns how many non-partial *.html bodies sit in dir.

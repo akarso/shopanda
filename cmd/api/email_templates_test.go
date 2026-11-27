@@ -148,16 +148,19 @@ func TestLoadFileEmailTemplates_EmptyRelativeFallsThrough(t *testing.T) {
 
 	prev := emailTemplatesFallbackRoots
 	emailTemplatesFallbackRoots = []string{full}
-	defer func() { emailTemplatesFallbackRoots = prev }()
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		emailTemplatesFallbackRoots = prev
+		if chErr := os.Chdir(cwd); chErr != nil {
+			t.Errorf("restore cwd: %v", chErr)
+		}
+	})
 	if err := os.Chdir(filepath.Join(root, "empty")); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Chdir(cwd) }()
 
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
@@ -227,9 +230,9 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 	}
 	fileOnly := map[string]string{
 		"order_confirmed": "We'll notify you when your order ships.",
-		"order_shipped":   "Your order is on its way!",
-		"password_reset":  "Reset Password",
-		"invoice_created": "is attached as a PDF",
+		"order_shipped":   "Great news",
+		"password_reset":  "If you didn't request a password reset",
+		"invoice_created": "Please keep it for your records.",
 	}
 	for name, ed := range samples {
 		msg, renderErr := tmpl.Render(name, "a@example.com", ed)
