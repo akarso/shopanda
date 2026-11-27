@@ -123,6 +123,69 @@ func TestEmailTemplateRepo_CRUD(t *testing.T) {
 	}
 }
 
+func TestEmailTemplateRepo_InvalidLocaleLeavesDefaultRow(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM email_templates")
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM email_templates")
+		mustExec(t, db, "DELETE FROM stores")
+	})
+
+	storeRepo, err := postgres.NewStoreRepo(db)
+	if err != nil {
+		t.Fatalf("NewStoreRepo: %v", err)
+	}
+	repo, err := postgres.NewEmailTemplateRepo(db)
+	if err != nil {
+		t.Fatalf("NewEmailTemplateRepo: %v", err)
+	}
+	ctx := context.Background()
+	s := mustNewStore(t, "email-tmpl-und", "Email Templates Und")
+	if err := storeRepo.Create(ctx, &s); err != nil {
+		t.Fatalf("Create store: %v", err)
+	}
+
+	row := &mail.EmailTemplate{
+		StoreID:   s.ID,
+		Name:      "order_confirmed",
+		Locale:    "",
+		Subject:   "Default subject",
+		Body:      "<p>default</p>",
+		UpdatedBy: "admin-1",
+	}
+	if err := repo.Upsert(ctx, row); err != nil {
+		t.Fatalf("Upsert default: %v", err)
+	}
+
+	err = repo.Upsert(ctx, &mail.EmailTemplate{
+		StoreID:   s.ID,
+		Name:      "order_confirmed",
+		Locale:    "und",
+		Subject:   "Should not write",
+		Body:      "<p>bad</p>",
+		UpdatedBy: "admin-1",
+	})
+	if err == nil {
+		t.Fatal("expected Upsert und rejected")
+	}
+	if err := repo.Delete(ctx, s.ID, "order_confirmed", "und"); err == nil {
+		t.Fatal("expected Delete und rejected")
+	}
+	if _, err := repo.Get(ctx, s.ID, "order_confirmed", "und"); err == nil {
+		t.Fatal("expected Get und rejected")
+	}
+
+	got, err := repo.Get(ctx, s.ID, "order_confirmed", "")
+	if err != nil || got == nil {
+		t.Fatalf("Get default: got=%v err=%v", got, err)
+	}
+	if got.Subject != "Default subject" || got.Body != "<p>default</p>" {
+		t.Fatalf("default row mutated: %#v", got)
+	}
+}
+
 func TestEmailTemplateRepo_UnknownStore(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

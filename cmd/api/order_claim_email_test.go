@@ -208,8 +208,12 @@ func TestStorefrontOrderClaimEmailer_DBOverrideOmitsEnglishText(t *testing.T) {
 	if !strings.Contains(stub.last.Body, "de-claim-") || !strings.Contains(stub.last.Body, "claim_token=tok-de") {
 		t.Fatalf("body = %s", stub.last.Body)
 	}
-	if stub.last.Text != "" {
-		t.Fatalf("override must not attach English text/plain, got %q", stub.last.Text)
+	wantLink := "https://shop.example/account/orders/claim?claim_token=tok-de"
+	if stub.last.Text != wantLink+"\n" {
+		t.Fatalf("override plain text = %q, want exact claim URL", stub.last.Text)
+	}
+	if strings.Contains(stub.last.Text, "Use the link below") {
+		t.Fatalf("override must not attach English instructions: %q", stub.last.Text)
 	}
 }
 
@@ -223,7 +227,7 @@ func TestStorefrontOrderClaimEmailer_RequestLanguageBeatsStore(t *testing.T) {
 		layout:    lr,
 		overrides: claimOverrideStub{
 			subject: "DE subject",
-			body:    "<p>de-only</p>",
+			body:    `<p>de-{{.Data.ClaimURL}}</p>`,
 		},
 		resolve: func(context.Context) (string, string, error) {
 			return "s1", "en", nil
@@ -236,5 +240,35 @@ func TestStorefrontOrderClaimEmailer_RequestLanguageBeatsStore(t *testing.T) {
 	}
 	if stub.last.Subject != "DE subject" {
 		t.Fatalf("subject = %q, want request-language de row", stub.last.Subject)
+	}
+	if !strings.Contains(stub.last.Body, "claim_token=tok") {
+		t.Fatalf("body missing claim token: %s", stub.last.Body)
+	}
+}
+
+func TestStorefrontOrderClaimEmailer_OverrideMissingClaimURLFails(t *testing.T) {
+	tmpl, lr := loadClaimTemplates(t)
+	stub := &claimMailerStub{}
+	emailer := storefrontOrderClaimEmailer{
+		mailer:    stub,
+		claimURL:  "https://shop.example/account/orders/claim",
+		templates: tmpl,
+		layout:    lr,
+		overrides: claimOverrideStub{
+			subject: "DE subject",
+			body:    "<p>de-only-no-link</p>",
+		},
+		resolve: func(context.Context) (string, string, error) {
+			return "s1", "en", nil
+		},
+		tokenTTL: time.Minute,
+	}
+	ctx := translation.WithLanguage(context.Background(), "de")
+	err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok")
+	if err == nil || !strings.Contains(err.Error(), "missing claim URL") {
+		t.Fatalf("err = %v, want missing claim URL", err)
+	}
+	if stub.last.To != "" {
+		t.Fatalf("must not send when body omits claim URL, got To=%q", stub.last.To)
 	}
 }

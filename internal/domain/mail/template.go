@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	htmltemplate "html/template"
+	"strings"
 	"sync"
 	texttemplate "text/template"
 )
@@ -102,13 +103,17 @@ func executeNamed(parts *NamedParts, name, to string, data interface{}) (Message
 	if err := parts.subject.Execute(&subBuf, data); err != nil {
 		return Message{}, fmt.Errorf("mail: render subject %q: %w", name, err)
 	}
+	subject := subBuf.String()
+	if strings.ContainsAny(subject, "\r\n") {
+		return Message{}, fmt.Errorf("mail: render subject %q: must not contain CR or LF", name)
+	}
 	var bodyBuf bytes.Buffer
 	if err := parts.body.Execute(&bodyBuf, data); err != nil {
 		return Message{}, fmt.Errorf("mail: render body %q: %w", name, err)
 	}
 	return Message{
 		To:      to,
-		Subject: subBuf.String(),
+		Subject: subject,
 		Body:    bodyBuf.String(),
 	}, nil
 }

@@ -62,6 +62,18 @@ func TestRenderWithOverrides_SubjectKeepsAmpersand(t *testing.T) {
 	}
 }
 
+func TestRenderWithOverrides_SubjectRejectsCRLF(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("order_confirmed", "File", "<p>file</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|order_confirmed|": {"Line1\r\nInjected", "<p>body</p>"},
+	}}
+	_, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "", "a@b.com", nil)
+	if err == nil || !strings.Contains(err.Error(), "CR or LF") {
+		t.Fatalf("err = %v, want CR or LF", err)
+	}
+}
+
 func TestRenderWithOverrides_ExactBeatsEmpty(t *testing.T) {
 	reg := mail.NewTemplates()
 	reg.Register("order_confirmed", "File", "<p>file</p>")
@@ -204,5 +216,27 @@ func TestEmailTemplate_Validate(t *testing.T) {
 	}
 	if err := noActor.Validate(); err == nil {
 		t.Fatal("expected updated_by required")
+	}
+	for _, bad := range []string{"und", "deutsch", "!!!"} {
+		inv := &mail.EmailTemplate{
+			StoreID: "s1", Name: "order_confirmed", Locale: bad, Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
+		}
+		if err := inv.Validate(); err == nil {
+			t.Fatalf("expected invalid locale %q rejected", bad)
+		}
+	}
+}
+
+func TestParseTemplateLocale(t *testing.T) {
+	got, err := mail.ParseTemplateLocale("")
+	if err != nil || got != "" {
+		t.Fatalf("empty: %q %v", got, err)
+	}
+	got, err = mail.ParseTemplateLocale("pt-BR")
+	if err != nil || got != "pt" {
+		t.Fatalf("pt-BR: %q %v", got, err)
+	}
+	if _, err := mail.ParseTemplateLocale("und"); err == nil {
+		t.Fatal("expected und rejected")
 	}
 }

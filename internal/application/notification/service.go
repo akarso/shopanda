@@ -237,12 +237,13 @@ func (s *Service) resolveDefaultStore(ctx context.Context) (storeID, storeName, 
 	return st.ID, strings.TrimSpace(st.Name), st.Language, nil
 }
 
-// prepareEmailStore resolves the default store once. When overrides are wired,
-// lookup failures abort the send so a stock file body is never acknowledged.
-func (s *Service) prepareEmailStore(ctx context.Context) (storeID, storeName, storeLang string, err error) {
+// prepareEmailStore resolves the default store once. Fail closed only when
+// overrides are wired and templateName may read email_templates — auth/token
+// templates still render from the file registry on a stores-table error.
+func (s *Service) prepareEmailStore(ctx context.Context, templateName string) (storeID, storeName, storeLang string, err error) {
 	storeID, storeName, storeLang, err = s.resolveDefaultStore(ctx)
 	if err != nil {
-		if s.overrides != nil {
+		if s.overrides != nil && mail.IsOverridableName(templateName) {
 			return "", "", "", fmt.Errorf("notification: default store: %w", err)
 		}
 		s.log.Warn("notification: default store lookup failed", map[string]interface{}{
@@ -286,17 +287,18 @@ func (s *Service) templateLocale(ctx context.Context, o *order.Order, storeLang 
 }
 
 // beginEmail resolves store + template locale once and builds brand EmailData.
+// templateName controls whether a FindDefault failure aborts (overridable only).
 // storeLang is the default-store language (possibly from storeLanguageLookup)
 // for orderDisplayLanguage to reuse without a second FindDefault.
-func (s *Service) beginEmail(ctx context.Context, o *order.Order) (storeID, locale, storeLang string, ed mail.EmailData, err error) {
+func (s *Service) beginEmail(ctx context.Context, o *order.Order, templateName string) (storeID, locale, storeLang string, ed mail.EmailData, err error) {
 	var storeName string
-	storeID, storeName, storeLang, err = s.prepareEmailStore(ctx)
+	storeID, storeName, storeLang, err = s.prepareEmailStore(ctx, templateName)
 	if err != nil {
 		return "", "", "", mail.EmailData{}, err
 	}
 	locale, err = s.templateLocale(ctx, o, &storeLang)
 	if err != nil {
-		if s.overrides != nil {
+		if s.overrides != nil && mail.IsOverridableName(templateName) {
 			return "", "", "", mail.EmailData{}, fmt.Errorf("notification: template locale: %w", err)
 		}
 		fields := map[string]interface{}{}
@@ -566,7 +568,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return err
 	}
 
-	storeID, locale, storeLang, ed, err := s.beginEmail(ctx, o)
+	storeID, locale, storeLang, ed, err := s.beginEmail(ctx, o, "order_confirmed")
 	if err != nil {
 		return err
 	}
@@ -716,7 +718,7 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 	q.Set("token", data.Token)
 	resetURL.RawQuery = q.Encode()
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, nil)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "password_reset")
 	if err != nil {
 		return err
 	}
@@ -761,7 +763,7 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, nil)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_verification")
 	if err != nil {
 		return err
 	}
@@ -800,7 +802,7 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		return err
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, nil)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "security_verification")
 	if err != nil {
 		return err
 	}
@@ -849,7 +851,7 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		firstName = cust.FirstName
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, nil)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_change_verification")
 	if err != nil {
 		return err
 	}
@@ -893,7 +895,7 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		firstName = cust.FirstName
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, nil)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_change_notice")
 	if err != nil {
 		return err
 	}
@@ -944,7 +946,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return err
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, o)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "order_shipped")
 	if err != nil {
 		return err
 	}
@@ -1094,7 +1096,7 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		s.log.Error("HandleVoucherIssued.pdf_render_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: render voucher PDF: %w", err)
 	}
-	storeID, locale, _, ed, err := s.beginEmail(ctx, o)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "voucher_issued")
 	if err != nil {
 		return err
 	}
@@ -1219,7 +1221,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		}
 	}
 
-	storeID, locale, _, ed, err := s.beginEmail(ctx, o)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "invoice_created")
 	if err != nil {
 		return err
 	}

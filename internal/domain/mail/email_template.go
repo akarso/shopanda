@@ -41,9 +41,23 @@ func IsOverridableName(name string) bool {
 }
 
 // CanonicalLocale returns the BCP 47 primary subtag (lower case), or "" when
-// empty/invalid. Never invents "en". Used for storage and lookup keys.
+// empty/invalid. Never invents "en". Used for render fallback chains; write
+// paths must use ParseTemplateLocale so invalid tags cannot alias onto "".
 func CanonicalLocale(locale string) string {
 	return translation.PrimaryLanguage(locale)
+}
+
+// ParseTemplateLocale canonicalizes a locale for storage / Get / Delete.
+// Empty input stays "". A non-empty input that does not yield a primary
+// subtag is an error — never collapse typos (und, deutsch) onto the
+// empty-locale (store-default) row.
+func ParseTemplateLocale(locale string) (string, error) {
+	raw := strings.TrimSpace(locale)
+	canon := CanonicalLocale(raw)
+	if raw != "" && canon == "" {
+		return "", fmt.Errorf("mail: invalid email template locale %q", raw)
+	}
+	return canon, nil
 }
 
 // EmailTemplate is a merchant DB override of a named transactional template.
@@ -103,7 +117,11 @@ func (t *EmailTemplate) Validate() error {
 	}
 	t.StoreID = strings.TrimSpace(t.StoreID)
 	t.Name = strings.TrimSpace(t.Name)
-	t.Locale = CanonicalLocale(t.Locale)
+	locale, err := ParseTemplateLocale(t.Locale)
+	if err != nil {
+		return err
+	}
+	t.Locale = locale
 	t.Subject = strings.TrimSpace(t.Subject)
 	t.UpdatedBy = strings.TrimSpace(t.UpdatedBy)
 	if t.StoreID == "" {

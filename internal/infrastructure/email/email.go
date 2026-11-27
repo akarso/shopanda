@@ -13,7 +13,7 @@ import (
 // (excluding _layout.html and other _-prefixed partials) and registers
 // them in the Templates registry. Existing names are overwritten.
 // Every file is parsed with mail.ParseNamed before any registry write;
-// PutAll applies the whole set under one lock so a parse failure leaves
+// PutParsed applies the whole set under one lock so a parse failure leaves
 // the destination unchanged.
 // names lists templates that replaced or added registry entries.
 func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) {

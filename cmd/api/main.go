@@ -925,14 +925,33 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: layout: %w", err)
 	}
-	// File/builtin path keeps the English text/plain part. A DB HTML override
-	// must not be paired with stock English instructions that may disagree.
-	if !res.FromOverride {
+	// Bearer ClaimURL must appear in HTML. Overrides that drop or rewrite the
+	// link must not send. Plain text always carries at least the exact URL
+	// (language-neutral); file path keeps the longer English copy.
+	// html/template may emit &amp; for query ampersands — accept either form.
+	if !claimBodyContainsURL(msg.Body, claimLink) {
+		return fmt.Errorf("storefront order claim emailer: rendered body missing claim URL")
+	}
+	if res.FromOverride {
+		msg.Text = claimLink + "\n"
+	} else {
 		msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
 			claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
 			"If you did not place an order with us, you can safely ignore this email.\n"
 	}
+	if !strings.Contains(msg.Text, claimLink) {
+		return fmt.Errorf("storefront order claim emailer: plain text missing claim URL")
+	}
 	return e.mailer.Send(ctx, msg)
+}
+
+func claimBodyContainsURL(body, claimLink string) bool {
+	if strings.Contains(body, claimLink) {
+		return true
+	}
+	// html/template attribute/text escaping turns & into &amp;.
+	escaped := strings.ReplaceAll(claimLink, "&", "&amp;")
+	return escaped != claimLink && strings.Contains(body, escaped)
 }
 
 // resolveStoreLocale prefers the request language (when present), else one

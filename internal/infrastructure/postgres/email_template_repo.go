@@ -57,7 +57,10 @@ func mapEmailTemplateExecError(err error) error {
 func (r *EmailTemplateRepo) Get(ctx context.Context, storeID, name, locale string) (*mail.EmailTemplate, error) {
 	storeID = strings.TrimSpace(storeID)
 	name = strings.TrimSpace(name)
-	locale = mail.CanonicalLocale(locale)
+	locale, err := mail.ParseTemplateLocale(locale)
+	if err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
 	if storeID == "" || name == "" {
 		return nil, nil
 	}
@@ -70,7 +73,7 @@ WHERE store_id = $1 AND name = $2 AND locale = $3`
 		updatedBy sql.NullString
 		updatedAt time.Time
 	)
-	err := r.db.QueryRowContext(ctx, q, storeID, name, locale).Scan(
+	err = r.db.QueryRowContext(ctx, q, storeID, name, locale).Scan(
 		&row.ID, &row.StoreID, &row.Name, &row.Locale, &row.Subject, &row.Body, &updatedAt, &updatedBy,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -97,11 +100,11 @@ func (r *EmailTemplateRepo) Upsert(ctx context.Context, t *mail.EmailTemplate) e
 	if strings.TrimSpace(t.ID) == "" {
 		t.ID = id.New()
 	}
-	now := time.Now().UTC()
-	t.UpdatedAt = now
+	// Both insert and conflict update use Postgres now() so updated_at cannot
+	// move backwards under Go/DB clock skew.
 	const q = `
 INSERT INTO email_templates (id, store_id, name, locale, subject, body, updated_at, updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
+VALUES ($1, $2, $3, $4, $5, $6, now(), NULLIF($7, ''))
 ON CONFLICT (store_id, name, locale) DO UPDATE SET
 	subject = EXCLUDED.subject,
 	body = EXCLUDED.body,
@@ -109,7 +112,7 @@ ON CONFLICT (store_id, name, locale) DO UPDATE SET
 	updated_by = EXCLUDED.updated_by
 RETURNING id, updated_at`
 	err := r.db.QueryRowContext(ctx, q,
-		t.ID, t.StoreID, t.Name, t.Locale, t.Subject, t.Body, t.UpdatedAt, t.UpdatedBy,
+		t.ID, t.StoreID, t.Name, t.Locale, t.Subject, t.Body, t.UpdatedBy,
 	).Scan(&t.ID, &t.UpdatedAt)
 	if err != nil {
 		if mapped := mapEmailTemplateExecError(err); mapped != err {
@@ -124,12 +127,15 @@ RETURNING id, updated_at`
 func (r *EmailTemplateRepo) Delete(ctx context.Context, storeID, name, locale string) error {
 	storeID = strings.TrimSpace(storeID)
 	name = strings.TrimSpace(name)
-	locale = mail.CanonicalLocale(locale)
+	locale, err := mail.ParseTemplateLocale(locale)
+	if err != nil {
+		return apperror.Validation(err.Error())
+	}
 	if storeID == "" || name == "" {
 		return nil
 	}
 	const q = `DELETE FROM email_templates WHERE store_id = $1 AND name = $2 AND locale = $3`
-	_, err := r.db.ExecContext(ctx, q, storeID, name, locale)
+	_, err = r.db.ExecContext(ctx, q, storeID, name, locale)
 	if err != nil {
 		return fmt.Errorf("email_template_repo: delete: %w", err)
 	}

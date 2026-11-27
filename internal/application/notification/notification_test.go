@@ -399,6 +399,34 @@ func TestHandleOrderPaid_FindDefaultErrorSkipsEnqueue(t *testing.T) {
 	}
 }
 
+func TestHandlePasswordReset_FindDefaultErrorStillEnqueues(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			c.FirstName = "Alice"
+			return &c, nil
+		},
+	}
+	svc := notification.New(tmpl, custRepo, &mockOrderRepo{}, q, mockLogger{},
+		notification.WithResetBaseURL("https://shop.test/reset"),
+		notification.WithStoreIdentity(nil, &defaultStoreStub{err: errors.New("db down")}),
+		notification.WithEmailTemplateOverrides(localeOverrideStub{}),
+	)
+	evt := event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
+		CustomerID: "cust-1",
+		Token:      "abc123",
+	})
+	if err := svc.HandlePasswordReset(context.Background(), evt); err != nil {
+		t.Fatalf("HandlePasswordReset: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("auth mail must still enqueue from file registry, got %d", len(q.enqueued))
+	}
+}
+
 func TestHandleOrderPaid_ExactLocaleBeatsEmpty(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
