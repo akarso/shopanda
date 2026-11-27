@@ -12,6 +12,7 @@ import (
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -165,5 +166,75 @@ func TestStorefrontOrderClaimEmailer_RejectsEmptyToken(t *testing.T) {
 	err := emailer.SendClaimEmail(context.Background(), "guest@example.com", "  ")
 	if err == nil || !strings.Contains(err.Error(), "empty claim token") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type claimOverrideStub struct {
+	subject, body string
+}
+
+func (o claimOverrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
+	if storeID != "s1" || name != "order_claim" || locale != "de" {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	return o.subject, o.body, nil
+}
+
+func TestStorefrontOrderClaimEmailer_DBOverrideOmitsEnglishText(t *testing.T) {
+	tmpl, lr := loadClaimTemplates(t)
+	stub := &claimMailerStub{}
+	emailer := storefrontOrderClaimEmailer{
+		mailer:    stub,
+		claimURL:  "https://shop.example/account/orders/claim",
+		storeURL:  "https://shop.example",
+		templates: tmpl,
+		layout:    lr,
+		overrides: claimOverrideStub{
+			subject: "Bestellung beanspruchen",
+			body:    "<p>de-claim-{{.Data.ClaimURL}}</p>",
+		},
+		resolve: func(context.Context) (string, string, error) {
+			return "s1", "en", nil
+		},
+		tokenTTL: 30 * time.Minute,
+	}
+	ctx := translation.WithLanguage(context.Background(), "de")
+	if err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok-de"); err != nil {
+		t.Fatalf("SendClaimEmail: %v", err)
+	}
+	if stub.last.Subject != "Bestellung beanspruchen" {
+		t.Fatalf("subject = %q", stub.last.Subject)
+	}
+	if !strings.Contains(stub.last.Body, "de-claim-") || !strings.Contains(stub.last.Body, "claim_token=tok-de") {
+		t.Fatalf("body = %s", stub.last.Body)
+	}
+	if stub.last.Text != "" {
+		t.Fatalf("override must not attach English text/plain, got %q", stub.last.Text)
+	}
+}
+
+func TestStorefrontOrderClaimEmailer_RequestLanguageBeatsStore(t *testing.T) {
+	tmpl, lr := loadClaimTemplates(t)
+	stub := &claimMailerStub{}
+	emailer := storefrontOrderClaimEmailer{
+		mailer:    stub,
+		claimURL:  "https://shop.example/account/orders/claim",
+		templates: tmpl,
+		layout:    lr,
+		overrides: claimOverrideStub{
+			subject: "DE subject",
+			body:    "<p>de-only</p>",
+		},
+		resolve: func(context.Context) (string, string, error) {
+			return "s1", "en", nil
+		},
+		tokenTTL: time.Minute,
+	}
+	ctx := translation.WithLanguage(context.Background(), "de-DE")
+	if err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok"); err != nil {
+		t.Fatalf("SendClaimEmail: %v", err)
+	}
+	if stub.last.Subject != "DE subject" {
+		t.Fatalf("subject = %q, want request-language de row", stub.last.Subject)
 	}
 }

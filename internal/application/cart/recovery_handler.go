@@ -37,40 +37,44 @@ type RecoveryBrand interface {
 
 // RecoveryHandler scans stale carts and enqueues recovery emails.
 type RecoveryHandler struct {
-	carts      domainCart.CartRepository
-	customers  customer.CustomerRepository
-	variants   catalog.VariantRepository
-	products   catalog.ProductRepository
-	templates  *mail.Templates
-	layout     mail.Layout
-	overrides  mail.OverrideSource
-	storeID    func(context.Context) (string, error)
-	locale     func(context.Context) (string, error)
-	queue      jobs.Queue
-	storeURL   string
-	settings   config.Repository
-	brand      RecoveryBrand
-	staleAfter time.Duration
-	log        logger.Logger
+	carts     domainCart.CartRepository
+	customers customer.CustomerRepository
+	variants  catalog.VariantRepository
+	products  catalog.ProductRepository
+	templates *mail.Templates
+	layout    mail.Layout
+	overrides mail.OverrideSource
+	// resolveStore returns default store id + primary-language locale once.
+	resolveStore func(context.Context) (storeID, locale string, err error)
+	storeID      func(context.Context) (string, error) // legacy; prefer resolveStore
+	locale       func(context.Context) (string, error) // legacy; prefer resolveStore
+	queue        jobs.Queue
+	storeURL     string
+	settings     config.Repository
+	brand        RecoveryBrand
+	staleAfter   time.Duration
+	log          logger.Logger
 }
 
 // RecoveryHandlerConfig configures a RecoveryHandler.
 type RecoveryHandlerConfig struct {
-	Carts      domainCart.CartRepository
-	Customers  customer.CustomerRepository
-	Variants   catalog.VariantRepository
-	Products   catalog.ProductRepository
-	Templates  *mail.Templates
-	Layout     mail.Layout // optional — _layout.html chrome (PR-1210)
-	Overrides  mail.OverrideSource
-	StoreID    func(context.Context) (string, error)
-	Locale     func(context.Context) (string, error)
-	Queue      jobs.Queue
-	Settings   config.Repository
-	Brand      RecoveryBrand
-	StoreURL   string
-	StaleAfter time.Duration
-	Log        logger.Logger
+	Carts     domainCart.CartRepository
+	Customers customer.CustomerRepository
+	Variants  catalog.VariantRepository
+	Products  catalog.ProductRepository
+	Templates *mail.Templates
+	Layout    mail.Layout // optional — _layout.html chrome (PR-1210)
+	Overrides mail.OverrideSource
+	// ResolveStore returns store id + primary locale from one FindDefault.
+	ResolveStore func(context.Context) (storeID, locale string, err error)
+	StoreID      func(context.Context) (string, error) // legacy split lookup
+	Locale       func(context.Context) (string, error) // legacy split lookup
+	Queue        jobs.Queue
+	Settings     config.Repository
+	Brand        RecoveryBrand
+	StoreURL     string
+	StaleAfter   time.Duration
+	Log          logger.Logger
 }
 
 // NewRecoveryHandler creates a RecoveryHandler.
@@ -101,21 +105,22 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		staleAfter = DefaultRecoveryStaleAfter
 	}
 	return &RecoveryHandler{
-		carts:      cfg.Carts,
-		customers:  cfg.Customers,
-		variants:   cfg.Variants,
-		products:   cfg.Products,
-		templates:  cfg.Templates,
-		layout:     cfg.Layout,
-		overrides:  cfg.Overrides,
-		storeID:    cfg.StoreID,
-		locale:     cfg.Locale,
-		queue:      cfg.Queue,
-		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
-		settings:   cfg.Settings,
-		brand:      cfg.Brand,
-		staleAfter: staleAfter,
-		log:        cfg.Log,
+		carts:        cfg.Carts,
+		customers:    cfg.Customers,
+		variants:     cfg.Variants,
+		products:     cfg.Products,
+		templates:    cfg.Templates,
+		layout:       cfg.Layout,
+		overrides:    cfg.Overrides,
+		resolveStore: cfg.ResolveStore,
+		storeID:      cfg.StoreID,
+		locale:       cfg.Locale,
+		queue:        cfg.Queue,
+		storeURL:     strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
+		settings:     cfg.Settings,
+		brand:        cfg.Brand,
+		staleAfter:   staleAfter,
+		log:          cfg.Log,
 	}
 }
 
@@ -204,30 +209,15 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		"Items":     items,
 		"ItemCount": c.TotalQuantity(),
 	}
-	storeID := ""
-	if h.storeID != nil {
-		id, err := h.storeID(ctx)
-		if err != nil {
-			return fmt.Errorf("resolve store id: %w", err)
-		}
-		storeID = id
+	storeID, locale, err := h.resolveStoreLocale(ctx)
+	if err != nil {
+		return err
 	}
-	locale := ""
-	if h.locale != nil {
-		lang, err := h.locale(ctx)
-		if err != nil {
-			h.log.Warn("cart.recovery.locale_lookup_failed", map[string]interface{}{
-				"error": err.Error(),
-			})
-		} else {
-			locale = lang
-		}
-	}
-	msg, err := mail.RenderWithOverrides(ctx, h.templates, h.overrides, storeID, "cart_recovery", locale, email, ed)
+	res, err := mail.RenderWithOverrides(ctx, h.templates, h.overrides, storeID, "cart_recovery", locale, email, ed)
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}
-	msg, err = mail.ApplyLayout(h.layout, msg, ed)
+	msg, err := mail.ApplyLayout(h.layout, res.Message, ed)
 	if err != nil {
 		return fmt.Errorf("wrap layout: %w", err)
 	}
@@ -250,6 +240,32 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		return err
 	}
 	return nil
+}
+
+func (h *RecoveryHandler) resolveStoreLocale(ctx context.Context) (storeID, locale string, err error) {
+	if h.resolveStore != nil {
+		id, loc, resolveErr := h.resolveStore(ctx)
+		if resolveErr != nil {
+			return "", "", fmt.Errorf("resolve store: %w", resolveErr)
+		}
+		return id, loc, nil
+	}
+	if h.storeID != nil {
+		id, idErr := h.storeID(ctx)
+		if idErr != nil {
+			return "", "", fmt.Errorf("resolve store id: %w", idErr)
+		}
+		storeID = id
+	}
+	if h.locale != nil {
+		lang, locErr := h.locale(ctx)
+		if locErr != nil {
+			// Fail closed: do not mark sent or enqueue the empty-locale / file body.
+			return "", "", fmt.Errorf("resolve locale: %w", locErr)
+		}
+		locale = lang
+	}
+	return storeID, locale, nil
 }
 
 func (h *RecoveryHandler) terminalSkipRecovery(ctx context.Context, cartID string) {

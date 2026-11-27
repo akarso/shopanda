@@ -40,12 +40,13 @@ func TestEmailTemplateRepo_CRUD(t *testing.T) {
 	}
 
 	row := &mail.EmailTemplate{
-		ID:      id.New(),
-		StoreID: s.ID,
-		Name:    "order_confirmed",
-		Locale:  "",
-		Subject: "Thanks {{.Data.OrderID}}",
-		Body:    "<p>Order {{.Data.OrderID}}</p>",
+		ID:        id.New(),
+		StoreID:   s.ID,
+		Name:      "order_confirmed",
+		Locale:    "",
+		Subject:   "Thanks {{.Data.OrderID}}",
+		Body:      "<p>Order {{.Data.OrderID}}</p>",
+		UpdatedBy: "admin-1",
 	}
 	if err := repo.Upsert(ctx, row); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -73,11 +74,12 @@ func TestEmailTemplateRepo_CRUD(t *testing.T) {
 	}
 
 	de := &mail.EmailTemplate{
-		StoreID: s.ID,
-		Name:    "order_confirmed",
-		Locale:  "de",
-		Subject: "Danke",
-		Body:    "<p>de</p>",
+		StoreID:   s.ID,
+		Name:      "order_confirmed",
+		Locale:    "DE",
+		Subject:   "Danke",
+		Body:      "<p>de</p>",
+		UpdatedBy: "admin-2",
 	}
 	if err := repo.Upsert(ctx, de); err != nil {
 		t.Fatalf("Upsert de: %v", err)
@@ -88,6 +90,25 @@ func TestEmailTemplateRepo_CRUD(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("list len = %d, want 2", len(list))
+	}
+
+	// Canonical locale: DE upsert is stored/fetched as de.
+	gotDE, err := repo.Get(ctx, s.ID, "order_confirmed", "de")
+	if err != nil || gotDE == nil || gotDE.Locale != "de" {
+		t.Fatalf("Get de: got=%v err=%v", gotDE, err)
+	}
+	firstUpdated := got.UpdatedAt
+	row.Subject = "Updated again"
+	row.UpdatedBy = "admin-3"
+	if err := repo.Upsert(ctx, row); err != nil {
+		t.Fatalf("Upsert again: %v", err)
+	}
+	got, err = repo.Get(ctx, s.ID, "order_confirmed", "")
+	if err != nil || got == nil {
+		t.Fatalf("Get after second update: %v %v", got, err)
+	}
+	if !got.UpdatedAt.After(firstUpdated) {
+		t.Fatalf("updated_at did not advance: first=%v second=%v", firstUpdated, got.UpdatedAt)
 	}
 
 	if err := repo.Delete(ctx, s.ID, "order_confirmed", "de"); err != nil {
@@ -110,10 +131,11 @@ func TestEmailTemplateRepo_UnknownStore(t *testing.T) {
 		t.Fatalf("NewEmailTemplateRepo: %v", err)
 	}
 	err = repo.Upsert(context.Background(), &mail.EmailTemplate{
-		StoreID: "missing-store",
-		Name:    "order_confirmed",
-		Subject: "x",
-		Body:    "<p>x</p>",
+		StoreID:   "missing-store",
+		Name:      "order_confirmed",
+		Subject:   "x",
+		Body:      "<p>x</p>",
+		UpdatedBy: "admin-1",
 	})
 	if err == nil {
 		t.Fatal("expected store not found")

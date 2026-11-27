@@ -292,27 +292,30 @@ func TestHandleOrderPaid_WrapsLayout(t *testing.T) {
 	}
 }
 
-type overrideStub struct {
-	subject, body string
-}
-
-func (o overrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
-	if storeID == "" || name != "order_confirmed" {
-		return "", "", mail.ErrTemplateNotFound
-	}
-	if locale != "" && locale != "en" {
-		return "", "", mail.ErrTemplateNotFound
-	}
-	return o.subject, o.body, nil
-}
-
 type defaultStoreStub struct {
 	store.StoreRepository
-	st *store.Store
+	st  *store.Store
+	err error
 }
 
 func (d *defaultStoreStub) FindDefault(context.Context) (*store.Store, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
 	return d.st, nil
+}
+
+type localeOverrideStub map[string]struct{ subject, body string }
+
+func (o localeOverrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
+	if storeID == "" || name != "order_confirmed" {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	row, ok := o[locale]
+	if !ok {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	return row.subject, row.body, nil
 }
 
 func TestHandleOrderPaid_DBOverrideWinsAndLayoutWraps(t *testing.T) {
@@ -338,9 +341,11 @@ func TestHandleOrderPaid_DBOverrideWinsAndLayoutWraps(t *testing.T) {
 	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
 		notification.WithLayout(layout),
 		notification.WithStoreIdentity(nil, &defaultStoreStub{st: &st}),
-		notification.WithEmailTemplateOverrides(overrideStub{
-			subject: "DB Order {{.Data.OrderID}}",
-			body:    "<p>db-body-{{.Data.OrderID}}</p>",
+		notification.WithEmailTemplateOverrides(localeOverrideStub{
+			"en": {
+				subject: "DB Order {{.Data.OrderID}}",
+				body:    "<p>db-body-{{.Data.OrderID}}</p>",
+			},
 		}),
 	)
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
@@ -359,6 +364,76 @@ func TestHandleOrderPaid_DBOverrideWinsAndLayoutWraps(t *testing.T) {
 	}
 	if !strings.Contains(body, "db-body-ord-1") || !strings.HasPrefix(body, "<layout>") {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestHandleOrderPaid_FindDefaultErrorSkipsEnqueue(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1", Language: "en"}, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithStoreIdentity(nil, &defaultStoreStub{err: errors.New("db down")}),
+		notification.WithEmailTemplateOverrides(localeOverrideStub{
+			"en": {subject: "Should not send", body: "<p>no</p>"},
+		}),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err == nil {
+		t.Fatal("expected FindDefault error")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("queue must stay empty on store lookup failure, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleOrderPaid_ExactLocaleBeatsEmpty(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1", Language: "de"}, nil
+		},
+	}
+	st, err := store.NewStore("store-1", "main", "Main", "USD", "US", "en", "shop.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithStoreIdentity(nil, &defaultStoreStub{st: &st}),
+		notification.WithEmailTemplateOverrides(localeOverrideStub{
+			"":   {subject: "Empty locale", body: "<p>empty</p>"},
+			"de": {subject: "Deutsch {{.Data.OrderID}}", body: "<p>de-body</p>"},
+		}),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	subj, _ := q.enqueued[0].Payload["subject"].(string)
+	if subj != "Deutsch ord-1" {
+		t.Fatalf("subject = %q, want exact de row", subj)
 	}
 }
 

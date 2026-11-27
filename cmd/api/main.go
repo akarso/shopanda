@@ -859,10 +859,13 @@ type storefrontOrderClaimEmailer struct {
 	templates *mail.Templates
 	layout    mail.Layout
 	overrides mail.OverrideSource
-	storeID   func(context.Context) (string, error)
-	locale    func(context.Context) (string, error)
-	brand     storeidentity.EmailBrandSource
-	tokenTTL  time.Duration
+	// resolve returns default store id + primary-language locale in one FindDefault.
+	resolve func(context.Context) (storeID, locale string, err error)
+	// storeID / locale are legacy split lookups (tests); prefer resolve.
+	storeID  func(context.Context) (string, error)
+	locale   func(context.Context) (string, error)
+	brand    storeidentity.EmailBrandSource
+	tokenTTL time.Duration
 }
 
 func storefrontClaimPageURL(cfg *config.Config) string {
@@ -910,34 +913,61 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 		"ClaimURL":  claimLink,
 		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
 	}
-	storeID := ""
-	if e.storeID != nil {
-		id, err := e.storeID(ctx)
-		if err != nil {
-			return fmt.Errorf("storefront order claim emailer: store id: %w", err)
-		}
-		storeID = id
+	storeID, locale, err := e.resolveStoreLocale(ctx)
+	if err != nil {
+		return err
 	}
-	locale := ""
-	if e.locale != nil {
-		lang, err := e.locale(ctx)
-		if err != nil {
-			return fmt.Errorf("storefront order claim emailer: locale: %w", err)
-		}
-		locale = lang
-	}
-	msg, err := mail.RenderWithOverrides(ctx, e.templates, e.overrides, storeID, "order_claim", locale, contactEmail, ed)
+	res, err := mail.RenderWithOverrides(ctx, e.templates, e.overrides, storeID, "order_claim", locale, contactEmail, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: render: %w", err)
 	}
-	msg, err = mail.ApplyLayout(e.layout, msg, ed)
+	msg, err := mail.ApplyLayout(e.layout, res.Message, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: layout: %w", err)
 	}
-	msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
-		claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
-		"If you did not place an order with us, you can safely ignore this email.\n"
+	// File/builtin path keeps the English text/plain part. A DB HTML override
+	// must not be paired with stock English instructions that may disagree.
+	if !res.FromOverride {
+		msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
+			claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
+			"If you did not place an order with us, you can safely ignore this email.\n"
+	}
 	return e.mailer.Send(ctx, msg)
+}
+
+// resolveStoreLocale prefers the request language (when present), else one
+// FindDefault for both store id and primary-language locale.
+func (e storefrontOrderClaimEmailer) resolveStoreLocale(ctx context.Context) (storeID, locale string, err error) {
+	if raw, ok := translation.LanguageOK(ctx); ok {
+		locale = translation.PrimaryLanguage(raw)
+	}
+	if e.resolve != nil {
+		id, storeLocale, resolveErr := e.resolve(ctx)
+		if resolveErr != nil {
+			return "", "", fmt.Errorf("storefront order claim emailer: store: %w", resolveErr)
+		}
+		storeID = id
+		if locale == "" {
+			locale = storeLocale
+		}
+		return storeID, locale, nil
+	}
+	// Legacy split closures (tests / older wiring).
+	if e.storeID != nil {
+		id, idErr := e.storeID(ctx)
+		if idErr != nil {
+			return "", "", fmt.Errorf("storefront order claim emailer: store id: %w", idErr)
+		}
+		storeID = id
+	}
+	if locale == "" && e.locale != nil {
+		lang, locErr := e.locale(ctx)
+		if locErr != nil {
+			return "", "", fmt.Errorf("storefront order claim emailer: locale: %w", locErr)
+		}
+		locale = lang
+	}
+	return storeID, locale, nil
 }
 
 func formatClaimTokenTTL(d time.Duration) string {
@@ -1035,36 +1065,17 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, nil, err
 	}
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
-		Carts:     cartRepo,
-		Customers: customerRepo,
-		Variants:  variantRepo,
-		Products:  productRepo,
-		Templates: mailTemplates,
-		Layout:    emailLayout,
-		Overrides: mail.RepoOverrideSource{Repo: emailTemplateRepo},
-		StoreID: func(ctx context.Context) (string, error) {
-			st, err := storeRepo.FindDefault(ctx)
-			if err != nil {
-				return "", err
-			}
-			if st == nil {
-				return "", nil
-			}
-			return st.ID, nil
-		},
-		Locale: func(ctx context.Context) (string, error) {
-			st, err := storeRepo.FindDefault(ctx)
-			if err != nil {
-				return "", err
-			}
-			if st == nil {
-				return "", nil
-			}
-			return translation.PrimaryLanguage(st.Language), nil
-		},
-		Queue:    jobQueue,
-		StoreURL: cfg.Server.PublicBaseURL,
-		Settings: configRepo,
+		Carts:        cartRepo,
+		Customers:    customerRepo,
+		Variants:     variantRepo,
+		Products:     productRepo,
+		Templates:    mailTemplates,
+		Layout:       emailLayout,
+		Overrides:    mail.RepoOverrideSource{Repo: emailTemplateRepo},
+		ResolveStore: defaultStoreIDAndLocale(storeRepo),
+		Queue:        jobQueue,
+		StoreURL:     cfg.Server.PublicBaseURL,
+		Settings:     configRepo,
 		Brand: storeidentity.EmailBrandSource{
 			Identity: recoveryIdentity,
 			Stores:   storeRepo,

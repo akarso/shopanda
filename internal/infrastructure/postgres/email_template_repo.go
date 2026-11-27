@@ -57,7 +57,7 @@ func mapEmailTemplateExecError(err error) error {
 func (r *EmailTemplateRepo) Get(ctx context.Context, storeID, name, locale string) (*mail.EmailTemplate, error) {
 	storeID = strings.TrimSpace(storeID)
 	name = strings.TrimSpace(name)
-	locale = strings.TrimSpace(locale)
+	locale = mail.CanonicalLocale(locale)
 	if storeID == "" || name == "" {
 		return nil, nil
 	}
@@ -98,16 +98,14 @@ func (r *EmailTemplateRepo) Upsert(ctx context.Context, t *mail.EmailTemplate) e
 		t.ID = id.New()
 	}
 	now := time.Now().UTC()
-	if t.UpdatedAt.IsZero() {
-		t.UpdatedAt = now
-	}
+	t.UpdatedAt = now
 	const q = `
 INSERT INTO email_templates (id, store_id, name, locale, subject, body, updated_at, updated_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
 ON CONFLICT (store_id, name, locale) DO UPDATE SET
 	subject = EXCLUDED.subject,
 	body = EXCLUDED.body,
-	updated_at = EXCLUDED.updated_at,
+	updated_at = now(),
 	updated_by = EXCLUDED.updated_by
 RETURNING id, updated_at`
 	err := r.db.QueryRowContext(ctx, q,
@@ -126,7 +124,7 @@ RETURNING id, updated_at`
 func (r *EmailTemplateRepo) Delete(ctx context.Context, storeID, name, locale string) error {
 	storeID = strings.TrimSpace(storeID)
 	name = strings.TrimSpace(name)
-	locale = strings.TrimSpace(locale)
+	locale = mail.CanonicalLocale(locale)
 	if storeID == "" || name == "" {
 		return nil
 	}

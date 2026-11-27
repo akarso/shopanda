@@ -33,14 +33,32 @@ func TestRenderWithOverrides_DBWins(t *testing.T) {
 	src := &overrideStub{rows: map[string][2]string{
 		"s1|order_confirmed|": {"DB {{.Data.X}}", "<p>db-{{.Data.X}}</p>"},
 	}}
-	msg, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "en", "a@b.com", mail.EmailData{
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "en", "a@b.com", mail.EmailData{
 		Data: map[string]interface{}{"X": "ok"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.Subject != "DB ok" || !strings.Contains(msg.Body, "db-ok") {
-		t.Fatalf("got subject=%q body=%q", msg.Subject, msg.Body)
+	if !res.FromOverride {
+		t.Fatal("expected FromOverride")
+	}
+	if res.Message.Subject != "DB ok" || !strings.Contains(res.Message.Body, "db-ok") {
+		t.Fatalf("got subject=%q body=%q", res.Message.Subject, res.Message.Body)
+	}
+}
+
+func TestRenderWithOverrides_SubjectKeepsAmpersand(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("order_confirmed", "File", "<p>file</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|order_confirmed|": {"Fish & Chips", "<p>body</p>"},
+	}}
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "", "a@b.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Message.Subject != "Fish & Chips" {
+		t.Fatalf("subject = %q, want Fish & Chips (not HTML-escaped)", res.Message.Subject)
 	}
 }
 
@@ -51,12 +69,12 @@ func TestRenderWithOverrides_ExactBeatsEmpty(t *testing.T) {
 		"s1|order_confirmed|":   {"Default", "<p>default</p>"},
 		"s1|order_confirmed|de": {"German", "<p>de</p>"},
 	}}
-	msg, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "de", "a@b.com", nil)
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "DE", "a@b.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.Subject != "German" {
-		t.Fatalf("subject = %q, want German", msg.Subject)
+	if res.Message.Subject != "German" {
+		t.Fatalf("subject = %q, want German (canonical de)", res.Message.Subject)
 	}
 }
 
@@ -66,12 +84,27 @@ func TestRenderWithOverrides_FallsBackToEmptyLocale(t *testing.T) {
 	src := &overrideStub{rows: map[string][2]string{
 		"s1|order_confirmed|": {"Default", "<p>default</p>"},
 	}}
-	msg, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "fr", "a@b.com", nil)
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "fr", "a@b.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.Subject != "Default" {
-		t.Fatalf("subject = %q, want Default", msg.Subject)
+	if res.Message.Subject != "Default" {
+		t.Fatalf("subject = %q, want Default", res.Message.Subject)
+	}
+}
+
+func TestRenderWithOverrides_AuthNameSkipsDB(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("password_reset", "File reset", "<p>file</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|password_reset|": {"Hijacked", "<p><a href=\"https://evil\">x</a></p>"},
+	}}
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "password_reset", "en", "a@b.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FromOverride || res.Message.Subject != "File reset" {
+		t.Fatalf("auth template must not use DB: from=%v subject=%q", res.FromOverride, res.Message.Subject)
 	}
 }
 
@@ -79,12 +112,12 @@ func TestRenderWithOverrides_DeleteReturnsToFile(t *testing.T) {
 	reg := mail.NewTemplates()
 	reg.Register("order_confirmed", "File subject", "<p>file-body</p>")
 	src := &overrideStub{rows: map[string][2]string{}}
-	msg, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "en", "a@b.com", nil)
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "en", "a@b.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.Subject != "File subject" || !strings.Contains(msg.Body, "file-body") {
-		t.Fatalf("got subject=%q body=%q", msg.Subject, msg.Body)
+	if res.FromOverride || res.Message.Subject != "File subject" {
+		t.Fatalf("got from=%v subject=%q", res.FromOverride, res.Message.Subject)
 	}
 }
 
@@ -115,12 +148,12 @@ func TestRenderWithOverrides_BadDBBody(t *testing.T) {
 func TestRenderWithOverrides_NilSrcUsesRegistry(t *testing.T) {
 	reg := mail.NewTemplates()
 	reg.Register("order_confirmed", "File", "<p>file</p>")
-	msg, err := mail.RenderWithOverrides(context.Background(), reg, nil, "s1", "order_confirmed", "en", "a@b.com", nil)
+	res, err := mail.RenderWithOverrides(context.Background(), reg, nil, "s1", "order_confirmed", "en", "a@b.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.Subject != "File" {
-		t.Fatalf("subject = %q", msg.Subject)
+	if res.FromOverride || res.Message.Subject != "File" {
+		t.Fatalf("got from=%v subject=%q", res.FromOverride, res.Message.Subject)
 	}
 }
 
@@ -136,12 +169,40 @@ func TestRenderWithOverrides_SourceError(t *testing.T) {
 }
 
 func TestEmailTemplate_Validate(t *testing.T) {
-	ok := &mail.EmailTemplate{StoreID: "s1", Name: "order_confirmed", Subject: "Hi", Body: "<p>x</p>"}
+	ok := &mail.EmailTemplate{
+		StoreID: "s1", Name: "order_confirmed", Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "admin-1",
+	}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	bad := &mail.EmailTemplate{Name: "order_confirmed"}
-	if err := bad.Validate(); err == nil {
-		t.Fatal("expected store_id error")
+	if ok.Locale != "" {
+		t.Fatalf("locale = %q", ok.Locale)
+	}
+	de := &mail.EmailTemplate{
+		StoreID: "s1", Name: "order_confirmed", Locale: "DE", Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
+	}
+	if err := de.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if de.Locale != "de" {
+		t.Fatalf("canonical locale = %q, want de", de.Locale)
+	}
+	badName := &mail.EmailTemplate{
+		StoreID: "s1", Name: "Bad-Name", Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
+	}
+	if err := badName.Validate(); err == nil {
+		t.Fatal("expected name pattern error")
+	}
+	auth := &mail.EmailTemplate{
+		StoreID: "s1", Name: "password_reset", Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
+	}
+	if err := auth.Validate(); err == nil {
+		t.Fatal("expected not overridable")
+	}
+	noActor := &mail.EmailTemplate{
+		StoreID: "s1", Name: "order_confirmed", Subject: "Hi", Body: "<p>x</p>",
+	}
+	if err := noActor.Validate(); err == nil {
+		t.Fatal("expected updated_by required")
 	}
 }

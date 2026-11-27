@@ -994,6 +994,114 @@ func TestRecoveryHandler_Handle_WrapsLayout(t *testing.T) {
 	}
 }
 
+func TestRecoveryHandler_Handle_LocaleLookupErrorSkipsMark(t *testing.T) {
+	c, err := domainCart.NewCart("cart-locale-err", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		ResolveStore: func(context.Context) (string, string, error) {
+			return "", "", errors.New("store down")
+		},
+		Log: &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle batch: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("locale/store failure must skip enqueue, got %d", len(queue.enqueued))
+	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("locale/store failure must leave cart unmarked, got %v", carts.marked)
+	}
+}
+
+type recoveryOverrideStub struct {
+	subject, body string
+}
+
+func (o recoveryOverrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
+	if storeID != "s1" || name != "cart_recovery" || locale != "de" {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	return o.subject, o.body, nil
+}
+
+func TestRecoveryHandler_Handle_DBOverrideBody(t *testing.T) {
+	c, err := domainCart.NewCart("cart-db-override", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Overrides: recoveryOverrideStub{
+			subject: "Warenkorb wartet",
+			body:    "<p>de-recovery-{{.Data.FirstName}}</p>",
+		},
+		ResolveStore: func(context.Context) (string, string, error) {
+			return "s1", "de", nil
+		},
+		Queue:    queue,
+		StoreURL: "https://shop.example",
+		Log:      &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued = %d", len(queue.enqueued))
+	}
+	subj, _ := queue.enqueued[0].Payload["subject"].(string)
+	body, _ := queue.enqueued[0].Payload["body"].(string)
+	if subj != "Warenkorb wartet" {
+		t.Fatalf("subject = %q", subj)
+	}
+	if !strings.Contains(body, "de-recovery-Alex") {
+		t.Fatalf("body = %q", body)
+	}
+}
+
 func TestRecoveryHandler_Handle_WrapErrorSkipsEnqueue(t *testing.T) {
 	c, err := domainCart.NewCart("cart-wrap-err", "EUR")
 	if err != nil {

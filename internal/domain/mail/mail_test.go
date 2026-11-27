@@ -1,7 +1,6 @@
 package mail_test
 
 import (
-	"html/template"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/mail"
@@ -49,26 +48,26 @@ func TestApplyLayout_NilNoop(t *testing.T) {
 	}
 }
 
-func TestTemplates_PutAll_RejectsNilAndEmpty(t *testing.T) {
+func TestTemplates_PutParsed_RejectsNilAndEmpty(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	parsed, err := mail.ParseNamed("ok", "s", "<p>x</p>")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tmpl.PutAll(map[string]*template.Template{"": parsed}); err == nil {
+	if err := tmpl.PutParsed(map[string]*mail.NamedParts{"": parsed}); err == nil {
 		t.Fatal("expected empty name error")
 	}
-	if err := tmpl.PutAll(map[string]*template.Template{"ok": nil}); err == nil {
+	if err := tmpl.PutParsed(map[string]*mail.NamedParts{"ok": nil}); err == nil {
 		t.Fatal("expected nil template error")
 	}
 	if _, err := tmpl.Render("ok", "a@b.com", nil); err == nil {
-		t.Fatal("rejected PutAll must not mutate registry")
+		t.Fatal("rejected PutParsed must not mutate registry")
 	}
 }
 
 func TestTemplates_Render(t *testing.T) {
 	tmpl := mail.NewTemplates()
-	tmpl.Register("welcome", "Welcome {{.Name}}", "<h1>Hello {{.Name}}</h1>")
+	tmpl.Register("welcome", "Welcome {{.Name}} & Co", "<h1>Hello {{.Name}}</h1>")
 
 	msg, err := tmpl.Render("welcome", "user@example.com", map[string]string{"Name": "Alice"})
 	if err != nil {
@@ -77,8 +76,8 @@ func TestTemplates_Render(t *testing.T) {
 	if msg.To != "user@example.com" {
 		t.Errorf("To = %q, want %q", msg.To, "user@example.com")
 	}
-	if msg.Subject != "Welcome Alice" {
-		t.Errorf("Subject = %q, want %q", msg.Subject, "Welcome Alice")
+	if msg.Subject != "Welcome Alice & Co" {
+		t.Errorf("Subject = %q, want plain &", msg.Subject)
 	}
 	if msg.Body != "<h1>Hello Alice</h1>" {
 		t.Errorf("Body = %q, want %q", msg.Body, "<h1>Hello Alice</h1>")

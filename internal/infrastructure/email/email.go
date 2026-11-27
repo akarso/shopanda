@@ -2,7 +2,6 @@ package email
 
 import (
 	"fmt"
-	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,7 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		return nil, fmt.Errorf("email: read dir %s: %w", dir, err)
 	}
 
-	parsed := make(map[string]*template.Template, len(entries))
+	parsed := make(map[string]*mail.NamedParts, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -42,15 +41,15 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		if loadErr != nil {
 			return nil, fmt.Errorf("email: load template %s: %w", tmplName, loadErr)
 		}
-		tmpl, parseErr := mail.ParseNamed(tmplName, subject, body)
+		parts, parseErr := mail.ParseNamed(tmplName, subject, body)
 		if parseErr != nil {
 			return nil, fmt.Errorf("email: parse template %s: %w", tmplName, parseErr)
 		}
-		parsed[tmplName] = tmpl
+		parsed[tmplName] = parts
 		names = append(names, tmplName)
 	}
 
-	if err := t.PutAll(parsed); err != nil {
+	if err := t.PutParsed(parsed); err != nil {
 		return nil, err
 	}
 	return names, nil

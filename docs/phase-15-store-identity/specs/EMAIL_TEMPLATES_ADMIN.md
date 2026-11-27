@@ -44,13 +44,19 @@ email_templates
   UNIQUE (store_id, name, locale)
 ```
 
-`locale` empty = store default language override row. Render-time lookup:
+`locale` empty = store default language override row. Locale keys are the BCP 47 primary subtag (lower case); `Validate` / `Get` canonicalize (`DE` / `pt-BR` → `de` / `pt`). Senders never invent synthetic `en` for template lookup — unknown language uses the empty-locale row only.
+
+Render-time lookup (`RenderWithOverrides`):
 
 1. Exact requested locale (when non-empty)
 2. Empty locale (store default language row)
 3. In-memory registry (file `LoadDir` over builtin `RegisterTemplates`)
 
-Body is inner HTML (layout still wraps). No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
+Only overridable names may be stored or applied from DB: `order_confirmed`, `order_shipped`, `invoice_created`, `cart_recovery`, `order_claim`, `voucher_issued`. Auth/token templates (`password_reset`, verification, email-change) stay file/builtin so a DB row cannot rewrite live token URLs.
+
+Subject uses `text/template` (SMTP header stays plain: `Fish & Chips`); body uses `html/template`. Layout still wraps body HTML. No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
+
+When overrides are wired, a default-store lookup failure aborts the send (notification does not enqueue the stock file; recovery does not mark the cart sent). Claim prefers request language (`LanguageOK`) over the store primary language, and omits the fixed English `text/plain` part when the HTML came from a DB override.
 
 ## 4. Admin API (PR-1213)
 
