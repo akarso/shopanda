@@ -16,12 +16,14 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 type recoveryCartRepo struct {
 	domainCart.CartRepository
 	candidates    []domainCart.Cart
 	marked        []string
+	claimed       map[string]struct{}
 	markClaimable bool
 }
 
@@ -35,11 +37,32 @@ func (s *recoveryCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time
 }
 
 func (s *recoveryCartRepo) MarkRecoveryEmailSent(_ context.Context, cartID string, _ time.Time) (bool, error) {
+	if s.claimed == nil {
+		s.claimed = map[string]struct{}{}
+	}
+	if _, ok := s.claimed[cartID]; ok {
+		return false, nil
+	}
 	if !s.markClaimable {
 		return false, nil
 	}
+	s.claimed[cartID] = struct{}{}
 	s.marked = append(s.marked, cartID)
 	return true, nil
+}
+
+func (s *recoveryCartRepo) ClearRecoveryEmailSent(_ context.Context, cartID string) error {
+	if s.claimed != nil {
+		delete(s.claimed, cartID)
+	}
+	out := s.marked[:0]
+	for _, id := range s.marked {
+		if id != cartID {
+			out = append(out, id)
+		}
+	}
+	s.marked = out
+	return nil
 }
 
 type recoveryCustomerRepo struct {
@@ -73,6 +96,9 @@ type recoveryQueue struct {
 	jobs.Queue
 	enqueued []jobs.Job
 	errOnce  error
+	allowDup bool // brokers that ignore job id uniqueness
+	byID     map[string]struct{}
+	details  map[string]*jobs.Detail
 }
 
 func (s *recoveryQueue) Enqueue(_ context.Context, job jobs.Job) error {
@@ -81,8 +107,24 @@ func (s *recoveryQueue) Enqueue(_ context.Context, job jobs.Job) error {
 		s.errOnce = nil
 		return err
 	}
+	if s.byID == nil {
+		s.byID = map[string]struct{}{}
+	}
+	if !s.allowDup {
+		if _, ok := s.byID[job.ID]; ok {
+			return apperror.Conflict("job already enqueued")
+		}
+	}
+	s.byID[job.ID] = struct{}{}
 	s.enqueued = append(s.enqueued, job)
 	return nil
+}
+
+func (s *recoveryQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	if s.details == nil {
+		return nil, nil
+	}
+	return s.details[id], nil
 }
 
 type recoveryLogger struct {
@@ -212,7 +254,7 @@ func TestRecoveryHandler_Handle_SkipsInactiveCustomer(t *testing.T) {
 	}
 }
 
-func TestRecoveryHandler_Handle_MarkRaceAfterEnqueue(t *testing.T) {
+func TestRecoveryHandler_Handle_SkipsAlreadyClaimedCart(t *testing.T) {
 	c, err := domainCart.NewCart("cart-3", "EUR")
 	if err != nil {
 		t.Fatalf("NewCart: %v", err)
@@ -239,15 +281,15 @@ func TestRecoveryHandler_Handle_MarkRaceAfterEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if len(queue.enqueued) != 1 {
-		t.Fatalf("enqueue-then-mark: expect job even when mark loses race, got %d", len(queue.enqueued))
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("expected no email jobs when claim fails, got %d", len(queue.enqueued))
 	}
 	if len(carts.marked) != 0 {
-		t.Fatalf("expected no mark when claim loses race, got %v", carts.marked)
+		t.Fatalf("expected no mark when claim fails, got %v", carts.marked)
 	}
 }
 
-func TestRecoveryHandler_Handle_EnqueueErrorLeavesUnmarked(t *testing.T) {
+func TestRecoveryHandler_Handle_EnqueueErrorClearsMark(t *testing.T) {
 	c, err := domainCart.NewCart("cart-enq-err", "EUR")
 	if err != nil {
 		t.Fatalf("NewCart: %v", err)
@@ -284,7 +326,138 @@ func TestRecoveryHandler_Handle_EnqueueErrorLeavesUnmarked(t *testing.T) {
 		t.Fatalf("enqueue error must leave queue empty, got %d", len(queue.enqueued))
 	}
 	if len(carts.marked) != 0 {
-		t.Fatalf("enqueue error must leave cart unmarked, got %v", carts.marked)
+		t.Fatalf("enqueue error must clear mark, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_AllowDupQueueClaimPreventsSecondPublish(t *testing.T) {
+	c, err := domainCart.NewCart("cart-dup", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{allowDup: true}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("first enqueue = %d", len(queue.enqueued))
+	}
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("mark-before-enqueue must block second publish on allow-dup queue, got %d", len(queue.enqueued))
+	}
+}
+
+func TestRecoveryHandler_Handle_ConflictPendingKeepsMark(t *testing.T) {
+	c, err := domainCart.NewCart("cart-conflict", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	jobID := cartApp.CartRecoveryEmailJobID(c.ID)
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusPending}}},
+	}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("conflict must not enqueue again, got %d", len(queue.enqueued))
+	}
+	if len(carts.marked) != 1 {
+		t.Fatalf("pending conflict must keep mark, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_ConflictFailedClearsMark(t *testing.T) {
+	c, err := domainCart.NewCart("cart-failed", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	jobID := cartApp.CartRecoveryEmailJobID(c.ID)
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed}}},
+	}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("terminal conflict must clear mark, got %v", carts.marked)
 	}
 }
 

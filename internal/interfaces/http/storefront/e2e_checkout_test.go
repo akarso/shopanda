@@ -89,6 +89,7 @@ func (r *e2eCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ i
 func (r *e2eCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
+func (r *e2eCartRepo) ClearRecoveryEmailSent(context.Context, string) error { return nil }
 
 type e2eVariantRepo struct {
 	variants map[string]*catalog.Variant

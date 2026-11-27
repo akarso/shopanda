@@ -49,20 +49,29 @@ func (t *Templates) TryRegister(name, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	t.PutAll(map[string]*template.Template{name: tmpl})
-	return nil
+	return t.PutAll(map[string]*template.Template{name: tmpl})
 }
 
 // PutAll stores already-parsed templates under one lock (LoadDir atomic apply).
-func (t *Templates) PutAll(entries map[string]*template.Template) {
+// Rejects empty names and nil templates without mutating the registry.
+func (t *Templates) PutAll(entries map[string]*template.Template) error {
 	if len(entries) == 0 {
-		return
+		return nil
+	}
+	for name, tmpl := range entries {
+		if name == "" {
+			return fmt.Errorf("mail: PutAll empty name")
+		}
+		if tmpl == nil {
+			return fmt.Errorf("mail: PutAll nil template %q", name)
+		}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for name, tmpl := range entries {
 		t.tmpls[name] = tmpl
 	}
+	return nil
 }
 
 // Render builds a Message by executing the named template with the given data.

@@ -33,4 +33,8 @@ type CartRepository interface {
 	// MarkRecoveryEmailSent atomically claims a cart for recovery (compare-and-set on
 	// recovery_email_sent_at). Returns false when already claimed or sent.
 	MarkRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) (bool, error)
+
+	// ClearRecoveryEmailSent clears the recovery claim so a failed enqueue can
+	// retry on the next scan (recovery_email_sent_at → NULL).
+	ClearRecoveryEmailSent(ctx context.Context, cartID string) error
 }

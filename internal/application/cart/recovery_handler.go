@@ -197,20 +197,22 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return fmt.Errorf("wrap layout: %w", err)
 	}
-	// Enqueue first (stable job id). Mark only after success so a queue blip
-	// leaves the cart scannable. Conflict on the job id means already queued.
-	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
-		return err
-	}
+	// Claim first so brokers that ignore job ids cannot double-publish across
+	// overlapping scans. Stable job id still collapses retries on Postgres/Redis.
 	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
 	if err != nil {
 		return err
 	}
 	if !marked {
-		h.log.Info("cart.recovery.mark_lost_race", map[string]interface{}{
-			"cart_id":     c.ID,
-			"customer_id": c.CustomerID,
-		})
+		return nil
+	}
+	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
+		if clearErr := h.carts.ClearRecoveryEmailSent(ctx, c.ID); clearErr != nil {
+			h.log.Error("cart.recovery.clear_claim_failed", clearErr, map[string]interface{}{
+				"cart_id": c.ID,
+			})
+		}
+		return err
 	}
 	return nil
 }
@@ -253,25 +255,25 @@ func (h *RecoveryHandler) recoveryItems(ctx context.Context, c *domainCart.Cart)
 	return out, nil
 }
 
+// recoveryJobGetter is optional introspection for Conflict handling.
+type recoveryJobGetter interface {
+	Get(ctx context.Context, id string) (*jobs.Detail, error)
+}
+
 func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, cartID, customerID string) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
 		"body":    msg.Body,
 	}
-	jobID := cartRecoveryJobID(cartID)
+	jobID := CartRecoveryEmailJobID(cartID)
 	job, err := jobs.NewJob(jobID, notification.JobTypeEmailSend, payload)
 	if err != nil {
 		return fmt.Errorf("create email job: %w", err)
 	}
 	if err := h.queue.Enqueue(ctx, job); err != nil {
 		if apperror.Is(err, apperror.CodeConflict) {
-			h.log.Info("cart.recovery.email_already_enqueued", map[string]interface{}{
-				"cart_id":     cartID,
-				"customer_id": customerID,
-				"job_id":      job.ID,
-			})
-			return nil
+			return h.handleEnqueueConflict(ctx, job.ID, cartID, customerID)
 		}
 		return fmt.Errorf("enqueue email job: %w", err)
 	}
@@ -283,9 +285,39 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 	return nil
 }
 
-// cartRecoveryJobID returns a stable UUID v5-shaped id for one recovery email
-// per cart (sha1 of a fixed namespace + cart id).
-func cartRecoveryJobID(cartID string) string {
+func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, jobID, cartID, customerID string) error {
+	logFields := map[string]interface{}{
+		"cart_id":     cartID,
+		"customer_id": customerID,
+		"job_id":      jobID,
+	}
+	getter, ok := h.queue.(recoveryJobGetter)
+	if !ok {
+		h.log.Info("cart.recovery.email_already_enqueued", logFields)
+		return nil
+	}
+	detail, err := getter.Get(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("get email job %s: %w", jobID, err)
+	}
+	if detail == nil {
+		h.log.Info("cart.recovery.email_conflict_missing", logFields)
+		return fmt.Errorf("enqueue email job: conflict but job %s not found", jobID)
+	}
+	switch detail.Status {
+	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusDone:
+		h.log.Info("cart.recovery.email_already_enqueued", logFields)
+		return nil
+	default:
+		// failed / cancelled / other terminal — leave cart unmarked for retry.
+		h.log.Info("cart.recovery.email_conflict_terminal", logFields)
+		return fmt.Errorf("enqueue email job: existing job %s is %s", jobID, detail.Status)
+	}
+}
+
+// CartRecoveryEmailJobID returns a stable UUID v5-shaped id for one recovery
+// email per cart (sha1 of a fixed namespace + cart id).
+func CartRecoveryEmailJobID(cartID string) string {
 	sum := sha1.Sum([]byte("shopanda.email.cart_recovery:" + strings.TrimSpace(cartID)))
 	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
 	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant

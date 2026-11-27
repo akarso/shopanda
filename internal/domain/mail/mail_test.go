@@ -1,6 +1,7 @@
 package mail_test
 
 import (
+	"html/template"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/mail"
@@ -45,6 +46,23 @@ func TestApplyLayout_NilNoop(t *testing.T) {
 	}
 	if got.Body != msg.Body {
 		t.Fatalf("body = %q", got.Body)
+	}
+}
+
+func TestTemplates_PutAll_RejectsNilAndEmpty(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	parsed, err := mail.ParseNamed("ok", "s", "<p>x</p>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpl.PutAll(map[string]*template.Template{"": parsed}); err == nil {
+		t.Fatal("expected empty name error")
+	}
+	if err := tmpl.PutAll(map[string]*template.Template{"ok": nil}); err == nil {
+		t.Fatal("expected nil template error")
+	}
+	if _, err := tmpl.Render("ok", "a@b.com", nil); err == nil {
+		t.Fatal("rejected PutAll must not mutate registry")
 	}
 }
 

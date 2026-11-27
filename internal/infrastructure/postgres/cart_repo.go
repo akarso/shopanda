@@ -284,6 +284,21 @@ func (r *CartRepo) MarkRecoveryEmailSent(ctx context.Context, cartID string, sen
 	return n == 1, nil
 }
 
+// ClearRecoveryEmailSent clears recovery_email_sent_at so a failed enqueue can retry.
+func (r *CartRepo) ClearRecoveryEmailSent(ctx context.Context, cartID string) error {
+	if cartID == "" {
+		return fmt.Errorf("cart_repo: clear recovery email sent: empty id")
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE carts
+		SET recovery_email_sent_at = NULL
+		WHERE id = $1`, cartID)
+	if err != nil {
+		return fmt.Errorf("cart_repo: clear recovery email sent: %w", err)
+	}
+	return nil
+}
+
 // loadItems fetches all items for a cart, ordered by created_at.
 func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, error) {
 	const query = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at,

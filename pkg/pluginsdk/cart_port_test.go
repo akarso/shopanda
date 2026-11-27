@@ -163,6 +163,7 @@ func (r *cartPortMemCarts) FindRecoveryCandidates(context.Context, time.Time, in
 func (r *cartPortMemCarts) MarkRecoveryEmailSent(context.Context, string, time.Time) (bool, error) {
 	return false, nil
 }
+func (r *cartPortMemCarts) ClearRecoveryEmailSent(context.Context, string) error { return nil }
 
 type cartPortPrices struct {
 	currency string

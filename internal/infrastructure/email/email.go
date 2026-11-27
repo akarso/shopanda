@@ -50,7 +50,9 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		names = append(names, tmplName)
 	}
 
-	t.PutAll(parsed)
+	if err := t.PutAll(parsed); err != nil {
+		return nil, err
+	}
 	return names, nil
 }
 
