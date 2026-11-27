@@ -69,7 +69,7 @@ When overrides are wired, a default-store lookup failure aborts **overridable** 
 | POST | `/api/v1/admin/email-templates/{name}/preview` | Render with sample payload (no send) |
 | POST | `/api/v1/admin/email-templates/{name}/test-send` | Render + send to an address via existing mailer |
 
-RBAC: reuse config/store admin permission or a dedicated `email_templates.write`. Do not invent a second SMTP stack.
+RBAC: `content.read` (list/get/preview), `content.write` (put/delete/test-send). Store scope is the default store. PUT is allowlist-only (overridable names); auth/claim/voucher return validation errors. Preview never calls the mailer; test-send uses the process mailer synchronously (no second SMTP stack). `updated_by` is the admin actor id.
 
 ## 5. Admin UI (PR-1214)
 
