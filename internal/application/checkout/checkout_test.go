@@ -60,7 +60,7 @@ func (r *mockCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ 
 func (r *mockCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (r *mockCartRepo) ClearRecoveryEmailSent(context.Context, string) error { return nil }
+func (r *mockCartRepo) ClearRecoveryEmailSent(context.Context, string, time.Time) error { return nil }
 
 // --- Helpers ---
 

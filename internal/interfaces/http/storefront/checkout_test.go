@@ -88,7 +88,7 @@ func (r *stubCheckoutCartRepo) FindRecoveryCandidates(_ context.Context, _ time.
 func (r *stubCheckoutCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (r *stubCheckoutCartRepo) ClearRecoveryEmailSent(context.Context, string) error { return nil }
+func (r *stubCheckoutCartRepo) ClearRecoveryEmailSent(context.Context, string, time.Time) error { return nil }
 
 // stubCheckoutVariantRepo ────────────────────────────────────────────────
 

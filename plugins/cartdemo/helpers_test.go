@@ -84,7 +84,7 @@ func (r *stubCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ 
 func (r *stubCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (r *stubCartRepo) ClearRecoveryEmailSent(context.Context, string) error { return nil }
+func (r *stubCartRepo) ClearRecoveryEmailSent(context.Context, string, time.Time) error { return nil }
 
 type stubPriceRepo struct {
 	prices map[string]*pricing.Price

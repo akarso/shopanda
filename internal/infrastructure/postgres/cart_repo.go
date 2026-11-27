@@ -284,15 +284,16 @@ func (r *CartRepo) MarkRecoveryEmailSent(ctx context.Context, cartID string, sen
 	return n == 1, nil
 }
 
-// ClearRecoveryEmailSent clears recovery_email_sent_at so a failed enqueue can retry.
-func (r *CartRepo) ClearRecoveryEmailSent(ctx context.Context, cartID string) error {
+// ClearRecoveryEmailSent clears recovery_email_sent_at only when it still
+// matches sentAt (the timestamp from the mark that is being rolled back).
+func (r *CartRepo) ClearRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) error {
 	if cartID == "" {
 		return fmt.Errorf("cart_repo: clear recovery email sent: empty id")
 	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE carts
 		SET recovery_email_sent_at = NULL
-		WHERE id = $1`, cartID)
+		WHERE id = $1 AND recovery_email_sent_at = $2`, cartID, sentAt)
 	if err != nil {
 		return fmt.Errorf("cart_repo: clear recovery email sent: %w", err)
 	}

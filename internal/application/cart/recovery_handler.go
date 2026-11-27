@@ -3,6 +3,7 @@ package cart
 import (
 	"context"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -199,7 +200,8 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	}
 	// Claim first so brokers that ignore job ids cannot double-publish across
 	// overlapping scans. Stable job id still collapses retries on Postgres/Redis.
-	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
+	sentAt := time.Now().UTC()
+	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, sentAt)
 	if err != nil {
 		return err
 	}
@@ -207,7 +209,7 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		return nil
 	}
 	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
-		if clearErr := h.carts.ClearRecoveryEmailSent(ctx, c.ID); clearErr != nil {
+		if clearErr := h.carts.ClearRecoveryEmailSent(ctx, c.ID, sentAt); clearErr != nil {
 			h.log.Error("cart.recovery.clear_claim_failed", clearErr, map[string]interface{}{
 				"cart_id": c.ID,
 			})
@@ -293,6 +295,8 @@ func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, jobID, cart
 	}
 	getter, ok := h.queue.(recoveryJobGetter)
 	if !ok {
+		// Brokers without Get: keep the claim. We cannot tell terminal from
+		// in-flight; clearing would reopen double-send on SQS/Rabbit/Kafka.
 		h.log.Info("cart.recovery.email_already_enqueued", logFields)
 		return nil
 	}
@@ -308,10 +312,20 @@ func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, jobID, cart
 	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusDone:
 		h.log.Info("cart.recovery.email_already_enqueued", logFields)
 		return nil
+	case jobs.StatusFailed, jobs.StatusCancelled:
+		requeueErr := h.queue.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal())
+		if errors.Is(requeueErr, jobs.ErrRequeueUnsupported) {
+			h.log.Info("cart.recovery.email_requeue_unsupported", logFields)
+			return nil // keep mark; broker cannot revive the id
+		}
+		if requeueErr != nil {
+			return fmt.Errorf("requeue email job %s: %w", jobID, requeueErr)
+		}
+		h.log.Info("cart.recovery.email_requeued", logFields)
+		return nil
 	default:
-		// failed / cancelled / other terminal — leave cart unmarked for retry.
-		h.log.Info("cart.recovery.email_conflict_terminal", logFields)
-		return fmt.Errorf("enqueue email job: existing job %s is %s", jobID, detail.Status)
+		h.log.Info("cart.recovery.email_conflict_unknown_status", logFields)
+		return fmt.Errorf("enqueue email job: existing job %s has status %s", jobID, detail.Status)
 	}
 }
 

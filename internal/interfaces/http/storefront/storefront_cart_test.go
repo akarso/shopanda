@@ -113,7 +113,7 @@ func (r *storefrontCartRepoStub) FindRecoveryCandidates(_ context.Context, _ tim
 func (r *storefrontCartRepoStub) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (r *storefrontCartRepoStub) ClearRecoveryEmailSent(context.Context, string) error { return nil }
+func (r *storefrontCartRepoStub) ClearRecoveryEmailSent(context.Context, string, time.Time) error { return nil }
 
 type storefrontPriceRepoStub struct {
 	prices map[string]*pricing.Price
