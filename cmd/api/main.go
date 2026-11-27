@@ -926,13 +926,20 @@ func formatClaimTokenTTL(d time.Duration) string {
 	}
 	// Truncate toward zero so the advertised lifetime never exceeds ExpiresAt.
 	mins := int(d / time.Minute)
-	if mins < 1 {
-		mins = 1
+	if mins >= 1 {
+		if mins == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", mins)
 	}
-	if mins == 1 {
-		return "1 minute"
+	secs := int(d / time.Second)
+	if secs < 1 {
+		secs = 1
 	}
-	return fmt.Sprintf("%d minutes", mins)
+	if secs == 1 {
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", secs)
 }
 
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup

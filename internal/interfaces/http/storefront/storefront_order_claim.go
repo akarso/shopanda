@@ -13,6 +13,7 @@ import (
 
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -136,9 +137,12 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 				})
 			} else if err := h.sendClaimEmailWithRetry(r.Context(), contactEmail, claimToken); err != nil {
 				fields := map[string]interface{}{"path": r.URL.Path}
-				if isClaimEmailTimeout(err) {
+				switch {
+				case errors.Is(err, context.Canceled):
+					h.log.Error("storefront.order_claim.email_canceled", err, fields)
+				case isClaimEmailTimeout(err):
 					h.log.Error("storefront.order_claim.email_timeout", err, fields)
-				} else {
+				default:
 					h.log.Error("storefront.order_claim.email_failed", err, fields)
 				}
 			} else {
@@ -193,19 +197,19 @@ func (h *StorefrontHandler) sendClaimEmailWithRetry(ctx context.Context, contact
 }
 
 // isClaimEmailRetryable is true only when the message was almost certainly
-// not accepted (SMTP dial before DATA). Do not retry after DATA/Quit/timeouts.
+// not accepted (SMTP dial before DATA). Timeouts and post-dial errors are not.
 func isClaimEmailRetryable(err error) bool {
-	if err == nil || isClaimEmailTimeout(err) {
+	if err == nil || isClaimEmailTimeout(err) || errors.Is(err, context.Canceled) {
 		return false
 	}
-	return strings.Contains(err.Error(), "smtp: dial:")
+	return errors.Is(err, smtpmail.ErrDial)
 }
 
 func isClaimEmailTimeout(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	msg := err.Error()

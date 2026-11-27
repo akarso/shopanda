@@ -17,6 +17,7 @@ import (
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
@@ -658,18 +659,44 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 		// Same TTL orderClaimToken writes into ExpiresAt and claim mail advertises.
 		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
 	}
-	claimEmailer := storefrontOrderClaimEmailer{
-		mailer:    rt.mailer,
-		claimURL:  storefrontClaimPageURL(cfg),
-		storeURL:  strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/"),
-		templates: rt.mailTemplates,
-		layout:    rt.emailLayout,
-		brand: storeidentity.EmailBrandSource{
-			Identity: rt.storeIdentitySvc,
-			Stores:   rt.repos.storeRepo,
-			Config:   rt.repos.configRepo,
-		},
-		tokenTTL: sf.SecurityEmailTokenTTL(),
+	return sf.WithOrderClaimEmailer(newStorefrontOrderClaimEmailer(sf, rt, cfg))
+}
+
+// newStorefrontOrderClaimEmailer builds the claim mailer using the verifier TTL
+// already configured on sf (attachStorefrontClaimAPI must call this after
+// WithAccountSecurity / WithAccountSecurityEmailLinks).
+func newStorefrontOrderClaimEmailer(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) storefrontOrderClaimEmailer {
+	var brand storeidentity.EmailBrandSource
+	var mailer mail.Mailer
+	var templates *mail.Templates
+	var layout mail.Layout
+	if rt != nil {
+		mailer = rt.mailer
+		templates = rt.mailTemplates
+		layout = rt.emailLayout
+		if rt.repos != nil {
+			brand = storeidentity.EmailBrandSource{
+				Identity: rt.storeIdentitySvc,
+				Stores:   rt.repos.storeRepo,
+				Config:   rt.repos.configRepo,
+			}
+		}
 	}
-	return sf.WithOrderClaimEmailer(claimEmailer)
+	tokenTTL := storefront.DefaultSecurityEmailTokenTTL
+	if sf != nil {
+		tokenTTL = sf.SecurityEmailTokenTTL()
+	}
+	publicBase := ""
+	if cfg != nil {
+		publicBase = strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
+	}
+	return storefrontOrderClaimEmailer{
+		mailer:    mailer,
+		claimURL:  storefrontClaimPageURL(cfg),
+		storeURL:  publicBase,
+		templates: templates,
+		layout:    layout,
+		brand:     brand,
+		tokenTTL:  tokenTTL,
+	}
 }

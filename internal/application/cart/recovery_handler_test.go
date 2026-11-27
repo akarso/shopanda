@@ -43,13 +43,15 @@ func loadRecoveryFileTemplates(t *testing.T) (*mail.Templates, mail.Layout) {
 
 type recoveryCartRepo struct {
 	domainCart.CartRepository
-	candidates    []domainCart.Cart
-	marked        []string
-	claimedAt     map[string]time.Time
-	markClaimable bool
+	candidates         []domainCart.Cart
+	marked             []string
+	claimedAt          map[string]time.Time
+	markClaimable      bool
+	findCandidateCalls int
 }
 
 func (s *recoveryCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
+	s.findCandidateCalls++
 	out := make([]*domainCart.Cart, len(s.candidates))
 	for i := range s.candidates {
 		c := s.candidates[i]
@@ -438,6 +440,9 @@ func TestRecoveryHandler_Handle_EmptyStoreURLSkipsSend(t *testing.T) {
 			}
 			if variants.findCalls != 0 {
 				t.Fatalf("bad store URL %q must not look up variants, got %d calls", storeURL, variants.findCalls)
+			}
+			if carts.findCandidateCalls != 0 {
+				t.Fatalf("bad store URL %q must not fetch candidates, got %d calls", storeURL, carts.findCandidateCalls)
 			}
 		})
 	}
