@@ -196,8 +196,9 @@ func TestApp_ApplyQueueBoundHooks_PanicReturnsError(t *testing.T) {
 
 type introspectableHookQueue struct {
 	hookQueue
-	retryN  atomic.Int32
-	cancelN atomic.Int32
+	retryN   atomic.Int32
+	cancelN  atomic.Int32
+	replaced []string
 }
 
 func (q *introspectableHookQueue) List(context.Context, jobs.ListFilter) ([]jobs.Summary, error) {
@@ -216,6 +217,11 @@ func (q *introspectableHookQueue) Retry(context.Context, string) error {
 }
 func (q *introspectableHookQueue) Cancel(context.Context, string) error {
 	q.cancelN.Add(1)
+	return nil
+}
+
+func (q *introspectableHookQueue) ReplaceFailed(_ context.Context, job jobs.Job) error {
+	q.replaced = append(q.replaced, job.ID)
 	return nil
 }
 
@@ -243,6 +249,25 @@ func TestApp_WrapRequeueNotify_KeepsReaderAdmin(t *testing.T) {
 	}
 	if _, err := q.(jobs.Reader).CountsByStatus(context.Background()); err != nil {
 		t.Fatalf("CountsByStatus: %v", err)
+	}
+}
+
+func TestApp_WrapRequeueNotify_ForwardsReplaceFailed(t *testing.T) {
+	app := &plugin.App{}
+	inner := &introspectableHookQueue{}
+	q := app.WrapRequeueNotify(inner)
+	replacer, ok := q.(interface {
+		ReplaceFailed(context.Context, jobs.Job) error
+	})
+	if !ok {
+		t.Fatalf("%T must implement ReplaceFailed for email heal", q)
+	}
+	job := jobs.Job{ID: "email-1", Type: "email.send", Payload: map[string]interface{}{"body": "fresh"}}
+	if err := replacer.ReplaceFailed(context.Background(), job); err != nil {
+		t.Fatalf("ReplaceFailed: %v", err)
+	}
+	if len(inner.replaced) != 1 || inner.replaced[0] != "email-1" {
+		t.Fatalf("ReplaceFailed must hit live inner, got %v", inner.replaced)
 	}
 }
 

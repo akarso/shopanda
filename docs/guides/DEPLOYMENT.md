@@ -590,6 +590,7 @@ Do not separate the binary from its working directory unless you deliberately wa
 - `migrations/` for `setup` and `migrate`
 - `openapi.yaml` for `/docs/openapi.yaml`
 - `themes/` if `SHOPANDA_FRONTEND_ENABLED=true`
+- `templates/emails/` for transactional HTML (file templates overwrite builtins; resolved from cwd, then `/app/templates/emails` in containers; missing dir keeps builtins)
 
 ### Create the config and environment files
 

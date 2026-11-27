@@ -2,8 +2,13 @@ package cart
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrRecoveryClaimMismatch means ClearRecoveryEmailSent matched zero rows
+// (claim already cleared or a newer mark owns recovery_email_sent_at).
+var ErrRecoveryClaimMismatch = errors.New("cart: recovery claim timestamp mismatch")
 
 // CartRepository defines persistence operations for carts.
 type CartRepository interface {
@@ -33,4 +38,10 @@ type CartRepository interface {
 	// MarkRecoveryEmailSent atomically claims a cart for recovery (compare-and-set on
 	// recovery_email_sent_at). Returns false when already claimed or sent.
 	MarkRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) (bool, error)
+
+	// ClearRecoveryEmailSent clears the recovery claim written at sentAt so a
+	// failed enqueue can retry (recovery_email_sent_at → NULL). Returns
+	// ErrRecoveryClaimMismatch when no row matches (already cleared or a
+	// newer claim owns the column).
+	ClearRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) error
 }

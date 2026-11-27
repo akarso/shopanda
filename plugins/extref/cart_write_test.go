@@ -209,6 +209,7 @@ func (r *memCartRepo) FindRecoveryCandidates(context.Context, time.Time, int) ([
 func (r *memCartRepo) MarkRecoveryEmailSent(context.Context, string, time.Time) (bool, error) {
 	return false, nil
 }
+func (r *memCartRepo) ClearRecoveryEmailSent(context.Context, string, time.Time) error { return nil }
 
 type priceStub struct {
 	prices map[string]*domainpricing.Price

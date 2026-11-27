@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -793,6 +794,44 @@ func (q *JobQueue) loadJob(ctx context.Context, id string) (storedJob, error) {
 		return storedJob{}, fmt.Errorf("job_queue: unmarshal job %q: %w", id, err)
 	}
 	return job, nil
+}
+
+// Get returns a single job's full detail for conflict / admin introspection.
+// Returns (nil, nil) when the id is unknown.
+func (q *JobQueue) Get(ctx context.Context, jobID string) (*jobs.Detail, error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, nil
+	}
+	stored, err := q.loadJob(ctx, jobID)
+	if err != nil {
+		if errors.Is(err, errJobNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	meta, metaErr := q.loadClaimMeta(ctx, jobID)
+	if metaErr == nil && meta.Status != "" {
+		stored.Status = meta.Status
+		stored.Attempts = meta.Attempts
+	}
+	payload := stored.Payload
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	return &jobs.Detail{
+		Summary: jobs.Summary{
+			ID:         stored.ID,
+			Type:       stored.Type,
+			Status:     stored.Status,
+			Attempts:   stored.Attempts,
+			MaxRetries: stored.MaxRetries,
+			RunAt:      stored.RunAt,
+			CreatedAt:  stored.CreatedAt,
+			UpdatedAt:  stored.UpdatedAt,
+		},
+		Payload:   payload,
+		LastError: stored.LastError,
+	}, nil
 }
 
 func (q *JobQueue) promoteDelayed(ctx context.Context) error {

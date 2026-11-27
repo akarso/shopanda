@@ -2,6 +2,7 @@ package email
 
 import (
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,15 +12,19 @@ import (
 
 // LoadDir reads all .html templates from the loader's directory
 // (excluding _layout.html and other _-prefixed partials) and registers
-// them in the Templates registry.
-// Existing templates with the same name are overwritten.
-func LoadDir(t *mail.Templates, loader *FileLoader) error {
+// them in the Templates registry. Existing names are overwritten.
+// Every file is parsed with mail.ParseNamed before any registry write;
+// PutAll applies the whole set under one lock so a parse failure leaves
+// the destination unchanged.
+// names lists templates that replaced or added registry entries.
+func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) {
 	dir := loader.Dir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("email: read dir %s: %w", dir, err)
+		return nil, fmt.Errorf("email: read dir %s: %w", dir, err)
 	}
 
+	parsed := make(map[string]*template.Template, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -33,32 +38,57 @@ func LoadDir(t *mail.Templates, loader *FileLoader) error {
 		}
 
 		tmplName := strings.TrimSuffix(name, ".html")
-		subject, body, err := loader.Load(tmplName)
-		if err != nil {
-			return fmt.Errorf("email: load template %s: %w", tmplName, err)
+		subject, body, loadErr := loader.Load(tmplName)
+		if loadErr != nil {
+			return nil, fmt.Errorf("email: load template %s: %w", tmplName, loadErr)
 		}
-		t.Register(tmplName, subject, body)
+		tmpl, parseErr := mail.ParseNamed(tmplName, subject, body)
+		if parseErr != nil {
+			return nil, fmt.Errorf("email: parse template %s: %w", tmplName, parseErr)
+		}
+		parsed[tmplName] = tmpl
+		names = append(names, tmplName)
 	}
-	return nil
+
+	if err := t.PutAll(parsed); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+// CountBodyTemplates returns how many non-partial *.html bodies sit in dir.
+func CountBodyTemplates(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".html") && !strings.HasPrefix(name, "_") {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// HasLayout reports whether dir contains _layout.html.
+func HasLayout(dir string) bool {
+	st, err := os.Stat(filepath.Join(dir, "_layout.html"))
+	return err == nil && !st.IsDir()
 }
 
 // RenderEmail renders a named template and wraps the result in the layout.
 // If lr is nil, no layout wrapping is applied.
-func RenderEmail(t *mail.Templates, lr *LayoutRenderer, name, to string, data mail.EmailData) (mail.Message, error) {
+func RenderEmail(t *mail.Templates, lr mail.Layout, name, to string, data mail.EmailData) (mail.Message, error) {
 	msg, err := t.Render(name, to, data)
 	if err != nil {
 		return mail.Message{}, err
 	}
-
-	if lr != nil {
-		wrapped, wErr := lr.Wrap(msg.Body, data)
-		if wErr != nil {
-			return mail.Message{}, wErr
-		}
-		msg.Body = wrapped
-	}
-
-	return msg, nil
+	return mail.ApplyLayout(lr, msg, data)
 }
 
 // Setup initialises both a FileLoader and LayoutRenderer from the given

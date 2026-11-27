@@ -2,6 +2,8 @@ package cart
 
 import (
 	"context"
+	"crypto/sha1"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
-	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	"github.com/akarso/shopanda/internal/application/notification"
@@ -38,6 +40,7 @@ type RecoveryHandler struct {
 	variants   catalog.VariantRepository
 	products   catalog.ProductRepository
 	templates  *mail.Templates
+	layout     mail.Layout
 	queue      jobs.Queue
 	storeURL   string
 	settings   config.Repository
@@ -53,6 +56,7 @@ type RecoveryHandlerConfig struct {
 	Variants   catalog.VariantRepository
 	Products   catalog.ProductRepository
 	Templates  *mail.Templates
+	Layout     mail.Layout // optional — _layout.html chrome (PR-1210)
 	Queue      jobs.Queue
 	Settings   config.Repository
 	Brand      RecoveryBrand
@@ -94,6 +98,7 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		variants:   cfg.Variants,
 		products:   cfg.Products,
 		templates:  cfg.Templates,
+		layout:     cfg.Layout,
 		queue:      cfg.Queue,
 		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
 		settings:   cfg.Settings,
@@ -168,14 +173,6 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		return nil
 	}
 
-	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if !marked {
-		return nil
-	}
-
 	items, err := h.recoveryItems(ctx, c)
 	if err != nil {
 		return err
@@ -197,7 +194,29 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}
-	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
+	msg, err = mail.ApplyLayout(h.layout, msg, ed)
+	if err != nil {
+		return fmt.Errorf("wrap layout: %w", err)
+	}
+	// Claim first so brokers that ignore job ids cannot double-publish across
+	// overlapping scans. Stable job id still collapses retries on Postgres/Redis.
+	sentAt := time.Now().UTC()
+	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, sentAt)
+	if err != nil {
+		return err
+	}
+	if !marked {
+		return nil
+	}
+	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
+		if clearErr := h.carts.ClearRecoveryEmailSent(ctx, c.ID, sentAt); clearErr != nil {
+			h.log.Error("cart.recovery.clear_claim_failed", clearErr, map[string]interface{}{
+				"cart_id": c.ID,
+			})
+		}
+		return err
+	}
+	return nil
 }
 
 func (h *RecoveryHandler) terminalSkipRecovery(ctx context.Context, cartID string) {
@@ -238,17 +257,59 @@ func (h *RecoveryHandler) recoveryItems(ctx context.Context, c *domainCart.Cart)
 	return out, nil
 }
 
+// recoveryJobGetter is optional introspection for Conflict handling.
+type recoveryJobGetter interface {
+	Get(ctx context.Context, id string) (*jobs.Detail, error)
+}
+
+// recoveryFailedReplacer replaces a failed email.send payload and re-pends it
+// with attempts=0 (Postgres JobQueue.ReplaceFailed — same as invoice heal).
+type recoveryFailedReplacer interface {
+	ReplaceFailed(ctx context.Context, job jobs.Job) error
+}
+
+// recoveryQueueUnwrapper walks past WrapRequeueNotify / fence layers.
+type recoveryQueueUnwrapper interface {
+	UnwrapQueue() jobs.Queue
+}
+
+const recoveryQueueUnwrapDepth = 32
+
+// resolveRecoveryFailedReplacer finds ReplaceFailed on q or via UnwrapQueue
+// (serve/worker bind WrapRequeueNotify; some fences only expose Get outside).
+func resolveRecoveryFailedReplacer(q jobs.Queue) recoveryFailedReplacer {
+	for depth := 0; q != nil && depth < recoveryQueueUnwrapDepth; depth++ {
+		if r, ok := q.(recoveryFailedReplacer); ok {
+			return r
+		}
+		u, ok := q.(recoveryQueueUnwrapper)
+		if !ok {
+			return nil
+		}
+		next := u.UnwrapQueue()
+		if next == nil || next == q {
+			return nil
+		}
+		q = next
+	}
+	return nil
+}
+
 func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, cartID, customerID string) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
 		"body":    msg.Body,
 	}
-	job, err := jobs.NewJob(id.New(), notification.JobTypeEmailSend, payload)
+	jobID := CartRecoveryEmailJobID(cartID)
+	job, err := jobs.NewJob(jobID, notification.JobTypeEmailSend, payload)
 	if err != nil {
 		return fmt.Errorf("create email job: %w", err)
 	}
 	if err := h.queue.Enqueue(ctx, job); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			return h.handleEnqueueConflict(ctx, job, cartID, customerID)
+		}
 		return fmt.Errorf("enqueue email job: %w", err)
 	}
 	h.log.Info("cart.recovery.email_enqueued", map[string]interface{}{
@@ -257,4 +318,65 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 		"job_id":      job.ID,
 	})
 	return nil
+}
+
+func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, job jobs.Job, cartID, customerID string) error {
+	jobID := job.ID
+	logFields := map[string]interface{}{
+		"cart_id":     cartID,
+		"customer_id": customerID,
+		"job_id":      jobID,
+	}
+	getter, ok := h.queue.(recoveryJobGetter)
+	if !ok {
+		// Brokers without Get: keep the claim. We cannot tell terminal from
+		// in-flight; clearing would reopen double-send on SQS/Rabbit/Kafka.
+		h.log.Info("cart.recovery.email_already_enqueued", logFields)
+		return nil
+	}
+	detail, err := getter.Get(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("get email job %s: %w", jobID, err)
+	}
+	if detail == nil {
+		h.log.Info("cart.recovery.email_conflict_missing", logFields)
+		return fmt.Errorf("enqueue email job: conflict but job %s not found", jobID)
+	}
+	switch detail.Status {
+	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusDone, jobs.StatusReclaiming:
+		h.log.Info("cart.recovery.email_already_enqueued", logFields)
+		return nil
+	case jobs.StatusCancelled:
+		// Operator cancelled; leave the mark so we do not revive the id.
+		h.log.Info("cart.recovery.email_cancelled_kept", logFields)
+		return nil
+	case jobs.StatusFailed:
+		replacer := resolveRecoveryFailedReplacer(h.queue)
+		if replacer == nil {
+			// Redis etc: Get sees failed but cannot rewrite/reset attempts.
+			h.log.Info("cart.recovery.email_replace_unsupported", logFields)
+			return nil
+		}
+		if replaceErr := replacer.ReplaceFailed(ctx, job); replaceErr != nil {
+			if errors.Is(replaceErr, jobs.ErrRequeueNotTerminal) {
+				h.log.Info("cart.recovery.email_already_enqueued", logFields)
+				return nil
+			}
+			return fmt.Errorf("replace failed email job %s: %w", jobID, replaceErr)
+		}
+		h.log.Info("cart.recovery.email_replaced", logFields)
+		return nil
+	default:
+		h.log.Info("cart.recovery.email_conflict_unknown_status", logFields)
+		return fmt.Errorf("enqueue email job: existing job %s has status %s", jobID, detail.Status)
+	}
+}
+
+// CartRecoveryEmailJobID returns a stable UUID v5-shaped id for one recovery
+// email per cart (sha1 of a fixed namespace + cart id).
+func CartRecoveryEmailJobID(cartID string) string {
+	sum := sha1.Sum([]byte("shopanda.email.cart_recovery:" + strings.TrimSpace(cartID)))
+	sum[6] = (sum[6] & 0x0f) | 0x50 // version 5
+	sum[8] = (sum[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
