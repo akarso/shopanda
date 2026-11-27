@@ -185,6 +185,7 @@
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderNavigationGrid, auth: true },
         "/admin/content/blocks": { title: "Blocks", render: renderBlocksGrid, auth: true },
+        "/admin/content/email-templates": { title: "Email Templates", render: renderEmailTemplatesGrid, auth: true },
         "/admin/content/home-blocks": { title: "Home Blocks", render: renderHomeBlockPlacements, auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
@@ -332,6 +333,15 @@
                 title: "Edit Block",
                 auth: true,
                 render: function (container) { renderBlockEdit(container, blockID); }
+            };
+        }
+        var emailTemplateMatch = path.match(/^\/admin\/content\/email-templates\/([^/]+)$/);
+        if (emailTemplateMatch) {
+            var emailTemplateName = decodeURIComponent(emailTemplateMatch[1]);
+            return {
+                title: "Email Template",
+                auth: true,
+                render: function (container) { renderEmailTemplateEdit(container, emailTemplateName); }
             };
         }
         var webhookMatch = path.match(/^\/admin\/integrations\/webhooks\/([^/]+)$/);
@@ -9315,6 +9325,389 @@
         });
     }
 
+    var emailTemplateLabels = {
+        order_confirmed: "Order confirmed",
+        order_shipped: "Order shipped",
+        invoice_created: "Invoice created",
+        cart_recovery: "Cart recovery",
+        password_reset: "Password reset",
+        email_verification: "Email verification",
+        security_verification: "Security verification",
+        email_change_verification: "Email change verification",
+        email_change_notice: "Email change notice",
+        order_claim: "Order claim",
+        voucher_issued: "Voucher issued"
+    };
+
+    function emailTemplateLabel(name) {
+        return emailTemplateLabels[name] || name;
+    }
+
+    function formatEmailTemplateLocale(locale) {
+        if (locale === "" || locale == null) {
+            return "default";
+        }
+        return String(locale);
+    }
+
+    function formatEmailTemplateLocales(locales) {
+        if (!Array.isArray(locales) || locales.length === 0) {
+            return "—";
+        }
+        var out = [];
+        for (var i = 0; i < locales.length; i++) {
+            out.push(formatEmailTemplateLocale(locales[i]));
+        }
+        return out.join(", ");
+    }
+
+    function renderEmailTemplatesGrid(container) {
+        container.innerHTML = '<h2>Email Templates</h2>' +
+            '<p class="admin-form-hint">Transactional templates. Overrides apply for the default store. Auth, claim, and voucher templates are view-only.</p>' +
+            '<div id="email-templates-grid"></div>';
+
+        var grid = document.getElementById("email-templates-grid");
+        api("/admin/email-templates").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have content access.</p>';
+                return;
+            }
+            var items = body && body.data;
+            if (!Array.isArray(items)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load email templates.")) + "</p>";
+                return;
+            }
+            var html = '<table><thead><tr>' +
+                "<th>Template</th><th>Name</th><th>Source</th><th>Locales</th><th>Writable</th>" +
+                "</tr></thead><tbody>";
+            if (items.length === 0) {
+                html += '<tr><td colspan="5">No templates registered.</td></tr>';
+            } else {
+                for (var i = 0; i < items.length; i++) {
+                    var item = items[i] || {};
+                    var name = item.name || "";
+                    var href = "/admin/content/email-templates/" + encodeURIComponent(name);
+                    html += "<tr>" +
+                        '<td><a href="' + href + '" data-link>' + esc(emailTemplateLabel(name)) + "</a></td>" +
+                        "<td><code>" + esc(name) + "</code></td>" +
+                        "<td>" + esc(item.source || "") + "</td>" +
+                        "<td>" + esc(formatEmailTemplateLocales(item.locales)) + "</td>" +
+                        "<td>" + (item.writable ? "Yes" : "No") + "</td>" +
+                        "</tr>";
+                }
+            }
+            html += "</tbody></table>";
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load email templates.")) + "</p>";
+        });
+    }
+
+    function renderEmailTemplateEdit(container, templateName) {
+        container.innerHTML =
+            "<h2>" + esc(emailTemplateLabel(templateName)) + "</h2>" +
+            '<p><a href="/admin/content/email-templates" data-link>Back to email templates</a></p>' +
+            '<p class="admin-form-hint"><code>' + esc(templateName) + "</code></p>" +
+            '<div id="email-template-msg"></div>' +
+            '<div id="email-template-editor"><p>Loading…</p></div>';
+
+        var msg = document.getElementById("email-template-msg");
+        var editor = document.getElementById("email-template-editor");
+
+        Promise.all([
+            api("/admin/email-templates"),
+            api("/admin/email-templates/" + encodeURIComponent(templateName))
+        ]).then(function (results) {
+            var listBody = results[0];
+            var getBody = results[1];
+            if ((listBody && listBody.error && listBody.error.code === "forbidden") ||
+                (getBody && getBody.error && getBody.error.code === "forbidden")) {
+                msg.innerHTML = '<p role="alert">Your account does not have content access.</p>';
+                editor.innerHTML = "";
+                return;
+            }
+            if (getBody && getBody.error) {
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(getBody, "Failed to load template.")) + "</p>";
+                editor.innerHTML = "";
+                return;
+            }
+            var listItems = (listBody && Array.isArray(listBody.data)) ? listBody.data : [];
+            var meta = null;
+            for (var i = 0; i < listItems.length; i++) {
+                if (listItems[i] && listItems[i].name === templateName) {
+                    meta = listItems[i];
+                    break;
+                }
+            }
+            var tpl = (getBody && getBody.data) || {};
+            var writable = !!(tpl.writable || (meta && meta.writable));
+            var locales = (meta && Array.isArray(meta.locales)) ? meta.locales.slice() : [];
+            bindEmailTemplateEditor(editor, msg, templateName, tpl, writable, locales);
+        }).catch(function (err) {
+            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load template.")) + "</p>";
+            editor.innerHTML = "";
+        });
+    }
+
+    function bindEmailTemplateEditor(editor, msg, templateName, tpl, writable, locales) {
+        var currentLocale = (tpl && tpl.locale != null) ? String(tpl.locale) : "";
+        var localeOptions = [];
+        var seen = {};
+        function addLocaleOption(loc) {
+            var key = loc == null ? "" : String(loc);
+            if (seen[key]) {
+                return;
+            }
+            seen[key] = true;
+            localeOptions.push(key);
+        }
+        addLocaleOption("");
+        for (var i = 0; i < locales.length; i++) {
+            addLocaleOption(locales[i]);
+        }
+        addLocaleOption(currentLocale);
+
+        function localeSelectHTML(selected) {
+            var html = '<label>Locale<select name="locale" id="email-template-locale">';
+            for (var j = 0; j < localeOptions.length; j++) {
+                var loc = localeOptions[j];
+                html += '<option value="' + esc(loc) + '"' + (loc === selected ? " selected" : "") + ">" +
+                    esc(formatEmailTemplateLocale(loc)) + "</option>";
+            }
+            html += "</select></label>";
+            if (writable) {
+                html += '<label>Add locale<input name="new_locale" id="email-template-new-locale" placeholder="e.g. de" pattern="[A-Za-z]{2,8}"></label>' +
+                    '<button type="button" id="email-template-add-locale" class="secondary">Use locale</button>';
+            }
+            return html;
+        }
+
+        function metaHTML(row) {
+            var parts = ["Source: <strong>" + esc(row.source || "") + "</strong>"];
+            if (row.updated_at) {
+                parts.push("Updated: " + esc(String(row.updated_at)));
+            }
+            if (row.updated_by) {
+                parts.push("By: " + esc(String(row.updated_by)));
+            }
+            if (!writable) {
+                parts.push("View only (not overridable)");
+            }
+            return '<p class="admin-form-hint" id="email-template-meta">' + parts.join(" · ") + "</p>";
+        }
+
+        function renderForm(row) {
+            var disabled = writable ? "" : " disabled";
+            var actions = "";
+            if (writable) {
+                actions =
+                    '<div style="margin-top:1rem">' +
+                    '<button type="submit">Save</button> ' +
+                    '<button type="button" id="email-template-revert" class="danger">Revert to default</button>' +
+                    "</div>" +
+                    '<fieldset style="margin-top:1.5rem"><legend>Test send</legend>' +
+                    '<label>To<input type="email" name="test_to" id="email-template-test-to" placeholder="you@example.com"></label>' +
+                    '<button type="button" id="email-template-test-send">Send test</button>' +
+                    '<p class="admin-form-hint">Subject is prefixed with [TEST]. Limited to one send per 30 seconds.</p>' +
+                    "</fieldset>";
+            }
+            editor.innerHTML =
+                '<form id="email-template-form">' +
+                localeSelectHTML(row.locale != null ? String(row.locale) : "") +
+                metaHTML(row) +
+                '<label>Subject<input name="subject" id="email-template-subject" value="' + esc(row.subject || "") + '"' + disabled + " required></label>" +
+                '<label>Body (HTML)<textarea name="body" id="email-template-body" rows="16"' + disabled + ">" + esc(row.body || "") + "</textarea></label>" +
+                actions +
+                "</form>" +
+                '<section style="margin-top:2rem">' +
+                "<h3>Preview</h3>" +
+                '<p class="admin-form-hint">Uses the live render chain (requested locale → default override → file). Saved content only.</p>' +
+                '<button type="button" id="email-template-preview-btn">Refresh preview</button>' +
+                '<div id="email-template-preview-meta" class="admin-form-hint" style="margin-top:0.5rem"></div>' +
+                '<p id="email-template-preview-subject" style="font-weight:600;margin:0.75rem 0 0.25rem"></p>' +
+                '<iframe id="email-template-preview-frame" title="Email preview" sandbox="" style="width:100%;min-height:420px;border:1px solid #ccc;background:#fff"></iframe>' +
+                "</section>";
+
+            var form = document.getElementById("email-template-form");
+            var localeSelect = document.getElementById("email-template-locale");
+
+            function selectedLocale() {
+                return localeSelect ? localeSelect.value : "";
+            }
+
+            function loadLocale(locale) {
+                msg.innerHTML = "";
+                var q = locale ? ("?locale=" + encodeURIComponent(locale)) : "";
+                api("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load locale.")) + "</p>";
+                        return;
+                    }
+                    var next = (body && body.data) || {};
+                    addLocaleOption(next.locale != null ? String(next.locale) : locale);
+                    renderForm(next);
+                    refreshPreview();
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load locale.")) + "</p>";
+                });
+            }
+
+            if (localeSelect) {
+                localeSelect.addEventListener("change", function () {
+                    loadLocale(localeSelect.value);
+                });
+            }
+
+            var addLocaleBtn = document.getElementById("email-template-add-locale");
+            if (addLocaleBtn) {
+                addLocaleBtn.addEventListener("click", function () {
+                    var input = document.getElementById("email-template-new-locale");
+                    var raw = input ? String(input.value || "").trim() : "";
+                    if (!raw) {
+                        msg.innerHTML = '<p role="alert">Enter a locale (e.g. de).</p>';
+                        return;
+                    }
+                    addLocaleOption(raw.toLowerCase());
+                    loadLocale(raw.toLowerCase());
+                });
+            }
+
+            if (writable && form) {
+                form.addEventListener("submit", function (e) {
+                    e.preventDefault();
+                    var payload = {
+                        subject: form.elements.subject.value,
+                        body: form.elements.body.value,
+                        locale: selectedLocale()
+                    };
+                    api("/admin/email-templates/" + encodeURIComponent(templateName), {
+                        method: "PUT",
+                        body: JSON.stringify(payload)
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Save failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "<p>Saved.</p>";
+                        var saved = (body && body.data) || payload;
+                        addLocaleOption(saved.locale != null ? String(saved.locale) : payload.locale);
+                        renderForm(saved);
+                    }).catch(function (err) {
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                    });
+                });
+
+                var revertBtn = document.getElementById("email-template-revert");
+                if (revertBtn) {
+                    revertBtn.addEventListener("click", function () {
+                        var locLabel = formatEmailTemplateLocale(selectedLocale());
+                        if (!window.confirm("Revert " + templateName + " (" + locLabel + ") to the file/builtin template?")) {
+                            return;
+                        }
+                        var q = selectedLocale() ? ("?locale=" + encodeURIComponent(selectedLocale())) : "";
+                        apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Revert failed.")) + "</p>";
+                                return;
+                            }
+                            msg.innerHTML = "<p>Reverted to default.</p>";
+                            loadLocale(selectedLocale());
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Revert failed.")) + "</p>";
+                        });
+                    });
+                }
+
+                var testBtn = document.getElementById("email-template-test-send");
+                if (testBtn) {
+                    testBtn.addEventListener("click", function () {
+                        var toInput = document.getElementById("email-template-test-to");
+                        var to = toInput ? String(toInput.value || "").trim() : "";
+                        if (!to) {
+                            msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
+                            return;
+                        }
+                        api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
+                            method: "POST",
+                            body: JSON.stringify({ to: to, locale: selectedLocale() })
+                        }).then(function (body) {
+                            if (body && body.error) {
+                                var code = body.error.code || "";
+                                var errMsg = extractErrorMessage(body, "Test send failed.");
+                                if (code === "rate_limited") {
+                                    errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
+                                }
+                                msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
+                                return;
+                            }
+                            var data = (body && body.data) || {};
+                            msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
+                                (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
+                        });
+                    });
+                }
+            }
+
+            var previewBtn = document.getElementById("email-template-preview-btn");
+            if (previewBtn) {
+                previewBtn.addEventListener("click", function () {
+                    refreshPreview();
+                });
+            }
+
+            function refreshPreview() {
+                var previewMeta = document.getElementById("email-template-preview-meta");
+                var previewSubject = document.getElementById("email-template-preview-subject");
+                var frame = document.getElementById("email-template-preview-frame");
+                var locale = selectedLocale();
+                var url = "/admin/email-templates/" + encodeURIComponent(templateName) + "/preview";
+                if (locale) {
+                    url += "?locale=" + encodeURIComponent(locale);
+                }
+                api(url, { method: "POST", body: "{}" }).then(function (body) {
+                    if (body && body.error) {
+                        if (previewMeta) {
+                            previewMeta.innerHTML = '<span role="alert">' + esc(extractErrorMessage(body, "Preview failed.")) + "</span>";
+                        }
+                        return;
+                    }
+                    var data = (body && body.data) || {};
+                    var bits = [
+                        "source=" + (data.source || ""),
+                        "requested=" + formatEmailTemplateLocale(data.requested_locale),
+                        "resolved=" + formatEmailTemplateLocale(data.resolved_locale)
+                    ];
+                    if (data.fallback) {
+                        bits.push("fallback");
+                    }
+                    if (data.attachment_omitted) {
+                        bits.push("attachment omitted: " + data.attachment_omitted);
+                    }
+                    if (previewMeta) {
+                        previewMeta.textContent = bits.join(" · ");
+                    }
+                    if (previewSubject) {
+                        previewSubject.textContent = data.subject || "";
+                    }
+                    if (frame) {
+                        frame.setAttribute("srcdoc", data.body || "<p></p>");
+                    }
+                }).catch(function (err) {
+                    if (previewMeta) {
+                        previewMeta.innerHTML = '<span role="alert">' + esc(extractErrorMessage(err, "Preview failed.")) + "</span>";
+                    }
+                });
+            }
+
+            // Kick off initial preview after bind.
+            refreshPreview();
+        }
+
+        renderForm(tpl || {});
+    }
+
     function renderAbandonedCartSettingsPage(container) {
         container.innerHTML =
             '<h2>Abandoned Cart</h2>' +
@@ -9355,7 +9748,7 @@
             '<small class="admin-form-hint">When disabled, the scheduled recovery job skips sending emails. Carts stay active so shoppers can return anytime.</small>' +
             '<label>Delay (hours)<input type="number" name="cart_recovery_delay_hours" min="1" max="720" step="1" value="' + esc(String(delayHours)) + '"></label>' +
             '<small class="admin-form-hint">Hours of inactivity before the first recovery email is sent (1–720).</small>' +
-            '<p class="admin-form-hint">Email template: <strong>cart_recovery</strong> (“You left items in your cart”). Configure SMTP under <a href="/admin/settings" data-link>Settings → General</a>.</p>' +
+            '<p class="admin-form-hint">Email template: <a href="/admin/content/email-templates/cart_recovery" data-link><strong>cart_recovery</strong></a> (“You left items in your cart”). Configure SMTP under <a href="/admin/settings" data-link>Settings → General</a>.</p>' +
             '<button type="submit">Save</button>';
         form.addEventListener('submit', function (e) {
             e.preventDefault();

@@ -85,15 +85,16 @@ RBAC: `content.read` (list/get/preview), `content.write` (put/delete/test-send).
 
 ## 5. Admin UI (PR-1214)
 
-**Content → Email Templates** (`/admin/content/email-templates`).
+**Content → Email Templates** (`/admin/content/email-templates`) — shipped in the embedded admin SPA.
 
-* List: name, description, current source, updated
-* Edit: subject + HTML textarea (not a visual builder)
-* Preview pane (server-rendered sample)
-* Test send (to field)
-* Revert to default
+* List: label, name, source, locales, writable
+* Edit: subject + HTML textarea (not a visual builder); locale select (+ add locale when writable)
+* Preview pane (server-rendered sample in a sandboxed iframe; shows source / resolved_locale / fallback)
+* Test send (to field; writable only; `[TEST]` subject; 30s rate limit)
+* Revert to default (DELETE; writable only)
+* Auth/claim/voucher templates open as view/preview only
 
-Abandoned-cart settings keep enable/delay; they link here instead of a dead “template pick” (PR-641 out of scope).
+Abandoned-cart settings keep enable/delay; the hint links to `/admin/content/email-templates/cart_recovery` (PR-641 template picker remains out of scope).
 
 ## 6. Non-goals
 
