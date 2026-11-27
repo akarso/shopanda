@@ -261,9 +261,108 @@
         return "No override for this locale (already file/builtin).";
     }
 
+    // createScopedEditorSession owns separate locale / preview / write gates and
+    // scopes queries to the captured editor root (never document.getElementById).
+    // Preview refreshes must not call beginLocaleLoad / localeGate.start().
+    function createScopedEditorSession(editor) {
+        var localeGate = newLoadGate();
+        var previewGate = newLoadGate();
+        var writeGate = newLoadGate();
+        var localeLockOwner = null;
+
+        function alive() {
+            return !!(editor && editor.isConnected);
+        }
+
+        function q(id) {
+            if (!editor || typeof editor.querySelector !== "function") {
+                return null;
+            }
+            return editor.querySelector("#" + id);
+        }
+
+        function beginLocaleLoad() {
+            writeGate.start(); // drop in-flight PUT/DELETE apply
+            var ticket = localeGate.start();
+            localeLockOwner = ticket;
+            return ticket;
+        }
+
+        // settleLocaleLoad: 'apply' | 'stale-unlock' | 'stale-ignore' | 'detached'
+        function settleLocaleLoad(ticket) {
+            if (!alive()) {
+                if (localeLockOwner === ticket) {
+                    localeLockOwner = null;
+                }
+                return "detached";
+            }
+            if (!ticket || !ticket.isCurrent()) {
+                if (localeLockOwner === ticket) {
+                    localeLockOwner = null;
+                    return "stale-unlock";
+                }
+                return "stale-ignore";
+            }
+            localeLockOwner = null;
+            return "apply";
+        }
+
+        function beginPreview() {
+            return previewGate.start();
+        }
+
+        function settlePreview(ticket) {
+            if (!alive()) {
+                return "detached";
+            }
+            if (!ticket || !ticket.isCurrent()) {
+                return "stale";
+            }
+            return "apply";
+        }
+
+        function beginWrite() {
+            return writeGate.start(); // invalidate prior write apply
+        }
+
+        function settleWrite(ticket) {
+            if (!alive()) {
+                return "detached";
+            }
+            if (!ticket || !ticket.isCurrent()) {
+                return "stale";
+            }
+            // A locale load started after this write → writeGate was bumped.
+            return "apply";
+        }
+
+        function invalidate() {
+            localeGate.start();
+            previewGate.start();
+            writeGate.start();
+            localeLockOwner = null;
+        }
+
+        return {
+            editor: editor,
+            alive: alive,
+            q: q,
+            beginLocaleLoad: beginLocaleLoad,
+            settleLocaleLoad: settleLocaleLoad,
+            beginPreview: beginPreview,
+            settlePreview: settlePreview,
+            beginWrite: beginWrite,
+            settleWrite: settleWrite,
+            invalidate: invalidate,
+            // Exposed for tests.
+            _localeLockOwner: function () { return localeLockOwner; }
+        };
+    }
+
     var api = {
         escAttr: escAttr,
         newLoadGate: newLoadGate,
+        createScopedEditorSession: createScopedEditorSession,
         formatLocaleLabel: formatLocaleLabel,
         normalizeLocaleInput: normalizeLocaleInput,
         canShowWriteControls: canShowWriteControls,

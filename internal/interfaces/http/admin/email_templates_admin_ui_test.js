@@ -129,3 +129,61 @@ test("revertMessage distinguishes no-op delete", function () {
     assert.equal(ui.revertMessage(true), "Reverted to default.");
     assert.match(ui.revertMessage(false), /No override/);
 });
+
+function fakeEditorRoot(connected) {
+    var store = {};
+    var root = {
+        isConnected: connected !== false,
+        querySelector: function (sel) {
+            var id = String(sel || "").replace(/^#/, "");
+            return store[id] || null;
+        },
+        setField: function (id, el) {
+            store[id] = el;
+        }
+    };
+    return root;
+}
+
+test("preview begin does not retire locale lock; stale unlock only for lock owner", function () {
+    var editor = fakeEditorRoot(true);
+    var session = ui.createScopedEditorSession(editor);
+    var localeTicket = session.beginLocaleLoad();
+    session.beginPreview(); // must not make locale ticket stale
+    assert.equal(localeTicket.isCurrent(), true);
+    assert.equal(session.settleLocaleLoad(localeTicket), "apply");
+
+    var session2 = ui.createScopedEditorSession(editor);
+    var first = session2.beginLocaleLoad();
+    var second = session2.beginLocaleLoad();
+    assert.equal(session2.settleLocaleLoad(first), "stale-ignore");
+    assert.equal(session2.settleLocaleLoad(second), "apply");
+});
+
+test("detached editor root settles as detached and does not apply into another root", function () {
+    var rootA = fakeEditorRoot(true);
+    var rootB = fakeEditorRoot(true);
+    var subjectA = { value: "A-old" };
+    var subjectB = { value: "B-old" };
+    rootA.setField("email-template-subject", subjectA);
+    rootB.setField("email-template-subject", subjectB);
+
+    var sessionA = ui.createScopedEditorSession(rootA);
+    var ticket = sessionA.beginLocaleLoad();
+    rootA.isConnected = false;
+
+    assert.equal(sessionA.settleLocaleLoad(ticket), "detached");
+    // Writing through sessionA.q still targets A's detached field, never B.
+    var fieldA = sessionA.q("email-template-subject");
+    fieldA.value = "from-A-late";
+    assert.equal(subjectA.value, "from-A-late");
+    assert.equal(subjectB.value, "B-old");
+});
+
+test("write settle ignores responses after locale load starts", function () {
+    var editor = fakeEditorRoot(true);
+    var session = ui.createScopedEditorSession(editor);
+    var writeTicket = session.beginWrite();
+    session.beginLocaleLoad(); // bumps write gate
+    assert.equal(session.settleWrite(writeTicket), "stale");
+});

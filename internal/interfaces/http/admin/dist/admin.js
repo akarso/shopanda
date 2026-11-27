@@ -9428,6 +9428,9 @@
             api("/admin/email-templates/" + encodeURIComponent(templateName)),
             api("/admin/stores")
         ]).then(function (results) {
+            if (!editor.isConnected) {
+                return;
+            }
             var listResult = emailTemplatesUI.listLoadResult(results[0]);
             if (!listResult.ok) {
                 msg.innerHTML = '<p role="alert">' + esc(listResult.forbidden
@@ -9444,9 +9447,11 @@
                 editor.innerHTML = "";
                 return;
             }
-            var stores = normalizeStores(results[2] && results[2].data && results[2].data.stores
-                ? results[2].data.stores
-                : []);
+            var storesBody = results[2];
+            var storesRaw = (storesBody && storesBody.data && storesBody.data.stores)
+                ? storesBody.data.stores
+                : (Array.isArray(adminScopeStores) ? adminScopeStores : []);
+            var stores = normalizeStores(storesRaw);
             var defaultStore = null;
             for (var s = 0; s < stores.length; s++) {
                 if (stores[s].is_default) {
@@ -9460,6 +9465,9 @@
             var locales = (meta && Array.isArray(meta.locales)) ? meta.locales.slice() : [];
             bindEmailTemplateEditor(editor, msg, templateName, tpl, templateWritable, locales, defaultStore);
         }).catch(function (err) {
+            if (!editor.isConnected) {
+                return;
+            }
             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load template.")) + "</p>";
             editor.innerHTML = "";
         });
@@ -9469,11 +9477,12 @@
         var ui = emailTemplatesUI;
         var hasContentWrite = userHasPermission("content.write");
         var canWrite = ui.canShowWriteControls(templateWritable, hasContentWrite);
-        var gate = ui.newLoadGate();
+        var session = ui.createScopedEditorSession(editor);
         var baseline = ui.baselineFromRow(tpl);
         var localeOptions = [];
         var seen = {};
         var loadingLocale = false;
+        var writing = false;
         var testSendInFlight = false;
 
         function addLocaleOption(loc) {
@@ -9522,15 +9531,15 @@
         }
 
         function updateMeta(row) {
-            var el = document.getElementById("email-template-meta");
+            var el = session.q("email-template-meta");
             if (el) {
                 el.outerHTML = metaHTML(row || {});
             }
         }
 
         function collectFields() {
-            var subjectInput = document.getElementById("email-template-subject");
-            var bodyInput = document.getElementById("email-template-body");
+            var subjectInput = session.q("email-template-subject");
+            var bodyInput = session.q("email-template-body");
             if (subjectInput) {
                 subjectInput.dataset.ro = canWrite ? "0" : "1";
             }
@@ -9538,20 +9547,38 @@
                 bodyInput.dataset.ro = canWrite ? "0" : "1";
             }
             return {
-                form: document.getElementById("email-template-form"),
-                localeSelect: document.getElementById("email-template-locale"),
+                form: session.q("email-template-form"),
+                localeSelect: session.q("email-template-locale"),
                 subjectInput: subjectInput,
                 bodyInput: bodyInput,
-                saveBtn: document.getElementById("email-template-save"),
-                revertBtn: document.getElementById("email-template-revert"),
-                testBtn: document.getElementById("email-template-test-send"),
-                addLocaleBtn: document.getElementById("email-template-add-locale"),
-                newLocaleInput: document.getElementById("email-template-new-locale"),
-                previewBtn: document.getElementById("email-template-preview-btn"),
-                previewMeta: document.getElementById("email-template-preview-meta"),
-                previewSubject: document.getElementById("email-template-preview-subject"),
-                previewFrame: document.getElementById("email-template-preview-frame")
+                saveBtn: session.q("email-template-save"),
+                revertBtn: session.q("email-template-revert"),
+                testBtn: session.q("email-template-test-send"),
+                addLocaleBtn: session.q("email-template-add-locale"),
+                newLocaleInput: session.q("email-template-new-locale"),
+                previewBtn: session.q("email-template-preview-btn"),
+                previewMeta: session.q("email-template-preview-meta"),
+                previewSubject: session.q("email-template-preview-subject"),
+                previewFrame: session.q("email-template-preview-frame")
             };
+        }
+
+        function restoreReadOnlyFields(fields) {
+            if (!canWrite) {
+                if (fields.subjectInput) {
+                    fields.subjectInput.disabled = true;
+                }
+                if (fields.bodyInput) {
+                    fields.bodyInput.disabled = true;
+                }
+            }
+        }
+
+        function unlockForm() {
+            var fields = collectFields();
+            ui.setWriteControlsLocked(fields, false);
+            restoreReadOnlyFields(fields);
+            syncTestSendEnabled(fields);
         }
 
         function syncTestSendEnabled(fields) {
@@ -9564,19 +9591,22 @@
                 fields.localeSelect ? fields.localeSelect.value : "",
                 baseline
             );
-            ui.setTestSendEnabled(fields.testBtn, clean && !loadingLocale && !testSendInFlight);
+            ui.setTestSendEnabled(fields.testBtn, clean && !loadingLocale && !writing && !testSendInFlight);
         }
 
-        function refreshPreview(ticket) {
+        function refreshPreview() {
+            if (!session.alive()) {
+                return;
+            }
             var fields = collectFields();
             var locale = baseline.locale;
             var url = "/admin/email-templates/" + encodeURIComponent(templateName) + "/preview";
             if (locale) {
                 url += "?locale=" + encodeURIComponent(locale);
             }
-            var previewTicket = ticket || gate.start();
+            var previewTicket = session.beginPreview();
             api(url, { method: "POST", body: "{}" }).then(function (body) {
-                if (!previewTicket.isCurrent()) {
+                if (session.settlePreview(previewTicket) !== "apply") {
                     return;
                 }
                 if (body && body.error) {
@@ -9592,7 +9622,7 @@
                     frame: fields.previewFrame
                 }, (body && body.data) || {}, previewTicket);
             }).catch(function (err) {
-                if (!previewTicket.isCurrent()) {
+                if (session.settlePreview(previewTicket) !== "apply") {
                     return;
                 }
                 if (fields.previewMeta) {
@@ -9602,8 +9632,8 @@
             });
         }
 
-        function applyLoadedRow(row, ticket) {
-            if (ticket && !ticket.isCurrent()) {
+        function applyLoadedRow(row) {
+            if (!session.alive()) {
                 return;
             }
             var fields = collectFields();
@@ -9613,76 +9643,69 @@
             baseline = ui.applyRowToFields(fields, row);
             updateMeta(row);
             loadingLocale = false;
+            writing = false;
             ui.setWriteControlsLocked(fields, false);
-            if (!canWrite) {
-                if (fields.subjectInput) {
-                    fields.subjectInput.disabled = true;
-                }
-                if (fields.bodyInput) {
-                    fields.bodyInput.disabled = true;
-                }
-            }
+            restoreReadOnlyFields(fields);
             syncTestSendEnabled(fields);
-            refreshPreview(ticket || gate.current());
+            refreshPreview();
         }
 
         function loadLocale(requestedLocale) {
+            if (!session.alive()) {
+                return;
+            }
             var fields = collectFields();
             var previous = baseline.locale;
-            // Snap select back until GET succeeds so Save cannot target the wrong locale.
             if (fields.localeSelect) {
                 fields.localeSelect.value = previous;
             }
             loadingLocale = true;
             ui.setWriteControlsLocked(fields, true);
             syncTestSendEnabled(fields);
-            msg.innerHTML = "";
-            var ticket = gate.start();
-            var q = requestedLocale ? ("?locale=" + encodeURIComponent(requestedLocale)) : "";
-            api("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
-                if (!ticket.isCurrent()) {
+            if (msg && msg.isConnected) {
+                msg.innerHTML = "";
+            }
+            var ticket = session.beginLocaleLoad();
+            var qs = requestedLocale ? ("?locale=" + encodeURIComponent(requestedLocale)) : "";
+            api("/admin/email-templates/" + encodeURIComponent(templateName) + qs).then(function (body) {
+                var outcome = session.settleLocaleLoad(ticket);
+                if (outcome === "detached" || outcome === "stale-ignore") {
+                    return;
+                }
+                if (outcome === "stale-unlock") {
+                    loadingLocale = false;
+                    unlockForm();
                     return;
                 }
                 if (body && body.error) {
                     loadingLocale = false;
+                    fields = collectFields();
                     if (fields.localeSelect) {
                         fields.localeSelect.value = previous;
                     }
-                    ui.setWriteControlsLocked(collectFields(), false);
-                    if (!canWrite) {
-                        var f2 = collectFields();
-                        if (f2.subjectInput) {
-                            f2.subjectInput.disabled = true;
-                        }
-                        if (f2.bodyInput) {
-                            f2.bodyInput.disabled = true;
-                        }
+                    unlockForm();
+                    if (msg && msg.isConnected) {
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load locale.")) + "</p>";
                     }
-                    syncTestSendEnabled(collectFields());
-                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load locale.")) + "</p>";
                     return;
                 }
-                applyLoadedRow((body && body.data) || { locale: requestedLocale }, ticket);
+                applyLoadedRow((body && body.data) || { locale: requestedLocale });
             }).catch(function (err) {
-                if (!ticket.isCurrent()) {
+                var outcome = session.settleLocaleLoad(ticket);
+                if (outcome === "detached" || outcome === "stale-ignore") {
                     return;
                 }
                 loadingLocale = false;
-                var f = collectFields();
-                if (f.localeSelect) {
-                    f.localeSelect.value = previous;
-                }
-                ui.setWriteControlsLocked(f, false);
-                if (!canWrite) {
-                    if (f.subjectInput) {
-                        f.subjectInput.disabled = true;
+                if (outcome === "stale-unlock" || outcome === "apply") {
+                    fields = collectFields();
+                    if (fields.localeSelect) {
+                        fields.localeSelect.value = previous;
                     }
-                    if (f.bodyInput) {
-                        f.bodyInput.disabled = true;
-                    }
+                    unlockForm();
                 }
-                syncTestSendEnabled(f);
-                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load locale.")) + "</p>";
+                if (outcome === "apply" && msg && msg.isConnected) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load locale.")) + "</p>";
+                }
             });
         }
 
@@ -9699,26 +9722,18 @@
 
         var fields = collectFields();
         ui.applyRowToFields(fields, tpl || {});
-        if (!canWrite) {
-            if (fields.subjectInput) {
-                fields.subjectInput.disabled = true;
-            }
-            if (fields.bodyInput) {
-                fields.bodyInput.disabled = true;
-            }
-        }
+        restoreReadOnlyFields(fields);
         syncTestSendEnabled(fields);
 
         if (fields.localeSelect) {
             fields.localeSelect.addEventListener("change", function () {
-                var requested = fields.localeSelect.value;
-                loadLocale(requested);
+                loadLocale(fields.localeSelect.value);
             });
         }
 
         if (fields.addLocaleBtn) {
             fields.addLocaleBtn.addEventListener("click", function () {
-                var input = document.getElementById("email-template-new-locale");
+                var input = session.q("email-template-new-locale");
                 var parsed = ui.normalizeLocaleInput(input ? input.value : "");
                 if (!parsed.ok) {
                     msg.innerHTML = '<p role="alert">Enter a valid locale (e.g. de). Tags like und are rejected.</p>';
@@ -9748,7 +9763,7 @@
         if (canWrite && fields.form) {
             fields.form.addEventListener("submit", function (e) {
                 e.preventDefault();
-                if (loadingLocale) {
+                if (loadingLocale || writing || !session.alive()) {
                     return;
                 }
                 var f = collectFields();
@@ -9757,26 +9772,41 @@
                     body: f.bodyInput ? f.bodyInput.value : "",
                     locale: baseline.locale
                 };
+                writing = true;
+                var writeTicket = session.beginWrite();
+                ui.setWriteControlsLocked(f, true);
+                syncTestSendEnabled(f);
                 api("/admin/email-templates/" + encodeURIComponent(templateName), {
                     method: "PUT",
                     body: JSON.stringify(payload)
                 }).then(function (body) {
+                    var outcome = session.settleWrite(writeTicket);
+                    if (outcome !== "apply") {
+                        return;
+                    }
+                    writing = false;
                     if (body && body.error) {
+                        unlockForm();
                         msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Save failed.")) + "</p>";
                         return;
                     }
                     msg.innerHTML = "<p>Saved.</p>";
                     var saved = (body && body.data) || payload;
                     addLocaleOption(saved.locale != null ? String(saved.locale) : payload.locale);
-                    applyLoadedRow(saved, gate.start());
+                    applyLoadedRow(saved);
                 }).catch(function (err) {
+                    if (session.settleWrite(writeTicket) !== "apply") {
+                        return;
+                    }
+                    writing = false;
+                    unlockForm();
                     msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
                 });
             });
 
             if (fields.revertBtn) {
                 fields.revertBtn.addEventListener("click", function () {
-                    if (loadingLocale) {
+                    if (loadingLocale || writing || !session.alive()) {
                         return;
                     }
                     var locLabel = ui.formatLocaleLabel(baseline.locale);
@@ -9784,15 +9814,32 @@
                         return;
                     }
                     var hadDb = baseline.source === "db";
-                    var q = baseline.locale ? ("?locale=" + encodeURIComponent(baseline.locale)) : "";
-                    apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
+                    var localeAtStart = baseline.locale;
+                    var qs = localeAtStart ? ("?locale=" + encodeURIComponent(localeAtStart)) : "";
+                    writing = true;
+                    var writeTicket = session.beginWrite();
+                    ui.setWriteControlsLocked(collectFields(), true);
+                    syncTestSendEnabled(collectFields());
+                    var status = ui.revertMessage(hadDb);
+                    apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + qs).then(function (body) {
+                        var outcome = session.settleWrite(writeTicket);
+                        if (outcome !== "apply") {
+                            return;
+                        }
+                        writing = false;
                         if (body && body.error) {
+                            unlockForm();
                             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Revert failed.")) + "</p>";
                             return;
                         }
-                        msg.innerHTML = "<p>" + esc(ui.revertMessage(hadDb)) + "</p>";
-                        loadLocale(baseline.locale);
+                        msg.innerHTML = "<p>" + esc(status) + "</p>";
+                        loadLocale(localeAtStart);
                     }).catch(function (err) {
+                        if (session.settleWrite(writeTicket) !== "apply") {
+                            return;
+                        }
+                        writing = false;
+                        unlockForm();
                         msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Revert failed.")) + "</p>";
                     });
                 });
@@ -9804,6 +9851,9 @@
                     if (f.testBtn && f.testBtn.disabled) {
                         return;
                     }
+                    if (!session.alive() || loadingLocale || writing) {
+                        return;
+                    }
                     if (!ui.formMatchesBaseline(
                         f.subjectInput ? f.subjectInput.value : "",
                         f.bodyInput ? f.bodyInput.value : "",
@@ -9813,7 +9863,7 @@
                         msg.innerHTML = '<p role="alert">Save your edits before test-send. The mail uses the saved render.</p>';
                         return;
                     }
-                    var toInput = document.getElementById("email-template-test-to");
+                    var toInput = session.q("email-template-test-to");
                     var to = toInput ? String(toInput.value || "").trim() : "";
                     if (!to) {
                         msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
@@ -9825,6 +9875,9 @@
                         method: "POST",
                         body: JSON.stringify({ to: to, locale: baseline.locale })
                     }).then(function (body) {
+                        if (!session.alive()) {
+                            return;
+                        }
                         testSendInFlight = false;
                         syncTestSendEnabled(collectFields());
                         if (body && body.error) {
@@ -9840,6 +9893,9 @@
                         msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
                             (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
                     }).catch(function (err) {
+                        if (!session.alive()) {
+                            return;
+                        }
                         testSendInFlight = false;
                         syncTestSendEnabled(collectFields());
                         msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
@@ -9850,11 +9906,12 @@
 
         if (fields.previewBtn) {
             fields.previewBtn.addEventListener("click", function () {
-                refreshPreview(gate.start());
+                // Preview uses its own sequence — must not retire the locale lock ticket.
+                refreshPreview();
             });
         }
 
-        refreshPreview(gate.start());
+        refreshPreview();
     }
 
     function renderAbandonedCartSettingsPage(container) {

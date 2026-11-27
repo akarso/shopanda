@@ -39,6 +39,7 @@ func TestAdminHandler_EmailTemplatesAdminUIScript(t *testing.T) {
 		"ShopandaEmailTemplatesAdminUI",
 		"escAttr",
 		"newLoadGate",
+		"createScopedEditorSession",
 		"canShowWriteControls",
 		"listLoadResult",
 		"applyRowToFields",
