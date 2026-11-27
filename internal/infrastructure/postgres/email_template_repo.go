@@ -182,3 +182,42 @@ ORDER BY updated_at DESC, name ASC, locale ASC`
 	}
 	return out, nil
 }
+
+// ListMetaByStore returns name/locale/updated metadata without subject/body.
+func (r *EmailTemplateRepo) ListMetaByStore(ctx context.Context, storeID string) ([]mail.EmailTemplateMeta, error) {
+	storeID = strings.TrimSpace(storeID)
+	if storeID == "" {
+		return nil, nil
+	}
+	const q = `
+SELECT name, locale, updated_at, updated_by
+FROM email_templates
+WHERE store_id = $1
+ORDER BY name ASC, locale ASC`
+	rows, err := r.db.QueryContext(ctx, q, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("email_template_repo: list meta: %w", err)
+	}
+	defer rows.Close()
+
+	var out []mail.EmailTemplateMeta
+	for rows.Next() {
+		var (
+			row       mail.EmailTemplateMeta
+			updatedBy sql.NullString
+			updatedAt time.Time
+		)
+		if err := rows.Scan(&row.Name, &row.Locale, &updatedAt, &updatedBy); err != nil {
+			return nil, fmt.Errorf("email_template_repo: list meta scan: %w", err)
+		}
+		row.UpdatedAt = updatedAt
+		if updatedBy.Valid {
+			row.UpdatedBy = updatedBy.String
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("email_template_repo: list meta rows: %w", err)
+	}
+	return out, nil
+}

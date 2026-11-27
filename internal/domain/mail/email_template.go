@@ -82,6 +82,16 @@ type EmailTemplateRepository interface {
 	Delete(ctx context.Context, storeID, name, locale string) error
 	// ListByStore returns all overrides for a store (any locale), newest first.
 	ListByStore(ctx context.Context, storeID string) ([]EmailTemplate, error)
+	// ListMetaByStore returns name/locale/updated metadata without subject/body.
+	ListMetaByStore(ctx context.Context, storeID string) ([]EmailTemplateMeta, error)
+}
+
+// EmailTemplateMeta is a lightweight list row (no subject/body payloads).
+type EmailTemplateMeta struct {
+	Name      string
+	Locale    string
+	UpdatedAt time.Time
+	UpdatedBy string
 }
 
 // OverrideSource is the DB side of render-time resolution (may wrap a repo).

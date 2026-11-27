@@ -130,6 +130,9 @@ func (t *Templates) putAll(entries map[string]FileEntry, origin string) error {
 				Body:    entry.Body,
 				Origin:  origin,
 			}
+		} else {
+			// PutParsed without raw text must not leave a stale Source entry.
+			delete(t.sources, name)
 		}
 	}
 	return nil

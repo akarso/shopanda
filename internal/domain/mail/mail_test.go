@@ -134,3 +134,28 @@ func TestMessage_Fields(t *testing.T) {
 		t.Errorf("Body = %q", m.Body)
 	}
 }
+
+func TestTemplates_PutParsed_ClearsStaleSource(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("welcome", "Old subj", "<p>old</p>")
+	if src, ok := tmpl.Source("welcome"); !ok || src.Subject != "Old subj" {
+		t.Fatalf("precondition source = %#v ok=%v", src, ok)
+	}
+	parts, err := mail.ParseNamed("welcome", "New subj", "<p>new</p>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpl.PutParsed(map[string]*mail.NamedParts{"welcome": parts}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tmpl.Source("welcome"); ok {
+		t.Fatal("PutParsed without raw text must clear Source entry")
+	}
+	msg, err := tmpl.Render("welcome", "a@b.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Subject != "New subj" {
+		t.Fatalf("subject = %q", msg.Subject)
+	}
+}

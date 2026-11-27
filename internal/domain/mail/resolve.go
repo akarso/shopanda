@@ -17,10 +17,25 @@ func overrideLocales(locale string) []string {
 	return []string{locale, ""}
 }
 
-// RenderResult is a rendered message plus whether a DB override supplied it.
+// RenderResult is a rendered message plus which layer supplied it.
 type RenderResult struct {
-	Message    Message
-	FromOverride bool
+	Message        Message
+	FromOverride   bool
+	ResolvedLocale string // DB locale key when FromOverride; empty for registry
+	Source         string // "db", OriginFile, or OriginBuiltin
+	Fallback       bool   // true when a non-empty request fell through to empty locale or registry
+}
+
+// RenderOption configures RenderWithOverrides.
+type RenderOption func(*renderOptions)
+
+type renderOptions struct {
+	exactLocale bool
+}
+
+// WithExactLocale skips the empty-locale fallback (exact key or registry only).
+func WithExactLocale() RenderOption {
+	return func(o *renderOptions) { o.exactLocale = true }
 }
 
 // RenderWithOverrides resolves DB → in-memory Templates (file/builtin).
@@ -34,7 +49,14 @@ func RenderWithOverrides(
 	src OverrideSource,
 	storeID, name, locale, to string,
 	data interface{},
+	opts ...RenderOption,
 ) (RenderResult, error) {
+	var o renderOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
 	if t == nil {
 		return RenderResult{}, fmt.Errorf("mail: nil templates registry")
 	}
@@ -43,9 +65,14 @@ func RenderWithOverrides(
 	if name == "" {
 		return RenderResult{}, fmt.Errorf("mail: empty template name")
 	}
+	requested := CanonicalLocale(locale)
 
 	if src != nil && storeID != "" && IsOverridableName(name) {
-		for _, loc := range overrideLocales(locale) {
+		chain := overrideLocales(locale)
+		if o.exactLocale {
+			chain = []string{requested}
+		}
+		for _, loc := range chain {
 			subject, body, err := src.Get(ctx, storeID, name, loc)
 			if errors.Is(err, ErrTemplateNotFound) {
 				continue
@@ -61,7 +88,13 @@ func RenderWithOverrides(
 			if err != nil {
 				return RenderResult{}, err
 			}
-			return RenderResult{Message: msg, FromOverride: true}, nil
+			return RenderResult{
+				Message:        msg,
+				FromOverride:   true,
+				ResolvedLocale: loc,
+				Source:         "db",
+				Fallback:       requested != "" && loc != requested,
+			}, nil
 		}
 	}
 
@@ -69,5 +102,26 @@ func RenderWithOverrides(
 	if err != nil {
 		return RenderResult{}, err
 	}
-	return RenderResult{Message: msg, FromOverride: false}, nil
+	origin := OriginBuiltin
+	if srcInfo, ok := t.Source(name); ok && srcInfo.Origin != "" {
+		origin = srcInfo.Origin
+	}
+	return RenderResult{
+		Message:      msg,
+		FromOverride: false,
+		Source:       origin,
+		// Requested a locale, tried DB for an overridable name, landed on registry.
+		Fallback: requested != "" && src != nil && storeID != "" && IsOverridableName(name),
+	}, nil
+}
+
+// ValidateRenderable parses subject/body and executes them with data.
+// Rejects executed subjects that contain CR/LF (SMTP header injection).
+func ValidateRenderable(name, subject, body string, data interface{}) error {
+	parts, err := ParseNamed(name, subject, body)
+	if err != nil {
+		return err
+	}
+	_, err = executeNamed(parts, name, "validate@example.com", data)
+	return err
 }

@@ -3,8 +3,11 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	netmail "net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
@@ -16,7 +19,12 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
-const emailTemplateOriginDB = "db"
+const (
+	emailTemplateOriginDB    = "db"
+	emailTemplateTestPrefix  = "[TEST] "
+	emailTemplateTestSendTTL = 15 * time.Second
+	emailTemplateTestSendGap = 30 * time.Second
+)
 
 // EmailTemplateAdminHandler serves admin transactional email template endpoints.
 type EmailTemplateAdminHandler struct {
@@ -28,6 +36,9 @@ type EmailTemplateAdminHandler struct {
 	brand     storeidentity.EmailBrandSource
 	storeURL  string
 	auditor   *adminapp.Auditor
+
+	testSendMu   sync.Mutex
+	testSendLast map[string]time.Time
 }
 
 // EmailTemplateAdminConfig configures EmailTemplateAdminHandler.
@@ -58,14 +69,15 @@ func NewEmailTemplateAdminHandler(cfg EmailTemplateAdminConfig) *EmailTemplateAd
 		auditor = adminapp.NewAuditor(logger.New("info"))
 	}
 	return &EmailTemplateAdminHandler{
-		templates: cfg.Templates,
-		layout:    cfg.Layout,
-		repo:      cfg.Repo,
-		mailer:    cfg.Mailer,
-		stores:    cfg.Stores,
-		brand:     cfg.Brand,
-		storeURL:  strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
-		auditor:   auditor,
+		templates:    cfg.Templates,
+		layout:       cfg.Layout,
+		repo:         cfg.Repo,
+		mailer:       cfg.Mailer,
+		stores:       cfg.Stores,
+		brand:        cfg.Brand,
+		storeURL:     strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
+		auditor:      auditor,
+		testSendLast: map[string]time.Time{},
 	}
 }
 
@@ -94,14 +106,22 @@ type emailTemplatePutRequest struct {
 }
 
 type emailTemplatePreviewResponse struct {
-	Name    string `json:"name"`
-	Locale  string `json:"locale"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	Name              string `json:"name"`
+	RequestedLocale   string `json:"requested_locale"`
+	ResolvedLocale    string `json:"resolved_locale"`
+	Source            string `json:"source"`
+	Fallback          bool   `json:"fallback"`
+	Subject           string `json:"subject"`
+	Body              string `json:"body"`
+	AttachmentOmitted string `json:"attachment_omitted,omitempty"`
 }
 
 type emailTemplateTestSendRequest struct {
 	To     string `json:"to"`
+	Locale string `json:"locale"`
+}
+
+type emailTemplateLocaleBody struct {
 	Locale string `json:"locale"`
 }
 
@@ -144,7 +164,7 @@ func (h *EmailTemplateAdminHandler) parseLocaleParam(r *http.Request) (string, e
 	return locale, nil
 }
 
-func (h *EmailTemplateAdminHandler) sampleEmailData(ctx context.Context) mail.EmailData {
+func (h *EmailTemplateAdminHandler) sampleEmailData(ctx context.Context, name string) mail.EmailData {
 	ed := h.brand.BrandEmailData(ctx, h.storeURL)
 	if ed.StoreURL == "" {
 		ed.StoreURL = h.storeURL
@@ -153,7 +173,7 @@ func (h *EmailTemplateAdminHandler) sampleEmailData(ctx context.Context) mail.Em
 	if base == "" {
 		base = "https://shop.example"
 	}
-	ed.Data = map[string]interface{}{
+	common := map[string]interface{}{
 		"OrderID":        "ord-sample-1",
 		"InvoiceNumber":  int64(1001),
 		"FirstName":      "Alex",
@@ -167,22 +187,131 @@ func (h *EmailTemplateAdminHandler) sampleEmailData(ctx context.Context) mail.Em
 		"TrackingNumber": "TRACK123",
 		"Carrier":        "demo-carrier",
 		"Codes":          []string{"ABCD-EFGH-IJKL"},
-		"Items": []map[string]interface{}{
-			{"Name": "Sample Item", "Qty": 1, "Price": "19.99", "VariantID": "var-1", "SKU": "SKU-1"},
-		},
-		"ItemCount": 1,
-		"Total":     "19.99",
+		"ItemCount":      1,
+		"Total":          "19.99",
 	}
+	switch name {
+	case "cart_recovery":
+		common["Items"] = []map[string]interface{}{
+			{
+				"Name":      "Sample Item",
+				"Quantity":  2,
+				"UnitPrice": "9.99",
+				"LineTotal": "19.98",
+				"VariantID": "var-1",
+				"SKU":       "SKU-1",
+			},
+		}
+	default:
+		common["Items"] = []map[string]interface{}{
+			{"Name": "Sample Item", "Qty": 1, "Price": "19.99", "VariantID": "var-1", "SKU": "SKU-1"},
+		}
+	}
+	ed.Data = common
 	return ed
 }
 
-func (h *EmailTemplateAdminHandler) renderNamed(ctx context.Context, storeID, name, locale, to string) (mail.Message, error) {
-	ed := h.sampleEmailData(ctx)
-	res, err := mail.RenderWithOverrides(ctx, h.templates, mail.RepoOverrideSource{Repo: h.repo}, storeID, name, locale, to, ed)
-	if err != nil {
-		return mail.Message{}, err
+func attachmentOmittedNote(name string) string {
+	switch name {
+	case "invoice_created":
+		return "invoice PDF"
+	case "voucher_issued":
+		return "voucher PDF"
+	default:
+		return ""
 	}
-	return mail.ApplyLayout(h.layout, res.Message, ed)
+}
+
+func (h *EmailTemplateAdminHandler) renderNamed(ctx context.Context, storeID, name, locale, to string, exact bool) (mail.RenderResult, mail.EmailData, error) {
+	ed := h.sampleEmailData(ctx, name)
+	var opts []mail.RenderOption
+	if exact {
+		opts = append(opts, mail.WithExactLocale())
+	}
+	res, err := mail.RenderWithOverrides(ctx, h.templates, mail.RepoOverrideSource{Repo: h.repo}, storeID, name, locale, to, ed, opts...)
+	if err != nil {
+		return mail.RenderResult{}, ed, err
+	}
+	msg, err := mail.ApplyLayout(h.layout, res.Message, ed)
+	if err != nil {
+		return mail.RenderResult{}, ed, err
+	}
+	res.Message = msg
+	return res, ed, nil
+}
+
+func (h *EmailTemplateAdminHandler) allowTestSend(adminID string) error {
+	key := strings.TrimSpace(adminID)
+	if key == "" {
+		key = "anonymous"
+	}
+	now := time.Now()
+	h.testSendMu.Lock()
+	defer h.testSendMu.Unlock()
+	if last, ok := h.testSendLast[key]; ok && now.Sub(last) < emailTemplateTestSendGap {
+		return apperror.Validation("test-send rate limited; try again shortly")
+	}
+	h.testSendLast[key] = now
+	return nil
+}
+
+func validateTestMailbox(to string) (string, error) {
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return "", apperror.Validation("to is required")
+	}
+	addr, err := netmail.ParseAddress(to)
+	if err != nil || addr == nil || strings.TrimSpace(addr.Address) == "" {
+		return "", apperror.Validation("invalid email address")
+	}
+	return addr.Address, nil
+}
+
+func decodeOptionalLocaleBody(r *http.Request, queryLocale string) (string, error) {
+	locale := queryLocale
+	if r.Body == nil {
+		return locale, nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return "", apperror.Validation("invalid request body")
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return locale, nil
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	var body emailTemplateLocaleBody
+	if err := dec.Decode(&body); err != nil {
+		return "", apperror.Validation("invalid request body")
+	}
+	if dec.More() {
+		return "", apperror.Validation("invalid request body")
+	}
+	if strings.TrimSpace(body.Locale) == "" {
+		return locale, nil
+	}
+	parsed, err := mail.ParseTemplateLocale(body.Locale)
+	if err != nil {
+		return "", apperror.Validation(err.Error())
+	}
+	return parsed, nil
+}
+
+func mapMailerError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := err.(*apperror.Error); ok {
+		return err
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "address") || strings.Contains(lower, "recipient") || strings.Contains(lower, "mailbox") {
+		return apperror.Validation("invalid email address")
+	}
+	return apperror.Unavailable("mail send failed")
 }
 
 // List handles GET /api/v1/admin/email-templates.
@@ -194,17 +323,20 @@ func (h *EmailTemplateAdminHandler) List() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		rows, err := h.repo.ListByStore(r.Context(), storeID)
+		rows, err := h.repo.ListMetaByStore(r.Context(), storeID)
 		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateList, "", nil, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 		localesByName := map[string][]string{}
-		dbExact := map[string]struct{}{} // name|locale
+		hasDB := map[string]bool{}
 		for _, row := range rows {
+			if !mail.IsOverridableName(row.Name) {
+				continue // ignore stray non-allowlisted rows
+			}
 			localesByName[row.Name] = append(localesByName[row.Name], row.Locale)
-			dbExact[row.Name+"|"+row.Locale] = struct{}{}
+			hasDB[row.Name] = true
 		}
 		names := h.templates.Names()
 		out := make([]emailTemplateListItem, 0, len(names))
@@ -222,8 +354,7 @@ func (h *EmailTemplateAdminHandler) List() http.HandlerFunc {
 			if ok && src.Origin != "" {
 				origin = src.Origin
 			}
-			// Effective list source for empty locale (store default): db wins when present.
-			if _, hasDB := dbExact[name+"|"]; hasDB && mail.IsOverridableName(name) {
+			if hasDB[name] {
 				item.Source = emailTemplateOriginDB
 			} else {
 				item.Source = origin
@@ -304,6 +435,12 @@ func (h *EmailTemplateAdminHandler) Put() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.NotFound("email template not found"))
 			return
 		}
+		if !mail.IsOverridableName(name) {
+			err := apperror.Validation("email template is not overridable")
+			h.audit(r, adminapp.AuditEmailTemplateUpdate, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
 		var req emailTemplatePutRequest
 		if err := decodeStrict(r, &req); err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateUpdate, name, nil, err)
@@ -327,7 +464,20 @@ func (h *EmailTemplateAdminHandler) Put() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		actor := adminIDFromRequest(r)
+		sample := h.sampleEmailData(r.Context(), name)
+		if err := mail.ValidateRenderable(name, req.Subject, req.Body, sample); err != nil {
+			err = apperror.Validation(err.Error())
+			h.audit(r, adminapp.AuditEmailTemplateUpdate, name, map[string]interface{}{"locale": parsedLocale}, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		actor := strings.TrimSpace(adminIDFromRequest(r))
+		if actor == "" {
+			err := apperror.Unauthorized("admin identity required")
+			h.audit(r, adminapp.AuditEmailTemplateUpdate, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
 		row := &mail.EmailTemplate{
 			StoreID:   storeID,
 			Name:      name,
@@ -365,6 +515,12 @@ func (h *EmailTemplateAdminHandler) Delete() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.NotFound("email template not found"))
 			return
 		}
+		if !mail.IsOverridableName(name) {
+			err := apperror.Validation("email template is not overridable")
+			h.audit(r, adminapp.AuditEmailTemplateDelete, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
 		locale, err := h.parseLocaleParam(r)
 		if err != nil {
 			httpshared.JSONError(w, err)
@@ -399,35 +555,37 @@ func (h *EmailTemplateAdminHandler) Preview() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		// Optional body locale override for preview without query.
-		var body struct {
-			Locale string `json:"locale"`
+		locale, err = decodeOptionalLocaleBody(r, locale)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if strings.TrimSpace(body.Locale) != "" {
-			locale, err = mail.ParseTemplateLocale(body.Locale)
-			if err != nil {
-				httpshared.JSONError(w, apperror.Validation(err.Error()))
-				return
-			}
-		}
+		exact := r.URL.Query().Get("exact") == "1" || strings.EqualFold(r.URL.Query().Get("exact"), "true")
 		storeID, err := h.defaultStoreID(r.Context())
 		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplatePreview, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		msg, err := h.renderNamed(r.Context(), storeID, name, locale, "preview@example.com")
-		h.audit(r, adminapp.AuditEmailTemplatePreview, name, map[string]interface{}{"locale": locale}, err)
+		res, _, err := h.renderNamed(r.Context(), storeID, name, locale, "preview@example.com", exact)
+		h.audit(r, adminapp.AuditEmailTemplatePreview, name, map[string]interface{}{
+			"locale": locale,
+			"exact":  exact,
+			"source": res.Source,
+		}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
 		httpshared.JSON(w, http.StatusOK, emailTemplatePreviewResponse{
-			Name:    name,
-			Locale:  locale,
-			Subject: msg.Subject,
-			Body:    msg.Body,
+			Name:              name,
+			RequestedLocale:   locale,
+			ResolvedLocale:    res.ResolvedLocale,
+			Source:            res.Source,
+			Fallback:          res.Fallback,
+			Subject:           res.Message.Subject,
+			Body:              res.Message.Body,
+			AttachmentOmitted: attachmentOmittedNote(name),
 		})
 	}
 }
@@ -440,8 +598,20 @@ func (h *EmailTemplateAdminHandler) TestSend() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.NotFound("email template not found"))
 			return
 		}
+		if !mail.IsOverridableName(name) {
+			err := apperror.Validation("test-send is limited to overridable templates")
+			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
 		if h.mailer == nil {
 			err := apperror.Unavailable("mailer not configured")
+			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		adminID := adminIDFromRequest(r)
+		if err := h.allowTestSend(adminID); err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
@@ -452,9 +622,8 @@ func (h *EmailTemplateAdminHandler) TestSend() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		to := strings.TrimSpace(req.To)
-		if to == "" {
-			err := apperror.Validation("to is required")
+		to, err := validateTestMailbox(req.To)
+		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
@@ -470,31 +639,45 @@ func (h *EmailTemplateAdminHandler) TestSend() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		exact := r.URL.Query().Get("exact") == "1" || strings.EqualFold(r.URL.Query().Get("exact"), "true")
 		storeID, err := h.defaultStoreID(r.Context())
 		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		msg, err := h.renderNamed(r.Context(), storeID, name, parsedLocale, to)
+		res, _, err := h.renderNamed(r.Context(), storeID, name, parsedLocale, to, exact)
 		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, map[string]interface{}{"locale": parsedLocale}, err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		err = h.mailer.Send(r.Context(), msg)
+		msg := res.Message
+		if !strings.HasPrefix(msg.Subject, emailTemplateTestPrefix) {
+			msg.Subject = emailTemplateTestPrefix + msg.Subject
+		}
+		sendCtx, cancel := context.WithTimeout(r.Context(), emailTemplateTestSendTTL)
+		defer cancel()
+		err = mapMailerError(h.mailer.Send(sendCtx, msg))
 		h.audit(r, adminapp.AuditEmailTemplateTestSend, name, map[string]interface{}{
 			"locale": parsedLocale,
 			"to":     to,
+			"source": res.Source,
+			"exact":  exact,
 		}, err)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"sent":    true,
-			"to":      to,
-			"subject": msg.Subject,
+			"sent":               true,
+			"to":                 to,
+			"subject":            msg.Subject,
+			"source":             res.Source,
+			"requested_locale":   parsedLocale,
+			"resolved_locale":    res.ResolvedLocale,
+			"fallback":           res.Fallback,
+			"attachment_omitted": attachmentOmittedNote(name),
 		})
 	}
 }
