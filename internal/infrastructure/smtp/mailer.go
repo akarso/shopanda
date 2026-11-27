@@ -3,7 +3,6 @@ package smtp
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"mime"
 	"net"
@@ -12,10 +11,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/mail"
 )
-
-// ErrDial means TCP dial failed before any SMTP dialogue (message not accepted).
-// Claim-mail retry matches this with errors.Is; do not wrap post-dial failures.
-var ErrDial = errors.New("smtp: dial")
 
 // Config holds SMTP connection settings.
 type Config struct {
@@ -55,7 +50,7 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	// Context-aware TCP connection.
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDial, err)
+		return fmt.Errorf("%w: %w", mail.ErrDial, err)
 	}
 
 	// Propagate context deadline to the connection.

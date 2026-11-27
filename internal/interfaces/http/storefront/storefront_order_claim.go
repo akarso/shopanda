@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -12,8 +13,8 @@ import (
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/theme"
-	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -197,12 +198,16 @@ func (h *StorefrontHandler) sendClaimEmailWithRetry(ctx context.Context, contact
 }
 
 // isClaimEmailRetryable is true only when the message was almost certainly
-// not accepted (SMTP dial before DATA). Timeouts and post-dial errors are not.
+// not accepted (mail.ErrDial before DATA). Dial timeouts and post-dial errors
+// are not retried.
 func isClaimEmailRetryable(err error) bool {
-	if err == nil || isClaimEmailTimeout(err) || errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
-	return errors.Is(err, smtpmail.ErrDial)
+	if !errors.Is(err, mail.ErrDial) {
+		return false
+	}
+	return !isClaimEmailTimeout(err)
 }
 
 func isClaimEmailTimeout(err error) bool {
@@ -212,8 +217,8 @@ func isClaimEmailTimeout(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "deadline exceeded")
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // AccountOrdersClaim handles GET and POST /account/orders/claim.

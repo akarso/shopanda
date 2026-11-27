@@ -647,17 +647,25 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 }
 
 func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
-	claimService := orderApp.NewClaimService(rt.repos.orderRepo)
-	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
-		WithVouchers(rt.voucherService).
-		WithTxStarter(rt.db)
-	sf = sf.
-		WithOrderClaim(claimService).
-		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
-		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
-	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
+	secret := ""
+	if rt != nil {
+		secret = rt.jwtSecretStr
+	}
+	sf = sf.WithAccountSecurity(secret, 10*time.Minute)
+	if cfg != nil && strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
 		// Same TTL orderClaimToken writes into ExpiresAt and claim mail advertises.
 		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
+	}
+	// Claim/link services need a live order repo (+ auth/JWT for linker). Tests
+	// may call this with a stub serveRuntime that only exercises emailer TTL.
+	if rt != nil && rt.repos != nil && rt.repos.orderRepo != nil {
+		sf = sf.WithOrderClaim(orderApp.NewClaimService(rt.repos.orderRepo))
+		if rt.authService != nil && rt.jwtIssuer != nil {
+			linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
+				WithVouchers(rt.voucherService).
+				WithTxStarter(rt.db)
+			sf = sf.WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService))
+		}
 	}
 	return sf.WithOrderClaimEmailer(newStorefrontOrderClaimEmailer(sf, rt, cfg))
 }
@@ -674,7 +682,9 @@ func newStorefrontOrderClaimEmailer(sf *storefront.StorefrontHandler, rt *serveR
 		mailer = rt.mailer
 		templates = rt.mailTemplates
 		layout = rt.emailLayout
-		if rt.repos != nil {
+		// Typed-nil *StoreRepo in an interface is non-nil; only wire brand
+		// when the concrete repo pointer is present.
+		if rt.repos != nil && rt.repos.storeRepo != nil {
 			brand = storeidentity.EmailBrandSource{
 				Identity: rt.storeIdentitySvc,
 				Stores:   rt.repos.storeRepo,

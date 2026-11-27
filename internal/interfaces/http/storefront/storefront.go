@@ -520,6 +520,14 @@ func (h *StorefrontHandler) WithOrderClaimEmailer(emailer OrderClaimEmailer) *St
 	return h
 }
 
+// OrderClaimEmailer returns the configured claim emailer, if any.
+func (h *StorefrontHandler) OrderClaimEmailer() OrderClaimEmailer {
+	if h == nil {
+		return nil
+	}
+	return h.emailer
+}
+
 // WithOrderLinker enables guest account registration and order linking operations.
 func (h *StorefrontHandler) WithOrderLinker(linker OrderLinker) *StorefrontHandler {
 	h.orderLinker = linker

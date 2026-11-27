@@ -934,7 +934,7 @@ func formatClaimTokenTTL(d time.Duration) string {
 	}
 	secs := int(d / time.Second)
 	if secs < 1 {
-		secs = 1
+		return "less than 1 second"
 	}
 	if secs == 1 {
 		return "1 second"

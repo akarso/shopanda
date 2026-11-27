@@ -14,14 +14,20 @@ import (
 	"time"
 
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/domain/mail"
 	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 )
+
+type claimDialTimeoutError struct{}
+
+func (claimDialTimeoutError) Error() string   { return "i/o timeout" }
+func (claimDialTimeoutError) Timeout() bool   { return true }
+func (claimDialTimeoutError) Temporary() bool { return true }
 
 type storefrontOrderClaimRepoStub struct {
 	byID map[string]*domainOrder.Order
@@ -362,7 +368,7 @@ func TestStorefrontHandler_ClaimOrderSearch_NoMatches_SkipsEmail(t *testing.T) {
 func TestStorefrontHandler_ClaimOrderSearch_DialRetryThenSuccess(t *testing.T) {
 	repo := newStorefrontOrderClaimRepoStub()
 	emailer := &storefrontOrderClaimEmailerStub{
-		errs: []error{fmt.Errorf("%w: connection refused", smtpmail.ErrDial), nil},
+		errs: []error{fmt.Errorf("%w: connection refused", mail.ErrDial), nil},
 	}
 	var logs bytes.Buffer
 	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
@@ -513,7 +519,7 @@ func TestStorefrontHandler_ClaimOrderSearch_DeadlineLogsTimeout(t *testing.T) {
 func TestStorefrontHandler_ClaimOrderSearch_DialIOTimeoutNoRetry(t *testing.T) {
 	repo := newStorefrontOrderClaimRepoStub()
 	emailer := &storefrontOrderClaimEmailerStub{
-		errs: []error{fmt.Errorf("%w: read tcp: i/o timeout", smtpmail.ErrDial)},
+		errs: []error{fmt.Errorf("%w: %w", mail.ErrDial, claimDialTimeoutError{})},
 	}
 	var logs bytes.Buffer
 	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
@@ -551,7 +557,7 @@ func TestStorefrontHandler_ClaimOrderSearch_DialIOTimeoutNoRetry(t *testing.T) {
 func TestStorefrontHandler_ClaimOrderSearch_DialDeadlineExceededNoRetry(t *testing.T) {
 	repo := newStorefrontOrderClaimRepoStub()
 	emailer := &storefrontOrderClaimEmailerStub{
-		errs: []error{fmt.Errorf("%w: %w", smtpmail.ErrDial, context.DeadlineExceeded)},
+		errs: []error{fmt.Errorf("%w: %w", mail.ErrDial, context.DeadlineExceeded)},
 	}
 	var logs bytes.Buffer
 	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
@@ -579,6 +585,44 @@ func TestStorefrontHandler_ClaimOrderSearch_DialDeadlineExceededNoRetry(t *testi
 	}
 	if !claimSearchHasEvent(entries, "storefront.order_claim.email_timeout") {
 		t.Fatalf("missing email_timeout: %s", logs.String())
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_PostDialIOTimeoutSubstringNoRetry(t *testing.T) {
+	// Substring alone must not classify a post-dial failure as dial/timeout.
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{
+		errs: []error{errors.New("smtp: close data: i/o timeout")},
+	}
+	var logs bytes.Buffer
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithLog(logger.NewWithWriter(&logs, "info"))
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if emailer.calls != 1 {
+		t.Fatalf("calls = %d, want 1", emailer.calls)
+	}
+	entries := claimSearchLogEvents(t, &logs)
+	if claimSearchHasEvent(entries, "storefront.order_claim.email_retry") {
+		t.Fatalf("must not retry post-dial error: %s", logs.String())
+	}
+	if claimSearchHasEvent(entries, "storefront.order_claim.email_timeout") {
+		t.Fatalf("substring i/o timeout must not log email_timeout: %s", logs.String())
+	}
+	if !claimSearchHasEvent(entries, "storefront.order_claim.email_failed") {
+		t.Fatalf("missing email_failed: %s", logs.String())
 	}
 }
 

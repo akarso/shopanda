@@ -60,26 +60,24 @@ func TestClaimEmailTokenTTL_ThroughAttachWiring(t *testing.T) {
 			// Absolute claim page so SendClaimEmail can build a link without SSR mode.
 			cfg.Frontend.ClaimURL = "https://shop.example/account/orders/claim"
 
-			sf := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
-				WithAccountSecurity("test-secret-at-least-32-bytes-long!!", 10*time.Minute)
-			// Same branch as attachStorefrontClaimAPI.
-			if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-				sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
-			}
-
 			stub := &claimTTLMailerStub{}
 			rt := &serveRuntime{
+				jwtSecretStr:  "test-secret-at-least-32-bytes-long!!",
 				mailer:        stub,
 				mailTemplates: tmpl,
 				emailLayout:   lr,
 			}
-			// Production path: attachStorefrontClaimAPI → newStorefrontOrderClaimEmailer.
-			emailer := newStorefrontOrderClaimEmailer(sf, rt, cfg)
-			if emailer.tokenTTL != tc.wantTTL {
-				t.Fatalf("tokenTTL = %v, want %v (SecurityEmailTokenTTL=%v)", emailer.tokenTTL, tc.wantTTL, sf.SecurityEmailTokenTTL())
+			sf := attachStorefrontClaimAPI(
+				storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil),
+				rt,
+				cfg,
+			)
+			if got := sf.SecurityEmailTokenTTL(); got != tc.wantTTL {
+				t.Fatalf("SecurityEmailTokenTTL = %v, want %v", got, tc.wantTTL)
 			}
-			if emailer.tokenTTL != sf.SecurityEmailTokenTTL() {
-				t.Fatal("emailer must use SecurityEmailTokenTTL()")
+			emailer := sf.OrderClaimEmailer()
+			if emailer == nil {
+				t.Fatal("attachStorefrontClaimAPI must install an order claim emailer")
 			}
 			if err := emailer.SendClaimEmail(context.Background(), "guest@example.com", "tok-ttl"); err != nil {
 				t.Fatalf("SendClaimEmail: %v", err)
@@ -107,5 +105,8 @@ func TestFormatClaimTokenTTL(t *testing.T) {
 	// Sub-minute must not round up past ExpiresAt.
 	if formatClaimTokenTTL(30*time.Second) != "30 seconds" {
 		t.Fatalf("format 30s = %q, want 30 seconds", formatClaimTokenTTL(30*time.Second))
+	}
+	if formatClaimTokenTTL(500*time.Millisecond) != "less than 1 second" {
+		t.Fatalf("format 500ms = %q, want less than 1 second", formatClaimTokenTTL(500*time.Millisecond))
 	}
 }
