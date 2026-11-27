@@ -23,15 +23,14 @@ const (
 var emailTemplateNameRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // overridableTemplateNames are the only templates merchants may override.
-// Auth/token templates stay file/builtin-only so a DB row cannot rewrite
-// ResetURL / VerifyURL destinations.
+// Auth/token, claim, and voucher templates stay file/builtin-only so a DB row
+// cannot rewrite ResetURL / VerifyURL / ClaimURL destinations or leak voucher
+// codes via injected beacons / rewritten links.
 var overridableTemplateNames = map[string]struct{}{
 	"order_confirmed": {},
 	"order_shipped":   {},
 	"invoice_created": {},
 	"cart_recovery":   {},
-	"order_claim":     {},
-	"voucher_issued":  {},
 }
 
 // IsOverridableName reports whether name may be stored or applied as a DB override.

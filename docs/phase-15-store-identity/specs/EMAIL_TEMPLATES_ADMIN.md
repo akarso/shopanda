@@ -52,11 +52,11 @@ Render-time lookup (`RenderWithOverrides`):
 2. Empty locale (store default language row)
 3. In-memory registry (file `LoadDir` over builtin `RegisterTemplates`)
 
-Only overridable names may be stored or applied from DB: `order_confirmed`, `order_shipped`, `invoice_created`, `cart_recovery`, `order_claim`, `voucher_issued`. Auth/token templates (`password_reset`, verification, email-change) stay file/builtin so a DB row cannot rewrite live token URLs.
+Only overridable names may be stored or applied from DB: `order_confirmed`, `order_shipped`, `invoice_created`, `cart_recovery`. Auth/token, claim, and voucher templates (`password_reset`, verification, email-change, `order_claim`, `voucher_issued`) stay file/builtin so a DB row cannot rewrite live token URLs, claim links, or voucher codes (contains-checks cannot stop an image beacon or rewritten `href`).
 
 Subject uses `text/template` (SMTP header stays plain: `Fish & Chips`); executed subjects that contain CR/LF are rejected before enqueue. Body uses `html/template`. Layout still wraps body HTML. No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
 
-When overrides are wired, a default-store lookup failure aborts **overridable** sends only (so a stock file body is never acknowledged for those names). Auth/token mail still renders from the file registry. Recovery does not mark the cart sent on store/locale lookup failure. Claim prefers request language (`LanguageOK`) over the store primary language; DB overrides must keep the exact `ClaimURL` in HTML, and plain text always includes at least that URL (language-neutral) instead of stock English instructions.
+When overrides are wired, a default-store lookup failure aborts **overridable** sends only (so a stock file body is never acknowledged for those names). Auth/token, claim, and voucher mail still render from the file registry. Recovery does not mark the cart sent on store/locale lookup failure. Claim prefers request language (`LanguageOK`) when resolving locale for brand data; the `order_claim` body always comes from file/builtin.
 
 ## 4. Admin API (PR-1213)
 

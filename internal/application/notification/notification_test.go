@@ -425,6 +425,14 @@ func TestHandlePasswordReset_FindDefaultErrorStillEnqueues(t *testing.T) {
 	if len(q.enqueued) != 1 {
 		t.Fatalf("auth mail must still enqueue from file registry, got %d", len(q.enqueued))
 	}
+	subj, _ := q.enqueued[0].Payload["subject"].(string)
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if subj != "Reset your password" {
+		t.Fatalf("subject = %q, want file template", subj)
+	}
+	if !strings.Contains(body, "https://shop.test/reset") || !strings.Contains(body, "abc123") {
+		t.Fatalf("body missing file reset URL/token: %q", body)
+	}
 }
 
 func TestHandleOrderPaid_ExactLocaleBeatsEmpty(t *testing.T) {
