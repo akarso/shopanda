@@ -262,6 +262,12 @@ type recoveryJobGetter interface {
 	Get(ctx context.Context, id string) (*jobs.Detail, error)
 }
 
+// recoveryFailedReplacer replaces a failed email.send payload and re-pends it
+// with attempts=0 (Postgres JobQueue.ReplaceFailed — same as invoice heal).
+type recoveryFailedReplacer interface {
+	ReplaceFailed(ctx context.Context, job jobs.Job) error
+}
+
 func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, cartID, customerID string) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
@@ -275,7 +281,7 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 	}
 	if err := h.queue.Enqueue(ctx, job); err != nil {
 		if apperror.Is(err, apperror.CodeConflict) {
-			return h.handleEnqueueConflict(ctx, job.ID, cartID, customerID)
+			return h.handleEnqueueConflict(ctx, job, cartID, customerID)
 		}
 		return fmt.Errorf("enqueue email job: %w", err)
 	}
@@ -287,7 +293,8 @@ func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, ca
 	return nil
 }
 
-func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, jobID, cartID, customerID string) error {
+func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, job jobs.Job, cartID, customerID string) error {
+	jobID := job.ID
 	logFields := map[string]interface{}{
 		"cart_id":     cartID,
 		"customer_id": customerID,
@@ -309,19 +316,28 @@ func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, jobID, cart
 		return fmt.Errorf("enqueue email job: conflict but job %s not found", jobID)
 	}
 	switch detail.Status {
-	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusDone:
+	case jobs.StatusPending, jobs.StatusProcessing, jobs.StatusDone, jobs.StatusReclaiming:
 		h.log.Info("cart.recovery.email_already_enqueued", logFields)
 		return nil
-	case jobs.StatusFailed, jobs.StatusCancelled:
-		requeueErr := h.queue.Requeue(ctx, jobID, detail.Attempts, jobs.WithRequeueTerminal())
-		if errors.Is(requeueErr, jobs.ErrRequeueUnsupported) {
-			h.log.Info("cart.recovery.email_requeue_unsupported", logFields)
-			return nil // keep mark; broker cannot revive the id
+	case jobs.StatusCancelled:
+		// Operator cancelled; leave the mark so we do not revive the id.
+		h.log.Info("cart.recovery.email_cancelled_kept", logFields)
+		return nil
+	case jobs.StatusFailed:
+		replacer, ok := h.queue.(recoveryFailedReplacer)
+		if !ok {
+			// Redis etc: Get sees failed but cannot rewrite/reset attempts.
+			h.log.Info("cart.recovery.email_replace_unsupported", logFields)
+			return nil
 		}
-		if requeueErr != nil {
-			return fmt.Errorf("requeue email job %s: %w", jobID, requeueErr)
+		if replaceErr := replacer.ReplaceFailed(ctx, job); replaceErr != nil {
+			if errors.Is(replaceErr, jobs.ErrRequeueNotTerminal) {
+				h.log.Info("cart.recovery.email_already_enqueued", logFields)
+				return nil
+			}
+			return fmt.Errorf("replace failed email job %s: %w", jobID, replaceErr)
 		}
-		h.log.Info("cart.recovery.email_requeued", logFields)
+		h.log.Info("cart.recovery.email_replaced", logFields)
 		return nil
 	default:
 		h.log.Info("cart.recovery.email_conflict_unknown_status", logFields)

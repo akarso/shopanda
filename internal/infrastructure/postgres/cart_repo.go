@@ -290,12 +290,19 @@ func (r *CartRepo) ClearRecoveryEmailSent(ctx context.Context, cartID string, se
 	if cartID == "" {
 		return fmt.Errorf("cart_repo: clear recovery email sent: empty id")
 	}
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE carts
 		SET recovery_email_sent_at = NULL
 		WHERE id = $1 AND recovery_email_sent_at = $2`, cartID, sentAt)
 	if err != nil {
 		return fmt.Errorf("cart_repo: clear recovery email sent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cart_repo: clear recovery email sent rows: %w", err)
+	}
+	if n == 0 {
+		return cart.ErrRecoveryClaimMismatch
 	}
 	return nil
 }

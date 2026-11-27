@@ -3,6 +3,7 @@ package cart_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -53,11 +54,11 @@ func (s *recoveryCartRepo) MarkRecoveryEmailSent(_ context.Context, cartID strin
 
 func (s *recoveryCartRepo) ClearRecoveryEmailSent(_ context.Context, cartID string, sentAt time.Time) error {
 	if s.claimedAt == nil {
-		return nil
+		return domainCart.ErrRecoveryClaimMismatch
 	}
 	at, ok := s.claimedAt[cartID]
 	if !ok || !at.Equal(sentAt) {
-		return nil
+		return domainCart.ErrRecoveryClaimMismatch
 	}
 	delete(s.claimedAt, cartID)
 	out := s.marked[:0]
@@ -100,9 +101,10 @@ func (s *recoveryProductRepo) FindByID(_ context.Context, id string) (*catalog.P
 type recoveryQueue struct {
 	jobs.Queue
 	enqueued   []jobs.Job
+	replaced   []jobs.Job
 	requeued   []string
 	errOnce    error
-	requeueErr error
+	replaceErr error
 	allowDup   bool // brokers that ignore job id uniqueness
 	byID       map[string]struct{}
 	details    map[string]*jobs.Detail
@@ -134,18 +136,66 @@ func (s *recoveryQueue) Get(_ context.Context, id string) (*jobs.Detail, error) 
 	return s.details[id], nil
 }
 
-func (s *recoveryQueue) Requeue(_ context.Context, id string, attempt int, _ ...jobs.RequeueOption) error {
-	if s.requeueErr != nil {
-		return s.requeueErr
+func (s *recoveryQueue) ReplaceFailed(_ context.Context, job jobs.Job) error {
+	if s.replaceErr != nil {
+		return s.replaceErr
 	}
-	s.requeued = append(s.requeued, id)
+	s.replaced = append(s.replaced, job)
 	if s.details != nil {
-		if d := s.details[id]; d != nil {
-			d.Status = jobs.StatusPending
-			d.Attempts = attempt
+		s.details[job.ID] = &jobs.Detail{
+			Summary: jobs.Summary{ID: job.ID, Status: jobs.StatusPending, Attempts: 0},
+			Payload: job.Payload,
 		}
 	}
 	return nil
+}
+
+func (s *recoveryQueue) Requeue(_ context.Context, id string, attempt int, opts ...jobs.RequeueOption) error {
+	settings := jobs.ResolveRequeueOptions(opts)
+	if !settings.Terminal {
+		return errors.New("recoveryQueue.Requeue: WithRequeueTerminal required")
+	}
+	d := (*jobs.Detail)(nil)
+	if s.details != nil {
+		d = s.details[id]
+	}
+	if d == nil || d.Attempts != attempt {
+		want := -1
+		if d != nil {
+			want = d.Attempts
+		}
+		return fmt.Errorf("recoveryQueue.Requeue: attempt %d != detail.Attempts %d", attempt, want)
+	}
+	s.requeued = append(s.requeued, id)
+	d.Status = jobs.StatusPending
+	return nil
+}
+
+// recoveryGetOnlyQueue has Get but not ReplaceFailed (Redis-shaped).
+type recoveryGetOnlyQueue struct {
+	jobs.Queue
+	enqueued []jobs.Job
+	byID     map[string]struct{}
+	details  map[string]*jobs.Detail
+}
+
+func (s *recoveryGetOnlyQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	if s.byID == nil {
+		s.byID = map[string]struct{}{}
+	}
+	if _, ok := s.byID[job.ID]; ok {
+		return apperror.Conflict("job already enqueued")
+	}
+	s.byID[job.ID] = struct{}{}
+	s.enqueued = append(s.enqueued, job)
+	return nil
+}
+
+func (s *recoveryGetOnlyQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	if s.details == nil {
+		return nil, nil
+	}
+	return s.details[id], nil
 }
 
 type recoveryLogger struct {
@@ -440,7 +490,7 @@ func TestRecoveryHandler_Handle_ConflictPendingKeepsMark(t *testing.T) {
 	}
 }
 
-func TestRecoveryHandler_Handle_ConflictFailedRequeuesAndKeepsMark(t *testing.T) {
+func TestRecoveryHandler_Handle_ConflictFailedReplacesAndKeepsMark(t *testing.T) {
 	c, err := domainCart.NewCart("cart-failed", "EUR")
 	if err != nil {
 		t.Fatalf("NewCart: %v", err)
@@ -461,7 +511,10 @@ func TestRecoveryHandler_Handle_ConflictFailedRequeuesAndKeepsMark(t *testing.T)
 	queue := &recoveryQueue{
 		byID: map[string]struct{}{jobID: {}},
 		details: map[string]*jobs.Detail{
-			jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}},
+			jobID: {
+				Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3},
+				Payload: map[string]interface{}{"body": "stale"},
+			},
 		},
 	}
 	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
@@ -479,11 +532,14 @@ func TestRecoveryHandler_Handle_ConflictFailedRequeuesAndKeepsMark(t *testing.T)
 	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if len(queue.requeued) != 1 || queue.requeued[0] != jobID {
-		t.Fatalf("requeued = %v, want [%s]", queue.requeued, jobID)
+	if len(queue.replaced) != 1 || queue.replaced[0].ID != jobID {
+		t.Fatalf("replaced = %#v, want id %s", queue.replaced, jobID)
+	}
+	if body, _ := queue.replaced[0].Payload["body"].(string); body == "" || body == "stale" {
+		t.Fatalf("ReplaceFailed must write fresh body, got %q", body)
 	}
 	if len(carts.marked) != 1 {
-		t.Fatalf("successful requeue must keep mark, got %v", carts.marked)
+		t.Fatalf("successful replace must keep mark, got %v", carts.marked)
 	}
 	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
 		t.Fatalf("second: %v", err)
@@ -491,8 +547,8 @@ func TestRecoveryHandler_Handle_ConflictFailedRequeuesAndKeepsMark(t *testing.T)
 	if len(queue.enqueued) != 0 {
 		t.Fatalf("second Handle must not publish again, got %d", len(queue.enqueued))
 	}
-	if len(queue.requeued) != 1 {
-		t.Fatalf("second Handle must not requeue again, got %d", len(queue.requeued))
+	if len(queue.replaced) != 1 {
+		t.Fatalf("second Handle must not replace again, got %d", len(queue.replaced))
 	}
 	if len(carts.marked) != 1 {
 		t.Fatalf("marked after second = %v, want 1", carts.marked)
@@ -517,10 +573,9 @@ func TestRecoveryHandler_Handle_ConflictFailedUnsupportedKeepsMark(t *testing.T)
 	}}
 	templates := mail.NewTemplates()
 	notification.RegisterTemplates(templates)
-	queue := &recoveryQueue{
-		byID:       map[string]struct{}{jobID: {}},
-		details:    map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed}}},
-		requeueErr: jobs.ErrRequeueUnsupported,
+	queue := &recoveryGetOnlyQueue{
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed}}},
 	}
 	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
 		Carts:     carts,
@@ -537,11 +592,101 @@ func TestRecoveryHandler_Handle_ConflictFailedUnsupportedKeepsMark(t *testing.T)
 	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if len(queue.requeued) != 0 {
-		t.Fatalf("unsupported must not record requeue, got %v", queue.requeued)
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("unsupported must not enqueue, got %d", len(queue.enqueued))
 	}
 	if len(carts.marked) != 1 {
-		t.Fatalf("unsupported requeue must keep mark, got %v", carts.marked)
+		t.Fatalf("unsupported replace must keep mark, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_ConflictCancelledKeepsMark(t *testing.T) {
+	c, err := domainCart.NewCart("cart-cancelled", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	jobID := cartApp.CartRecoveryEmailJobID(c.ID)
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusCancelled}}},
+	}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.replaced) != 0 {
+		t.Fatalf("cancelled must not ReplaceFailed, got %#v", queue.replaced)
+	}
+	if len(carts.marked) != 1 {
+		t.Fatalf("cancelled must keep mark, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_ConflictReclaimingKeepsMark(t *testing.T) {
+	c, err := domainCart.NewCart("cart-reclaiming", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	jobID := cartApp.CartRecoveryEmailJobID(c.ID)
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusReclaiming}}},
+	}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.replaced) != 0 {
+		t.Fatalf("reclaiming must not ReplaceFailed, got %#v", queue.replaced)
+	}
+	if len(carts.marked) != 1 {
+		t.Fatalf("reclaiming must keep mark, got %v", carts.marked)
 	}
 }
 
