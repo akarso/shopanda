@@ -65,6 +65,32 @@ func TestTemplates_PutParsed_RejectsNilAndEmpty(t *testing.T) {
 	}
 }
 
+func TestTemplates_SourceAndNames(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("welcome", "Hi {{.Name}}", "<p>{{.Name}}</p>")
+	src, ok := tmpl.Source("welcome")
+	if !ok || src.Origin != mail.OriginBuiltin || src.Subject != "Hi {{.Name}}" {
+		t.Fatalf("builtin source = %#v ok=%v", src, ok)
+	}
+	parts, err := mail.ParseNamed("order_confirmed", "File subj", "<p>file</p>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpl.PutFile(map[string]mail.FileEntry{
+		"order_confirmed": {Parts: parts, Subject: "File subj", Body: "<p>file</p>"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src, ok = tmpl.Source("order_confirmed")
+	if !ok || src.Origin != mail.OriginFile || src.Body != "<p>file</p>" {
+		t.Fatalf("file source = %#v ok=%v", src, ok)
+	}
+	names := tmpl.Names()
+	if len(names) != 2 || names[0] != "order_confirmed" || names[1] != "welcome" {
+		t.Fatalf("Names = %v", names)
+	}
+}
+
 func TestTemplates_Render(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	tmpl.Register("welcome", "Welcome {{.Name}} & Co", "<h1>Hello {{.Name}}</h1>")
@@ -106,5 +132,30 @@ func TestMessage_Fields(t *testing.T) {
 	}
 	if m.Body != "<p>Hello</p>" {
 		t.Errorf("Body = %q", m.Body)
+	}
+}
+
+func TestTemplates_PutParsed_ClearsStaleSource(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	tmpl.Register("welcome", "Old subj", "<p>old</p>")
+	if src, ok := tmpl.Source("welcome"); !ok || src.Subject != "Old subj" {
+		t.Fatalf("precondition source = %#v ok=%v", src, ok)
+	}
+	parts, err := mail.ParseNamed("welcome", "New subj", "<p>new</p>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpl.PutParsed(map[string]*mail.NamedParts{"welcome": parts}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tmpl.Source("welcome"); ok {
+		t.Fatal("PutParsed without raw text must clear Source entry")
+	}
+	msg, err := tmpl.Render("welcome", "a@b.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Subject != "New subj" {
+		t.Fatalf("subject = %q", msg.Subject)
 	}
 }

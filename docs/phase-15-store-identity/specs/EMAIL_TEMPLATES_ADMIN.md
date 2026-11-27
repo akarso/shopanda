@@ -62,14 +62,26 @@ When overrides are wired, a default-store lookup failure aborts **overridable** 
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/admin/email-templates` | Registered names + source (`builtin` / `file` / `db`) + locales present |
-| GET | `/api/v1/admin/email-templates/{name}` | Subject + body for locale (query `locale`) |
-| PUT | `/api/v1/admin/email-templates/{name}` | Save DB override |
-| DELETE | `/api/v1/admin/email-templates/{name}` | Remove override (revert to file/builtin) |
-| POST | `/api/v1/admin/email-templates/{name}/preview` | Render with sample payload (no send) |
-| POST | `/api/v1/admin/email-templates/{name}/test-send` | Render + send to an address via existing mailer |
+| GET | `/api/v1/admin/email-templates` | Registered names + source (`builtin` / `file` / `db`) + locales present (metadata only; no subject/body) |
+| GET | `/api/v1/admin/email-templates/{name}` | Exact locale subject + body (query `locale`); no empty-locale fallthrough |
+| PUT | `/api/v1/admin/email-templates/{name}` | Save DB override (parse + sample execute before Upsert) |
+| DELETE | `/api/v1/admin/email-templates/{name}` | Remove override (allowlist only; revert to file/builtin) |
+| POST | `/api/v1/admin/email-templates/{name}/preview` | Render with sample payload (no send); reports source / resolved_locale / fallback |
+| POST | `/api/v1/admin/email-templates/{name}/test-send` | Overridable names only; `[TEST]` subject; mailbox check; short Send deadline |
 
-RBAC: reuse config/store admin permission or a dedicated `email_templates.write`. Do not invent a second SMTP stack.
+RBAC: `content.read` (list/get/preview), `content.write` (put/delete/test-send). Store scope is the default store.
+
+**PUT:** allowlist-only. Requires a real admin actor id (`adminIDFromRequest`’s `"system"` fallback is not accepted as `updated_by`). Before Upsert, subject/body are parsed and executed with the same sample data preview uses; executed subjects containing CR/LF are rejected. A failed validation leaves no row.
+
+**GET vs preview:** GET is exact-locale (DB row for that key, else file/builtin source text). Preview and test-send use the live render chain (requested locale → empty locale → file) unless `exact=1` / `exact=true`. Responses include `source`, `resolved_locale`, and `fallback` so a default-locale DB override is visible when previewing `de`.
+
+**List `source`:** `db` when any allowlisted locale row exists for that name (including `de`-only). Locales are sorted by name/locale; empty locale is JSON `""`.
+
+**Test-send:** overridable names only (not auth/claim/voucher). Requires a real admin actor id (not the `"system"` audit fallback). `to` must parse as a mailbox; subject is prefixed with `[TEST] `; Send runs under a ~15s deadline. The per-admin rate window is stamped only after validation (bad body/`to` does not burn it) and returns `rate_limited` (429). Limit is per process. Invoice/voucher previews set `attachment_omitted` (no PDF is attached). SMTP dial/send failures map to unavailable — not a client `to` validation error.
+
+**Preview body:** empty body is OK; non-empty body uses strict JSON decode (422 on error). Sample maps are per-template (`cart_recovery` sets `Quantity` / `UnitPrice` / `LineTotal` / `Price` so file and builtin bodies both render).
+
+`updated_by` is the admin actor id (required on write).
 
 ## 5. Admin UI (PR-1214)
 

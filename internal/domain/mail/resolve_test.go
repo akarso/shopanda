@@ -264,3 +264,53 @@ func TestParseTemplateLocale(t *testing.T) {
 		t.Fatal("expected und rejected")
 	}
 }
+
+func TestValidateRenderable(t *testing.T) {
+	if err := mail.ValidateRenderable("order_confirmed", "Hi {{.Data.X}}", "<p>{{.Data.X}}</p>", mail.EmailData{
+		Data: map[string]interface{}{"X": "ok"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mail.ValidateRenderable("order_confirmed", "Hi {{", "<p>x</p>", nil); err == nil {
+		t.Fatal("expected parse error")
+	}
+	if err := mail.ValidateRenderable("order_confirmed", "a\nb", "<p>x</p>", nil); err == nil {
+		t.Fatal("expected CR/LF reject")
+	}
+	if err := mail.ValidateRenderable("order_confirmed", `{{printf "a\rb"}}`, "<p>x</p>", nil); err == nil {
+		t.Fatal("expected rendered CR/LF reject")
+	}
+}
+
+func TestRenderWithOverrides_ExactLocale(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("order_confirmed", "File", "<p>file</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|order_confirmed|": {"Default", "<p>default</p>"},
+	}}
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "de", "a@b.com", nil, mail.WithExactLocale())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FromOverride || res.Message.Subject != "File" {
+		t.Fatalf("exact must skip empty locale: from=%v subject=%q", res.FromOverride, res.Message.Subject)
+	}
+	if !res.Fallback || res.Source != mail.OriginBuiltin {
+		t.Fatalf("fallback/source = %#v", res)
+	}
+}
+
+func TestRenderWithOverrides_FallbackMetadata(t *testing.T) {
+	reg := mail.NewTemplates()
+	reg.Register("order_confirmed", "File", "<p>file</p>")
+	src := &overrideStub{rows: map[string][2]string{
+		"s1|order_confirmed|": {"Default", "<p>default</p>"},
+	}}
+	res, err := mail.RenderWithOverrides(context.Background(), reg, src, "s1", "order_confirmed", "de", "a@b.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.FromOverride || res.Source != "db" || !res.Fallback || res.ResolvedLocale != "" {
+		t.Fatalf("expected empty-locale fallback: %#v", res)
+	}
+}

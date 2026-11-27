@@ -72,7 +72,7 @@ See [`specs/EMAIL_TEMPLATES_ADMIN.md`](specs/EMAIL_TEMPLATES_ADMIN.md) and [Phas
 | PR-1210 | Wire file loader | `email.LoadDir` in `cmd/`; wrap with `_layout.html`; fill `EmailData` from current store name/address/logo (identity in 1205). — **done** |
 | PR-1211 | Remaining file templates | `email_verification`, `security_verification`, `email_change_*`, `cart_recovery`, guest order-claim — same layout. — **done** |
 | PR-1212 | DB template store | Table + loader: DB (name + locale) → file → builtin. — **done** |
-| PR-1213 | Admin email-template API | List registered names; GET/PUT subject+html per locale; reset-to-file. |
+| PR-1213 | Admin email-template API | List registered names; GET/PUT subject+html per locale; reset-to-file. — **done** |
 | PR-1214 | Admin editor UI | Content → Email Templates: list, edit, preview (sample data), test send via existing SMTP test path. |
 
 **Out of scope for the track:** WYSIWYG / drag-drop, A/B tests, marketing/newsletters, MJML, SMS/push, per-email “from name” picker.

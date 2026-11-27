@@ -213,6 +213,7 @@ type serveRuntime struct {
 	storeIdentitySvc               *storeidentity.Service
 	storeIdentityAdmin             *admin.StoreIdentityAdminHandler
 	storeIdentityHandler           *storefront.StoreIdentityHandler
+	emailTemplateAdmin             *admin.EmailTemplateAdminHandler
 	mailTemplates                  *mail.Templates
 	emailLayout                    mail.Layout
 	mailer                         mail.Mailer
@@ -1184,6 +1185,20 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
 	storeIdentityAdmin := admin.NewStoreIdentityAdminHandlerWithAuditor(storeIdentitySvc, sharedAuditor)
 	storeIdentityHandler := storefront.NewStoreIdentityHandler(storeIdentitySvc)
+	emailTemplateAdmin := admin.NewEmailTemplateAdminHandler(admin.EmailTemplateAdminConfig{
+		Templates: mailTemplates,
+		Layout:    emailLayout,
+		Repo:      repos.emailTemplateRepo,
+		Mailer:    mailer,
+		Stores:    repos.storeRepo,
+		Brand: storeidentity.EmailBrandSource{
+			Identity: storeIdentitySvc,
+			Stores:   repos.storeRepo,
+			Config:   repos.configRepo,
+		},
+		StoreURL: cfg.Server.PublicBaseURL,
+		Auditor:  sharedAuditor,
+	})
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
 	webhookService := webhookApp.NewService(repos.webhookEndpointRepo)
 	webhookEndpointAdmin := admin.NewWebhookEndpointAdminHandler(webhookService)
@@ -1348,6 +1363,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeIdentitySvc:               storeIdentitySvc,
 		storeIdentityAdmin:             storeIdentityAdmin,
 		storeIdentityHandler:           storeIdentityHandler,
+		emailTemplateAdmin:             emailTemplateAdmin,
 		mailTemplates:                  mailTemplates,
 		emailLayout:                    emailLayout,
 		mailer:                         mailer,

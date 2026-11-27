@@ -13,8 +13,8 @@ import (
 // (excluding _layout.html and other _-prefixed partials) and registers
 // them in the Templates registry. Existing names are overwritten.
 // Every file is parsed with mail.ParseNamed before any registry write;
-// PutParsed applies the whole set under one lock so a parse failure leaves
-// the destination unchanged.
+// PutFile applies the whole set under one lock so a parse failure leaves
+// the destination unchanged. Raw subject/body are retained with origin "file".
 // names lists templates that replaced or added registry entries.
 func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) {
 	dir := loader.Dir()
@@ -23,7 +23,7 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		return nil, fmt.Errorf("email: read dir %s: %w", dir, err)
 	}
 
-	parsed := make(map[string]*mail.NamedParts, len(entries))
+	parsed := make(map[string]mail.FileEntry, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -45,11 +45,11 @@ func LoadDir(t *mail.Templates, loader *FileLoader) (names []string, err error) 
 		if parseErr != nil {
 			return nil, fmt.Errorf("email: parse template %s: %w", tmplName, parseErr)
 		}
-		parsed[tmplName] = parts
+		parsed[tmplName] = mail.FileEntry{Parts: parts, Subject: subject, Body: body}
 		names = append(names, tmplName)
 	}
 
-	if err := t.PutParsed(parsed); err != nil {
+	if err := t.PutFile(parsed); err != nil {
 		return nil, err
 	}
 	return names, nil

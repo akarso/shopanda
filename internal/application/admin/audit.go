@@ -61,6 +61,13 @@ const (
 	AuditContentBlockUpdate AuditAction = "content_block.update"
 	AuditContentBlockDelete AuditAction = "content_block.delete"
 
+	AuditEmailTemplateList     AuditAction = "email_template.list"
+	AuditEmailTemplateRead     AuditAction = "email_template.read"
+	AuditEmailTemplateUpdate   AuditAction = "email_template.update"
+	AuditEmailTemplateDelete   AuditAction = "email_template.delete"
+	AuditEmailTemplatePreview  AuditAction = "email_template.preview"
+	AuditEmailTemplateTestSend AuditAction = "email_template.test_send"
+
 	// Category operations
 	AuditCategoryCreate          AuditAction = "category.create"
 	AuditCategoryUpdate          AuditAction = "category.update"

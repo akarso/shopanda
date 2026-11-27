@@ -11,7 +11,7 @@
 | PR-1210 | B | done | [Wire file email loader](PR-1210.md) |
 | PR-1211 | B | done | [Remaining file templates](PR-1211.md) |
 | PR-1212 | B | done | [DB template store](PR-1212.md) |
-| PR-1213 | B | planned | [Admin email-template API](PR-1213.md) |
+| PR-1213 | B | done | [Admin email-template API](PR-1213.md) |
 | PR-1214 | B | planned | [Admin email-template editor](PR-1214.md) |
 | PR-1220 | C | planned | [Theme catalog + activate API](PR-1220.md) |
 | PR-1221 | C | planned | [Admin Themes page](PR-1221.md) |
