@@ -177,6 +177,33 @@ func resolveAdmin(q jobs.Queue) jobs.Admin {
 	return nil
 }
 
+// failedJobReplacer is Postgres JobQueue.ReplaceFailed (invoice / recovery heal).
+type failedJobReplacer interface {
+	ReplaceFailed(ctx context.Context, job jobs.Job) error
+}
+
+func resolveFailedReplacer(q jobs.Queue) failedJobReplacer {
+	for depth := 0; q != nil && depth < maxQueueUnwrapDepth; depth++ {
+		if next, ok := skipNotifyWrapper(q); ok {
+			q = next
+			continue
+		}
+		if r, ok := q.(failedJobReplacer); ok {
+			return r
+		}
+		u, ok := q.(queueUnwrapper)
+		if !ok {
+			return nil
+		}
+		next := u.UnwrapQueue()
+		if next == nil || queueSame(next, q) {
+			return nil
+		}
+		q = next
+	}
+	return nil
+}
+
 // WrapRequeueNotify returns q wrapped so Requeue runs OnRequeued hooks
 // before pending (via jobs.RequeueHookable). When the wrap chain exposes
 // Reader and Admin at wrap time, the returned value implements those
@@ -342,7 +369,17 @@ func (q *requeueNotifyIntrospectable) Cancel(ctx context.Context, id string) err
 	return ad.Cancel(ctx, id)
 }
 
+// ReplaceFailed forwards to the live inner queue (Postgres JobQueue).
+func (q *requeueNotifyIntrospectable) ReplaceFailed(ctx context.Context, job jobs.Job) error {
+	r := resolveFailedReplacer(q.inner)
+	if r == nil {
+		return fmt.Errorf("plugin: queue wrap chain has no ReplaceFailed")
+	}
+	return r.ReplaceFailed(ctx, job)
+}
+
 var _ jobs.Queue = (*requeueNotifyQueue)(nil)
 var _ jobs.Queue = (*requeueNotifyIntrospectable)(nil)
 var _ jobs.Reader = (*requeueNotifyIntrospectable)(nil)
 var _ jobs.Admin = (*requeueNotifyIntrospectable)(nil)
+var _ failedJobReplacer = (*requeueNotifyIntrospectable)(nil)

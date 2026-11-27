@@ -268,6 +268,33 @@ type recoveryFailedReplacer interface {
 	ReplaceFailed(ctx context.Context, job jobs.Job) error
 }
 
+// recoveryQueueUnwrapper walks past WrapRequeueNotify / fence layers.
+type recoveryQueueUnwrapper interface {
+	UnwrapQueue() jobs.Queue
+}
+
+const recoveryQueueUnwrapDepth = 32
+
+// resolveRecoveryFailedReplacer finds ReplaceFailed on q or via UnwrapQueue
+// (serve/worker bind WrapRequeueNotify; some fences only expose Get outside).
+func resolveRecoveryFailedReplacer(q jobs.Queue) recoveryFailedReplacer {
+	for depth := 0; q != nil && depth < recoveryQueueUnwrapDepth; depth++ {
+		if r, ok := q.(recoveryFailedReplacer); ok {
+			return r
+		}
+		u, ok := q.(recoveryQueueUnwrapper)
+		if !ok {
+			return nil
+		}
+		next := u.UnwrapQueue()
+		if next == nil || next == q {
+			return nil
+		}
+		q = next
+	}
+	return nil
+}
+
 func (h *RecoveryHandler) enqueueEmail(ctx context.Context, msg mail.Message, cartID, customerID string) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
@@ -324,8 +351,8 @@ func (h *RecoveryHandler) handleEnqueueConflict(ctx context.Context, job jobs.Jo
 		h.log.Info("cart.recovery.email_cancelled_kept", logFields)
 		return nil
 	case jobs.StatusFailed:
-		replacer, ok := h.queue.(recoveryFailedReplacer)
-		if !ok {
+		replacer := resolveRecoveryFailedReplacer(h.queue)
+		if replacer == nil {
 			// Redis etc: Get sees failed but cannot rewrite/reset attempts.
 			h.log.Info("cart.recovery.email_replace_unsupported", logFields)
 			return nil

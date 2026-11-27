@@ -198,6 +198,49 @@ func (s *recoveryGetOnlyQueue) Get(_ context.Context, id string) (*jobs.Detail, 
 	return s.details[id], nil
 }
 
+// recoveryOuterGetQueue mimics WrapRequeueNotify: Get outside, ReplaceFailed
+// only on the UnwrapQueue inner value.
+type recoveryOuterGetQueue struct {
+	jobs.Queue
+	inner    *recoveryReplaceInner
+	enqueued []jobs.Job
+	byID     map[string]struct{}
+	details  map[string]*jobs.Detail
+}
+
+func (s *recoveryOuterGetQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	if s.byID == nil {
+		s.byID = map[string]struct{}{}
+	}
+	if _, ok := s.byID[job.ID]; ok {
+		return apperror.Conflict("job already enqueued")
+	}
+	s.byID[job.ID] = struct{}{}
+	s.enqueued = append(s.enqueued, job)
+	return nil
+}
+
+func (s *recoveryOuterGetQueue) Get(_ context.Context, id string) (*jobs.Detail, error) {
+	if s.details == nil {
+		return nil, nil
+	}
+	return s.details[id], nil
+}
+
+func (s *recoveryOuterGetQueue) UnwrapQueue() jobs.Queue {
+	return s.inner
+}
+
+type recoveryReplaceInner struct {
+	jobs.Queue
+	replaced []jobs.Job
+}
+
+func (s *recoveryReplaceInner) ReplaceFailed(_ context.Context, job jobs.Job) error {
+	s.replaced = append(s.replaced, job)
+	return nil
+}
+
 type recoveryLogger struct {
 	infos []string
 }
@@ -549,6 +592,70 @@ func TestRecoveryHandler_Handle_ConflictFailedReplacesAndKeepsMark(t *testing.T)
 	}
 	if len(queue.replaced) != 1 {
 		t.Fatalf("second Handle must not replace again, got %d", len(queue.replaced))
+	}
+	if len(carts.marked) != 1 {
+		t.Fatalf("marked after second = %v, want 1", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_ConflictFailedReplaceViaUnwrap(t *testing.T) {
+	c, err := domainCart.NewCart("cart-unwrap", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	jobID := cartApp.CartRecoveryEmailJobID(c.ID)
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	inner := &recoveryReplaceInner{}
+	queue := &recoveryOuterGetQueue{
+		inner:   inner,
+		byID:    map[string]struct{}{jobID: {}},
+		details: map[string]*jobs.Detail{jobID: {Summary: jobs.Summary{ID: jobID, Status: jobs.StatusFailed, Attempts: 3}}},
+	}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "https://shop.example",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if len(inner.replaced) != 1 || inner.replaced[0].ID != jobID {
+		t.Fatalf("replaced via unwrap = %#v, want id %s", inner.replaced, jobID)
+	}
+	if body, _ := inner.replaced[0].Payload["body"].(string); body == "" || body == "stale" {
+		t.Fatalf("fresh body via unwrap, got %q", body)
+	}
+	if _, ok := any(queue).(interface {
+		ReplaceFailed(context.Context, jobs.Job) error
+	}); ok {
+		t.Fatal("outer queue must not implement ReplaceFailed")
+	}
+	if len(carts.marked) != 1 {
+		t.Fatalf("marked after replace = %v, want 1", carts.marked)
+	}
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if len(inner.replaced) != 1 {
+		t.Fatalf("second Handle must not replace again, got %d", len(inner.replaced))
 	}
 	if len(carts.marked) != 1 {
 		t.Fatalf("marked after second = %v, want 1", carts.marked)
