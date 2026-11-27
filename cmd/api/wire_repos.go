@@ -51,6 +51,7 @@ type serveRepos struct {
 	contentBlockRepo              *postgres.ContentBlockRepo
 	storeRepo                     *postgres.StoreRepo
 	storeIdentityRepo             *postgres.StoreIdentityRepo
+	emailTemplateRepo             *postgres.EmailTemplateRepo
 	translationRepo               *postgres.TranslationRepo
 	contentTranslationRepo        *postgres.ContentTranslationRepo
 	consentRepo                   *postgres.ConsentRepo
@@ -278,6 +279,11 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	repos.storeIdentityRepo, err = postgres.NewStoreIdentityRepo(conn)
 	if err != nil {
 		return nil, wrapRepoOpen("storeIdentityRepo", err)
+	}
+
+	repos.emailTemplateRepo, err = postgres.NewEmailTemplateRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("emailTemplateRepo", err)
 	}
 
 	repos.translationRepo, err = postgres.NewTranslationRepo(conn)

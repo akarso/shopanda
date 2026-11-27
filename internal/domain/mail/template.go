@@ -3,23 +3,31 @@ package mail
 import (
 	"bytes"
 	"fmt"
-	"html/template"
+	htmltemplate "html/template"
+	"strings"
 	"sync"
+	texttemplate "text/template"
 )
+
+// NamedParts holds a plain-text subject template and an HTML body template.
+type NamedParts struct {
+	subject *texttemplate.Template
+	body    *htmltemplate.Template
+}
 
 // Templates is a registry of named email templates.
 type Templates struct {
 	mu    sync.RWMutex
-	tmpls map[string]*template.Template
+	tmpls map[string]*NamedParts
 }
 
 // NewTemplates creates an empty template registry.
 func NewTemplates() *Templates {
-	return &Templates{tmpls: make(map[string]*template.Template)}
+	return &Templates{tmpls: make(map[string]*NamedParts)}
 }
 
-// Register adds a named template. The body is parsed as html/template.
-// Panics if name is empty or body/subject fails to parse.
+// Register adds a named template. Subject uses text/template; body uses
+// html/template. Panics if name is empty or subject/body fails to parse.
 // Prefer TryRegister when loading untrusted file templates (PR-1210).
 func (t *Templates) Register(name, subject, body string) {
 	if err := t.TryRegister(name, subject, body); err != nil {
@@ -27,49 +35,51 @@ func (t *Templates) Register(name, subject, body string) {
 	}
 }
 
-// ParseNamed parses subject + body without touching a registry.
-func ParseNamed(name, subject, body string) (*template.Template, error) {
+// ParseNamed parses subject (text/template) + body (html/template) without
+// touching a registry.
+func ParseNamed(name, subject, body string) (*NamedParts, error) {
 	if name == "" {
 		return nil, fmt.Errorf("mail.Templates.Register: name must not be empty")
 	}
-	tmpl, err := template.New(name).Parse(body)
+	subj, err := texttemplate.New(name + ".subject").Parse(subject)
+	if err != nil {
+		return nil, fmt.Errorf("mail: parse subject %q: %w", name, err)
+	}
+	bodyTmpl, err := htmltemplate.New(name).Parse(body)
 	if err != nil {
 		return nil, fmt.Errorf("mail: parse body %q: %w", name, err)
 	}
-	if _, err := tmpl.New(name + ".subject").Parse(subject); err != nil {
-		return nil, fmt.Errorf("mail: parse subject %q: %w", name, err)
-	}
-	return tmpl, nil
+	return &NamedParts{subject: subj, body: bodyTmpl}, nil
 }
 
 // TryRegister adds a named template and returns a parse error instead of
 // panicking. Subject and body are both parsed before the registry is updated.
 func (t *Templates) TryRegister(name, subject, body string) error {
-	tmpl, err := ParseNamed(name, subject, body)
+	parts, err := ParseNamed(name, subject, body)
 	if err != nil {
 		return err
 	}
-	return t.PutAll(map[string]*template.Template{name: tmpl})
+	return t.PutParsed(map[string]*NamedParts{name: parts})
 }
 
-// PutAll stores already-parsed templates under one lock (LoadDir atomic apply).
+// PutParsed stores already-parsed NamedParts under one lock (LoadDir atomic apply).
 // Rejects empty names and nil templates without mutating the registry.
-func (t *Templates) PutAll(entries map[string]*template.Template) error {
+func (t *Templates) PutParsed(entries map[string]*NamedParts) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	for name, tmpl := range entries {
+	for name, parts := range entries {
 		if name == "" {
-			return fmt.Errorf("mail: PutAll empty name")
+			return fmt.Errorf("mail: PutParsed empty name")
 		}
-		if tmpl == nil {
-			return fmt.Errorf("mail: PutAll nil template %q", name)
+		if parts == nil || parts.subject == nil || parts.body == nil {
+			return fmt.Errorf("mail: PutParsed nil template %q", name)
 		}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for name, tmpl := range entries {
-		t.tmpls[name] = tmpl
+	for name, parts := range entries {
+		t.tmpls[name] = parts
 	}
 	return nil
 }
@@ -77,29 +87,33 @@ func (t *Templates) PutAll(entries map[string]*template.Template) error {
 // Render builds a Message by executing the named template with the given data.
 func (t *Templates) Render(name, to string, data interface{}) (Message, error) {
 	t.mu.RLock()
-	tmpl, ok := t.tmpls[name]
+	parts, ok := t.tmpls[name]
 	t.mu.RUnlock()
 	if !ok {
 		return Message{}, fmt.Errorf("mail: unknown template %q", name)
 	}
+	return executeNamed(parts, name, to, data)
+}
 
-	var subBuf bytes.Buffer
-	subTmpl := tmpl.Lookup(name + ".subject")
-	if subTmpl == nil {
-		return Message{}, fmt.Errorf("mail: subject template missing for %q", name)
+func executeNamed(parts *NamedParts, name, to string, data interface{}) (Message, error) {
+	if parts == nil || parts.subject == nil || parts.body == nil {
+		return Message{}, fmt.Errorf("mail: nil template parts for %q", name)
 	}
-	if err := subTmpl.Execute(&subBuf, data); err != nil {
+	var subBuf bytes.Buffer
+	if err := parts.subject.Execute(&subBuf, data); err != nil {
 		return Message{}, fmt.Errorf("mail: render subject %q: %w", name, err)
 	}
-
+	subject := subBuf.String()
+	if strings.ContainsAny(subject, "\r\n") {
+		return Message{}, fmt.Errorf("mail: render subject %q: must not contain CR or LF", name)
+	}
 	var bodyBuf bytes.Buffer
-	if err := tmpl.Execute(&bodyBuf, data); err != nil {
+	if err := parts.body.Execute(&bodyBuf, data); err != nil {
 		return Message{}, fmt.Errorf("mail: render body %q: %w", name, err)
 	}
-
 	return Message{
 		To:      to,
-		Subject: subBuf.String(),
+		Subject: subject,
 		Body:    bodyBuf.String(),
 	}, nil
 }

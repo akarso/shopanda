@@ -711,12 +711,22 @@ func newStorefrontOrderClaimEmailer(sf *storefront.StorefrontHandler, rt *serveR
 	if cfg != nil {
 		publicBase = strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
 	}
+	var overrides mail.OverrideSource
+	var resolveFn func(context.Context) (storeID, locale string, err error)
+	if rt != nil && rt.repos != nil && rt.repos.emailTemplateRepo != nil {
+		overrides = mail.RepoOverrideSource{Repo: rt.repos.emailTemplateRepo}
+	}
+	if rt != nil && rt.repos != nil && rt.repos.storeRepo != nil {
+		resolveFn = defaultStoreIDAndLocale(rt.repos.storeRepo)
+	}
 	return storefrontOrderClaimEmailer{
 		mailer:    mailer,
 		claimURL:  storefrontClaimPageURL(cfg),
 		storeURL:  publicBase,
 		templates: templates,
 		layout:    layout,
+		overrides: overrides,
+		resolve:   resolveFn,
 		brand:     brand,
 		tokenTTL:  tokenTTL,
 	}

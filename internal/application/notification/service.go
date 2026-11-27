@@ -81,6 +81,7 @@ type Service struct {
 	stores              store.StoreRepository
 	config              legal.ConfigGetter    // optional — interim store.logo for LogoURL
 	invoicePDF          media.ReadableStorage // optional — prefer sealed stored PDF over re-render
+	overrides           mail.OverrideSource   // optional — DB template overrides (PR-1212)
 }
 
 // Option configures optional Service fields.
@@ -173,13 +174,21 @@ func WithLayout(layout mail.Layout) Option {
 	return func(s *Service) { s.layout = layout }
 }
 
-// renderEmail renders a named template and optionally wraps with layout.
-func (s *Service) renderEmail(name, to string, ed mail.EmailData) (mail.Message, error) {
-	msg, err := s.templates.Render(name, to, ed)
+// WithEmailTemplateOverrides enables render-time DB → file → builtin resolution.
+// Nil keeps file/builtin registry only.
+func WithEmailTemplateOverrides(src mail.OverrideSource) Option {
+	return func(s *Service) { s.overrides = src }
+}
+
+// renderEmail resolves DB overrides (when wired) then optionally wraps with layout.
+// locale is the requested primary language subtag (or empty for the store-default DB row).
+// When overrides are configured, a FindDefault failure aborts the send (no silent file fallback).
+func (s *Service) renderEmail(ctx context.Context, name, to string, ed mail.EmailData, storeID, locale string) (mail.Message, error) {
+	res, err := mail.RenderWithOverrides(ctx, s.templates, s.overrides, storeID, name, locale, to, ed)
 	if err != nil {
 		return mail.Message{}, err
 	}
-	msg, err = mail.ApplyLayout(s.layout, msg, ed)
+	msg, err := mail.ApplyLayout(s.layout, res.Message, ed)
 	if err != nil {
 		return mail.Message{}, fmt.Errorf("notification: wrap layout %s: %w", name, err)
 	}
@@ -187,14 +196,15 @@ func (s *Service) renderEmail(name, to string, ed mail.EmailData) (mail.Message,
 }
 
 // baseEmailData starts every template payload with StoreURL plus brand fields
-// from the default store's identity (best-effort).
-func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
+// for the given default store (call resolveDefaultStore once per send).
+func (s *Service) baseEmailData(ctx context.Context, storeID, storeName string) mail.EmailData {
 	if s == nil {
 		return mail.EmailData{}
 	}
-	ed := mail.EmailData{StoreURL: strings.TrimRight(strings.TrimSpace(s.storeURL), "/")}
-	storeID, storeName := s.resolveDefaultStore(ctx)
-	ed.StoreName = storeName
+	ed := mail.EmailData{
+		StoreURL:  strings.TrimRight(strings.TrimSpace(s.storeURL), "/"),
+		StoreName: storeName,
+	}
 	if s.identity != nil && storeID != "" {
 		addr, err := s.identity.FormattedGeneralAddress(ctx, storeID)
 		if err != nil {
@@ -210,21 +220,96 @@ func (s *Service) baseEmailData(ctx context.Context) mail.EmailData {
 	return ed
 }
 
-func (s *Service) resolveDefaultStore(ctx context.Context) (storeID, storeName string) {
+// resolveDefaultStore returns the default store id/name/language. A FindDefault
+// error is returned to the caller (not swallowed) so override-aware sends can
+// fail closed.
+func (s *Service) resolveDefaultStore(ctx context.Context) (storeID, storeName, storeLang string, err error) {
 	if s == nil || s.stores == nil {
-		return "", ""
+		return "", "", "", nil
 	}
 	st, err := s.stores.FindDefault(ctx)
 	if err != nil {
+		return "", "", "", err
+	}
+	if st == nil {
+		return "", "", "", nil
+	}
+	return st.ID, strings.TrimSpace(st.Name), st.Language, nil
+}
+
+// prepareEmailStore resolves the default store once. Fail closed only when
+// overrides are wired and templateName may read email_templates — auth/token
+// templates still render from the file registry on a stores-table error.
+func (s *Service) prepareEmailStore(ctx context.Context, templateName string) (storeID, storeName, storeLang string, err error) {
+	storeID, storeName, storeLang, err = s.resolveDefaultStore(ctx)
+	if err != nil {
+		if s.overrides != nil && mail.IsOverridableName(templateName) {
+			return "", "", "", fmt.Errorf("notification: default store: %w", err)
+		}
 		s.log.Warn("notification: default store lookup failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		return "", ""
+		return "", "", "", nil
 	}
-	if st == nil {
-		return "", ""
+	return storeID, storeName, storeLang, nil
+}
+
+// templateLocale returns the primary language subtag for DB override lookup.
+// Never invents "en": empty means the empty-locale (store default) row.
+// storeLang is filled from FindDefault (or a one-shot storeLanguageLookup) and
+// reused for hook DisplayLanguage so each send does at most one store lookup.
+func (s *Service) templateLocale(ctx context.Context, o *order.Order, storeLang *string) (string, error) {
+	if storeLang == nil {
+		empty := ""
+		storeLang = &empty
 	}
-	return st.ID, strings.TrimSpace(st.Name)
+	if o != nil {
+		if p := translation.PrimaryLanguage(o.Language); p != "" {
+			return p, nil
+		}
+	}
+	if p := translation.PrimaryLanguage(*storeLang); p != "" {
+		return p, nil
+	}
+	// stores unset: fall back to the injected lookup / static config language.
+	if s != nil && s.stores == nil && s.storeLanguageLookup != nil {
+		lang, err := s.storeLanguageLookup(ctx)
+		if err != nil {
+			return "", err
+		}
+		*storeLang = lang
+		return translation.PrimaryLanguage(lang), nil
+	}
+	if s != nil {
+		return translation.PrimaryLanguage(s.fallbackLanguage), nil
+	}
+	return "", nil
+}
+
+// beginEmail resolves store + template locale once and builds brand EmailData.
+// templateName controls whether a FindDefault failure aborts (overridable only).
+// storeLang is the default-store language (possibly from storeLanguageLookup)
+// for orderDisplayLanguage to reuse without a second FindDefault.
+func (s *Service) beginEmail(ctx context.Context, o *order.Order, templateName string) (storeID, locale, storeLang string, ed mail.EmailData, err error) {
+	var storeName string
+	storeID, storeName, storeLang, err = s.prepareEmailStore(ctx, templateName)
+	if err != nil {
+		return "", "", "", mail.EmailData{}, err
+	}
+	locale, err = s.templateLocale(ctx, o, &storeLang)
+	if err != nil {
+		if s.overrides != nil && mail.IsOverridableName(templateName) {
+			return "", "", "", mail.EmailData{}, fmt.Errorf("notification: template locale: %w", err)
+		}
+		fields := map[string]interface{}{}
+		if o != nil {
+			fields["order_id"] = o.ID
+		}
+		s.log.Error("notification.template_locale_failed", err, fields)
+		locale = ""
+		err = nil
+	}
+	return storeID, locale, storeLang, s.baseEmailData(ctx, storeID, storeName), nil
 }
 
 func (s *Service) logoURL(ctx context.Context, storeID string) string {
@@ -270,9 +355,9 @@ func (s *Service) invoicePDFBytes(ctx context.Context, inv invoice.Invoice) ([]b
 }
 
 // orderDisplayLanguage resolves the sealed hook language once per email.
-// Lookup runs only when the order has no usable primary language; a failed
-// lookup keeps the static fallback for every line (no per-line retry).
-func (s *Service) orderDisplayLanguage(ctx context.Context, o *order.Order) string {
+// storeLangHint is the language already resolved in beginEmail (FindDefault or
+// storeLanguageLookup); a further lookup runs only when that hint is empty.
+func (s *Service) orderDisplayLanguage(ctx context.Context, o *order.Order, storeLangHint string) string {
 	if s == nil {
 		return translation.DisplayLanguage("", "")
 	}
@@ -286,14 +371,16 @@ func (s *Service) orderDisplayLanguage(ctx context.Context, o *order.Order) stri
 		return translation.DisplayLanguage(orderLang, "")
 	}
 	fallback := s.fallbackLanguage
-	if s.storeLanguageLookup != nil {
+	if translation.PrimaryLanguage(storeLangHint) != "" {
+		fallback = storeLangHint
+	} else if s.storeLanguageLookup != nil {
 		lang, err := s.storeLanguageLookup(ctx)
 		if err != nil {
 			fields := map[string]interface{}{}
 			if orderID != "" {
 				fields["order_id"] = orderID
 			}
-			s.log.Error("HandleOrderPaid.store_language_failed", err, fields)
+			s.log.Error("notification.store_language_failed", err, fields)
 		} else if strings.TrimSpace(lang) != "" {
 			fallback = lang
 		}
@@ -481,9 +568,13 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return err
 	}
 
-	tmplItems := s.orderConfirmedItems(ctx, o)
+	storeID, locale, storeLang, ed, err := s.beginEmail(ctx, o, "order_confirmed")
+	if err != nil {
+		return err
+	}
+	displayLang := s.orderDisplayLanguage(ctx, o, storeLang)
+	tmplItems := s.orderConfirmedItems(ctx, o, displayLang)
 
-	ed := s.baseEmailData(ctx)
 	ed.Data = map[string]interface{}{
 		"OrderID":   data.OrderID,
 		"FirstName": recipient.FirstName,
@@ -492,7 +583,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		"Total":     o.TotalAmount.String(),
 	}
 
-	msg, err := s.renderEmail("order_confirmed", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "order_confirmed", recipient.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleOrderPaid.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -513,7 +604,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 // order.line.display enrich (when hooks wired) appends derived fields.
 // Extension lookup and enrich-handler failures are logged and skipped so
 // confirmation still enqueues.
-func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map[string]interface{} {
+func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order, lang string) []map[string]interface{} {
 	items := o.Items()
 	tmplItems := make([]map[string]interface{}, len(items))
 	variantIDs := make([]string, len(items))
@@ -549,11 +640,10 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 			reg = s.extensions.Registry()
 		}
 	}
-	// Language is only sealed into order.line.display; skip store lookup when
-	// no hooks are wired. Resolve once so a multi-line email does one FindDefault.
-	lang := ""
-	if s.hooks != nil {
-		lang = s.orderDisplayLanguage(ctx, o)
+	// Language is sealed into order.line.display only when hooks are wired.
+	// Caller resolves lang once for template locale + enrich (PR-1212).
+	if s.hooks == nil {
+		lang = ""
 	}
 	for i, it := range items {
 		apiItems := byVariant[it.VariantID]
@@ -628,14 +718,17 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 	q.Set("token", data.Token)
 	resetURL.RawQuery = q.Encode()
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "password_reset")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"ResetURL":  resetURL.String(),
 		"ExpiresIn": "1 hour",
 	}
 
-	msg, err := s.renderEmail("password_reset", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "password_reset", cust.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandlePasswordReset.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -670,13 +763,16 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_verification")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"VerifyURL": verifyURL,
 	}
 
-	msg, err := s.renderEmail("email_verification", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "email_verification", cust.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleEmailVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -706,13 +802,16 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		return err
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "security_verification")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"VerifyURL": data.VerifyURL,
 	}
 
-	msg, err := s.renderEmail("security_verification", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "security_verification", cust.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleSecurityVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -752,14 +851,17 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		firstName = cust.FirstName
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_change_verification")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"FirstName": firstName,
 		"VerifyURL": verifyURL,
 		"NewEmail":  newEmail,
 	}
 
-	msg, err := s.renderEmail("email_change_verification", newEmail, ed)
+	msg, err := s.renderEmail(ctx, "email_change_verification", newEmail, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleEmailChangeRequested.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -793,13 +895,16 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		firstName = cust.FirstName
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, nil, "email_change_notice")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"FirstName": firstName,
 		"NewEmail":  strings.TrimSpace(data.NewEmail),
 	}
 
-	msg, err := s.renderEmail("email_change_notice", oldEmail, ed)
+	msg, err := s.renderEmail(ctx, "email_change_notice", oldEmail, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleEmailChangeNotified.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -841,7 +946,10 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return err
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "order_shipped")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"OrderID":   data.OrderID,
 		"FirstName": recipient.FirstName,
@@ -854,7 +962,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		ed.Data["Carrier"] = data.ProviderRef
 	}
 
-	msg, err := s.renderEmail("order_shipped", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "order_shipped", recipient.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleShipmentShipped.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "shipment_id": data.ShipmentID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -988,14 +1096,17 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		s.log.Error("HandleVoucherIssued.pdf_render_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: render voucher PDF: %w", err)
 	}
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "voucher_issued")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"OrderID":   data.OrderID,
 		"FirstName": recipient.FirstName,
 		"Guest":     recipient.Guest,
 		"Codes":     codeStrs,
 	}
-	msg, err := s.renderEmail("voucher_issued", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "voucher_issued", recipient.Email, ed, storeID, locale)
 	if err != nil {
 		return fmt.Errorf("notification: render voucher template: %w", err)
 	}
@@ -1110,7 +1221,10 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		}
 	}
 
-	ed := s.baseEmailData(ctx)
+	storeID, locale, _, ed, err := s.beginEmail(ctx, o, "invoice_created")
+	if err != nil {
+		return err
+	}
 	ed.Data = map[string]interface{}{
 		"OrderID":       data.OrderID,
 		"InvoiceNumber": data.InvoiceNumber,
@@ -1120,7 +1234,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		"Total":         inv.TotalAmount().String(),
 	}
 
-	msg, err := s.renderEmail("invoice_created", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "invoice_created", recipient.Email, ed, storeID, locale)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.template_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
 		return fmt.Errorf("notification: render template: %w", err)

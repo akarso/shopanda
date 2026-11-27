@@ -2,7 +2,7 @@
 
 Completes [Phase 2 EMAIL_TEMPLATES](../../phase-2-merchant-ready/specs/EMAIL_TEMPLATES.md) and [Phase 1 EMAILS_NOTIFICATIONS](../../phase-1-core/specs/EMAILS_NOTIFICATIONS.md) §6.
 
-Those specs already defined file templates, `_layout.html`, `EmailData`, and resolution **DB → file → builtin**. Production still uses only `notification.RegisterTemplates` hardcoded HTML. `email.LoadDir` is never called from `cmd/`. Admin editor was an explicit non-goal; Phase 6 left it as backlog. This phase implements it.
+Those specs already defined file templates, `_layout.html`, `EmailData`, and resolution **DB → file → builtin**. PR-1210 wired `LoadDir`; PR-1212 adds DB overrides at render time. Admin editor remains PR-1213–1214.
 
 ## 1. Wiring (PR-1210)
 
@@ -44,9 +44,19 @@ email_templates
   UNIQUE (store_id, name, locale)
 ```
 
-`locale` empty = store default language. Lookup: exact locale → store language → file → builtin.
+`locale` empty = store default language override row. Locale keys are the BCP 47 primary subtag (lower case); `Validate` / `Get` / `Delete` canonicalize (`DE` / `pt-BR` → `de` / `pt`). A non-empty input that does not yield a primary subtag (`und`, `deutsch`) is rejected — it must not alias onto the empty-locale default row. Render-only: an unknown request language still falls through to the empty row via `overrideLocales`. Senders never invent synthetic `en` for template lookup.
 
-Body is inner HTML (layout still wraps). No MJML.
+Render-time lookup (`RenderWithOverrides`):
+
+1. Exact requested locale (when non-empty)
+2. Empty locale (store default language row)
+3. In-memory registry (file `LoadDir` over builtin `RegisterTemplates`)
+
+Only overridable names may be stored or applied from DB: `order_confirmed`, `order_shipped`, `invoice_created`, `cart_recovery`. Auth/token, claim, and voucher templates (`password_reset`, verification, email-change, `order_claim`, `voucher_issued`) stay file/builtin so a DB row cannot rewrite live token URLs, claim links, or voucher codes (contains-checks cannot stop an image beacon or rewritten `href`).
+
+Subject uses `text/template` (SMTP header stays plain: `Fish & Chips`); executed subjects that contain CR/LF are rejected before enqueue. Body uses `html/template`. Layout still wraps body HTML. No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
+
+When overrides are wired, a default-store lookup failure aborts **overridable** sends only (so a stock file body is never acknowledged for those names). Auth/token, claim, and voucher mail still render from the file registry on a stores-table error (`BrandEmailData` and claim `resolve` are best-effort). Recovery does not mark the cart sent on store/locale lookup failure. The `order_claim` body always comes from file/builtin.
 
 ## 4. Admin API (PR-1213)
 

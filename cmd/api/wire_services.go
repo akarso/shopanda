@@ -501,6 +501,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		notification.WithStoreIdentity(storeIdentitySvc, repos.storeRepo),
 		notification.WithConfig(repos.configRepo),
 		notification.WithLayout(emailLayout),
+		notification.WithEmailTemplateOverrides(mail.RepoOverrideSource{Repo: repos.emailTemplateRepo}),
 		notification.WithStoreLanguageLookup(func(ctx context.Context) (string, error) {
 			st, err := repos.storeRepo.FindDefault(ctx)
 			if err != nil {

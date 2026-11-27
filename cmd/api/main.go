@@ -857,8 +857,14 @@ type storefrontOrderClaimEmailer struct {
 	storeURL  string
 	templates *mail.Templates
 	layout    mail.Layout
-	brand     storeidentity.EmailBrandSource
-	tokenTTL  time.Duration
+	overrides mail.OverrideSource
+	// resolve returns default store id + primary-language locale in one FindDefault.
+	resolve func(context.Context) (storeID, locale string, err error)
+	// storeID / locale are legacy split lookups (tests); prefer resolve.
+	storeID  func(context.Context) (string, error)
+	locale   func(context.Context) (string, error)
+	brand    storeidentity.EmailBrandSource
+	tokenTTL time.Duration
 }
 
 func storefrontClaimPageURL(cfg *config.Config) string {
@@ -906,18 +912,66 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 		"ClaimURL":  claimLink,
 		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
 	}
-	msg, err := e.templates.Render("order_claim", contactEmail, ed)
+	// order_claim is not overridable: a FindDefault failure must not block the
+	// file/builtin body (same fail-open as auth mail via prepareEmailStore).
+	storeID, locale := e.resolveStoreLocale(ctx)
+	res, err := mail.RenderWithOverrides(ctx, e.templates, e.overrides, storeID, "order_claim", locale, contactEmail, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: render: %w", err)
 	}
-	msg, err = mail.ApplyLayout(e.layout, msg, ed)
+	msg, err := mail.ApplyLayout(e.layout, res.Message, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: layout: %w", err)
+	}
+	// order_claim is not overridable; file/builtin HTML is trusted. Still require
+	// the bearer link in the rendered body (and plain text) so a broken file
+	// template cannot enqueue a token-less message.
+	if !claimBodyContainsURL(msg.Body, claimLink) {
+		return fmt.Errorf("storefront order claim emailer: rendered body missing claim URL")
 	}
 	msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
 		claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
 		"If you did not place an order with us, you can safely ignore this email.\n"
+	if !strings.Contains(msg.Text, claimLink) {
+		return fmt.Errorf("storefront order claim emailer: plain text missing claim URL")
+	}
 	return e.mailer.Send(ctx, msg)
+}
+
+func claimBodyContainsURL(body, claimLink string) bool {
+	if strings.Contains(body, claimLink) {
+		return true
+	}
+	// html/template attribute/text escaping turns & into &amp;.
+	escaped := strings.ReplaceAll(claimLink, "&", "&amp;")
+	return escaped != claimLink && strings.Contains(body, escaped)
+}
+
+// resolveStoreLocale best-effort loads store id + locale for RenderWithOverrides.
+// order_claim never applies DB overrides, so a FindDefault error returns empty
+// values and the file template still renders.
+func (e storefrontOrderClaimEmailer) resolveStoreLocale(ctx context.Context) (storeID, locale string) {
+	if e.resolve != nil {
+		id, storeLocale, err := e.resolve(ctx)
+		if err != nil {
+			return "", ""
+		}
+		return id, storeLocale
+	}
+	// Legacy split closures (tests / older wiring).
+	if e.storeID != nil {
+		id, err := e.storeID(ctx)
+		if err == nil {
+			storeID = id
+		}
+	}
+	if e.locale != nil {
+		lang, err := e.locale(ctx)
+		if err == nil {
+			locale = lang
+		}
+	}
+	return storeID, locale
 }
 
 func formatClaimTokenTTL(d time.Duration) string {
@@ -1010,16 +1064,22 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		storeRepo,
 		app.TaxIdentifierTypes(),
 	)
+	emailTemplateRepo, err := postgres.NewEmailTemplateRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
-		Carts:     cartRepo,
-		Customers: customerRepo,
-		Variants:  variantRepo,
-		Products:  productRepo,
-		Templates: mailTemplates,
-		Layout:    emailLayout,
-		Queue:     jobQueue,
-		StoreURL:  cfg.Server.PublicBaseURL,
-		Settings:  configRepo,
+		Carts:        cartRepo,
+		Customers:    customerRepo,
+		Variants:     variantRepo,
+		Products:     productRepo,
+		Templates:    mailTemplates,
+		Layout:       emailLayout,
+		Overrides:    mail.RepoOverrideSource{Repo: emailTemplateRepo},
+		ResolveStore: defaultStoreIDAndLocale(storeRepo),
+		Queue:        jobQueue,
+		StoreURL:     cfg.Server.PublicBaseURL,
+		Settings:     configRepo,
 		Brand: storeidentity.EmailBrandSource{
 			Identity: recoveryIdentity,
 			Stores:   storeRepo,
