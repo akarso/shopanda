@@ -13,7 +13,7 @@ Phase 6 shipped a working admin. Phase 14 finished theme packaging (`theme:init`
 | Contact emails | One SMTP From | No sales / support / general identities |
 | Phone / legal company name | Missing | GPSR manufacturer name is product-safety, not seller identity |
 | Invoice PDF seller block | Missing | PDF has invoice # and customer id only |
-| Transactional email templates | Hardcoded strings in `RegisterTemplates` | File templates exist but are not loaded; no admin edit |
+| Transactional email templates | Files + DB overrides (PR-1210–1212); no admin editor yet | Admin edit is PR-1213–1214 |
 | Theme switch | `frontend.theme_path` / env / CLI | No `/admin/themes` |
 | Logo / tagline | Logo is a URL string unused by the default theme; tagline is hardcoded | Appearance requires a theme fork |
 

@@ -23,6 +23,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -288,6 +289,76 @@ func TestHandleOrderPaid_WrapsLayout(t *testing.T) {
 	body, _ := q.enqueued[0].Payload["body"].(string)
 	if !strings.HasPrefix(body, "<layout>") || !strings.Contains(body, "</layout>") {
 		t.Fatalf("body not wrapped: %q", body)
+	}
+}
+
+type overrideStub struct {
+	subject, body string
+}
+
+func (o overrideStub) Get(_ context.Context, storeID, name, locale string) (string, string, error) {
+	if storeID == "" || name != "order_confirmed" {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	if locale != "" && locale != "en" {
+		return "", "", mail.ErrTemplateNotFound
+	}
+	return o.subject, o.body, nil
+}
+
+type defaultStoreStub struct {
+	store.StoreRepository
+	st *store.Store
+}
+
+func (d *defaultStoreStub) FindDefault(context.Context) (*store.Store, error) {
+	return d.st, nil
+}
+
+func TestHandleOrderPaid_DBOverrideWinsAndLayoutWraps(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	layout := &stubLayout{}
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+			return &c, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1", Language: "en"}, nil
+		},
+	}
+	st, err := store.NewStore("store-1", "main", "Main", "USD", "US", "en", "shop.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q,
+		notification.WithLayout(layout),
+		notification.WithStoreIdentity(nil, &defaultStoreStub{st: &st}),
+		notification.WithEmailTemplateOverrides(overrideStub{
+			subject: "DB Order {{.Data.OrderID}}",
+			body:    "<p>db-body-{{.Data.OrderID}}</p>",
+		}),
+	)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1", OldStatus: "pending", NewStatus: "paid",
+	})
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid: %v", err)
+	}
+	if !layout.wrapped {
+		t.Fatal("expected layout.Wrap")
+	}
+	subj, _ := q.enqueued[0].Payload["subject"].(string)
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if subj != "DB Order ord-1" {
+		t.Fatalf("subject = %q", subj)
+	}
+	if !strings.Contains(body, "db-body-ord-1") || !strings.HasPrefix(body, "<layout>") {
+		t.Fatalf("body = %q", body)
 	}
 }
 

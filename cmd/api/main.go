@@ -32,6 +32,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -857,6 +858,9 @@ type storefrontOrderClaimEmailer struct {
 	storeURL  string
 	templates *mail.Templates
 	layout    mail.Layout
+	overrides mail.OverrideSource
+	storeID   func(context.Context) (string, error)
+	locale    func(context.Context) (string, error)
 	brand     storeidentity.EmailBrandSource
 	tokenTTL  time.Duration
 }
@@ -906,7 +910,23 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 		"ClaimURL":  claimLink,
 		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
 	}
-	msg, err := e.templates.Render("order_claim", contactEmail, ed)
+	storeID := ""
+	if e.storeID != nil {
+		id, err := e.storeID(ctx)
+		if err != nil {
+			return fmt.Errorf("storefront order claim emailer: store id: %w", err)
+		}
+		storeID = id
+	}
+	locale := ""
+	if e.locale != nil {
+		lang, err := e.locale(ctx)
+		if err != nil {
+			return fmt.Errorf("storefront order claim emailer: locale: %w", err)
+		}
+		locale = lang
+	}
+	msg, err := mail.RenderWithOverrides(ctx, e.templates, e.overrides, storeID, "order_claim", locale, contactEmail, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: render: %w", err)
 	}
@@ -1010,6 +1030,10 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		storeRepo,
 		app.TaxIdentifierTypes(),
 	)
+	emailTemplateRepo, err := postgres.NewEmailTemplateRepo(conn)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
 		Carts:     cartRepo,
 		Customers: customerRepo,
@@ -1017,9 +1041,30 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		Products:  productRepo,
 		Templates: mailTemplates,
 		Layout:    emailLayout,
-		Queue:     jobQueue,
-		StoreURL:  cfg.Server.PublicBaseURL,
-		Settings:  configRepo,
+		Overrides: mail.RepoOverrideSource{Repo: emailTemplateRepo},
+		StoreID: func(ctx context.Context) (string, error) {
+			st, err := storeRepo.FindDefault(ctx)
+			if err != nil {
+				return "", err
+			}
+			if st == nil {
+				return "", nil
+			}
+			return st.ID, nil
+		},
+		Locale: func(ctx context.Context) (string, error) {
+			st, err := storeRepo.FindDefault(ctx)
+			if err != nil {
+				return "", err
+			}
+			if st == nil {
+				return "", nil
+			}
+			return translation.PrimaryLanguage(st.Language), nil
+		},
+		Queue:    jobQueue,
+		StoreURL: cfg.Server.PublicBaseURL,
+		Settings: configRepo,
 		Brand: storeidentity.EmailBrandSource{
 			Identity: recoveryIdentity,
 			Stores:   storeRepo,

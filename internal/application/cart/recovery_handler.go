@@ -43,6 +43,9 @@ type RecoveryHandler struct {
 	products   catalog.ProductRepository
 	templates  *mail.Templates
 	layout     mail.Layout
+	overrides  mail.OverrideSource
+	storeID    func(context.Context) (string, error)
+	locale     func(context.Context) (string, error)
 	queue      jobs.Queue
 	storeURL   string
 	settings   config.Repository
@@ -59,6 +62,9 @@ type RecoveryHandlerConfig struct {
 	Products   catalog.ProductRepository
 	Templates  *mail.Templates
 	Layout     mail.Layout // optional — _layout.html chrome (PR-1210)
+	Overrides  mail.OverrideSource
+	StoreID    func(context.Context) (string, error)
+	Locale     func(context.Context) (string, error)
 	Queue      jobs.Queue
 	Settings   config.Repository
 	Brand      RecoveryBrand
@@ -101,6 +107,9 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		products:   cfg.Products,
 		templates:  cfg.Templates,
 		layout:     cfg.Layout,
+		overrides:  cfg.Overrides,
+		storeID:    cfg.StoreID,
+		locale:     cfg.Locale,
 		queue:      cfg.Queue,
 		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
 		settings:   cfg.Settings,
@@ -195,7 +204,26 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 		"Items":     items,
 		"ItemCount": c.TotalQuantity(),
 	}
-	msg, err := h.templates.Render("cart_recovery", email, ed)
+	storeID := ""
+	if h.storeID != nil {
+		id, err := h.storeID(ctx)
+		if err != nil {
+			return fmt.Errorf("resolve store id: %w", err)
+		}
+		storeID = id
+	}
+	locale := ""
+	if h.locale != nil {
+		lang, err := h.locale(ctx)
+		if err != nil {
+			h.log.Warn("cart.recovery.locale_lookup_failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			locale = lang
+		}
+	}
+	msg, err := mail.RenderWithOverrides(ctx, h.templates, h.overrides, storeID, "cart_recovery", locale, email, ed)
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}

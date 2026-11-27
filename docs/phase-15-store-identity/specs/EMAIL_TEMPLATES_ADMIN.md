@@ -2,7 +2,7 @@
 
 Completes [Phase 2 EMAIL_TEMPLATES](../../phase-2-merchant-ready/specs/EMAIL_TEMPLATES.md) and [Phase 1 EMAILS_NOTIFICATIONS](../../phase-1-core/specs/EMAILS_NOTIFICATIONS.md) §6.
 
-Those specs already defined file templates, `_layout.html`, `EmailData`, and resolution **DB → file → builtin**. Production still uses only `notification.RegisterTemplates` hardcoded HTML. `email.LoadDir` is never called from `cmd/`. Admin editor was an explicit non-goal; Phase 6 left it as backlog. This phase implements it.
+Those specs already defined file templates, `_layout.html`, `EmailData`, and resolution **DB → file → builtin**. PR-1210 wired `LoadDir`; PR-1212 adds DB overrides at render time. Admin editor remains PR-1213–1214.
 
 ## 1. Wiring (PR-1210)
 
@@ -44,9 +44,13 @@ email_templates
   UNIQUE (store_id, name, locale)
 ```
 
-`locale` empty = store default language. Lookup: exact locale → store language → file → builtin.
+`locale` empty = store default language override row. Render-time lookup:
 
-Body is inner HTML (layout still wraps). No MJML.
+1. Exact requested locale (when non-empty)
+2. Empty locale (store default language row)
+3. In-memory registry (file `LoadDir` over builtin `RegisterTemplates`)
+
+Body is inner HTML (layout still wraps). No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
 
 ## 4. Admin API (PR-1213)
 

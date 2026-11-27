@@ -21,6 +21,7 @@ import (
 	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -711,12 +712,44 @@ func newStorefrontOrderClaimEmailer(sf *storefront.StorefrontHandler, rt *serveR
 	if cfg != nil {
 		publicBase = strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
 	}
+	var overrides mail.OverrideSource
+	var storeIDFn func(context.Context) (string, error)
+	var localeFn func(context.Context) (string, error)
+	if rt != nil && rt.repos != nil && rt.repos.emailTemplateRepo != nil {
+		overrides = mail.RepoOverrideSource{Repo: rt.repos.emailTemplateRepo}
+	}
+	if rt != nil && rt.repos != nil && rt.repos.storeRepo != nil {
+		stores := rt.repos.storeRepo
+		storeIDFn = func(ctx context.Context) (string, error) {
+			st, err := stores.FindDefault(ctx)
+			if err != nil {
+				return "", err
+			}
+			if st == nil {
+				return "", nil
+			}
+			return st.ID, nil
+		}
+		localeFn = func(ctx context.Context) (string, error) {
+			st, err := stores.FindDefault(ctx)
+			if err != nil {
+				return "", err
+			}
+			if st == nil {
+				return "", nil
+			}
+			return translation.PrimaryLanguage(st.Language), nil
+		}
+	}
 	return storefrontOrderClaimEmailer{
 		mailer:    mailer,
 		claimURL:  storefrontClaimPageURL(cfg),
 		storeURL:  publicBase,
 		templates: templates,
 		layout:    layout,
+		overrides: overrides,
+		storeID:   storeIDFn,
+		locale:    localeFn,
 		brand:     brand,
 		tokenTTL:  tokenTTL,
 	}

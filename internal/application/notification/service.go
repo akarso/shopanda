@@ -81,6 +81,7 @@ type Service struct {
 	stores              store.StoreRepository
 	config              legal.ConfigGetter    // optional — interim store.logo for LogoURL
 	invoicePDF          media.ReadableStorage // optional — prefer sealed stored PDF over re-render
+	overrides           mail.OverrideSource   // optional — DB template overrides (PR-1212)
 }
 
 // Option configures optional Service fields.
@@ -173,9 +174,17 @@ func WithLayout(layout mail.Layout) Option {
 	return func(s *Service) { s.layout = layout }
 }
 
-// renderEmail renders a named template and optionally wraps with layout.
-func (s *Service) renderEmail(name, to string, ed mail.EmailData) (mail.Message, error) {
-	msg, err := s.templates.Render(name, to, ed)
+// WithEmailTemplateOverrides enables render-time DB → file → builtin resolution.
+// Nil keeps file/builtin registry only.
+func WithEmailTemplateOverrides(src mail.OverrideSource) Option {
+	return func(s *Service) { s.overrides = src }
+}
+
+// renderEmail resolves DB overrides (when wired) then optionally wraps with layout.
+// locale is the requested language (order or store); empty uses the store-default DB row.
+func (s *Service) renderEmail(ctx context.Context, name, to string, ed mail.EmailData, locale string) (mail.Message, error) {
+	storeID, _ := s.resolveDefaultStore(ctx)
+	msg, err := mail.RenderWithOverrides(ctx, s.templates, s.overrides, storeID, name, locale, to, ed)
 	if err != nil {
 		return mail.Message{}, err
 	}
@@ -481,7 +490,8 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return err
 	}
 
-	tmplItems := s.orderConfirmedItems(ctx, o)
+	lang := s.orderDisplayLanguage(ctx, o)
+	tmplItems := s.orderConfirmedItems(ctx, o, lang)
 
 	ed := s.baseEmailData(ctx)
 	ed.Data = map[string]interface{}{
@@ -492,7 +502,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		"Total":     o.TotalAmount.String(),
 	}
 
-	msg, err := s.renderEmail("order_confirmed", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "order_confirmed", recipient.Email, ed, lang)
 	if err != nil {
 		s.log.Error("HandleOrderPaid.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -513,7 +523,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 // order.line.display enrich (when hooks wired) appends derived fields.
 // Extension lookup and enrich-handler failures are logged and skipped so
 // confirmation still enqueues.
-func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map[string]interface{} {
+func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order, lang string) []map[string]interface{} {
 	items := o.Items()
 	tmplItems := make([]map[string]interface{}, len(items))
 	variantIDs := make([]string, len(items))
@@ -549,11 +559,10 @@ func (s *Service) orderConfirmedItems(ctx context.Context, o *order.Order) []map
 			reg = s.extensions.Registry()
 		}
 	}
-	// Language is only sealed into order.line.display; skip store lookup when
-	// no hooks are wired. Resolve once so a multi-line email does one FindDefault.
-	lang := ""
-	if s.hooks != nil {
-		lang = s.orderDisplayLanguage(ctx, o)
+	// Language is sealed into order.line.display only when hooks are wired.
+	// Caller resolves lang once for template locale + enrich (PR-1212).
+	if s.hooks == nil {
+		lang = ""
 	}
 	for i, it := range items {
 		apiItems := byVariant[it.VariantID]
@@ -635,7 +644,7 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 		"ExpiresIn": "1 hour",
 	}
 
-	msg, err := s.renderEmail("password_reset", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "password_reset", cust.Email, ed, s.orderDisplayLanguage(ctx, nil))
 	if err != nil {
 		s.log.Error("HandlePasswordReset.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -676,7 +685,7 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		"VerifyURL": verifyURL,
 	}
 
-	msg, err := s.renderEmail("email_verification", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "email_verification", cust.Email, ed, s.orderDisplayLanguage(ctx, nil))
 	if err != nil {
 		s.log.Error("HandleEmailVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -712,7 +721,7 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 		"VerifyURL": data.VerifyURL,
 	}
 
-	msg, err := s.renderEmail("security_verification", cust.Email, ed)
+	msg, err := s.renderEmail(ctx, "security_verification", cust.Email, ed, s.orderDisplayLanguage(ctx, nil))
 	if err != nil {
 		s.log.Error("HandleSecurityVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -759,7 +768,7 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		"NewEmail":  newEmail,
 	}
 
-	msg, err := s.renderEmail("email_change_verification", newEmail, ed)
+	msg, err := s.renderEmail(ctx, "email_change_verification", newEmail, ed, s.orderDisplayLanguage(ctx, nil))
 	if err != nil {
 		s.log.Error("HandleEmailChangeRequested.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -799,7 +808,7 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		"NewEmail":  strings.TrimSpace(data.NewEmail),
 	}
 
-	msg, err := s.renderEmail("email_change_notice", oldEmail, ed)
+	msg, err := s.renderEmail(ctx, "email_change_notice", oldEmail, ed, s.orderDisplayLanguage(ctx, nil))
 	if err != nil {
 		s.log.Error("HandleEmailChangeNotified.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -854,7 +863,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		ed.Data["Carrier"] = data.ProviderRef
 	}
 
-	msg, err := s.renderEmail("order_shipped", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "order_shipped", recipient.Email, ed, s.orderDisplayLanguage(ctx, o))
 	if err != nil {
 		s.log.Error("HandleShipmentShipped.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "shipment_id": data.ShipmentID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -995,7 +1004,7 @@ func (s *Service) HandleVoucherIssued(ctx context.Context, evt event.Event) erro
 		"Guest":     recipient.Guest,
 		"Codes":     codeStrs,
 	}
-	msg, err := s.renderEmail("voucher_issued", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "voucher_issued", recipient.Email, ed, s.orderDisplayLanguage(ctx, o))
 	if err != nil {
 		return fmt.Errorf("notification: render voucher template: %w", err)
 	}
@@ -1120,7 +1129,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		"Total":         inv.TotalAmount().String(),
 	}
 
-	msg, err := s.renderEmail("invoice_created", recipient.Email, ed)
+	msg, err := s.renderEmail(ctx, "invoice_created", recipient.Email, ed, s.orderDisplayLanguage(ctx, o))
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.template_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
 		return fmt.Errorf("notification: render template: %w", err)
