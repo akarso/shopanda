@@ -192,12 +192,14 @@ func (h *EmailTemplateAdminHandler) sampleEmailData(ctx context.Context, name st
 	}
 	switch name {
 	case "cart_recovery":
+		// Match recoveryItems: file uses Quantity/UnitPrice/LineTotal; builtin still reads Price.
 		common["Items"] = []map[string]interface{}{
 			{
 				"Name":      "Sample Item",
 				"Quantity":  2,
 				"UnitPrice": "9.99",
 				"LineTotal": "19.98",
+				"Price":     "9.99",
 				"VariantID": "var-1",
 				"SKU":       "SKU-1",
 			},
@@ -240,7 +242,9 @@ func (h *EmailTemplateAdminHandler) renderNamed(ctx context.Context, storeID, na
 	return res, ed, nil
 }
 
-func (h *EmailTemplateAdminHandler) allowTestSend(adminID string) error {
+// takeTestSendSlot stamps the per-admin window after validation, before SMTP dial.
+// Bad bodies/addresses do not burn the window. Returns RateLimited (429).
+func (h *EmailTemplateAdminHandler) takeTestSendSlot(adminID string) error {
 	key := strings.TrimSpace(adminID)
 	if key == "" {
 		key = "anonymous"
@@ -249,10 +253,18 @@ func (h *EmailTemplateAdminHandler) allowTestSend(adminID string) error {
 	h.testSendMu.Lock()
 	defer h.testSendMu.Unlock()
 	if last, ok := h.testSendLast[key]; ok && now.Sub(last) < emailTemplateTestSendGap {
-		return apperror.Validation("test-send rate limited; try again shortly")
+		return apperror.RateLimited("test-send rate limited; try again shortly")
 	}
 	h.testSendLast[key] = now
 	return nil
+}
+
+func requireAdminActor(r *http.Request) (string, error) {
+	ac, err := adminapp.FromContext(r.Context())
+	if err != nil || ac == nil || strings.TrimSpace(ac.AdminID) == "" {
+		return "", apperror.Unauthorized("admin identity required")
+	}
+	return strings.TrimSpace(ac.AdminID), nil
 }
 
 func validateTestMailbox(to string) (string, error) {
@@ -303,13 +315,10 @@ func mapMailerError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := err.(*apperror.Error); ok {
-		return err
-	}
-	msg := err.Error()
-	lower := strings.ToLower(msg)
-	if strings.Contains(lower, "address") || strings.Contains(lower, "recipient") || strings.Contains(lower, "mailbox") {
-		return apperror.Validation("invalid email address")
+	// Mailbox is validated before dial; do not map dial/SMTP text containing
+	// "address" (e.g. "missing port in address") to a client 422.
+	if ae, ok := err.(*apperror.Error); ok {
+		return ae
 	}
 	return apperror.Unavailable("mail send failed")
 }
@@ -471,9 +480,8 @@ func (h *EmailTemplateAdminHandler) Put() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		actor := strings.TrimSpace(adminIDFromRequest(r))
-		if actor == "" {
-			err := apperror.Unauthorized("admin identity required")
+		actor, err := requireAdminActor(r)
+		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateUpdate, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
@@ -610,8 +618,8 @@ func (h *EmailTemplateAdminHandler) TestSend() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		adminID := adminIDFromRequest(r)
-		if err := h.allowTestSend(adminID); err != nil {
+		adminID, err := requireAdminActor(r)
+		if err != nil {
 			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
 			httpshared.JSONError(w, err)
 			return
@@ -655,6 +663,11 @@ func (h *EmailTemplateAdminHandler) TestSend() http.HandlerFunc {
 		msg := res.Message
 		if !strings.HasPrefix(msg.Subject, emailTemplateTestPrefix) {
 			msg.Subject = emailTemplateTestPrefix + msg.Subject
+		}
+		if err := h.takeTestSendSlot(adminID); err != nil {
+			h.audit(r, adminapp.AuditEmailTemplateTestSend, name, nil, err)
+			httpshared.JSONError(w, err)
+			return
 		}
 		sendCtx, cancel := context.WithTimeout(r.Context(), emailTemplateTestSendTTL)
 		defer cancel()

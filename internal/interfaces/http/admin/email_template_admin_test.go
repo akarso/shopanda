@@ -384,7 +384,7 @@ func TestEmailTemplateAdmin_CartRecoverySampleFields(t *testing.T) {
 	repo := &etTemplateRepo{}
 	_, mux := newEmailTemplateAdmin(t, repo, &etMailerStub{})
 	req := withAdminID(httptest.NewRequest(http.MethodPut, "/api/v1/admin/email-templates/cart_recovery",
-		strings.NewReader(`{"subject":"Cart","body":"<p>{{range .Data.Items}}{{.Quantity}} {{.UnitPrice}} {{.LineTotal}}{{end}}</p>"}`)))
+		strings.NewReader(`{"subject":"Cart","body":"<p>{{range .Data.Items}}{{.Quantity}} {{.UnitPrice}} {{.LineTotal}} {{.Price}}{{end}}</p>"}`)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -396,8 +396,39 @@ func TestEmailTemplateAdmin_CartRecoverySampleFields(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "2") || !strings.Contains(rec.Body.String(), "9.99") || !strings.Contains(rec.Body.String(), "19.98") {
-		t.Fatalf("cart recovery sample missing Quantity/UnitPrice/LineTotal: %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "2") || !strings.Contains(body, "9.99") || !strings.Contains(body, "19.98") {
+		t.Fatalf("cart recovery sample missing Quantity/UnitPrice/LineTotal/Price: %s", body)
+	}
+}
+
+func TestEmailTemplateAdmin_CartRecoveryBuiltinUsesPrice(t *testing.T) {
+	repo := &etTemplateRepo{}
+	_, mux := newEmailTemplateAdmin(t, repo, &etMailerStub{})
+	// No DB row → builtin body reads .Quantity and .Price.
+	req := withAdminID(httptest.NewRequest(http.MethodPost, "/api/v1/admin/email-templates/cart_recovery/preview", bytes.NewReader([]byte("{}"))))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "9.99") || !strings.Contains(rec.Body.String(), "× 2") {
+		t.Fatalf("builtin cart_recovery sample missing Price/Quantity: %s", rec.Body.String())
+	}
+}
+
+func TestEmailTemplateAdmin_PutRequiresAdminActor(t *testing.T) {
+	repo := &etTemplateRepo{}
+	_, mux := newEmailTemplateAdmin(t, repo, &etMailerStub{})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/email-templates/order_confirmed",
+		strings.NewReader(`{"subject":"Hi","body":"<p>x</p>"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatal("PUT without admin id must fail")
+	}
+	if len(repo.rows) != 0 {
+		t.Fatal("must not upsert as system")
 	}
 }
 
@@ -454,6 +485,36 @@ func TestEmailTemplateAdmin_TestSendInvalidTo(t *testing.T) {
 	}
 	if len(mailer.sent) != 0 {
 		t.Fatal("Send must not dial on bad address")
+	}
+	// Bad address must not stamp the rate window — a valid send still works.
+	req = withAdminID(httptest.NewRequest(http.MethodPost, "/api/v1/admin/email-templates/order_confirmed/test-send",
+		strings.NewReader(`{"to":"ops@example.com"}`)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid send after bad to: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEmailTemplateAdmin_TestSendRateLimited(t *testing.T) {
+	repo := &etTemplateRepo{}
+	mailer := &etMailerStub{}
+	_, mux := newEmailTemplateAdmin(t, repo, mailer)
+	body := `{"to":"ops@example.com"}`
+	req := withAdminID(httptest.NewRequest(http.MethodPost, "/api/v1/admin/email-templates/order_confirmed/test-send", strings.NewReader(body)))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first send: %d %s", rec.Code, rec.Body.String())
+	}
+	req = withAdminID(httptest.NewRequest(http.MethodPost, "/api/v1/admin/email-templates/order_confirmed/test-send", strings.NewReader(body)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second send want 429, got %d %s", rec.Code, rec.Body.String())
+	}
+	if len(mailer.sent) != 1 {
+		t.Fatalf("rate-limited Send count=%d", len(mailer.sent))
 	}
 }
 

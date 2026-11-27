@@ -71,15 +71,15 @@ When overrides are wired, a default-store lookup failure aborts **overridable** 
 
 RBAC: `content.read` (list/get/preview), `content.write` (put/delete/test-send). Store scope is the default store.
 
-**PUT:** allowlist-only. Before Upsert, subject/body are parsed and executed with the same sample data preview uses; executed subjects containing CR/LF are rejected. A failed validation leaves no row.
+**PUT:** allowlist-only. Requires a real admin actor id (`adminIDFromRequest`’s `"system"` fallback is not accepted as `updated_by`). Before Upsert, subject/body are parsed and executed with the same sample data preview uses; executed subjects containing CR/LF are rejected. A failed validation leaves no row.
 
 **GET vs preview:** GET is exact-locale (DB row for that key, else file/builtin source text). Preview and test-send use the live render chain (requested locale → empty locale → file) unless `exact=1` / `exact=true`. Responses include `source`, `resolved_locale`, and `fallback` so a default-locale DB override is visible when previewing `de`.
 
 **List `source`:** `db` when any allowlisted locale row exists for that name (including `de`-only). Locales are sorted by name/locale; empty locale is JSON `""`.
 
-**Test-send:** overridable names only (not auth/claim/voucher). `to` must parse as a mailbox; subject is prefixed with `[TEST] `; Send runs under a ~15s deadline with a light per-admin rate limit. Invoice/voucher previews set `attachment_omitted` (no PDF is attached).
+**Test-send:** overridable names only (not auth/claim/voucher). Requires a real admin actor id (not the `"system"` audit fallback). `to` must parse as a mailbox; subject is prefixed with `[TEST] `; Send runs under a ~15s deadline. The per-admin rate window is stamped only after validation (bad body/`to` does not burn it) and returns `rate_limited` (429). Limit is per process. Invoice/voucher previews set `attachment_omitted` (no PDF is attached). SMTP dial/send failures map to unavailable — not a client `to` validation error.
 
-**Preview body:** empty body is OK; non-empty body uses strict JSON decode (422 on error). Sample maps are per-template (`cart_recovery` uses `Quantity` / `UnitPrice` / `LineTotal`).
+**Preview body:** empty body is OK; non-empty body uses strict JSON decode (422 on error). Sample maps are per-template (`cart_recovery` sets `Quantity` / `UnitPrice` / `LineTotal` / `Price` so file and builtin bodies both render).
 
 `updated_by` is the admin actor id (required on write).
 
