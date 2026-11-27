@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -177,6 +178,34 @@ func (o claimOverrideStub) Get(_ context.Context, storeID, name, locale string) 
 		return "", "", mail.ErrTemplateNotFound
 	}
 	return o.subject, o.body, nil
+}
+
+func TestStorefrontOrderClaimEmailer_FindDefaultErrorStillSendsFile(t *testing.T) {
+	tmpl, lr := loadClaimTemplates(t)
+	stub := &claimMailerStub{}
+	emailer := storefrontOrderClaimEmailer{
+		mailer:    stub,
+		claimURL:  "https://shop.example/account/orders/claim",
+		storeURL:  "https://shop.example",
+		templates: tmpl,
+		layout:    lr,
+		resolve: func(context.Context) (string, string, error) {
+			return "", "", errors.New("stores down")
+		},
+		tokenTTL: 15 * time.Minute,
+	}
+	if err := emailer.SendClaimEmail(context.Background(), "guest@example.com", "tok-outage"); err != nil {
+		t.Fatalf("SendClaimEmail: %v", err)
+	}
+	if stub.last.Subject != "Claim your guest order" {
+		t.Fatalf("subject = %q, want file template", stub.last.Subject)
+	}
+	if !strings.Contains(stub.last.Body, "claim_token=tok-outage") {
+		t.Fatalf("body missing claim URL: %s", stub.last.Body)
+	}
+	if !strings.Contains(stub.last.Text, "claim_token=tok-outage") {
+		t.Fatalf("plain text missing claim URL: %q", stub.last.Text)
+	}
 }
 
 func TestStorefrontOrderClaimEmailer_IgnoresDBOverrideBeacon(t *testing.T) {

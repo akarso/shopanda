@@ -32,7 +32,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
-	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -913,10 +912,9 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 		"ClaimURL":  claimLink,
 		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
 	}
-	storeID, locale, err := e.resolveStoreLocale(ctx)
-	if err != nil {
-		return err
-	}
+	// order_claim is not overridable: a FindDefault failure must not block the
+	// file/builtin body (same fail-open as auth mail via prepareEmailStore).
+	storeID, locale := e.resolveStoreLocale(ctx)
 	res, err := mail.RenderWithOverrides(ctx, e.templates, e.overrides, storeID, "order_claim", locale, contactEmail, ed)
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: render: %w", err)
@@ -949,39 +947,31 @@ func claimBodyContainsURL(body, claimLink string) bool {
 	return escaped != claimLink && strings.Contains(body, escaped)
 }
 
-// resolveStoreLocale prefers the request language (when present), else one
-// FindDefault for both store id and primary-language locale.
-func (e storefrontOrderClaimEmailer) resolveStoreLocale(ctx context.Context) (storeID, locale string, err error) {
-	if raw, ok := translation.LanguageOK(ctx); ok {
-		locale = translation.PrimaryLanguage(raw)
-	}
+// resolveStoreLocale best-effort loads store id + locale for RenderWithOverrides.
+// order_claim never applies DB overrides, so a FindDefault error returns empty
+// values and the file template still renders.
+func (e storefrontOrderClaimEmailer) resolveStoreLocale(ctx context.Context) (storeID, locale string) {
 	if e.resolve != nil {
-		id, storeLocale, resolveErr := e.resolve(ctx)
-		if resolveErr != nil {
-			return "", "", fmt.Errorf("storefront order claim emailer: store: %w", resolveErr)
+		id, storeLocale, err := e.resolve(ctx)
+		if err != nil {
+			return "", ""
 		}
-		storeID = id
-		if locale == "" {
-			locale = storeLocale
-		}
-		return storeID, locale, nil
+		return id, storeLocale
 	}
 	// Legacy split closures (tests / older wiring).
 	if e.storeID != nil {
-		id, idErr := e.storeID(ctx)
-		if idErr != nil {
-			return "", "", fmt.Errorf("storefront order claim emailer: store id: %w", idErr)
+		id, err := e.storeID(ctx)
+		if err == nil {
+			storeID = id
 		}
-		storeID = id
 	}
-	if locale == "" && e.locale != nil {
-		lang, locErr := e.locale(ctx)
-		if locErr != nil {
-			return "", "", fmt.Errorf("storefront order claim emailer: locale: %w", locErr)
+	if e.locale != nil {
+		lang, err := e.locale(ctx)
+		if err == nil {
+			locale = lang
 		}
-		locale = lang
 	}
-	return storeID, locale, nil
+	return storeID, locale
 }
 
 func formatClaimTokenTTL(d time.Duration) string {

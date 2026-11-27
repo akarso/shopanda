@@ -56,7 +56,7 @@ Only overridable names may be stored or applied from DB: `order_confirmed`, `ord
 
 Subject uses `text/template` (SMTP header stays plain: `Fish & Chips`); executed subjects that contain CR/LF are rejected before enqueue. Body uses `html/template`. Layout still wraps body HTML. No MJML. Boot still registers builtins then files; DB is consulted only when rendering.
 
-When overrides are wired, a default-store lookup failure aborts **overridable** sends only (so a stock file body is never acknowledged for those names). Auth/token, claim, and voucher mail still render from the file registry. Recovery does not mark the cart sent on store/locale lookup failure. Claim prefers request language (`LanguageOK`) when resolving locale for brand data; the `order_claim` body always comes from file/builtin.
+When overrides are wired, a default-store lookup failure aborts **overridable** sends only (so a stock file body is never acknowledged for those names). Auth/token, claim, and voucher mail still render from the file registry on a stores-table error (`BrandEmailData` and claim `resolve` are best-effort). Recovery does not mark the cart sent on store/locale lookup failure. The `order_claim` body always comes from file/builtin.
 
 ## 4. Admin API (PR-1213)
 
