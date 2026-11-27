@@ -124,6 +124,11 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 		return nil
 	}
 
+	base, err := absoluteRecoveryStoreURL(h.storeURL)
+	if err != nil {
+		return err
+	}
+
 	staleBefore := time.Now().UTC().Add(-settings.StaleAfter)
 	candidates, err := h.carts.FindRecoveryCandidates(ctx, staleBefore, recoveryBatchSize)
 	if err != nil {
@@ -134,17 +139,18 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 		return nil
 	}
 
-	brand := mail.EmailData{StoreURL: h.storeURL}
+	brand := mail.EmailData{StoreURL: base}
 	if h.brand != nil {
-		brand = h.brand.BrandEmailData(ctx, h.storeURL)
+		brand = h.brand.BrandEmailData(ctx, base)
 	}
+	brand.StoreURL = base
 
 	sent := 0
 	for _, c := range candidates {
 		if c == nil || len(c.Items) == 0 || c.CustomerID == "" {
 			continue
 		}
-		if err := h.processCart(ctx, c, brand); err != nil {
+		if err := h.processCart(ctx, c, brand, base); err != nil {
 			h.log.Error("cart.recovery.cart_failed", err, map[string]interface{}{
 				"cart_id":     c.ID,
 				"customer_id": c.CustomerID,
@@ -160,12 +166,7 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 	return nil
 }
 
-func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData) error {
-	base, err := absoluteRecoveryStoreURL(h.storeURL)
-	if err != nil {
-		return err
-	}
-
+func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData, storeBase string) error {
 	cust, err := h.customers.FindByID(ctx, c.CustomerID)
 	if err != nil {
 		return fmt.Errorf("find customer: %w", err)
@@ -184,10 +185,10 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return err
 	}
-	cartURL := base + "/cart"
+	cartURL := storeBase + "/cart"
 
 	ed := brand
-	ed.StoreURL = base
+	ed.StoreURL = storeBase
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"CartURL":   cartURL,

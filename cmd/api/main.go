@@ -861,8 +861,6 @@ type storefrontOrderClaimEmailer struct {
 	tokenTTL  time.Duration
 }
 
-const defaultOrderClaimEmailTimeout = 15 * time.Second
-
 func storefrontClaimPageURL(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
@@ -902,10 +900,8 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, defaultOrderClaimEmailTimeout)
-	defer cancel()
 
-	ed := e.brand.BrandEmailData(sendCtx, strings.TrimRight(strings.TrimSpace(e.storeURL), "/"))
+	ed := e.brand.BrandEmailData(ctx, strings.TrimRight(strings.TrimSpace(e.storeURL), "/"))
 	ed.Data = map[string]interface{}{
 		"ClaimURL":  claimLink,
 		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
@@ -921,14 +917,15 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contact
 	msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
 		claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
 		"If you did not place an order with us, you can safely ignore this email.\n"
-	return e.mailer.Send(sendCtx, msg)
+	return e.mailer.Send(ctx, msg)
 }
 
 func formatClaimTokenTTL(d time.Duration) string {
 	if d <= 0 {
 		d = storefront.DefaultSecurityEmailTokenTTL
 	}
-	mins := int(d.Round(time.Minute) / time.Minute)
+	// Truncate toward zero so the advertised lifetime never exceeds ExpiresAt.
+	mins := int(d / time.Minute)
 	if mins < 1 {
 		mins = 1
 	}

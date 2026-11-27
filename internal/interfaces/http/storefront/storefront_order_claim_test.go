@@ -1,9 +1,11 @@
 package storefront_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 )
@@ -118,12 +121,60 @@ func (r *storefrontOrderClaimRepoStub) ListCreatedSince(context.Context, time.Ti
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string
 	lastToken string
+	calls     int
+	errs      []error // returned in order; nil entries succeed
 }
 
 func (e *storefrontOrderClaimEmailerStub) SendClaimEmail(_ context.Context, contactEmail, claimToken string) error {
+	e.calls++
 	e.lastEmail = contactEmail
 	e.lastToken = claimToken
-	return nil
+	if len(e.errs) == 0 {
+		return nil
+	}
+	err := e.errs[0]
+	e.errs = e.errs[1:]
+	return err
+}
+
+func claimSearchLogEvents(t *testing.T, buf *bytes.Buffer) []map[string]interface{} {
+	t.Helper()
+	var out []map[string]interface{}
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("log json: %v (%q)", err, line)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func claimSearchHasEvent(logs []map[string]interface{}, event string) bool {
+	for _, e := range logs {
+		if e["event"] == event {
+			return true
+		}
+	}
+	return false
+}
+
+func claimSearchEmailSent(logs []map[string]interface{}) (bool, bool) {
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i]["event"] != "storefront.order_claim.search" {
+			continue
+		}
+		ctx, _ := logs[i]["context"].(map[string]interface{})
+		if ctx == nil {
+			return false, false
+		}
+		v, ok := ctx["email_sent"].(bool)
+		return v, ok
+	}
+	return false, false
 }
 
 type storefrontOrderLinkerStub struct {
@@ -304,6 +355,154 @@ func TestStorefrontHandler_ClaimOrderSearch_NoMatches_SkipsEmail(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "If any orders exist for this email") {
 		t.Fatalf("expected generic message, got body: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_DialRetryThenSuccess(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{
+		errs: []error{fmt.Errorf("smtp: dial: connection refused"), nil},
+	}
+	var logs bytes.Buffer
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithLog(logger.NewWithWriter(&logs, "info"))
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if emailer.calls != 2 {
+		t.Fatalf("calls = %d, want 2", emailer.calls)
+	}
+	entries := claimSearchLogEvents(t, &logs)
+	if !claimSearchHasEvent(entries, "storefront.order_claim.email_retry") {
+		t.Fatalf("missing email_retry log: %s", logs.String())
+	}
+	sent, ok := claimSearchEmailSent(entries)
+	if !ok || !sent {
+		t.Fatalf("email_sent = %v ok=%v, want true; logs: %s", sent, ok, logs.String())
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_PermanentErrorNoRetry(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{
+		errs: []error{errors.New("storefront order claim emailer: templates not configured")},
+	}
+	var logs bytes.Buffer
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithLog(logger.NewWithWriter(&logs, "info"))
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if emailer.calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no retry)", emailer.calls)
+	}
+	entries := claimSearchLogEvents(t, &logs)
+	if claimSearchHasEvent(entries, "storefront.order_claim.email_retry") {
+		t.Fatalf("must not retry permanent error: %s", logs.String())
+	}
+	if !claimSearchHasEvent(entries, "storefront.order_claim.email_failed") {
+		t.Fatalf("missing email_failed: %s", logs.String())
+	}
+	sent, ok := claimSearchEmailSent(entries)
+	if !ok || sent {
+		t.Fatalf("email_sent = %v ok=%v, want false", sent, ok)
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_CanceledLogsTimeout(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{errs: []error{context.Canceled}}
+	var logs bytes.Buffer
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithLog(logger.NewWithWriter(&logs, "info"))
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if emailer.calls != 1 {
+		t.Fatalf("calls = %d, want 1", emailer.calls)
+	}
+	entries := claimSearchLogEvents(t, &logs)
+	if !claimSearchHasEvent(entries, "storefront.order_claim.email_timeout") {
+		t.Fatalf("missing email_timeout: %s", logs.String())
+	}
+	if claimSearchHasEvent(entries, "storefront.order_claim.email_retry") {
+		t.Fatalf("must not retry canceled: %s", logs.String())
+	}
+	sent, ok := claimSearchEmailSent(entries)
+	if !ok || sent {
+		t.Fatalf("email_sent = %v ok=%v, want false", sent, ok)
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_DeadlineLogsTimeout(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{errs: []error{context.DeadlineExceeded}}
+	var logs bytes.Buffer
+	h := storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithLog(logger.NewWithWriter(&logs, "info"))
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	if emailer.calls != 1 {
+		t.Fatalf("calls = %d, want 1", emailer.calls)
+	}
+	entries := claimSearchLogEvents(t, &logs)
+	if !claimSearchHasEvent(entries, "storefront.order_claim.email_timeout") {
+		t.Fatalf("missing email_timeout: %s", logs.String())
+	}
+	sent, ok := claimSearchEmailSent(entries)
+	if !ok || sent {
+		t.Fatalf("email_sent = %v ok=%v, want false", sent, ok)
 	}
 }
 

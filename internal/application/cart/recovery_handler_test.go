@@ -103,10 +103,12 @@ func (s *recoveryCustomerRepo) FindByID(_ context.Context, id string) (*customer
 
 type recoveryVariantRepo struct {
 	catalog.VariantRepository
-	byID map[string]*catalog.Variant
+	byID      map[string]*catalog.Variant
+	findCalls int
 }
 
 func (s *recoveryVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	s.findCalls++
 	return s.byID[id], nil
 }
 
@@ -412,26 +414,30 @@ func TestRecoveryHandler_Handle_EmptyStoreURLSkipsSend(t *testing.T) {
 			templates := mail.NewTemplates()
 			notification.RegisterTemplates(templates)
 			queue := &recoveryQueue{}
+			variants := &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+				"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+			}}
 			h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
 				Carts:     carts,
 				Customers: customers,
-				Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
-					"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
-				}},
+				Variants:  variants,
 				Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
 				Templates: templates,
 				Queue:     queue,
 				StoreURL:  storeURL,
 				Log:       &recoveryLogger{},
 			})
-			if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
-				t.Fatalf("Handle: %v", err)
+			if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err == nil {
+				t.Fatal("Handle must fail on bad store URL before scanning carts")
 			}
 			if len(queue.enqueued) != 0 {
 				t.Fatalf("bad store URL %q must not enqueue, got %d", storeURL, len(queue.enqueued))
 			}
 			if len(carts.marked) != 0 {
 				t.Fatalf("bad store URL %q must not mark, got %v", storeURL, carts.marked)
+			}
+			if variants.findCalls != 0 {
+				t.Fatalf("bad store URL %q must not look up variants, got %d calls", storeURL, variants.findCalls)
 			}
 		})
 	}

@@ -136,7 +136,7 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 				})
 			} else if err := h.sendClaimEmailWithRetry(r.Context(), contactEmail, claimToken); err != nil {
 				fields := map[string]interface{}{"path": r.URL.Path}
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				if isClaimEmailTimeout(err) {
 					h.log.Error("storefront.order_claim.email_timeout", err, fields)
 				} else {
 					h.log.Error("storefront.order_claim.email_failed", err, fields)
@@ -156,28 +156,60 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 	}
 }
 
+// ClaimEmailSendTimeout is the single budget for claim SMTP (including one
+// dial-only retry). Shared with cmd/api SendClaimEmail callers.
+const ClaimEmailSendTimeout = 15 * time.Second
+
 const claimEmailSendAttempts = 2
 
 func (h *StorefrontHandler) sendClaimEmailWithRetry(ctx context.Context, contactEmail, claimToken string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, ClaimEmailSendTimeout)
+	defer cancel()
+
 	var last error
 	for attempt := 1; attempt <= claimEmailSendAttempts; attempt++ {
-		last = h.emailer.SendClaimEmail(ctx, contactEmail, claimToken)
+		if sendCtx.Err() != nil {
+			if last == nil {
+				last = sendCtx.Err()
+			}
+			return last
+		}
+		last = h.emailer.SendClaimEmail(sendCtx, contactEmail, claimToken)
 		if last == nil {
 			return nil
 		}
-		if errors.Is(last, context.Canceled) {
+		if !isClaimEmailRetryable(last) || attempt >= claimEmailSendAttempts || sendCtx.Err() != nil {
 			return last
 		}
-		if attempt < claimEmailSendAttempts && ctx.Err() == nil {
-			h.log.Warn("storefront.order_claim.email_retry", map[string]interface{}{
-				"attempt": attempt,
-				"error":   last.Error(),
-			})
-			continue
-		}
-		break
+		h.log.Warn("storefront.order_claim.email_retry", map[string]interface{}{
+			"attempt": attempt,
+			"error":   last.Error(),
+		})
 	}
 	return last
+}
+
+// isClaimEmailRetryable is true only when the message was almost certainly
+// not accepted (SMTP dial before DATA). Do not retry after DATA/Quit/timeouts.
+func isClaimEmailRetryable(err error) bool {
+	if err == nil || isClaimEmailTimeout(err) {
+		return false
+	}
+	return strings.Contains(err.Error(), "smtp: dial:")
+}
+
+func isClaimEmailTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "deadline exceeded")
 }
 
 // AccountOrdersClaim handles GET and POST /account/orders/claim.
