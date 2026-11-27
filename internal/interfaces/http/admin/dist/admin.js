@@ -4765,6 +4765,7 @@
                     'customers.read', 'customers.write',
                     'invoices.read',
                     'media.read', 'media.write',
+                    'content.read', 'content.write',
                     'settings.read', 'settings.write',
                     'audit.read',
                     'shipping.read', 'shipping.write',
@@ -4784,6 +4785,7 @@
                     'customers.read',
                     'invoices.read',
                     'media.read', 'media.write',
+                    'content.read',
                     'shipping.read', 'shipping.write'
                 ]
             },
@@ -4793,7 +4795,8 @@
                 permissions: [
                     'products.read', 'products.write',
                     'categories.read', 'categories.write',
-                    'media.read', 'media.write'
+                    'media.read', 'media.write',
+                    'content.read', 'content.write'
                 ]
             },
             {
@@ -4803,7 +4806,8 @@
                     'products.read',
                     'orders.read',
                     'customers.read',
-                    'invoices.read'
+                    'invoices.read',
+                    'content.read'
                 ]
             }
         ];
@@ -9325,6 +9329,10 @@
         });
     }
 
+    var emailTemplatesUI = (typeof ShopandaEmailTemplatesAdminUI !== "undefined")
+        ? ShopandaEmailTemplatesAdminUI
+        : null;
+
     var emailTemplateLabels = {
         order_confirmed: "Order confirmed",
         order_shipped: "Order shipped",
@@ -9343,20 +9351,16 @@
         return emailTemplateLabels[name] || name;
     }
 
-    function formatEmailTemplateLocale(locale) {
-        if (locale === "" || locale == null) {
-            return "default";
-        }
-        return String(locale);
-    }
-
     function formatEmailTemplateLocales(locales) {
         if (!Array.isArray(locales) || locales.length === 0) {
             return "—";
         }
+        var fmt = emailTemplatesUI ? emailTemplatesUI.formatLocaleLabel : function (l) {
+            return (l === "" || l == null) ? "default" : String(l);
+        };
         var out = [];
         for (var i = 0; i < locales.length; i++) {
-            out.push(formatEmailTemplateLocale(locales[i]));
+            out.push(fmt(locales[i]));
         }
         return out.join(", ");
     }
@@ -9413,74 +9417,79 @@
 
         var msg = document.getElementById("email-template-msg");
         var editor = document.getElementById("email-template-editor");
+        if (!emailTemplatesUI) {
+            msg.innerHTML = '<p role="alert">Email template UI helpers failed to load.</p>';
+            editor.innerHTML = "";
+            return;
+        }
 
         Promise.all([
             api("/admin/email-templates"),
-            api("/admin/email-templates/" + encodeURIComponent(templateName))
+            api("/admin/email-templates/" + encodeURIComponent(templateName)),
+            api("/admin/stores")
         ]).then(function (results) {
-            var listBody = results[0];
+            var listResult = emailTemplatesUI.listLoadResult(results[0]);
+            if (!listResult.ok) {
+                msg.innerHTML = '<p role="alert">' + esc(listResult.forbidden
+                    ? "Your account does not have content access."
+                    : listResult.message) + "</p>";
+                editor.innerHTML = "";
+                return;
+            }
             var getBody = results[1];
-            if ((listBody && listBody.error && listBody.error.code === "forbidden") ||
-                (getBody && getBody.error && getBody.error.code === "forbidden")) {
-                msg.innerHTML = '<p role="alert">Your account does not have content access.</p>';
-                editor.innerHTML = "";
-                return;
-            }
             if (getBody && getBody.error) {
-                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(getBody, "Failed to load template.")) + "</p>";
+                msg.innerHTML = '<p role="alert">' + esc(getBody.error.code === "forbidden"
+                    ? "Your account does not have content access."
+                    : extractErrorMessage(getBody, "Failed to load template.")) + "</p>";
                 editor.innerHTML = "";
                 return;
             }
-            var listItems = (listBody && Array.isArray(listBody.data)) ? listBody.data : [];
-            var meta = null;
-            for (var i = 0; i < listItems.length; i++) {
-                if (listItems[i] && listItems[i].name === templateName) {
-                    meta = listItems[i];
+            var stores = normalizeStores(results[2] && results[2].data && results[2].data.stores
+                ? results[2].data.stores
+                : []);
+            var defaultStore = null;
+            for (var s = 0; s < stores.length; s++) {
+                if (stores[s].is_default) {
+                    defaultStore = stores[s];
                     break;
                 }
             }
+            var meta = emailTemplatesUI.findListMeta(listResult.items, templateName);
             var tpl = (getBody && getBody.data) || {};
-            var writable = !!(tpl.writable || (meta && meta.writable));
+            var templateWritable = !!tpl.writable;
             var locales = (meta && Array.isArray(meta.locales)) ? meta.locales.slice() : [];
-            bindEmailTemplateEditor(editor, msg, templateName, tpl, writable, locales);
+            bindEmailTemplateEditor(editor, msg, templateName, tpl, templateWritable, locales, defaultStore);
         }).catch(function (err) {
             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load template.")) + "</p>";
             editor.innerHTML = "";
         });
     }
 
-    function bindEmailTemplateEditor(editor, msg, templateName, tpl, writable, locales) {
-        var currentLocale = (tpl && tpl.locale != null) ? String(tpl.locale) : "";
+    function bindEmailTemplateEditor(editor, msg, templateName, tpl, templateWritable, locales, defaultStore) {
+        var ui = emailTemplatesUI;
+        var hasContentWrite = userHasPermission("content.write");
+        var canWrite = ui.canShowWriteControls(templateWritable, hasContentWrite);
+        var gate = ui.newLoadGate();
+        var baseline = ui.baselineFromRow(tpl);
         var localeOptions = [];
         var seen = {};
+        var loadingLocale = false;
+        var testSendInFlight = false;
+
         function addLocaleOption(loc) {
             var key = loc == null ? "" : String(loc);
             if (seen[key]) {
-                return;
+                return false;
             }
             seen[key] = true;
             localeOptions.push(key);
+            return true;
         }
         addLocaleOption("");
         for (var i = 0; i < locales.length; i++) {
             addLocaleOption(locales[i]);
         }
-        addLocaleOption(currentLocale);
-
-        function localeSelectHTML(selected) {
-            var html = '<label>Locale<select name="locale" id="email-template-locale">';
-            for (var j = 0; j < localeOptions.length; j++) {
-                var loc = localeOptions[j];
-                html += '<option value="' + esc(loc) + '"' + (loc === selected ? " selected" : "") + ">" +
-                    esc(formatEmailTemplateLocale(loc)) + "</option>";
-            }
-            html += "</select></label>";
-            if (writable) {
-                html += '<label>Add locale<input name="new_locale" id="email-template-new-locale" placeholder="e.g. de" pattern="[A-Za-z]{2,8}"></label>' +
-                    '<button type="button" id="email-template-add-locale" class="secondary">Use locale</button>';
-            }
-            return html;
-        }
+        addLocaleOption(baseline.locale);
 
         function metaHTML(row) {
             var parts = ["Source: <strong>" + esc(row.source || "") + "</strong>"];
@@ -9490,222 +9499,362 @@
             if (row.updated_by) {
                 parts.push("By: " + esc(String(row.updated_by)));
             }
-            if (!writable) {
-                parts.push("View only (not overridable)");
-            }
             return '<p class="admin-form-hint" id="email-template-meta">' + parts.join(" · ") + "</p>";
         }
 
-        function renderForm(row) {
-            var disabled = writable ? "" : " disabled";
-            var actions = "";
-            if (writable) {
-                actions =
-                    '<div style="margin-top:1rem">' +
-                    '<button type="submit">Save</button> ' +
-                    '<button type="button" id="email-template-revert" class="danger">Revert to default</button>' +
-                    "</div>" +
-                    '<fieldset style="margin-top:1.5rem"><legend>Test send</legend>' +
-                    '<label>To<input type="email" name="test_to" id="email-template-test-to" placeholder="you@example.com"></label>' +
-                    '<button type="button" id="email-template-test-send">Send test</button>' +
-                    '<p class="admin-form-hint">Subject is prefixed with [TEST]. Limited to one send per 30 seconds.</p>' +
-                    "</fieldset>";
+        function bannerHTML() {
+            var defID = defaultStore && defaultStore.id ? defaultStore.id : "";
+            if (!ui.defaultStoreBannerNeeded(adminScope.store_id, defID)) {
+                return "";
             }
-            editor.innerHTML =
-                '<form id="email-template-form">' +
-                localeSelectHTML(row.locale != null ? String(row.locale) : "") +
-                metaHTML(row) +
-                '<label>Subject<input name="subject" id="email-template-subject" value="' + esc(row.subject || "") + '"' + disabled + " required></label>" +
-                '<label>Body (HTML)<textarea name="body" id="email-template-body" rows="16"' + disabled + ">" + esc(row.body || "") + "</textarea></label>" +
-                actions +
-                "</form>" +
-                '<section style="margin-top:2rem">' +
-                "<h3>Preview</h3>" +
-                '<p class="admin-form-hint">Uses the live render chain (requested locale → default override → file). Saved content only.</p>' +
-                '<button type="button" id="email-template-preview-btn">Refresh preview</button>' +
-                '<div id="email-template-preview-meta" class="admin-form-hint" style="margin-top:0.5rem"></div>' +
-                '<p id="email-template-preview-subject" style="font-weight:600;margin:0.75rem 0 0.25rem"></p>' +
-                '<iframe id="email-template-preview-frame" title="Email preview" sandbox="" style="width:100%;min-height:420px;border:1px solid #ccc;background:#fff"></iframe>' +
-                "</section>";
-
-            var form = document.getElementById("email-template-form");
-            var localeSelect = document.getElementById("email-template-locale");
-
-            function selectedLocale() {
-                return localeSelect ? localeSelect.value : "";
-            }
-
-            function loadLocale(locale) {
-                msg.innerHTML = "";
-                var q = locale ? ("?locale=" + encodeURIComponent(locale)) : "";
-                api("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
-                    if (body && body.error) {
-                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load locale.")) + "</p>";
-                        return;
-                    }
-                    var next = (body && body.data) || {};
-                    addLocaleOption(next.locale != null ? String(next.locale) : locale);
-                    renderForm(next);
-                    refreshPreview();
-                }).catch(function (err) {
-                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load locale.")) + "</p>";
-                });
-            }
-
-            if (localeSelect) {
-                localeSelect.addEventListener("change", function () {
-                    loadLocale(localeSelect.value);
-                });
-            }
-
-            var addLocaleBtn = document.getElementById("email-template-add-locale");
-            if (addLocaleBtn) {
-                addLocaleBtn.addEventListener("click", function () {
-                    var input = document.getElementById("email-template-new-locale");
-                    var raw = input ? String(input.value || "").trim() : "";
-                    if (!raw) {
-                        msg.innerHTML = '<p role="alert">Enter a locale (e.g. de).</p>';
-                        return;
-                    }
-                    addLocaleOption(raw.toLowerCase());
-                    loadLocale(raw.toLowerCase());
-                });
-            }
-
-            if (writable && form) {
-                form.addEventListener("submit", function (e) {
-                    e.preventDefault();
-                    var payload = {
-                        subject: form.elements.subject.value,
-                        body: form.elements.body.value,
-                        locale: selectedLocale()
-                    };
-                    api("/admin/email-templates/" + encodeURIComponent(templateName), {
-                        method: "PUT",
-                        body: JSON.stringify(payload)
-                    }).then(function (body) {
-                        if (body && body.error) {
-                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Save failed.")) + "</p>";
-                            return;
-                        }
-                        msg.innerHTML = "<p>Saved.</p>";
-                        var saved = (body && body.data) || payload;
-                        addLocaleOption(saved.locale != null ? String(saved.locale) : payload.locale);
-                        renderForm(saved);
-                    }).catch(function (err) {
-                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
-                    });
-                });
-
-                var revertBtn = document.getElementById("email-template-revert");
-                if (revertBtn) {
-                    revertBtn.addEventListener("click", function () {
-                        var locLabel = formatEmailTemplateLocale(selectedLocale());
-                        if (!window.confirm("Revert " + templateName + " (" + locLabel + ") to the file/builtin template?")) {
-                            return;
-                        }
-                        var q = selectedLocale() ? ("?locale=" + encodeURIComponent(selectedLocale())) : "";
-                        apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
-                            if (body && body.error) {
-                                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Revert failed.")) + "</p>";
-                                return;
-                            }
-                            msg.innerHTML = "<p>Reverted to default.</p>";
-                            loadLocale(selectedLocale());
-                        }).catch(function (err) {
-                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Revert failed.")) + "</p>";
-                        });
-                    });
-                }
-
-                var testBtn = document.getElementById("email-template-test-send");
-                if (testBtn) {
-                    testBtn.addEventListener("click", function () {
-                        var toInput = document.getElementById("email-template-test-to");
-                        var to = toInput ? String(toInput.value || "").trim() : "";
-                        if (!to) {
-                            msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
-                            return;
-                        }
-                        api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
-                            method: "POST",
-                            body: JSON.stringify({ to: to, locale: selectedLocale() })
-                        }).then(function (body) {
-                            if (body && body.error) {
-                                var code = body.error.code || "";
-                                var errMsg = extractErrorMessage(body, "Test send failed.");
-                                if (code === "rate_limited") {
-                                    errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
-                                }
-                                msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
-                                return;
-                            }
-                            var data = (body && body.data) || {};
-                            msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
-                                (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
-                        }).catch(function (err) {
-                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
-                        });
-                    });
-                }
-            }
-
-            var previewBtn = document.getElementById("email-template-preview-btn");
-            if (previewBtn) {
-                previewBtn.addEventListener("click", function () {
-                    refreshPreview();
-                });
-            }
-
-            function refreshPreview() {
-                var previewMeta = document.getElementById("email-template-preview-meta");
-                var previewSubject = document.getElementById("email-template-preview-subject");
-                var frame = document.getElementById("email-template-preview-frame");
-                var locale = selectedLocale();
-                var url = "/admin/email-templates/" + encodeURIComponent(templateName) + "/preview";
-                if (locale) {
-                    url += "?locale=" + encodeURIComponent(locale);
-                }
-                api(url, { method: "POST", body: "{}" }).then(function (body) {
-                    if (body && body.error) {
-                        if (previewMeta) {
-                            previewMeta.innerHTML = '<span role="alert">' + esc(extractErrorMessage(body, "Preview failed.")) + "</span>";
-                        }
-                        return;
-                    }
-                    var data = (body && body.data) || {};
-                    var bits = [
-                        "source=" + (data.source || ""),
-                        "requested=" + formatEmailTemplateLocale(data.requested_locale),
-                        "resolved=" + formatEmailTemplateLocale(data.resolved_locale)
-                    ];
-                    if (data.fallback) {
-                        bits.push("fallback");
-                    }
-                    if (data.attachment_omitted) {
-                        bits.push("attachment omitted: " + data.attachment_omitted);
-                    }
-                    if (previewMeta) {
-                        previewMeta.textContent = bits.join(" · ");
-                    }
-                    if (previewSubject) {
-                        previewSubject.textContent = data.subject || "";
-                    }
-                    if (frame) {
-                        frame.setAttribute("srcdoc", data.body || "<p></p>");
-                    }
-                }).catch(function (err) {
-                    if (previewMeta) {
-                        previewMeta.innerHTML = '<span role="alert">' + esc(extractErrorMessage(err, "Preview failed.")) + "</span>";
-                    }
-                });
-            }
-
-            // Kick off initial preview after bind.
-            refreshPreview();
+            var label = (defaultStore && defaultStore.name) ? defaultStore.name : "default store";
+            return '<p class="admin-form-hint" role="status" id="email-template-store-banner">' +
+                "Header store is not the default. Save, revert, and test-send still apply to the default store (" +
+                esc(label) + ").</p>";
         }
 
-        renderForm(tpl || {});
+        function rebuildLocaleSelect(fields, selected) {
+            if (!fields.localeSelect) {
+                return;
+            }
+            fields.localeSelect.innerHTML = ui.buildLocaleOptionsHTML(localeOptions, selected, esc);
+            fields.localeSelect.value = selected;
+        }
+
+        function updateMeta(row) {
+            var el = document.getElementById("email-template-meta");
+            if (el) {
+                el.outerHTML = metaHTML(row || {});
+            }
+        }
+
+        function collectFields() {
+            var subjectInput = document.getElementById("email-template-subject");
+            var bodyInput = document.getElementById("email-template-body");
+            if (subjectInput) {
+                subjectInput.dataset.ro = canWrite ? "0" : "1";
+            }
+            if (bodyInput) {
+                bodyInput.dataset.ro = canWrite ? "0" : "1";
+            }
+            return {
+                form: document.getElementById("email-template-form"),
+                localeSelect: document.getElementById("email-template-locale"),
+                subjectInput: subjectInput,
+                bodyInput: bodyInput,
+                saveBtn: document.getElementById("email-template-save"),
+                revertBtn: document.getElementById("email-template-revert"),
+                testBtn: document.getElementById("email-template-test-send"),
+                addLocaleBtn: document.getElementById("email-template-add-locale"),
+                newLocaleInput: document.getElementById("email-template-new-locale"),
+                previewBtn: document.getElementById("email-template-preview-btn"),
+                previewMeta: document.getElementById("email-template-preview-meta"),
+                previewSubject: document.getElementById("email-template-preview-subject"),
+                previewFrame: document.getElementById("email-template-preview-frame")
+            };
+        }
+
+        function syncTestSendEnabled(fields) {
+            if (!canWrite || !fields.testBtn) {
+                return;
+            }
+            var clean = ui.formMatchesBaseline(
+                fields.subjectInput ? fields.subjectInput.value : "",
+                fields.bodyInput ? fields.bodyInput.value : "",
+                fields.localeSelect ? fields.localeSelect.value : "",
+                baseline
+            );
+            ui.setTestSendEnabled(fields.testBtn, clean && !loadingLocale && !testSendInFlight);
+        }
+
+        function refreshPreview(ticket) {
+            var fields = collectFields();
+            var locale = baseline.locale;
+            var url = "/admin/email-templates/" + encodeURIComponent(templateName) + "/preview";
+            if (locale) {
+                url += "?locale=" + encodeURIComponent(locale);
+            }
+            var previewTicket = ticket || gate.start();
+            api(url, { method: "POST", body: "{}" }).then(function (body) {
+                if (!previewTicket.isCurrent()) {
+                    return;
+                }
+                if (body && body.error) {
+                    if (fields.previewMeta) {
+                        fields.previewMeta.innerHTML = '<span role="alert">' +
+                            esc(extractErrorMessage(body, "Preview failed.")) + "</span>";
+                    }
+                    return;
+                }
+                ui.paintPreview({
+                    meta: fields.previewMeta,
+                    subject: fields.previewSubject,
+                    frame: fields.previewFrame
+                }, (body && body.data) || {}, previewTicket);
+            }).catch(function (err) {
+                if (!previewTicket.isCurrent()) {
+                    return;
+                }
+                if (fields.previewMeta) {
+                    fields.previewMeta.innerHTML = '<span role="alert">' +
+                        esc(extractErrorMessage(err, "Preview failed.")) + "</span>";
+                }
+            });
+        }
+
+        function applyLoadedRow(row, ticket) {
+            if (ticket && !ticket.isCurrent()) {
+                return;
+            }
+            var fields = collectFields();
+            var loc = row.locale != null ? String(row.locale) : "";
+            addLocaleOption(loc);
+            rebuildLocaleSelect(fields, loc);
+            baseline = ui.applyRowToFields(fields, row);
+            updateMeta(row);
+            loadingLocale = false;
+            ui.setWriteControlsLocked(fields, false);
+            if (!canWrite) {
+                if (fields.subjectInput) {
+                    fields.subjectInput.disabled = true;
+                }
+                if (fields.bodyInput) {
+                    fields.bodyInput.disabled = true;
+                }
+            }
+            syncTestSendEnabled(fields);
+            refreshPreview(ticket || gate.current());
+        }
+
+        function loadLocale(requestedLocale) {
+            var fields = collectFields();
+            var previous = baseline.locale;
+            // Snap select back until GET succeeds so Save cannot target the wrong locale.
+            if (fields.localeSelect) {
+                fields.localeSelect.value = previous;
+            }
+            loadingLocale = true;
+            ui.setWriteControlsLocked(fields, true);
+            syncTestSendEnabled(fields);
+            msg.innerHTML = "";
+            var ticket = gate.start();
+            var q = requestedLocale ? ("?locale=" + encodeURIComponent(requestedLocale)) : "";
+            api("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
+                if (!ticket.isCurrent()) {
+                    return;
+                }
+                if (body && body.error) {
+                    loadingLocale = false;
+                    if (fields.localeSelect) {
+                        fields.localeSelect.value = previous;
+                    }
+                    ui.setWriteControlsLocked(collectFields(), false);
+                    if (!canWrite) {
+                        var f2 = collectFields();
+                        if (f2.subjectInput) {
+                            f2.subjectInput.disabled = true;
+                        }
+                        if (f2.bodyInput) {
+                            f2.bodyInput.disabled = true;
+                        }
+                    }
+                    syncTestSendEnabled(collectFields());
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load locale.")) + "</p>";
+                    return;
+                }
+                applyLoadedRow((body && body.data) || { locale: requestedLocale }, ticket);
+            }).catch(function (err) {
+                if (!ticket.isCurrent()) {
+                    return;
+                }
+                loadingLocale = false;
+                var f = collectFields();
+                if (f.localeSelect) {
+                    f.localeSelect.value = previous;
+                }
+                ui.setWriteControlsLocked(f, false);
+                if (!canWrite) {
+                    if (f.subjectInput) {
+                        f.subjectInput.disabled = true;
+                    }
+                    if (f.bodyInput) {
+                        f.bodyInput.disabled = true;
+                    }
+                }
+                syncTestSendEnabled(f);
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load locale.")) + "</p>";
+            });
+        }
+
+        editor.innerHTML = ui.editorShellHTML({
+            canWrite: canWrite,
+            templateWritable: templateWritable,
+            hasContentWrite: hasContentWrite,
+            selectedLocale: baseline.locale,
+            localeOptions: localeOptions,
+            escText: esc,
+            metaHTML: metaHTML(tpl || {}),
+            bannerHTML: bannerHTML()
+        });
+
+        var fields = collectFields();
+        ui.applyRowToFields(fields, tpl || {});
+        if (!canWrite) {
+            if (fields.subjectInput) {
+                fields.subjectInput.disabled = true;
+            }
+            if (fields.bodyInput) {
+                fields.bodyInput.disabled = true;
+            }
+        }
+        syncTestSendEnabled(fields);
+
+        if (fields.localeSelect) {
+            fields.localeSelect.addEventListener("change", function () {
+                var requested = fields.localeSelect.value;
+                loadLocale(requested);
+            });
+        }
+
+        if (fields.addLocaleBtn) {
+            fields.addLocaleBtn.addEventListener("click", function () {
+                var input = document.getElementById("email-template-new-locale");
+                var parsed = ui.normalizeLocaleInput(input ? input.value : "");
+                if (!parsed.ok) {
+                    msg.innerHTML = '<p role="alert">Enter a valid locale (e.g. de). Tags like und are rejected.</p>';
+                    return;
+                }
+                if (parsed.locale === "") {
+                    msg.innerHTML = '<p role="alert">Enter a locale (e.g. de).</p>';
+                    return;
+                }
+                addLocaleOption(parsed.locale);
+                rebuildLocaleSelect(collectFields(), baseline.locale);
+                loadLocale(parsed.locale);
+            });
+        }
+
+        if (fields.subjectInput) {
+            fields.subjectInput.addEventListener("input", function () {
+                syncTestSendEnabled(collectFields());
+            });
+        }
+        if (fields.bodyInput) {
+            fields.bodyInput.addEventListener("input", function () {
+                syncTestSendEnabled(collectFields());
+            });
+        }
+
+        if (canWrite && fields.form) {
+            fields.form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                if (loadingLocale) {
+                    return;
+                }
+                var f = collectFields();
+                var payload = {
+                    subject: f.subjectInput ? f.subjectInput.value : "",
+                    body: f.bodyInput ? f.bodyInput.value : "",
+                    locale: baseline.locale
+                };
+                api("/admin/email-templates/" + encodeURIComponent(templateName), {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Save failed.")) + "</p>";
+                        return;
+                    }
+                    msg.innerHTML = "<p>Saved.</p>";
+                    var saved = (body && body.data) || payload;
+                    addLocaleOption(saved.locale != null ? String(saved.locale) : payload.locale);
+                    applyLoadedRow(saved, gate.start());
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            });
+
+            if (fields.revertBtn) {
+                fields.revertBtn.addEventListener("click", function () {
+                    if (loadingLocale) {
+                        return;
+                    }
+                    var locLabel = ui.formatLocaleLabel(baseline.locale);
+                    if (!window.confirm("Revert " + templateName + " (" + locLabel + ") to the file/builtin template?")) {
+                        return;
+                    }
+                    var hadDb = baseline.source === "db";
+                    var q = baseline.locale ? ("?locale=" + encodeURIComponent(baseline.locale)) : "";
+                    apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + q).then(function (body) {
+                        if (body && body.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Revert failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "<p>" + esc(ui.revertMessage(hadDb)) + "</p>";
+                        loadLocale(baseline.locale);
+                    }).catch(function (err) {
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Revert failed.")) + "</p>";
+                    });
+                });
+            }
+
+            if (fields.testBtn) {
+                fields.testBtn.addEventListener("click", function () {
+                    var f = collectFields();
+                    if (f.testBtn && f.testBtn.disabled) {
+                        return;
+                    }
+                    if (!ui.formMatchesBaseline(
+                        f.subjectInput ? f.subjectInput.value : "",
+                        f.bodyInput ? f.bodyInput.value : "",
+                        f.localeSelect ? f.localeSelect.value : "",
+                        baseline
+                    )) {
+                        msg.innerHTML = '<p role="alert">Save your edits before test-send. The mail uses the saved render.</p>';
+                        return;
+                    }
+                    var toInput = document.getElementById("email-template-test-to");
+                    var to = toInput ? String(toInput.value || "").trim() : "";
+                    if (!to) {
+                        msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
+                        return;
+                    }
+                    testSendInFlight = true;
+                    syncTestSendEnabled(f);
+                    api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
+                        method: "POST",
+                        body: JSON.stringify({ to: to, locale: baseline.locale })
+                    }).then(function (body) {
+                        testSendInFlight = false;
+                        syncTestSendEnabled(collectFields());
+                        if (body && body.error) {
+                            var code = body.error.code || "";
+                            var errMsg = extractErrorMessage(body, "Test send failed.");
+                            if (code === "rate_limited") {
+                                errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
+                            }
+                            msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
+                            return;
+                        }
+                        var data = (body && body.data) || {};
+                        msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
+                            (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
+                    }).catch(function (err) {
+                        testSendInFlight = false;
+                        syncTestSendEnabled(collectFields());
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
+                    });
+                });
+            }
+        }
+
+        if (fields.previewBtn) {
+            fields.previewBtn.addEventListener("click", function () {
+                refreshPreview(gate.start());
+            });
+        }
+
+        refreshPreview(gate.start());
     }
 
     function renderAbandonedCartSettingsPage(container) {

@@ -88,11 +88,13 @@ RBAC: `content.read` (list/get/preview), `content.write` (put/delete/test-send).
 **Content → Email Templates** (`/admin/content/email-templates`) — shipped in the embedded admin SPA.
 
 * List: label, name, source, locales, writable
-* Edit: subject + HTML textarea (not a visual builder); locale select (+ add locale when writable)
-* Preview pane (server-rendered sample in a sandboxed iframe; shows source / resolved_locale / fallback)
-* Test send (to field; writable only; `[TEST]` subject; 30s rate limit)
-* Revert to default (DELETE; writable only)
-* Auth/claim/voucher templates open as view/preview only
+* Edit: subject + HTML textarea (not a visual builder); locale select (+ add locale when writable). Subject/body are set via DOM properties (`escAttr` / empty attributes — never interpolate untrusted subject into HTML attributes). Locale GET uses a generation gate: the select snaps back until load succeeds; Save/Revert/Test send are disabled while a locale load is in flight.
+* Preview pane (server-rendered sample in a sandboxed iframe with `referrerpolicy=no-referrer`; shows source / resolved_locale / fallback). Stale preview responses are ignored.
+* Test send (to field; requires `content.write` + overridable name; disabled while the textarea differs from the last loaded/saved payload — mail is the saved render). `[TEST]` subject; 30s rate limit; button disabled in-flight.
+* Revert to default (DELETE; writable only). Missing-row delete reports “No override…”.
+* List load failure fails closed (editor does not open with an empty locale list).
+* Banner when the header store is not the default store (writes still hit default).
+* Auth/claim/voucher templates open as view/preview only; roles without `content.write` also hide Save/Revert/Test send.
 
 Abandoned-cart settings keep enable/delay; the hint links to `/admin/content/email-templates/cart_recovery` (PR-641 template picker remains out of scope).
 
