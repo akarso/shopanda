@@ -1,0 +1,9 @@
+<!-- Subject: A change to your account email was requested -->
+<h1>Email Change Requested</h1>
+<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>
+<p>Someone requested to change your account email to <strong>{{.Data.NewEmail}}</strong>.</p>
+<p>The change only takes effect after the new address is confirmed.</p>
+
+<p style="color: #999999; font-size: 13px; margin-top: 24px;">
+  If this wasn't you, change your password immediately.
+</p>

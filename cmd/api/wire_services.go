@@ -207,6 +207,8 @@ type serveRuntime struct {
 	storeIdentitySvc               *storeidentity.Service
 	storeIdentityAdmin             *admin.StoreIdentityAdminHandler
 	storeIdentityHandler           *storefront.StoreIdentityHandler
+	mailTemplates                  *mail.Templates
+	emailLayout                    mail.Layout
 	auditLogAdmin                  *admin.AuditLogAdminHandler
 	webhookEndpointAdmin           *admin.WebhookEndpointAdminHandler
 	integrationIdempotencyAdmin    *admin.IntegrationIdempotencyAdminHandler
@@ -1334,6 +1336,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeIdentitySvc:               storeIdentitySvc,
 		storeIdentityAdmin:             storeIdentityAdmin,
 		storeIdentityHandler:           storeIdentityHandler,
+		mailTemplates:                  mailTemplates,
+		emailLayout:                    emailLayout,
 		auditLogAdmin:                  auditLogAdmin,
 		webhookEndpointAdmin:           webhookEndpointAdmin,
 		integrationIdempotencyAdmin:    integrationIdempotencyAdmin,

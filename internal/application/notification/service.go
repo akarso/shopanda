@@ -411,6 +411,12 @@ func RegisterTemplates(t *mail.Templates) {
 			"<p>You still have {{.Data.ItemCount}} item(s) waiting in your cart.</p>"+
 			"<ul>{{range .Data.Items}}<li>{{.Name}} × {{.Quantity}} — {{.Price}}</li>{{end}}</ul>"+
 			"<p><a href=\"{{.Data.CartURL}}\">Return to your cart</a></p>")
+
+	t.Register("order_claim",
+		"Claim your guest order",
+		"<h1>Claim Your Order</h1>"+
+			"<p>Use the link below to claim your guest order and view it in your account:</p>"+
+			"<p><a href=\"{{.Data.ClaimURL}}\">Claim your guest order</a></p>")
 }
 
 // orderRecipient resolves the notification recipient for an order.

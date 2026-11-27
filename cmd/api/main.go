@@ -851,8 +851,12 @@ Commands:
 }
 
 type storefrontOrderClaimEmailer struct {
-	mailer   mail.Mailer
-	claimURL string
+	mailer    mail.Mailer
+	claimURL  string
+	storeURL  string
+	templates *mail.Templates
+	layout    mail.Layout
+	brand     storeidentity.EmailBrandSource
 }
 
 func storefrontClaimPageURL(cfg *config.Config) string {
@@ -876,6 +880,9 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	if e.mailer == nil {
 		return fmt.Errorf("storefront order claim emailer: mailer not configured")
 	}
+	if e.templates == nil {
+		return fmt.Errorf("storefront order claim emailer: templates not configured")
+	}
 	baseURL, err := url.Parse(strings.TrimSpace(e.claimURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
 		return fmt.Errorf("storefront order claim emailer: invalid claim URL")
@@ -884,12 +891,20 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()
 
-	body := "Use the link below to claim your guest order and view it in your account:\n\n" + baseURL.String()
-	return e.mailer.Send(context.Background(), mail.Message{
-		To:      contactEmail,
-		Subject: "Claim your guest order",
-		Body:    body,
-	})
+	ctx := context.Background()
+	ed := e.brand.BrandEmailData(ctx, strings.TrimRight(strings.TrimSpace(e.storeURL), "/"))
+	ed.Data = map[string]interface{}{
+		"ClaimURL": baseURL.String(),
+	}
+	msg, err := e.templates.Render("order_claim", contactEmail, ed)
+	if err != nil {
+		return fmt.Errorf("storefront order claim emailer: render: %w", err)
+	}
+	msg, err = mail.ApplyLayout(e.layout, msg, ed)
+	if err != nil {
+		return fmt.Errorf("storefront order claim emailer: layout: %w", err)
+	}
+	return e.mailer.Send(ctx, msg)
 }
 
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup

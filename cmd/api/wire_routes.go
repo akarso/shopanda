@@ -15,6 +15,7 @@ import (
 
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
@@ -655,7 +656,15 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 			Password: cfg.Mail.SMTP.Password,
 			From:     cfg.Mail.SMTP.From,
 		}),
-		claimURL: storefrontClaimPageURL(cfg),
+		claimURL:  storefrontClaimPageURL(cfg),
+		storeURL:  strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/"),
+		templates: rt.mailTemplates,
+		layout:    rt.emailLayout,
+		brand: storeidentity.EmailBrandSource{
+			Identity: rt.storeIdentitySvc,
+			Stores:   rt.repos.storeRepo,
+			Config:   rt.repos.configRepo,
+		},
 	}
 	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
 		WithVouchers(rt.voucherService).

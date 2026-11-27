@@ -227,12 +227,56 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 				"OrderID":       "ord-1",
 			},
 		},
+		"email_verification": {
+			StoreName: "Acme",
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify"},
+		},
+		"security_verification": {
+			StoreName: "Acme",
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/security"},
+		},
+		"email_change_verification": {
+			StoreName: "Acme",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"NewEmail":  "new@example.com",
+				"VerifyURL": "https://shop.example/change",
+			},
+		},
+		"email_change_notice": {
+			StoreName: "Acme",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"NewEmail":  "new@example.com",
+			},
+		},
+		"cart_recovery": {
+			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"ItemCount": 1,
+				"CartURL":   "https://shop.example/cart",
+				"Items":     []map[string]interface{}{{"Name": "Tee", "Quantity": 1, "Price": "EUR 10.00"}},
+			},
+		},
+		"order_claim": {
+			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
+			Data:      map[string]interface{}{"ClaimURL": "https://shop.example/account/orders/claim?claim_token=tok"},
+		},
 	}
 	fileOnly := map[string]string{
-		"order_confirmed": "We'll notify you when your order ships.",
-		"order_shipped":   "Great news",
-		"password_reset":  "If you didn't request a password reset",
-		"invoice_created": "Please keep it for your records.",
+		"order_confirmed":           "We'll notify you when your order ships.",
+		"order_shipped":             "Great news",
+		"password_reset":            "If you didn't request a password reset",
+		"invoice_created":           "Please keep it for your records.",
+		"email_verification":        "If you didn't create an account",
+		"security_verification":     "change your password immediately",
+		"email_change_verification": "current email keeps working",
+		"email_change_notice":       "change your password immediately",
+		"cart_recovery":             "waiting in your cart",
+		"order_claim":               "If you did not place an order",
 	}
 	for name, ed := range samples {
 		msg, renderErr := tmpl.Render(name, "a@example.com", ed)
@@ -257,10 +301,10 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		}
 	}
 
-	builtin := mail.EmailData{StoreName: "Acme", Data: map[string]interface{}{"Code": "123456"}}
-	msg, err := tmpl.Render("email_verification", "a@example.com", builtin)
+	builtin := mail.EmailData{StoreName: "Acme", Data: map[string]interface{}{"Codes": []string{"123456"}, "OrderID": "ord-1"}}
+	msg, err := tmpl.Render("voucher_issued", "a@example.com", builtin)
 	if err != nil {
-		t.Fatalf("builtin email_verification: %v", err)
+		t.Fatalf("builtin voucher_issued: %v", err)
 	}
 	wrapped, err := mail.ApplyLayout(lr, msg, builtin)
 	if err != nil {
