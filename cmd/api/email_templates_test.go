@@ -229,22 +229,23 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		},
 		"email_verification": {
 			StoreName: "Acme",
-			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify"},
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify-email"},
 		},
 		"security_verification": {
 			StoreName: "Acme",
-			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/security"},
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify-security"},
 		},
 		"email_change_verification": {
 			StoreName: "Acme",
 			Data: map[string]interface{}{
 				"FirstName": "Ada",
 				"NewEmail":  "new@example.com",
-				"VerifyURL": "https://shop.example/change",
+				"VerifyURL": "https://shop.example/verify-email-change",
 			},
 		},
 		"email_change_notice": {
 			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
 			Data: map[string]interface{}{
 				"FirstName": "Ada",
 				"NewEmail":  "new@example.com",
@@ -255,15 +256,22 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 			StoreURL:  "https://shop.example",
 			Data: map[string]interface{}{
 				"FirstName": "Ada",
-				"ItemCount": 1,
+				"ItemCount": 2,
 				"CartURL":   "https://shop.example/cart",
-				"Items":     []map[string]interface{}{{"Name": "Tee", "Quantity": 1, "Price": "EUR 10.00"}},
+				"Items": []map[string]interface{}{{
+					"Name": "Tee", "Quantity": 2,
+					"UnitPrice": "EUR 19.99", "LineTotal": "EUR 39.98",
+					"Price": "EUR 19.99",
+				}},
 			},
 		},
 		"order_claim": {
 			StoreName: "Acme",
 			StoreURL:  "https://shop.example",
-			Data:      map[string]interface{}{"ClaimURL": "https://shop.example/account/orders/claim?claim_token=tok"},
+			Data: map[string]interface{}{
+				"ClaimURL":  "https://shop.example/account/orders/claim?claim_token=tok",
+				"ExpiresIn": "45 minutes",
+			},
 		},
 	}
 	fileOnly := map[string]string{
@@ -271,12 +279,21 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		"order_shipped":             "Great news",
 		"password_reset":            "If you didn't request a password reset",
 		"invoice_created":           "Please keep it for your records.",
-		"email_verification":        "If you didn't create an account",
-		"security_verification":     "change your password immediately",
-		"email_change_verification": "current email keeps working",
-		"email_change_notice":       "change your password immediately",
-		"cart_recovery":             "waiting in your cart",
-		"order_claim":               "If you did not place an order",
+		"email_verification":        "Confirm this email address for your account by clicking the button below",
+		"security_verification":     "Confirm access to your account security settings by clicking the button below",
+		"email_change_verification": "until you confirm this change",
+		"email_change_notice":       "from your account security settings",
+		"cart_recovery":             `class="cart-recovery-items"`,
+		"order_claim":               "Or copy this link:",
+	}
+	actionHrefs := map[string]string{
+		"email_verification":        `href="https://shop.example/verify-email"`,
+		"security_verification":     `href="https://shop.example/verify-security"`,
+		"email_change_verification": `href="https://shop.example/verify-email-change"`,
+		"email_change_notice":       `href="https://shop.example/account"`,
+		"cart_recovery":             `href="https://shop.example/cart"`,
+		"order_claim":               `href="https://shop.example/account/orders/claim?claim_token=tok"`,
+		"password_reset":            `href="https://shop.example/reset"`,
 	}
 	for name, ed := range samples {
 		msg, renderErr := tmpl.Render(name, "a@example.com", ed)
@@ -289,6 +306,9 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		if needle := fileOnly[name]; needle != "" && !strings.Contains(msg.Body, needle) {
 			t.Fatalf("%s missing file-only body %q (LoadDir may not have overwritten)\n%s", name, needle, msg.Body)
 		}
+		if href := actionHrefs[name]; href != "" && !strings.Contains(msg.Body, href) {
+			t.Fatalf("%s missing action href %q\n%s", name, href, msg.Body)
+		}
 		wrapped, wrapErr := mail.ApplyLayout(lr, msg, ed)
 		if wrapErr != nil {
 			t.Fatalf("%s wrap: %v", name, wrapErr)
@@ -298,6 +318,9 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		}
 		if strings.Count(wrapped.Body, `class="container"`) != 1 {
 			t.Fatalf("%s expected single layout wrapper", name)
+		}
+		if href := actionHrefs[name]; href != "" && !strings.Contains(wrapped.Body, href) {
+			t.Fatalf("%s wrapped missing action href %q", name, href)
 		}
 	}
 

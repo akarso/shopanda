@@ -115,13 +115,12 @@ func (r *storefrontOrderClaimRepoStub) ListCreatedSince(context.Context, time.Ti
 	return nil, nil
 }
 
-
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string
 	lastToken string
 }
 
-func (e *storefrontOrderClaimEmailerStub) SendClaimEmail(contactEmail, claimToken string) error {
+func (e *storefrontOrderClaimEmailerStub) SendClaimEmail(_ context.Context, contactEmail, claimToken string) error {
 	e.lastEmail = contactEmail
 	e.lastToken = claimToken
 	return nil

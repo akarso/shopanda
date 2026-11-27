@@ -209,6 +209,7 @@ type serveRuntime struct {
 	storeIdentityHandler           *storefront.StoreIdentityHandler
 	mailTemplates                  *mail.Templates
 	emailLayout                    mail.Layout
+	mailer                         mail.Mailer
 	auditLogAdmin                  *admin.AuditLogAdminHandler
 	webhookEndpointAdmin           *admin.WebhookEndpointAdminHandler
 	integrationIdempotencyAdmin    *admin.IntegrationIdempotencyAdminHandler
@@ -449,6 +450,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	emailLayout, err := loadFileEmailTemplates(mailTemplates, defaultEmailTemplatesDir, log)
 	if err != nil {
 		return nil, fmt.Errorf("email templates: %w", err)
+	}
+	mailer, err := resolveMailer(pluginApp, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("mailer: %w", err)
 	}
 
 	invoicePDFRenderer := invoicepdf.NewRenderer()
@@ -1338,6 +1343,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeIdentityHandler:           storeIdentityHandler,
 		mailTemplates:                  mailTemplates,
 		emailLayout:                    emailLayout,
+		mailer:                         mailer,
 		auditLogAdmin:                  auditLogAdmin,
 		webhookEndpointAdmin:           webhookEndpointAdmin,
 		integrationIdempotencyAdmin:    integrationIdempotencyAdmin,

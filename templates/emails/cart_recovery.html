@@ -1,15 +1,16 @@
 <!-- Subject: You left items in your cart -->
 <h1>Complete your order</h1>
 {{if .Data.FirstName}}<p>Hi {{.Data.FirstName}},</p>{{end}}
-<p>You still have {{.Data.ItemCount}} item(s) waiting in your cart.</p>
+<p>You still have {{.Data.ItemCount}} item(s) waiting in your cart at checkout.</p>
 
 {{if .Data.Items}}
-<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 24px 0;">
+<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 24px 0;" class="cart-recovery-items">
   <thead>
     <tr style="background: #f8f8f8; border-bottom: 2px solid #eaeaea;">
       <th align="left" style="padding: 8px;">Product</th>
       <th align="center" style="padding: 8px;">Qty</th>
-      <th align="right" style="padding: 8px;">Price</th>
+      <th align="right" style="padding: 8px;">Unit price</th>
+      <th align="right" style="padding: 8px;">Line total</th>
     </tr>
   </thead>
   <tbody>
@@ -17,7 +18,8 @@
     <tr style="border-bottom: 1px solid #eaeaea;">
       <td style="padding: 8px;">{{.Name}}</td>
       <td align="center" style="padding: 8px;">{{.Quantity}}</td>
-      <td align="right" style="padding: 8px;">{{.Price}}</td>
+      <td align="right" style="padding: 8px;">{{.UnitPrice}}</td>
+      <td align="right" style="padding: 8px;">{{.LineTotal}}</td>
     </tr>
     {{end}}
   </tbody>

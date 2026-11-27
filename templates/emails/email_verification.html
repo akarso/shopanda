@@ -1,6 +1,6 @@
 <!-- Subject: Verify your email address -->
 <h1>Verify Your Email</h1>
-<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>
+{{if .Data.FirstName}}<p>Hi {{.Data.FirstName}},</p>{{end}}
 <p>Confirm this email address for your account by clicking the button below:</p>
 
 <p style="margin: 24px 0;">

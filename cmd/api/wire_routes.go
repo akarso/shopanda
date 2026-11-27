@@ -20,7 +20,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
-	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -648,14 +647,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
 	claimService := orderApp.NewClaimService(rt.repos.orderRepo)
+	claimTTL := 10 * time.Minute
+	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
+		claimTTL = 45 * time.Minute
+	}
 	claimEmailer := storefrontOrderClaimEmailer{
-		mailer: smtpmail.New(smtpmail.Config{
-			Host:     cfg.Mail.SMTP.Host,
-			Port:     cfg.Mail.SMTP.Port,
-			User:     cfg.Mail.SMTP.User,
-			Password: cfg.Mail.SMTP.Password,
-			From:     cfg.Mail.SMTP.From,
-		}),
+		mailer:    rt.mailer,
 		claimURL:  storefrontClaimPageURL(cfg),
 		storeURL:  strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/"),
 		templates: rt.mailTemplates,
@@ -665,6 +662,7 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 			Stores:   rt.repos.storeRepo,
 			Config:   rt.repos.configRepo,
 		},
+		tokenTTL: claimTTL,
 	}
 	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
 		WithVouchers(rt.voucherService).
@@ -675,7 +673,7 @@ func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime
 		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
 		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
 	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
+		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, claimTTL)
 	}
 	return sf
 }

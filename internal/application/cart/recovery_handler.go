@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
@@ -177,13 +178,14 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return err
 	}
-	cartURL := h.storeURL + "/cart"
-	if h.storeURL == "" {
-		cartURL = "/cart"
+	base := strings.TrimRight(strings.TrimSpace(h.storeURL), "/")
+	if base == "" {
+		return fmt.Errorf("cart recovery: store URL required for absolute cart link")
 	}
+	cartURL := base + "/cart"
 
 	ed := brand
-	ed.StoreURL = h.storeURL
+	ed.StoreURL = base
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"CartURL":   cartURL,
@@ -248,13 +250,32 @@ func (h *RecoveryHandler) recoveryItems(ctx context.Context, c *domainCart.Cart)
 				}
 			}
 		}
+		lineTotal, err := item.UnitPrice.MulChecked(int64(item.Quantity))
+		if err != nil {
+			return nil, fmt.Errorf("line total %q: %w", item.VariantID, err)
+		}
 		out = append(out, map[string]interface{}{
-			"Name":     label,
-			"Quantity": item.Quantity,
-			"Price":    item.UnitPrice.String(),
+			"Name":      label,
+			"Quantity":  item.Quantity,
+			"UnitPrice": formatRecoveryMoney(item.UnitPrice),
+			"LineTotal": formatRecoveryMoney(lineTotal),
+			// Price kept for older file/builtin templates that still read it.
+			"Price": formatRecoveryMoney(item.UnitPrice),
 		})
 	}
 	return out, nil
+}
+
+// formatRecoveryMoney formats minor units as major units (2-decimal), matching
+// invoice PDF display (e.g. "EUR 12.99").
+func formatRecoveryMoney(m shared.Money) string {
+	amount := m.Amount()
+	sign := ""
+	if amount < 0 {
+		sign = "-"
+		amount = -amount
+	}
+	return fmt.Sprintf("%s%s %d.%02d", sign, m.Currency(), amount/100, amount%100)
 }
 
 // recoveryJobGetter is optional introspection for Conflict handling.

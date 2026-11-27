@@ -416,7 +416,11 @@ func RegisterTemplates(t *mail.Templates) {
 		"Claim your guest order",
 		"<h1>Claim Your Order</h1>"+
 			"<p>Use the link below to claim your guest order and view it in your account:</p>"+
-			"<p><a href=\"{{.Data.ClaimURL}}\">Claim your guest order</a></p>")
+			"<p><a href=\"{{.Data.ClaimURL}}\">Claim your guest order</a></p>"+
+			"<p style=\"word-break: break-all; font-size: 13px; color: #666666;\">Or copy this link:<br>{{.Data.ClaimURL}}</p>"+
+			"<p>This link expires in <strong>{{.Data.ExpiresIn}}</strong>.</p>"+
+			"<p style=\"color: #999999; font-size: 13px; margin-top: 24px;\">"+
+			"If you did not place an order with us, you can safely ignore this email.</p>")
 }
 
 // orderRecipient resolves the notification recipient for an order.

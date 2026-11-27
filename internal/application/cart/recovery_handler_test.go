@@ -333,8 +333,62 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 	if got := job.Payload["to"]; got != "buyer@example.com" {
 		t.Errorf("payload to = %v, want buyer@example.com", got)
 	}
+	body, _ := job.Payload["body"].(string)
+	if !strings.Contains(body, "https://shop.example/cart") {
+		t.Fatalf("body missing absolute cart URL: %s", body)
+	}
+	if strings.Contains(body, `href="/cart"`) {
+		t.Fatalf("body must not use relative cart href: %s", body)
+	}
+	if !strings.Contains(body, "EUR 19.99") {
+		t.Fatalf("body missing major-unit unit price, got: %s", body)
+	}
+	if strings.Contains(body, "1999 EUR") {
+		t.Fatalf("body still has minor-unit money: %s", body)
+	}
 	if len(carts.marked) != 1 || carts.marked[0] != "cart-1" {
 		t.Errorf("marked carts = %v, want [cart-1]", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_EmptyStoreURLSkipsSend(t *testing.T) {
+	c, err := domainCart.NewCart("cart-empty-url", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	templates := mail.NewTemplates()
+	notification.RegisterTemplates(templates)
+	queue := &recoveryQueue{}
+	h := cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:     carts,
+		Customers: customers,
+		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
+			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
+		}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Templates: templates,
+		Queue:     queue,
+		StoreURL:  "",
+		Log:       &recoveryLogger{},
+	})
+	if err := h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("empty store URL must not enqueue, got %d", len(queue.enqueued))
+	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("empty store URL must not mark, got %v", carts.marked)
 	}
 }
 

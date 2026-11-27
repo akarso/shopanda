@@ -857,7 +857,10 @@ type storefrontOrderClaimEmailer struct {
 	templates *mail.Templates
 	layout    mail.Layout
 	brand     storeidentity.EmailBrandSource
+	tokenTTL  time.Duration
 }
+
+const defaultOrderClaimEmailTimeout = 15 * time.Second
 
 func storefrontClaimPageURL(cfg *config.Config) string {
 	if cfg == nil {
@@ -876,12 +879,15 @@ func storefrontClaimPageURL(cfg *config.Config) string {
 	return ""
 }
 
-func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken string) error {
+func (e storefrontOrderClaimEmailer) SendClaimEmail(ctx context.Context, contactEmail, claimToken string) error {
 	if e.mailer == nil {
 		return fmt.Errorf("storefront order claim emailer: mailer not configured")
 	}
 	if e.templates == nil {
 		return fmt.Errorf("storefront order claim emailer: templates not configured")
+	}
+	if strings.TrimSpace(claimToken) == "" {
+		return fmt.Errorf("storefront order claim emailer: empty claim token")
 	}
 	baseURL, err := url.Parse(strings.TrimSpace(e.claimURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
@@ -890,11 +896,18 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()
+	claimLink := baseURL.String()
 
-	ctx := context.Background()
-	ed := e.brand.BrandEmailData(ctx, strings.TrimRight(strings.TrimSpace(e.storeURL), "/"))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, defaultOrderClaimEmailTimeout)
+	defer cancel()
+
+	ed := e.brand.BrandEmailData(sendCtx, strings.TrimRight(strings.TrimSpace(e.storeURL), "/"))
 	ed.Data = map[string]interface{}{
-		"ClaimURL": baseURL.String(),
+		"ClaimURL":  claimLink,
+		"ExpiresIn": formatClaimTokenTTL(e.tokenTTL),
 	}
 	msg, err := e.templates.Render("order_claim", contactEmail, ed)
 	if err != nil {
@@ -904,7 +917,24 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	if err != nil {
 		return fmt.Errorf("storefront order claim emailer: layout: %w", err)
 	}
-	return e.mailer.Send(ctx, msg)
+	msg.Text = "Use the link below to claim your guest order and view it in your account:\n\n" +
+		claimLink + "\n\nThis link expires in " + formatClaimTokenTTL(e.tokenTTL) + ".\n\n" +
+		"If you did not place an order with us, you can safely ignore this email.\n"
+	return e.mailer.Send(sendCtx, msg)
+}
+
+func formatClaimTokenTTL(d time.Duration) string {
+	if d <= 0 {
+		d = 10 * time.Minute
+	}
+	mins := int(d.Round(time.Minute) / time.Minute)
+	if mins < 1 {
+		mins = 1
+	}
+	if mins == 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", mins)
 }
 
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup

@@ -1,6 +1,6 @@
 <!-- Subject: Verify your security access -->
 <h1>Verify Security Access</h1>
-<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>
+{{if .Data.FirstName}}<p>Hi {{.Data.FirstName}},</p>{{end}}
 <p>Confirm access to your account security settings by clicking the button below:</p>
 
 <p style="margin: 24px 0;">

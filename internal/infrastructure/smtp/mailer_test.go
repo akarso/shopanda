@@ -112,6 +112,79 @@ func TestMailer_Send(t *testing.T) {
 	}
 }
 
+func TestMailer_Send_PlainTextAlternative(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	addr := ln.Addr().(*net.TCPAddr)
+	received := make(chan string, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		scanner := bufio.NewScanner(conn)
+		fmt.Fprintf(conn, "220 localhost\r\n")
+		var dataBody strings.Builder
+		inData := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			switch {
+			case strings.HasPrefix(line, "EHLO"), strings.HasPrefix(line, "HELO"):
+				fmt.Fprintf(conn, "250 OK\r\n")
+			case strings.HasPrefix(line, "MAIL FROM"):
+				fmt.Fprintf(conn, "250 OK\r\n")
+			case strings.HasPrefix(line, "RCPT TO"):
+				fmt.Fprintf(conn, "250 OK\r\n")
+			case line == "DATA":
+				fmt.Fprintf(conn, "354 End data\r\n")
+				inData = true
+			case inData && line == ".":
+				fmt.Fprintf(conn, "250 OK\r\n")
+				inData = false
+			case inData:
+				dataBody.WriteString(line)
+				dataBody.WriteString("\r\n")
+			case line == "QUIT":
+				fmt.Fprintf(conn, "221 Bye\r\n")
+				received <- dataBody.String()
+				return
+			default:
+				fmt.Fprintf(conn, "500 Unknown\r\n")
+			}
+		}
+	}()
+
+	mailer := smtpmail.New(smtpmail.Config{Host: "127.0.0.1", Port: addr.Port, From: "shop@example.com"})
+	msg := mail.Message{
+		To:      "buyer@example.com",
+		Subject: "Claim",
+		Body:    "<p><a href=\"https://shop.example/claim?t=1\">Claim</a></p>",
+		Text:    "Claim: https://shop.example/claim?t=1\n",
+	}
+	if err := mailer.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var body string
+	select {
+	case body = <-received:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for SMTP stub")
+	}
+	if !strings.Contains(body, "multipart/alternative") {
+		t.Fatalf("expected multipart/alternative, got:\n%s", body)
+	}
+	if !strings.Contains(body, "text/plain") {
+		t.Fatalf("expected text/plain part, got:\n%s", body)
+	}
+	if !strings.Contains(body, "https://shop.example/claim?t=1") {
+		t.Fatalf("expected plain URL, got:\n%s", body)
+	}
+}
+
 func TestMailer_Send_RejectsCRLF(t *testing.T) {
 	tests := []struct {
 		name        string

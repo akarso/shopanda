@@ -19,7 +19,8 @@ type Attachment struct {
 type Message struct {
 	To          string
 	Subject     string
-	Body        string
+	Body        string // HTML body
+	Text        string // optional plain-text alternative (multipart/alternative)
 	Attachments []Attachment
 }
 

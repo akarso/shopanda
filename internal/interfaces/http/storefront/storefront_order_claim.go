@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"mime"
@@ -17,7 +18,7 @@ import (
 
 // OrderClaimEmailer sends guest-order claim links.
 type OrderClaimEmailer interface {
-	SendClaimEmail(contactEmail, claimToken string) error
+	SendClaimEmail(ctx context.Context, contactEmail, claimToken string) error
 }
 
 // OrderLinker handles guest account registration and order linking.
@@ -132,7 +133,7 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 				h.log.Error("storefront.order_claim.token_failed", err, map[string]interface{}{
 					"path": r.URL.Path,
 				})
-			} else if err := h.emailer.SendClaimEmail(contactEmail, claimToken); err != nil {
+			} else if err := h.emailer.SendClaimEmail(r.Context(), contactEmail, claimToken); err != nil {
 				h.log.Error("storefront.order_claim.email_failed", err, map[string]interface{}{
 					"path": r.URL.Path,
 				})

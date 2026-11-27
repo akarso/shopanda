@@ -1,6 +1,6 @@
 <!-- Subject: Confirm your new email address -->
 <h1>Confirm Your New Email</h1>
-<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>
+{{if .Data.FirstName}}<p>Hi {{.Data.FirstName}},</p>{{end}}
 <p>Confirm <strong>{{.Data.NewEmail}}</strong> as the new email for your account.</p>
 
 <p style="margin: 24px 0;">
@@ -10,7 +10,7 @@
   </a>
 </p>
 
-<p>This link is time-limited. Your current email keeps working until you confirm.</p>
+<p>This link is time-limited. Your current email keeps working until you confirm this change.</p>
 
 <p style="color: #999999; font-size: 13px; margin-top: 24px;">
   If you didn't request this change, you can ignore this message.
