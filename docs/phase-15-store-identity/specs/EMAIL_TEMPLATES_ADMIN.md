@@ -21,20 +21,20 @@ Fill `EmailData` on every send path:
 | `LogoURL` | Site identity logo, else `store.logo` | `store.logo` |
 | `StoreAddress` | formatted `general` address | `store.address` |
 
-Guest order-claim mail in `cmd/api` becomes a named template in **PR-1211**, not in PR-1210.
+Guest order-claim mail in `cmd/api` uses the named `order_claim` template (PR-1211).
 
 ## 2. File set
 
-Already on disk: `_layout.html`, `order_confirmed`, `order_shipped`, `password_reset`, `invoice_created`.
-
-PR-1211 adds the rest of `RegisterTemplates` plus claim:
+On disk (PR-1210 + PR-1211): `_layout.html`, `order_confirmed`, `order_shipped`, `password_reset`, `invoice_created`, plus:
 
 * `email_verification.html`
 * `security_verification.html`
 * `email_change_verification.html`
 * `email_change_notice.html`
 * `cart_recovery.html`
-* `order_claim.html` (guest claim)
+* `order_claim.html` (guest claim; `cmd/api` claim emailer renders this name)
+
+`voucher_issued` remains builtin-only for now.
 
 ## 3. DB override (PR-1212)
 

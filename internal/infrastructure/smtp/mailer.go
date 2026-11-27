@@ -50,7 +50,7 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	// Context-aware TCP connection.
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("smtp: dial: %w", err)
+		return fmt.Errorf("%w: %w", mail.ErrDial, err)
 	}
 
 	// Propagate context deadline to the connection.
@@ -84,47 +84,21 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 		return fmt.Errorf("smtp: DATA: %w", err)
 	}
 
+	for _, att := range msg.Attachments {
+		if err := rejectCRLF(att.ContentType); err != nil {
+			return fmt.Errorf("smtp: invalid attachment Content-Type: %w", err)
+		}
+		if err := rejectCRLF(att.Filename); err != nil {
+			return fmt.Errorf("smtp: invalid attachment Filename: %w", err)
+		}
+	}
+
 	var buf strings.Builder
 	fmt.Fprintf(&buf, "From: %s\r\n", m.cfg.From)
 	fmt.Fprintf(&buf, "To: %s\r\n", msg.To)
 	fmt.Fprintf(&buf, "Subject: %s\r\n", msg.Subject)
 	buf.WriteString("MIME-Version: 1.0\r\n")
-
-	if len(msg.Attachments) == 0 {
-		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		buf.WriteString("\r\n")
-		buf.WriteString(msg.Body)
-	} else {
-		boundary := "==shopanda_boundary=="
-		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%q\r\n", boundary)
-		buf.WriteString("\r\n")
-
-		// HTML body part.
-		fmt.Fprintf(&buf, "--%s\r\n", boundary)
-		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		buf.WriteString("\r\n")
-		buf.WriteString(msg.Body)
-		buf.WriteString("\r\n")
-
-		// Attachment parts.
-		for _, att := range msg.Attachments {
-			if err := rejectCRLF(att.ContentType); err != nil {
-				return fmt.Errorf("smtp: invalid attachment Content-Type: %w", err)
-			}
-			if err := rejectCRLF(att.Filename); err != nil {
-				return fmt.Errorf("smtp: invalid attachment Filename: %w", err)
-			}
-			fmt.Fprintf(&buf, "--%s\r\n", boundary)
-			fmt.Fprintf(&buf, "Content-Type: %s\r\n", att.ContentType)
-			disposition := mime.FormatMediaType("attachment", map[string]string{"filename": att.Filename})
-			fmt.Fprintf(&buf, "Content-Disposition: %s\r\n", disposition)
-			buf.WriteString("Content-Transfer-Encoding: base64\r\n")
-			buf.WriteString("\r\n")
-			writeBase64Wrapped(&buf, att.Data)
-			buf.WriteString("\r\n")
-		}
-		fmt.Fprintf(&buf, "--%s--\r\n", boundary)
-	}
+	writeMIMEBody(&buf, msg)
 
 	if _, err := wc.Write([]byte(buf.String())); err != nil {
 		wc.Close()
@@ -135,6 +109,65 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	}
 
 	return client.Quit()
+}
+
+// writeMIMEBody writes Content-Type and body parts for msg.
+func writeMIMEBody(buf *strings.Builder, msg mail.Message) {
+	hasText := strings.TrimSpace(msg.Text) != ""
+	hasAtt := len(msg.Attachments) > 0
+	switch {
+	case !hasAtt && !hasText:
+		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(msg.Body)
+	case !hasAtt && hasText:
+		boundary := "==shopanda_alt=="
+		fmt.Fprintf(buf, "Content-Type: multipart/alternative; boundary=%q\r\n", boundary)
+		buf.WriteString("\r\n")
+		writeAlternativeParts(buf, boundary, msg.Text, msg.Body)
+		fmt.Fprintf(buf, "--%s--\r\n", boundary)
+	default:
+		mixed := "==shopanda_boundary=="
+		fmt.Fprintf(buf, "Content-Type: multipart/mixed; boundary=%q\r\n", mixed)
+		buf.WriteString("\r\n")
+		fmt.Fprintf(buf, "--%s\r\n", mixed)
+		if hasText {
+			alt := "==shopanda_alt=="
+			fmt.Fprintf(buf, "Content-Type: multipart/alternative; boundary=%q\r\n", alt)
+			buf.WriteString("\r\n")
+			writeAlternativeParts(buf, alt, msg.Text, msg.Body)
+			fmt.Fprintf(buf, "--%s--\r\n", alt)
+		} else {
+			buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+			buf.WriteString("\r\n")
+			buf.WriteString(msg.Body)
+			buf.WriteString("\r\n")
+		}
+		for _, att := range msg.Attachments {
+			fmt.Fprintf(buf, "--%s\r\n", mixed)
+			fmt.Fprintf(buf, "Content-Type: %s\r\n", att.ContentType)
+			disposition := mime.FormatMediaType("attachment", map[string]string{"filename": att.Filename})
+			fmt.Fprintf(buf, "Content-Disposition: %s\r\n", disposition)
+			buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+			buf.WriteString("\r\n")
+			writeBase64Wrapped(buf, att.Data)
+			buf.WriteString("\r\n")
+		}
+		fmt.Fprintf(buf, "--%s--\r\n", mixed)
+	}
+}
+
+func writeAlternativeParts(buf *strings.Builder, boundary, text, html string) {
+	fmt.Fprintf(buf, "--%s\r\n", boundary)
+	buf.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	buf.WriteString("\r\n")
+	buf.WriteString(text)
+	buf.WriteString("\r\n")
+	fmt.Fprintf(buf, "--%s\r\n", boundary)
+	buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	buf.WriteString("\r\n")
+	buf.WriteString(html)
+	buf.WriteString("\r\n")
 }
 
 // writeBase64Wrapped writes data as base64 with lines wrapped at 76

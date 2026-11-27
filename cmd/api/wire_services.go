@@ -115,6 +115,12 @@ type serveRuntime struct {
 	jwtIssuer    *jwt.Issuer
 	jwtSecretStr string
 
+	// claimAPIOrders / claimAPIAuther override repos.orderRepo and authService for
+	// attachStorefrontClaimAPI in tests (production leaves both nil). Claim and
+	// link services are still constructed unconditionally.
+	claimAPIOrders order.OrderRepository
+	claimAPIAuther orderApp.OrderAuther
+
 	pdp *composition.Pipeline[composition.ProductContext]
 	plp *composition.Pipeline[composition.ListingContext]
 
@@ -207,6 +213,9 @@ type serveRuntime struct {
 	storeIdentitySvc               *storeidentity.Service
 	storeIdentityAdmin             *admin.StoreIdentityAdminHandler
 	storeIdentityHandler           *storefront.StoreIdentityHandler
+	mailTemplates                  *mail.Templates
+	emailLayout                    mail.Layout
+	mailer                         mail.Mailer
 	auditLogAdmin                  *admin.AuditLogAdminHandler
 	webhookEndpointAdmin           *admin.WebhookEndpointAdminHandler
 	integrationIdempotencyAdmin    *admin.IntegrationIdempotencyAdminHandler
@@ -447,6 +456,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	emailLayout, err := loadFileEmailTemplates(mailTemplates, defaultEmailTemplatesDir, log)
 	if err != nil {
 		return nil, fmt.Errorf("email templates: %w", err)
+	}
+	mailer, err := resolveMailer(pluginApp, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("mailer: %w", err)
 	}
 
 	invoicePDFRenderer := invoicepdf.NewRenderer()
@@ -1334,6 +1347,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeIdentitySvc:               storeIdentitySvc,
 		storeIdentityAdmin:             storeIdentityAdmin,
 		storeIdentityHandler:           storeIdentityHandler,
+		mailTemplates:                  mailTemplates,
+		emailLayout:                    emailLayout,
+		mailer:                         mailer,
 		auditLogAdmin:                  auditLogAdmin,
 		webhookEndpointAdmin:           webhookEndpointAdmin,
 		integrationIdempotencyAdmin:    integrationIdempotencyAdmin,

@@ -1,9 +1,11 @@
 package storefront
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -11,13 +13,14 @@ import (
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // OrderClaimEmailer sends guest-order claim links.
 type OrderClaimEmailer interface {
-	SendClaimEmail(contactEmail, claimToken string) error
+	SendClaimEmail(ctx context.Context, contactEmail, claimToken string) error
 }
 
 // OrderLinker handles guest account registration and order linking.
@@ -124,7 +127,8 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 		}
 
 		// Failures past this point are logged but still answered with the
-		// generic message to keep the response shape constant.
+		// generic message to keep the response shape constant (no account
+		// enumeration). Timeouts/failures are not treated as a completed send.
 		emailSent := false
 		if len(orders) > 0 {
 			claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
@@ -132,10 +136,16 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 				h.log.Error("storefront.order_claim.token_failed", err, map[string]interface{}{
 					"path": r.URL.Path,
 				})
-			} else if err := h.emailer.SendClaimEmail(contactEmail, claimToken); err != nil {
-				h.log.Error("storefront.order_claim.email_failed", err, map[string]interface{}{
-					"path": r.URL.Path,
-				})
+			} else if err := h.sendClaimEmailWithRetry(r.Context(), contactEmail, claimToken); err != nil {
+				fields := map[string]interface{}{"path": r.URL.Path}
+				switch {
+				case errors.Is(err, context.Canceled):
+					h.log.Error("storefront.order_claim.email_canceled", err, fields)
+				case isClaimEmailTimeout(err):
+					h.log.Error("storefront.order_claim.email_timeout", err, fields)
+				default:
+					h.log.Error("storefront.order_claim.email_failed", err, fields)
+				}
 			} else {
 				emailSent = true
 			}
@@ -149,6 +159,66 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 			"message": "If any orders exist for this email, a claim link has been sent.",
 		})
 	}
+}
+
+// ClaimEmailSendTimeout is the single budget for claim SMTP (including one
+// dial-only retry). Shared with cmd/api SendClaimEmail callers.
+const ClaimEmailSendTimeout = 15 * time.Second
+
+const claimEmailSendAttempts = 2
+
+func (h *StorefrontHandler) sendClaimEmailWithRetry(ctx context.Context, contactEmail, claimToken string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, ClaimEmailSendTimeout)
+	defer cancel()
+
+	var last error
+	for attempt := 1; attempt <= claimEmailSendAttempts; attempt++ {
+		if sendCtx.Err() != nil {
+			if last == nil {
+				last = sendCtx.Err()
+			}
+			return last
+		}
+		last = h.emailer.SendClaimEmail(sendCtx, contactEmail, claimToken)
+		if last == nil {
+			return nil
+		}
+		if !isClaimEmailRetryable(last) || attempt >= claimEmailSendAttempts || sendCtx.Err() != nil {
+			return last
+		}
+		h.log.Warn("storefront.order_claim.email_retry", map[string]interface{}{
+			"attempt": attempt,
+			"error":   last.Error(),
+		})
+	}
+	return last
+}
+
+// isClaimEmailRetryable is true only when the message was almost certainly
+// not accepted (mail.ErrDial before DATA). Dial timeouts and post-dial errors
+// are not retried.
+func isClaimEmailRetryable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if !errors.Is(err, mail.ErrDial) {
+		return false
+	}
+	return !isClaimEmailTimeout(err)
+}
+
+func isClaimEmailTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // AccountOrdersClaim handles GET and POST /account/orders/claim.

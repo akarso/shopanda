@@ -9,7 +9,7 @@
 | PR-1204 | A | done | [Address pages](PR-1204.md) |
 | PR-1205 | A | done | [Invoice, email, storefront consumers](PR-1205.md) |
 | PR-1210 | B | done | [Wire file email loader](PR-1210.md) |
-| PR-1211 | B | planned | [Remaining file templates](PR-1211.md) |
+| PR-1211 | B | done | [Remaining file templates](PR-1211.md) |
 | PR-1212 | B | planned | [DB template store](PR-1212.md) |
 | PR-1213 | B | planned | [Admin email-template API](PR-1213.md) |
 | PR-1214 | B | planned | [Admin email-template editor](PR-1214.md) |

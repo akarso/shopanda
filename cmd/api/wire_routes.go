@@ -15,11 +15,13 @@ import (
 
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
+	"github.com/akarso/shopanda/internal/domain/mail"
+	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
-	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -646,27 +648,76 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 }
 
 func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
-	claimService := orderApp.NewClaimService(rt.repos.orderRepo)
-	claimEmailer := storefrontOrderClaimEmailer{
-		mailer: smtpmail.New(smtpmail.Config{
-			Host:     cfg.Mail.SMTP.Host,
-			Port:     cfg.Mail.SMTP.Port,
-			User:     cfg.Mail.SMTP.User,
-			Password: cfg.Mail.SMTP.Password,
-			From:     cfg.Mail.SMTP.From,
-		}),
-		claimURL: storefrontClaimPageURL(cfg),
-	}
-	linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
+	orders, auther := claimAttachDeps(rt)
+	claimService := orderApp.NewClaimService(orders)
+	linkService := orderApp.NewLinkOrderService(orders, auther, rt.jwtIssuer).
 		WithVouchers(rt.voucherService).
 		WithTxStarter(rt.db)
 	sf = sf.
 		WithOrderClaim(claimService).
-		WithOrderClaimEmailer(claimEmailer).
 		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
 		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
 	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
-		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
+		// Same TTL orderClaimToken writes into ExpiresAt and claim mail advertises.
+		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
 	}
-	return sf
+	return sf.WithOrderClaimEmailer(newStorefrontOrderClaimEmailer(sf, rt, cfg))
+}
+
+// claimAttachDeps resolves order/auth deps for claim wiring. Test overrides
+// (claimAPIOrders / claimAPIAuther) win when set; otherwise production repos.
+func claimAttachDeps(rt *serveRuntime) (domainOrder.OrderRepository, orderApp.OrderAuther) {
+	var orders domainOrder.OrderRepository
+	if rt.repos != nil {
+		orders = rt.repos.orderRepo
+	}
+	if rt.claimAPIOrders != nil {
+		orders = rt.claimAPIOrders
+	}
+	var auther orderApp.OrderAuther = rt.authService
+	if rt.claimAPIAuther != nil {
+		auther = rt.claimAPIAuther
+	}
+	return orders, auther
+}
+
+// newStorefrontOrderClaimEmailer builds the claim mailer using the verifier TTL
+// already configured on sf (attachStorefrontClaimAPI must call this after
+// WithAccountSecurity / WithAccountSecurityEmailLinks).
+func newStorefrontOrderClaimEmailer(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) storefrontOrderClaimEmailer {
+	var brand storeidentity.EmailBrandSource
+	var mailer mail.Mailer
+	var templates *mail.Templates
+	var layout mail.Layout
+	if rt != nil {
+		mailer = rt.mailer
+		templates = rt.mailTemplates
+		layout = rt.emailLayout
+		// Typed-nil *StoreRepo in an interface is non-nil; only wire brand
+		// when the concrete repo pointer is present.
+		if rt.repos != nil && rt.repos.storeRepo != nil {
+			brand = storeidentity.EmailBrandSource{
+				Identity: rt.storeIdentitySvc,
+				Stores:   rt.repos.storeRepo,
+				Config:   rt.repos.configRepo,
+			}
+		}
+	}
+	tokenTTL := storefront.DefaultSecurityEmailTokenTTL
+	if sf != nil {
+		tokenTTL = sf.SecurityEmailTokenTTL()
+	}
+	publicBase := ""
+	if cfg != nil {
+		publicBase = strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBaseURL), "/")
+	}
+	return storefrontOrderClaimEmailer{
+		mailer:    mailer,
+		claimURL:  storefrontClaimPageURL(cfg),
+		storeURL:  publicBase,
+		templates: templates,
+		layout:    layout,
+		brand:     brand,
+		tokenTTL:  tokenTTL,
+	}
 }

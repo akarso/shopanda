@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
@@ -122,6 +124,11 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 		return nil
 	}
 
+	base, err := absoluteRecoveryStoreURL(h.storeURL)
+	if err != nil {
+		return err
+	}
+
 	staleBefore := time.Now().UTC().Add(-settings.StaleAfter)
 	candidates, err := h.carts.FindRecoveryCandidates(ctx, staleBefore, recoveryBatchSize)
 	if err != nil {
@@ -132,17 +139,18 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 		return nil
 	}
 
-	brand := mail.EmailData{StoreURL: h.storeURL}
+	brand := mail.EmailData{StoreURL: base}
 	if h.brand != nil {
-		brand = h.brand.BrandEmailData(ctx, h.storeURL)
+		brand = h.brand.BrandEmailData(ctx, base)
 	}
+	brand.StoreURL = base
 
 	sent := 0
 	for _, c := range candidates {
 		if c == nil || len(c.Items) == 0 || c.CustomerID == "" {
 			continue
 		}
-		if err := h.processCart(ctx, c, brand); err != nil {
+		if err := h.processCart(ctx, c, brand, base); err != nil {
 			h.log.Error("cart.recovery.cart_failed", err, map[string]interface{}{
 				"cart_id":     c.ID,
 				"customer_id": c.CustomerID,
@@ -158,7 +166,7 @@ func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
 	return nil
 }
 
-func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData) error {
+func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, brand mail.EmailData, storeBase string) error {
 	cust, err := h.customers.FindByID(ctx, c.CustomerID)
 	if err != nil {
 		return fmt.Errorf("find customer: %w", err)
@@ -177,13 +185,10 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart, b
 	if err != nil {
 		return err
 	}
-	cartURL := h.storeURL + "/cart"
-	if h.storeURL == "" {
-		cartURL = "/cart"
-	}
+	cartURL := storeBase + "/cart"
 
 	ed := brand
-	ed.StoreURL = h.storeURL
+	ed.StoreURL = storeBase
 	ed.Data = map[string]interface{}{
 		"FirstName": cust.FirstName,
 		"CartURL":   cartURL,
@@ -248,13 +253,51 @@ func (h *RecoveryHandler) recoveryItems(ctx context.Context, c *domainCart.Cart)
 				}
 			}
 		}
+		lineTotal, err := item.UnitPrice.MulChecked(int64(item.Quantity))
+		if err != nil {
+			return nil, fmt.Errorf("line total %q: %w", item.VariantID, err)
+		}
 		out = append(out, map[string]interface{}{
-			"Name":     label,
-			"Quantity": item.Quantity,
-			"Price":    item.UnitPrice.String(),
+			"Name":      label,
+			"Quantity":  item.Quantity,
+			"UnitPrice": formatRecoveryMoney(item.UnitPrice),
+			"LineTotal": formatRecoveryMoney(lineTotal),
+			// Price kept for older file/builtin templates that still read it.
+			"Price": formatRecoveryMoney(item.UnitPrice),
 		})
 	}
 	return out, nil
+}
+
+// formatRecoveryMoney formats minor units as major units (2-decimal), matching
+// invoice PDF display (e.g. "EUR 12.99").
+func formatRecoveryMoney(m shared.Money) string {
+	amount := m.Amount()
+	sign := ""
+	if amount < 0 {
+		sign = "-"
+		amount = -amount
+	}
+	return fmt.Sprintf("%s%s %d.%02d", sign, m.Currency(), amount/100, amount%100)
+}
+
+// absoluteRecoveryStoreURL requires an http(s) absolute origin with a host.
+func absoluteRecoveryStoreURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("cart recovery: store URL required for absolute cart link")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("cart recovery: invalid store URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("cart recovery: store URL must be http(s), got %q", u.Scheme)
+	}
+	if strings.TrimSpace(u.Host) == "" {
+		return "", fmt.Errorf("cart recovery: store URL missing host")
+	}
+	return strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/"), nil
 }
 
 // recoveryJobGetter is optional introspection for Conflict handling.

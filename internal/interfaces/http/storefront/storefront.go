@@ -520,6 +520,14 @@ func (h *StorefrontHandler) WithOrderClaimEmailer(emailer OrderClaimEmailer) *St
 	return h
 }
 
+// OrderClaimEmailer returns the configured claim emailer, if any.
+func (h *StorefrontHandler) OrderClaimEmailer() OrderClaimEmailer {
+	if h == nil {
+		return nil
+	}
+	return h.emailer
+}
+
 // WithOrderLinker enables guest account registration and order linking operations.
 func (h *StorefrontHandler) WithOrderLinker(linker OrderLinker) *StorefrontHandler {
 	h.orderLinker = linker
@@ -557,6 +565,15 @@ func (h *StorefrontHandler) WithAccountSecurityEmailLinks(storeBaseURL string, e
 		h.security.emailTokenTTL = emailTokenTTL
 	}
 	return h
+}
+
+// SecurityEmailTokenTTL returns the lifetime orderClaimToken writes into
+// ExpiresAt (and that claim mail should advertise).
+func (h *StorefrontHandler) SecurityEmailTokenTTL() time.Duration {
+	if h == nil || h.security == nil || h.security.emailTokenTTL <= 0 {
+		return DefaultSecurityEmailTokenTTL
+	}
+	return h.security.emailTokenTTL
 }
 
 // Home handles GET / and renders the storefront landing page.

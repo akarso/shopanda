@@ -227,12 +227,73 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 				"OrderID":       "ord-1",
 			},
 		},
+		"email_verification": {
+			StoreName: "Acme",
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify-email"},
+		},
+		"security_verification": {
+			StoreName: "Acme",
+			Data:      map[string]interface{}{"FirstName": "Ada", "VerifyURL": "https://shop.example/verify-security"},
+		},
+		"email_change_verification": {
+			StoreName: "Acme",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"NewEmail":  "new@example.com",
+				"VerifyURL": "https://shop.example/verify-email-change",
+			},
+		},
+		"email_change_notice": {
+			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"NewEmail":  "new@example.com",
+			},
+		},
+		"cart_recovery": {
+			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
+			Data: map[string]interface{}{
+				"FirstName": "Ada",
+				"ItemCount": 2,
+				"CartURL":   "https://shop.example/cart",
+				"Items": []map[string]interface{}{{
+					"Name": "Tee", "Quantity": 2,
+					"UnitPrice": "EUR 19.99", "LineTotal": "EUR 39.98",
+					"Price": "EUR 19.99",
+				}},
+			},
+		},
+		"order_claim": {
+			StoreName: "Acme",
+			StoreURL:  "https://shop.example",
+			Data: map[string]interface{}{
+				"ClaimURL":  "https://shop.example/account/orders/claim?claim_token=tok",
+				"ExpiresIn": "45 minutes",
+			},
+		},
 	}
 	fileOnly := map[string]string{
-		"order_confirmed": "We'll notify you when your order ships.",
-		"order_shipped":   "Great news",
-		"password_reset":  "If you didn't request a password reset",
-		"invoice_created": "Please keep it for your records.",
+		"order_confirmed":           "We'll notify you when your order ships.",
+		"order_shipped":             "Great news",
+		"password_reset":            "If you didn't request a password reset",
+		"invoice_created":           "Please keep it for your records.",
+		"email_verification":        "Confirm this email address for your account by clicking the button below",
+		"security_verification":     "Confirm access to your account security settings by clicking the button below",
+		"email_change_verification": "until you confirm this change",
+		"email_change_notice":       "Open account security settings",
+		"cart_recovery":             `class="cart-recovery-items"`,
+		"order_claim":               `background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;`,
+	}
+	actionHrefs := map[string]string{
+		"email_verification":        `href="https://shop.example/verify-email"`,
+		"security_verification":     `href="https://shop.example/verify-security"`,
+		"email_change_verification": `href="https://shop.example/verify-email-change"`,
+		"email_change_notice":       `href="https://shop.example/account/security"`,
+		"cart_recovery":             `href="https://shop.example/cart"`,
+		"order_claim":               `href="https://shop.example/account/orders/claim?claim_token=tok"`,
+		"password_reset":            `href="https://shop.example/reset"`,
 	}
 	for name, ed := range samples {
 		msg, renderErr := tmpl.Render(name, "a@example.com", ed)
@@ -245,6 +306,9 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		if needle := fileOnly[name]; needle != "" && !strings.Contains(msg.Body, needle) {
 			t.Fatalf("%s missing file-only body %q (LoadDir may not have overwritten)\n%s", name, needle, msg.Body)
 		}
+		if href := actionHrefs[name]; href != "" && !strings.Contains(msg.Body, href) {
+			t.Fatalf("%s missing action href %q\n%s", name, href, msg.Body)
+		}
 		wrapped, wrapErr := mail.ApplyLayout(lr, msg, ed)
 		if wrapErr != nil {
 			t.Fatalf("%s wrap: %v", name, wrapErr)
@@ -255,12 +319,15 @@ func TestLoadFileEmailTemplates_RepoTree(t *testing.T) {
 		if strings.Count(wrapped.Body, `class="container"`) != 1 {
 			t.Fatalf("%s expected single layout wrapper", name)
 		}
+		if href := actionHrefs[name]; href != "" && !strings.Contains(wrapped.Body, href) {
+			t.Fatalf("%s wrapped missing action href %q", name, href)
+		}
 	}
 
-	builtin := mail.EmailData{StoreName: "Acme", Data: map[string]interface{}{"Code": "123456"}}
-	msg, err := tmpl.Render("email_verification", "a@example.com", builtin)
+	builtin := mail.EmailData{StoreName: "Acme", Data: map[string]interface{}{"Codes": []string{"123456"}, "OrderID": "ord-1"}}
+	msg, err := tmpl.Render("voucher_issued", "a@example.com", builtin)
 	if err != nil {
-		t.Fatalf("builtin email_verification: %v", err)
+		t.Fatalf("builtin voucher_issued: %v", err)
 	}
 	wrapped, err := mail.ApplyLayout(lr, msg, builtin)
 	if err != nil {
