@@ -115,6 +115,12 @@ type serveRuntime struct {
 	jwtIssuer    *jwt.Issuer
 	jwtSecretStr string
 
+	// claimAPIOrders / claimAPIAuther override repos.orderRepo and authService for
+	// attachStorefrontClaimAPI in tests (production leaves both nil). Claim and
+	// link services are still constructed unconditionally.
+	claimAPIOrders order.OrderRepository
+	claimAPIAuther orderApp.OrderAuther
+
 	pdp *composition.Pipeline[composition.ProductContext]
 	plp *composition.Pipeline[composition.ListingContext]
 

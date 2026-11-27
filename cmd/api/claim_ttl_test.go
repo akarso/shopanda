@@ -3,15 +3,21 @@ package main
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/application/auth"
 	"github.com/akarso/shopanda/internal/application/notification"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -22,6 +28,63 @@ type claimTTLMailerStub struct {
 func (m *claimTTLMailerStub) Send(_ context.Context, msg mail.Message) error {
 	m.last = msg
 	return nil
+}
+
+type claimTTLOrderRepo struct{}
+
+func (claimTTLOrderRepo) FindByID(context.Context, string) (*domainOrder.Order, error) {
+	return nil, nil
+}
+func (claimTTLOrderRepo) FindByIDs(context.Context, []string) (map[string]*domainOrder.Order, error) {
+	return map[string]*domainOrder.Order{}, nil
+}
+func (claimTTLOrderRepo) FindByCustomerID(context.Context, string) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+func (claimTTLOrderRepo) FindByContactEmail(context.Context, string) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+func (claimTTLOrderRepo) List(context.Context, int, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+func (claimTTLOrderRepo) ListCreatedSince(context.Context, time.Time, string, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+func (claimTTLOrderRepo) Save(context.Context, *domainOrder.Order) error { return nil }
+func (claimTTLOrderRepo) UpdateStatus(context.Context, *domainOrder.Order) error {
+	return nil
+}
+func (claimTTLOrderRepo) LinkToCustomer(context.Context, *domainOrder.Order) error { return nil }
+func (claimTTLOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
+	return 0, nil
+}
+func (claimTTLOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
+	return nil, nil
+}
+
+type claimTTLAuther struct{}
+
+func (claimTTLAuther) Register(context.Context, auth.RegisterInput) (auth.RegisterOutput, error) {
+	return auth.RegisterOutput{}, nil
+}
+func (claimTTLAuther) DeleteCustomer(context.Context, string) error { return nil }
+
+func newClaimTTLServeRuntime(t *testing.T, mailer mail.Mailer, tmpl *mail.Templates, layout mail.Layout) *serveRuntime {
+	t.Helper()
+	const secret = "test-secret-at-least-32-bytes-long!!"
+	issuer, err := jwt.NewIssuer(secret, time.Hour)
+	if err != nil {
+		t.Fatalf("jwt.NewIssuer: %v", err)
+	}
+	return &serveRuntime{
+		claimAPIOrders: claimTTLOrderRepo{},
+		claimAPIAuther: claimTTLAuther{},
+		jwtIssuer:      issuer,
+		jwtSecretStr:   secret,
+		mailer:         mailer,
+		mailTemplates:  tmpl,
+		emailLayout:    layout,
+	}
 }
 
 func TestClaimEmailTokenTTL_ThroughAttachWiring(t *testing.T) {
@@ -61,12 +124,7 @@ func TestClaimEmailTokenTTL_ThroughAttachWiring(t *testing.T) {
 			cfg.Frontend.ClaimURL = "https://shop.example/account/orders/claim"
 
 			stub := &claimTTLMailerStub{}
-			rt := &serveRuntime{
-				jwtSecretStr:  "test-secret-at-least-32-bytes-long!!",
-				mailer:        stub,
-				mailTemplates: tmpl,
-				emailLayout:   lr,
-			}
+			rt := newClaimTTLServeRuntime(t, stub, tmpl, lr)
 			sf := attachStorefrontClaimAPI(
 				storefront.NewStorefrontHandler(nil, nil, nil, nil, nil, nil),
 				rt,
@@ -74,6 +132,16 @@ func TestClaimEmailTokenTTL_ThroughAttachWiring(t *testing.T) {
 			)
 			if got := sf.SecurityEmailTokenTTL(); got != tc.wantTTL {
 				t.Fatalf("SecurityEmailTokenTTL = %v, want %v", got, tc.wantTTL)
+			}
+			// Claim + link services must be wired (not skipped) even with stub deps.
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+				"contact_email": []string{"guest@example.com"},
+			}.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			sf.ClaimOrderSearch().ServeHTTP(rec, req)
+			if rec.Code == http.StatusNotFound {
+				t.Fatalf("claim-search must be mounted (got 404); claim/link wiring was skipped")
 			}
 			emailer := sf.OrderClaimEmailer()
 			if emailer == nil {

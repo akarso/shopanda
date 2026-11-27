@@ -10,11 +10,13 @@ var ErrTemplateNotFound = errors.New("mail: template not found")
 
 // ErrDial means the message was almost certainly not accepted: the transport
 // failed before SMTP DATA (e.g. TCP dial). Claim-mail retry matches this with
-// errors.Is. Mailers (SMTP or plugin) should wrap dial/connect failures:
+// errors.Is. In-process mail.Mailer implementations (e.g. internal/infrastructure/smtp)
+// should wrap dial/connect failures:
 //
 //	return fmt.Errorf("%w: %w", mail.ErrDial, err)
 //
-// Do not wrap post-dial SMTP replies with ErrDial.
+// Do not wrap post-dial SMTP replies with ErrDial. Public plugin MailSenders
+// (pkg/extapi) do not see this sentinel; dial retry for those is out of scope.
 var ErrDial = errors.New("mail: dial")
 
 // Attachment represents an email file attachment.

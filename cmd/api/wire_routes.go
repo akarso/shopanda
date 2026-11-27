@@ -18,6 +18,7 @@ import (
 	storeidentity "github.com/akarso/shopanda/internal/application/storeidentity"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	domainOrder "github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
@@ -647,27 +648,37 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 }
 
 func attachStorefrontClaimAPI(sf *storefront.StorefrontHandler, rt *serveRuntime, cfg *config.Config) *storefront.StorefrontHandler {
-	secret := ""
-	if rt != nil {
-		secret = rt.jwtSecretStr
-	}
-	sf = sf.WithAccountSecurity(secret, 10*time.Minute)
-	if cfg != nil && strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
+	orders, auther := claimAttachDeps(rt)
+	claimService := orderApp.NewClaimService(orders)
+	linkService := orderApp.NewLinkOrderService(orders, auther, rt.jwtIssuer).
+		WithVouchers(rt.voucherService).
+		WithTxStarter(rt.db)
+	sf = sf.
+		WithOrderClaim(claimService).
+		WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService)).
+		WithAccountSecurity(rt.jwtSecretStr, 10*time.Minute)
+	if strings.TrimSpace(cfg.Server.PublicBaseURL) != "" {
 		// Same TTL orderClaimToken writes into ExpiresAt and claim mail advertises.
 		sf = sf.WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, storefront.OrderClaimEmailTokenTTL)
 	}
-	// Claim/link services need a live order repo (+ auth/JWT for linker). Tests
-	// may call this with a stub serveRuntime that only exercises emailer TTL.
-	if rt != nil && rt.repos != nil && rt.repos.orderRepo != nil {
-		sf = sf.WithOrderClaim(orderApp.NewClaimService(rt.repos.orderRepo))
-		if rt.authService != nil && rt.jwtIssuer != nil {
-			linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer).
-				WithVouchers(rt.voucherService).
-				WithTxStarter(rt.db)
-			sf = sf.WithOrderLinker(storefront.NewStorefrontOrderLinkerAdapter(linkService))
-		}
-	}
 	return sf.WithOrderClaimEmailer(newStorefrontOrderClaimEmailer(sf, rt, cfg))
+}
+
+// claimAttachDeps resolves order/auth deps for claim wiring. Test overrides
+// (claimAPIOrders / claimAPIAuther) win when set; otherwise production repos.
+func claimAttachDeps(rt *serveRuntime) (domainOrder.OrderRepository, orderApp.OrderAuther) {
+	var orders domainOrder.OrderRepository
+	if rt.repos != nil {
+		orders = rt.repos.orderRepo
+	}
+	if rt.claimAPIOrders != nil {
+		orders = rt.claimAPIOrders
+	}
+	var auther orderApp.OrderAuther = rt.authService
+	if rt.claimAPIAuther != nil {
+		auther = rt.claimAPIAuther
+	}
+	return orders, auther
 }
 
 // newStorefrontOrderClaimEmailer builds the claim mailer using the verifier TTL
