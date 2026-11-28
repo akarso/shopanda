@@ -214,7 +214,7 @@
     function setWriteControlsLocked(fields, locked) {
         fields = fields || {};
         var disabled = !!locked;
-        ["saveBtn", "revertBtn", "testBtn", "addLocaleBtn", "localeSelect", "newLocaleInput"].forEach(function (key) {
+        ["saveBtn", "revertBtn", "testBtn", "addLocaleBtn", "localeSelect", "newLocaleInput", "testToInput"].forEach(function (key) {
             if (fields[key]) {
                 fields[key].disabled = disabled;
             }
@@ -404,11 +404,37 @@
         return { clearInFlight: true, syncControls: true, paintStatus: true };
     }
 
+    // sideActionControlPlan is the unlock-vs-sync decision finishTestSend uses.
+    // When locale/write still owns the lock, only refresh Send test — never unlockForm.
+    function sideActionControlPlan(outcome, loadingLocale, writing) {
+        var plan = sideActionCompletion(outcome);
+        var ownerHoldsLock = !!(loadingLocale || writing);
+        return {
+            clearInFlight: plan.clearInFlight,
+            unlockForm: plan.syncControls && !ownerHoldsLock,
+            syncOnly: plan.syncControls && ownerHoldsLock,
+            paintStatus: plan.paintStatus
+        };
+    }
+
+    // formatTestSendLocaleLabel prefers resolved_locale when the send fell through.
+    function formatTestSendLocaleLabel(sentLocale, data) {
+        data = data || {};
+        var sent = sentLocale == null ? "" : String(sentLocale);
+        var resolved = data.resolved_locale != null ? String(data.resolved_locale) : sent;
+        if (data.fallback || resolved !== sent) {
+            return formatLocaleLabel(sent) + " → " + formatLocaleLabel(resolved) + " (fallback)";
+        }
+        return formatLocaleLabel(sent);
+    }
+
     var api = {
         escAttr: escAttr,
         newLoadGate: newLoadGate,
         createScopedEditorSession: createScopedEditorSession,
         sideActionCompletion: sideActionCompletion,
+        sideActionControlPlan: sideActionControlPlan,
+        formatTestSendLocaleLabel: formatTestSendLocaleLabel,
         formatLocaleLabel: formatLocaleLabel,
         normalizeLocaleInput: normalizeLocaleInput,
         canShowWriteControls: canShowWriteControls,

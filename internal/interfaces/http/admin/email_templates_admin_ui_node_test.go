@@ -42,6 +42,8 @@ func TestAdminHandler_EmailTemplatesAdminUIScript(t *testing.T) {
 		"createScopedEditorSession",
 		"beginSideAction",
 		"sideActionCompletion",
+		"sideActionControlPlan",
+		"formatTestSendLocaleLabel",
 		"canShowWriteControls",
 		"listLoadResult",
 		"applyRowToFields",

@@ -9554,6 +9554,7 @@
                 saveBtn: session.q("email-template-save"),
                 revertBtn: session.q("email-template-revert"),
                 testBtn: session.q("email-template-test-send"),
+                testToInput: session.q("email-template-test-to"),
                 addLocaleBtn: session.q("email-template-add-locale"),
                 newLocaleInput: session.q("email-template-new-locale"),
                 previewBtn: session.q("email-template-preview-btn"),
@@ -9755,26 +9756,29 @@
 
         function finishTestSend(sideTicket, onApply) {
             var outcome = session.settleSideAction(sideTicket);
-            var plan = ui.sideActionCompletion(outcome);
+            var plan = ui.sideActionControlPlan(outcome, loadingLocale, writing);
             if (plan.clearInFlight) {
                 testSendInFlight = false;
             }
-            if (plan.syncControls) {
-                if (loadingLocale || writing) {
-                    // Locale/write still owns the lock; only refresh the button flag.
-                    syncTestSendEnabled(collectFields());
-                } else {
-                    unlockForm();
-                }
+            if (plan.unlockForm) {
+                unlockForm();
+            } else if (plan.syncOnly) {
+                // Locale/write still owns the lock; only refresh the button flag.
+                syncTestSendEnabled(collectFields());
             }
             if (plan.paintStatus && typeof onApply === "function") {
                 onApply();
             }
+            return plan;
         }
 
         function runTestSend() {
             var f = collectFields();
-            if (!session.alive() || loadingLocale || writing || testSendInFlight) {
+            if (!session.alive() || loadingLocale || writing) {
+                return;
+            }
+            if (testSendInFlight) {
+                msg.innerHTML = '<p role="status">Test send in progress…</p>';
                 return;
             }
             // Dirty check before the disabled-button return so Enter in To still explains why.
@@ -9798,7 +9802,7 @@
             }
             var sentLocale = baseline.locale;
             testSendInFlight = true;
-            // Lock locale controls for the SMTP request (same lock set as locale/write).
+            // Lock locale + To for the SMTP request (same lock set as locale/write).
             ui.setWriteControlsLocked(f, true);
             syncTestSendEnabled(f);
             var sideTicket = session.beginSideAction();
@@ -9817,7 +9821,7 @@
                         return;
                     }
                     var data = (body && body.data) || {};
-                    var locLabel = ui.formatLocaleLabel(sentLocale);
+                    var locLabel = ui.formatTestSendLocaleLabel(sentLocale, data);
                     msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
                         " (" + esc(locLabel) + ")" +
                         (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";

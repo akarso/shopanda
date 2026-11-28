@@ -235,52 +235,81 @@ test("sideActionCompletion refreshes controls on stale but not detached", functi
     });
 });
 
-test("stale test-send after locale apply re-enables Send test", function () {
+test("sideActionControlPlan never unlocks while locale/write owns the lock", function () {
+    var held = ui.sideActionControlPlan("stale", true, false);
+    assert.equal(held.clearInFlight, true);
+    assert.equal(held.unlockForm, false);
+    assert.equal(held.syncOnly, true);
+    assert.equal(held.paintStatus, false);
+
+    var free = ui.sideActionControlPlan("stale", false, false);
+    assert.equal(free.unlockForm, true);
+    assert.equal(free.syncOnly, false);
+
+    var applyFree = ui.sideActionControlPlan("apply", false, false);
+    assert.equal(applyFree.unlockForm, true);
+    assert.equal(applyFree.paintStatus, true);
+
+    var applyHeld = ui.sideActionControlPlan("apply", false, true);
+    assert.equal(applyHeld.unlockForm, false);
+    assert.equal(applyHeld.syncOnly, true);
+});
+
+test("finishTestSend control plan: stale while locale locked keeps select disabled", function () {
     var editor = fakeEditorRoot(true);
     var testBtn = { disabled: true };
+    var localeSelect = { value: "de", disabled: true, innerHTML: "" };
+    var testTo = { value: "a@b.com", disabled: true };
     editor.setField("email-template-test-send", testBtn);
-    editor.setField("email-template-subject", { value: "Hi", dataset: { ro: "0" }, disabled: false });
-    editor.setField("email-template-body", { value: "<p>x</p>", dataset: { ro: "0" }, disabled: false });
-    editor.setField("email-template-locale", { value: "de", disabled: false, innerHTML: "" });
+    editor.setField("email-template-locale", localeSelect);
+    editor.setField("email-template-test-to", testTo);
+    editor.setField("email-template-subject", { value: "Hi", dataset: { ro: "0" }, disabled: true });
+    editor.setField("email-template-body", { value: "<p>x</p>", dataset: { ro: "0" }, disabled: true });
 
     var session = ui.createScopedEditorSession(editor);
     var sideTicket = session.beginSideAction();
+    session.beginLocaleLoad(); // invalidates side ticket; locale owns lock
+    var loadingLocale = true;
+    var writing = false;
     var testSendInFlight = true;
-    var baseline = ui.baselineFromRow({
-        locale: "de",
-        subject: "Hi",
-        body: "<p>x</p>",
-        source: "db"
-    });
 
-    // Locale GET finishes first while SMTP is still in flight.
-    session.beginLocaleLoad();
-    ui.applyRowToFields({
-        subjectInput: editor.querySelector("#email-template-subject"),
-        bodyInput: editor.querySelector("#email-template-body"),
-        localeSelect: editor.querySelector("#email-template-locale")
-    }, baseline);
-    // Simulate applyLoadedRow unlock while in-flight flag is still true.
-    ui.setWriteControlsLocked({
-        testBtn: testBtn,
-        localeSelect: editor.querySelector("#email-template-locale"),
-        subjectInput: editor.querySelector("#email-template-subject"),
-        bodyInput: editor.querySelector("#email-template-body")
-    }, false);
-    ui.setTestSendEnabled(testBtn, !testSendInFlight);
-    assert.equal(testBtn.disabled, true);
-
-    // Late SMTP response: stale side settle must clear the flag and refresh.
     var outcome = session.settleSideAction(sideTicket);
     assert.equal(outcome, "stale");
-    var plan = ui.sideActionCompletion(outcome);
+    var plan = ui.sideActionControlPlan(outcome, loadingLocale, writing);
+    assert.equal(plan.unlockForm, false);
+    assert.equal(plan.syncOnly, true);
     if (plan.clearInFlight) {
         testSendInFlight = false;
     }
-    if (plan.syncControls) {
-        var clean = ui.formMatchesBaseline("Hi", "<p>x</p>", "de", baseline);
-        ui.setTestSendEnabled(testBtn, clean && !testSendInFlight);
-    }
+    // syncOnly path: refresh button, do not unlock locale select.
+    ui.setTestSendEnabled(testBtn, !testSendInFlight && !loadingLocale && !writing);
     assert.equal(testSendInFlight, false);
+    assert.equal(localeSelect.disabled, true);
+    assert.equal(testTo.disabled, true);
+    assert.equal(testBtn.disabled, true); // still loading locale
+
+    // After locale unlock, Send test can enable again.
+    loadingLocale = false;
+    ui.setWriteControlsLocked({
+        testBtn: testBtn,
+        testToInput: testTo,
+        localeSelect: localeSelect,
+        subjectInput: editor.querySelector("#email-template-subject"),
+        bodyInput: editor.querySelector("#email-template-body")
+    }, false);
+    ui.setTestSendEnabled(testBtn, !testSendInFlight && !loadingLocale && !writing);
+    assert.equal(localeSelect.disabled, false);
     assert.equal(testBtn.disabled, false);
+});
+
+test("formatTestSendLocaleLabel names fallback resolution", function () {
+    assert.equal(ui.formatTestSendLocaleLabel("de", { resolved_locale: "de" }), "de");
+    assert.equal(
+        ui.formatTestSendLocaleLabel("de", { resolved_locale: "", fallback: true }),
+        "de → default (fallback)"
+    );
+    assert.equal(
+        ui.formatTestSendLocaleLabel("de", { resolved_locale: "en", fallback: false }),
+        "de → en (fallback)"
+    );
 });
