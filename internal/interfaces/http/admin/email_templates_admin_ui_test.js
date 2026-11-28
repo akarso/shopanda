@@ -29,6 +29,26 @@ test("editorShellHTML does not interpolate subject into attributes", function ()
     assert.match(html, /saved<\/strong> render/i);
 });
 
+test("editorShellHTML keeps add-locale and test-send outside the save form", function () {
+    var html = ui.editorShellHTML({
+        canWrite: true,
+        templateWritable: true,
+        hasContentWrite: true,
+        selectedLocale: "",
+        localeOptions: [""]
+    });
+    var formStart = html.indexOf('<form id="email-template-form">');
+    var formEnd = html.indexOf("</form>", formStart);
+    assert.ok(formStart >= 0 && formEnd > formStart);
+    var formHTML = html.slice(formStart, formEnd);
+    assert.doesNotMatch(formHTML, /email-template-new-locale/);
+    assert.doesNotMatch(formHTML, /email-template-test-to/);
+    assert.doesNotMatch(formHTML, /email-template-test-send/);
+    assert.match(formHTML, /email-template-save/);
+    assert.match(html, /id="email-template-new-locale"/);
+    assert.match(html, /id="email-template-test-fieldset"/);
+});
+
 test("buildLocaleOptionsHTML uses escAttr for option values", function () {
     var html = ui.buildLocaleOptionsHTML(['"><x>'], '"><x>', function (s) { return s; });
     assert.match(html, /value="&quot;&gt;&lt;x&gt;"/);
@@ -186,4 +206,13 @@ test("write settle ignores responses after locale load starts", function () {
     var writeTicket = session.beginWrite();
     session.beginLocaleLoad(); // bumps write gate
     assert.equal(session.settleWrite(writeTicket), "stale");
+});
+
+test("side action (test-send) is invalidated by locale load", function () {
+    var editor = fakeEditorRoot(true);
+    var session = ui.createScopedEditorSession(editor);
+    var side = session.beginSideAction();
+    session.beginLocaleLoad();
+    assert.equal(session.settleSideAction(side), "stale");
+    assert.equal(session.settleSideAction(session.beginSideAction()), "apply");
 });

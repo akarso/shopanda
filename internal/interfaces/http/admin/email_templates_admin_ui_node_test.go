@@ -40,6 +40,7 @@ func TestAdminHandler_EmailTemplatesAdminUIScript(t *testing.T) {
 		"escAttr",
 		"newLoadGate",
 		"createScopedEditorSession",
+		"beginSideAction",
 		"canShowWriteControls",
 		"listLoadResult",
 		"applyRowToFields",

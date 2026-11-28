@@ -137,40 +137,52 @@
         var meta = opts.metaHTML || "";
         var banner = opts.bannerHTML || "";
         var disabled = canWrite ? "" : " disabled";
-        var localeExtra = "";
+        // Add-locale and test-send stay outside #email-template-form so Enter in those
+        // fields cannot implicitly submit Save.
+        var localeBar =
+            '<div id="email-template-locale-bar">' +
+            '<label>Locale<select name="locale" id="email-template-locale">' +
+            buildLocaleOptionsHTML(localeOptions, selected, escText) +
+            "</select></label>";
         if (canWrite) {
-            localeExtra =
-                '<label>Add locale<input name="new_locale" id="email-template-new-locale" placeholder="e.g. de"></label>' +
+            localeBar +=
+                '<label>Add locale<input id="email-template-new-locale" placeholder="e.g. de" autocomplete="off"></label>' +
                 '<button type="button" id="email-template-add-locale" class="secondary">Use locale</button>';
         }
-        var actions = "";
+        localeBar += "</div>";
+
+        var writeActions = "";
         if (canWrite) {
-            actions =
+            writeActions =
                 '<div style="margin-top:1rem" id="email-template-write-actions">' +
                 '<button type="submit" id="email-template-save">Save</button> ' +
                 '<button type="button" id="email-template-revert" class="danger">Revert to default</button>' +
-                "</div>" +
+                "</div>";
+        } else if (opts.templateWritable && !opts.hasContentWrite) {
+            writeActions = '<p class="admin-form-hint" id="email-template-readonly-perm">Your role can view templates but not save, revert, or test-send.</p>';
+        } else if (!opts.templateWritable) {
+            writeActions = '<p class="admin-form-hint" id="email-template-readonly-name">View only (not overridable).</p>';
+        }
+
+        var testBlock = "";
+        if (canWrite) {
+            testBlock =
                 '<fieldset style="margin-top:1.5rem" id="email-template-test-fieldset"><legend>Test send</legend>' +
-                '<label>To<input type="email" name="test_to" id="email-template-test-to" placeholder="you@example.com"></label>' +
+                '<label>To<input type="email" id="email-template-test-to" placeholder="you@example.com" autocomplete="off"></label>' +
                 '<button type="button" id="email-template-test-send">Send test</button>' +
                 '<p class="admin-form-hint">Sends the <strong>saved</strong> render for this locale (not unsaved textarea edits). Subject is prefixed with [TEST]. Limited to one send per 30 seconds.</p>' +
                 "</fieldset>";
-        } else if (opts.templateWritable && !opts.hasContentWrite) {
-            actions = '<p class="admin-form-hint" id="email-template-readonly-perm">Your role can view templates but not save, revert, or test-send.</p>';
-        } else if (!opts.templateWritable) {
-            actions = '<p class="admin-form-hint" id="email-template-readonly-name">View only (not overridable).</p>';
         }
+
         return banner +
-            '<form id="email-template-form">' +
-            '<label>Locale<select name="locale" id="email-template-locale">' +
-            buildLocaleOptionsHTML(localeOptions, selected, escText) +
-            "</select></label>" +
-            localeExtra +
+            localeBar +
             meta +
+            '<form id="email-template-form">' +
             '<label>Subject<input name="subject" id="email-template-subject" value=""' + disabled + " required></label>" +
             '<label>Body (HTML)<textarea name="body" id="email-template-body" rows="16"' + disabled + "></textarea></label>" +
-            actions +
+            writeActions +
             "</form>" +
+            testBlock +
             '<section style="margin-top:2rem">' +
             "<h3>Preview</h3>" +
             '<p class="admin-form-hint">Uses the live render chain (requested locale → default override → file). Saved content only.</p>' +
@@ -268,6 +280,7 @@
         var localeGate = newLoadGate();
         var previewGate = newLoadGate();
         var writeGate = newLoadGate();
+        var sideGate = newLoadGate(); // test-send (and similar) — not the write lock
         var localeLockOwner = null;
 
         function alive() {
@@ -283,6 +296,7 @@
 
         function beginLocaleLoad() {
             writeGate.start(); // drop in-flight PUT/DELETE apply
+            sideGate.start();  // drop in-flight test-send status paint
             var ticket = localeGate.start();
             localeLockOwner = ticket;
             return ticket;
@@ -321,6 +335,20 @@
             return "apply";
         }
 
+        function beginSideAction() {
+            return sideGate.start();
+        }
+
+        function settleSideAction(ticket) {
+            if (!alive()) {
+                return "detached";
+            }
+            if (!ticket || !ticket.isCurrent()) {
+                return "stale";
+            }
+            return "apply";
+        }
+
         function beginWrite() {
             return writeGate.start(); // invalidate prior write apply
         }
@@ -340,6 +368,7 @@
             localeGate.start();
             previewGate.start();
             writeGate.start();
+            sideGate.start();
             localeLockOwner = null;
         }
 
@@ -351,6 +380,8 @@
             settleLocaleLoad: settleLocaleLoad,
             beginPreview: beginPreview,
             settlePreview: settlePreview,
+            beginSideAction: beginSideAction,
+            settleSideAction: settleSideAction,
             beginWrite: beginWrite,
             settleWrite: settleWrite,
             invalidate: invalidate,

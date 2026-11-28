@@ -9632,7 +9632,7 @@
             });
         }
 
-        function applyLoadedRow(row) {
+        function applyLoadedRow(row, statusHTML) {
             if (!session.alive()) {
                 return;
             }
@@ -9647,10 +9647,13 @@
             ui.setWriteControlsLocked(fields, false);
             restoreReadOnlyFields(fields);
             syncTestSendEnabled(fields);
+            if (statusHTML && msg && msg.isConnected) {
+                msg.innerHTML = statusHTML;
+            }
             refreshPreview();
         }
 
-        function loadLocale(requestedLocale) {
+        function loadLocale(requestedLocale, statusHTML) {
             if (!session.alive()) {
                 return;
             }
@@ -9662,7 +9665,8 @@
             loadingLocale = true;
             ui.setWriteControlsLocked(fields, true);
             syncTestSendEnabled(fields);
-            if (msg && msg.isConnected) {
+            // Keep a pending status (e.g. revert) until applyLoadedRow; otherwise clear.
+            if (!statusHTML && msg && msg.isConnected) {
                 msg.innerHTML = "";
             }
             var ticket = session.beginLocaleLoad();
@@ -9679,6 +9683,7 @@
                 }
                 if (body && body.error) {
                     loadingLocale = false;
+                    writing = false;
                     fields = collectFields();
                     if (fields.localeSelect) {
                         fields.localeSelect.value = previous;
@@ -9689,13 +9694,14 @@
                     }
                     return;
                 }
-                applyLoadedRow((body && body.data) || { locale: requestedLocale });
+                applyLoadedRow((body && body.data) || { locale: requestedLocale }, statusHTML);
             }).catch(function (err) {
                 var outcome = session.settleLocaleLoad(ticket);
                 if (outcome === "detached" || outcome === "stale-ignore") {
                     return;
                 }
                 loadingLocale = false;
+                writing = false;
                 if (outcome === "stale-unlock" || outcome === "apply") {
                     fields = collectFields();
                     if (fields.localeSelect) {
@@ -9731,21 +9737,90 @@
             });
         }
 
+        function runAddLocale() {
+            var input = session.q("email-template-new-locale");
+            var parsed = ui.normalizeLocaleInput(input ? input.value : "");
+            if (!parsed.ok) {
+                msg.innerHTML = '<p role="alert">Enter a valid locale (e.g. de). Tags like und are rejected.</p>';
+                return;
+            }
+            if (parsed.locale === "") {
+                msg.innerHTML = '<p role="alert">Enter a locale (e.g. de).</p>';
+                return;
+            }
+            addLocaleOption(parsed.locale);
+            rebuildLocaleSelect(collectFields(), baseline.locale);
+            loadLocale(parsed.locale);
+        }
+
+        function runTestSend() {
+            var f = collectFields();
+            if (f.testBtn && f.testBtn.disabled) {
+                return;
+            }
+            if (!session.alive() || loadingLocale || writing) {
+                return;
+            }
+            if (!ui.formMatchesBaseline(
+                f.subjectInput ? f.subjectInput.value : "",
+                f.bodyInput ? f.bodyInput.value : "",
+                f.localeSelect ? f.localeSelect.value : "",
+                baseline
+            )) {
+                msg.innerHTML = '<p role="alert">Save your edits before test-send. The mail uses the saved render.</p>';
+                return;
+            }
+            var toInput = session.q("email-template-test-to");
+            var to = toInput ? String(toInput.value || "").trim() : "";
+            if (!to) {
+                msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
+                return;
+            }
+            testSendInFlight = true;
+            syncTestSendEnabled(f);
+            var sideTicket = session.beginSideAction();
+            api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
+                method: "POST",
+                body: JSON.stringify({ to: to, locale: baseline.locale })
+            }).then(function (body) {
+                testSendInFlight = false;
+                if (session.settleSideAction(sideTicket) !== "apply") {
+                    return;
+                }
+                syncTestSendEnabled(collectFields());
+                if (body && body.error) {
+                    var code = body.error.code || "";
+                    var errMsg = extractErrorMessage(body, "Test send failed.");
+                    if (code === "rate_limited") {
+                        errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
+                    }
+                    msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
+                    return;
+                }
+                var data = (body && body.data) || {};
+                msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
+                    (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
+            }).catch(function (err) {
+                testSendInFlight = false;
+                if (session.settleSideAction(sideTicket) !== "apply") {
+                    return;
+                }
+                syncTestSendEnabled(collectFields());
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
+            });
+        }
+
         if (fields.addLocaleBtn) {
             fields.addLocaleBtn.addEventListener("click", function () {
-                var input = session.q("email-template-new-locale");
-                var parsed = ui.normalizeLocaleInput(input ? input.value : "");
-                if (!parsed.ok) {
-                    msg.innerHTML = '<p role="alert">Enter a valid locale (e.g. de). Tags like und are rejected.</p>';
-                    return;
+                runAddLocale();
+            });
+        }
+        if (fields.newLocaleInput) {
+            fields.newLocaleInput.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    runAddLocale();
                 }
-                if (parsed.locale === "") {
-                    msg.innerHTML = '<p role="alert">Enter a locale (e.g. de).</p>';
-                    return;
-                }
-                addLocaleOption(parsed.locale);
-                rebuildLocaleSelect(collectFields(), baseline.locale);
-                loadLocale(parsed.locale);
             });
         }
 
@@ -9781,24 +9856,23 @@
                     body: JSON.stringify(payload)
                 }).then(function (body) {
                     var outcome = session.settleWrite(writeTicket);
+                    writing = false;
                     if (outcome !== "apply") {
                         return;
                     }
-                    writing = false;
                     if (body && body.error) {
                         unlockForm();
                         msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Save failed.")) + "</p>";
                         return;
                     }
-                    msg.innerHTML = "<p>Saved.</p>";
                     var saved = (body && body.data) || payload;
                     addLocaleOption(saved.locale != null ? String(saved.locale) : payload.locale);
-                    applyLoadedRow(saved);
+                    applyLoadedRow(saved, "<p>Saved.</p>");
                 }).catch(function (err) {
+                    writing = false;
                     if (session.settleWrite(writeTicket) !== "apply") {
                         return;
                     }
-                    writing = false;
                     unlockForm();
                     msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
                 });
@@ -9820,25 +9894,24 @@
                     var writeTicket = session.beginWrite();
                     ui.setWriteControlsLocked(collectFields(), true);
                     syncTestSendEnabled(collectFields());
-                    var status = ui.revertMessage(hadDb);
+                    var statusHTML = "<p>" + esc(ui.revertMessage(hadDb)) + "</p>";
                     apiDelete("/admin/email-templates/" + encodeURIComponent(templateName) + qs).then(function (body) {
                         var outcome = session.settleWrite(writeTicket);
+                        writing = false;
                         if (outcome !== "apply") {
                             return;
                         }
-                        writing = false;
                         if (body && body.error) {
                             unlockForm();
                             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Revert failed.")) + "</p>";
                             return;
                         }
-                        msg.innerHTML = "<p>" + esc(status) + "</p>";
-                        loadLocale(localeAtStart);
+                        loadLocale(localeAtStart, statusHTML);
                     }).catch(function (err) {
+                        writing = false;
                         if (session.settleWrite(writeTicket) !== "apply") {
                             return;
                         }
-                        writing = false;
                         unlockForm();
                         msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Revert failed.")) + "</p>";
                     });
@@ -9847,59 +9920,16 @@
 
             if (fields.testBtn) {
                 fields.testBtn.addEventListener("click", function () {
-                    var f = collectFields();
-                    if (f.testBtn && f.testBtn.disabled) {
-                        return;
+                    runTestSend();
+                });
+            }
+            var testTo = session.q("email-template-test-to");
+            if (testTo) {
+                testTo.addEventListener("keydown", function (e) {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        runTestSend();
                     }
-                    if (!session.alive() || loadingLocale || writing) {
-                        return;
-                    }
-                    if (!ui.formMatchesBaseline(
-                        f.subjectInput ? f.subjectInput.value : "",
-                        f.bodyInput ? f.bodyInput.value : "",
-                        f.localeSelect ? f.localeSelect.value : "",
-                        baseline
-                    )) {
-                        msg.innerHTML = '<p role="alert">Save your edits before test-send. The mail uses the saved render.</p>';
-                        return;
-                    }
-                    var toInput = session.q("email-template-test-to");
-                    var to = toInput ? String(toInput.value || "").trim() : "";
-                    if (!to) {
-                        msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
-                        return;
-                    }
-                    testSendInFlight = true;
-                    syncTestSendEnabled(f);
-                    api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
-                        method: "POST",
-                        body: JSON.stringify({ to: to, locale: baseline.locale })
-                    }).then(function (body) {
-                        if (!session.alive()) {
-                            return;
-                        }
-                        testSendInFlight = false;
-                        syncTestSendEnabled(collectFields());
-                        if (body && body.error) {
-                            var code = body.error.code || "";
-                            var errMsg = extractErrorMessage(body, "Test send failed.");
-                            if (code === "rate_limited") {
-                                errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
-                            }
-                            msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
-                            return;
-                        }
-                        var data = (body && body.data) || {};
-                        msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
-                            (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
-                    }).catch(function (err) {
-                        if (!session.alive()) {
-                            return;
-                        }
-                        testSendInFlight = false;
-                        syncTestSendEnabled(collectFields());
-                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
-                    });
                 });
             }
         }
