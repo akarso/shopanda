@@ -55,6 +55,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "/admin/marketing/abandoned-cart") || !strings.Contains(body, "Abandoned Cart") {
 		t.Fatalf("expected abandoned cart nav link in index html")
 	}
+	if !strings.Contains(body, "/admin/content/email-templates") || !strings.Contains(body, "Email Templates") {
+		t.Fatalf("expected email templates nav link in index html")
+	}
 }
 
 func TestAdminHandler_StaticCSS(t *testing.T) {
