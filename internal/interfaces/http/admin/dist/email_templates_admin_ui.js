@@ -350,6 +350,7 @@
         }
 
         function beginWrite() {
+            sideGate.start(); // drop in-flight test-send status so it cannot overwrite "Saved."
             return writeGate.start(); // invalidate prior write apply
         }
 
@@ -390,10 +391,24 @@
         };
     }
 
+    // sideActionCompletion tells the binder what to do after settleSideAction.
+    // Stale (e.g. locale switched mid-SMTP) must still clear in-flight and refresh
+    // the Send test button when the editor is connected; detached skips sync.
+    function sideActionCompletion(outcome) {
+        if (outcome === "detached") {
+            return { clearInFlight: true, syncControls: false, paintStatus: false };
+        }
+        if (outcome === "stale") {
+            return { clearInFlight: true, syncControls: true, paintStatus: false };
+        }
+        return { clearInFlight: true, syncControls: true, paintStatus: true };
+    }
+
     var api = {
         escAttr: escAttr,
         newLoadGate: newLoadGate,
         createScopedEditorSession: createScopedEditorSession,
+        sideActionCompletion: sideActionCompletion,
         formatLocaleLabel: formatLocaleLabel,
         normalizeLocaleInput: normalizeLocaleInput,
         canShowWriteControls: canShowWriteControls,

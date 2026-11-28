@@ -9753,14 +9753,31 @@
             loadLocale(parsed.locale);
         }
 
+        function finishTestSend(sideTicket, onApply) {
+            var outcome = session.settleSideAction(sideTicket);
+            var plan = ui.sideActionCompletion(outcome);
+            if (plan.clearInFlight) {
+                testSendInFlight = false;
+            }
+            if (plan.syncControls) {
+                if (loadingLocale || writing) {
+                    // Locale/write still owns the lock; only refresh the button flag.
+                    syncTestSendEnabled(collectFields());
+                } else {
+                    unlockForm();
+                }
+            }
+            if (plan.paintStatus && typeof onApply === "function") {
+                onApply();
+            }
+        }
+
         function runTestSend() {
             var f = collectFields();
-            if (f.testBtn && f.testBtn.disabled) {
+            if (!session.alive() || loadingLocale || writing || testSendInFlight) {
                 return;
             }
-            if (!session.alive() || loadingLocale || writing) {
-                return;
-            }
+            // Dirty check before the disabled-button return so Enter in To still explains why.
             if (!ui.formMatchesBaseline(
                 f.subjectInput ? f.subjectInput.value : "",
                 f.bodyInput ? f.bodyInput.value : "",
@@ -9770,43 +9787,45 @@
                 msg.innerHTML = '<p role="alert">Save your edits before test-send. The mail uses the saved render.</p>';
                 return;
             }
+            if (f.testBtn && f.testBtn.disabled) {
+                return;
+            }
             var toInput = session.q("email-template-test-to");
             var to = toInput ? String(toInput.value || "").trim() : "";
             if (!to) {
                 msg.innerHTML = '<p role="alert">Enter a test recipient email.</p>';
                 return;
             }
+            var sentLocale = baseline.locale;
             testSendInFlight = true;
+            // Lock locale controls for the SMTP request (same lock set as locale/write).
+            ui.setWriteControlsLocked(f, true);
             syncTestSendEnabled(f);
             var sideTicket = session.beginSideAction();
             api("/admin/email-templates/" + encodeURIComponent(templateName) + "/test-send", {
                 method: "POST",
-                body: JSON.stringify({ to: to, locale: baseline.locale })
+                body: JSON.stringify({ to: to, locale: sentLocale })
             }).then(function (body) {
-                testSendInFlight = false;
-                if (session.settleSideAction(sideTicket) !== "apply") {
-                    return;
-                }
-                syncTestSendEnabled(collectFields());
-                if (body && body.error) {
-                    var code = body.error.code || "";
-                    var errMsg = extractErrorMessage(body, "Test send failed.");
-                    if (code === "rate_limited") {
-                        errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
+                finishTestSend(sideTicket, function () {
+                    if (body && body.error) {
+                        var code = body.error.code || "";
+                        var errMsg = extractErrorMessage(body, "Test send failed.");
+                        if (code === "rate_limited") {
+                            errMsg = "Test send rate limited. Wait about 30 seconds and try again.";
+                        }
+                        msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
+                        return;
                     }
-                    msg.innerHTML = '<p role="alert">' + esc(errMsg) + "</p>";
-                    return;
-                }
-                var data = (body && body.data) || {};
-                msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
-                    (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
+                    var data = (body && body.data) || {};
+                    var locLabel = ui.formatLocaleLabel(sentLocale);
+                    msg.innerHTML = "<p>Test sent to " + esc(data.to || to) +
+                        " (" + esc(locLabel) + ")" +
+                        (data.subject ? (" — " + esc(data.subject)) : "") + ".</p>";
+                });
             }).catch(function (err) {
-                testSendInFlight = false;
-                if (session.settleSideAction(sideTicket) !== "apply") {
-                    return;
-                }
-                syncTestSendEnabled(collectFields());
-                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
+                finishTestSend(sideTicket, function () {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Test send failed.")) + "</p>";
+                });
             });
         }
 

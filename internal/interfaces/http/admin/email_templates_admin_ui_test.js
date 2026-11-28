@@ -216,3 +216,71 @@ test("side action (test-send) is invalidated by locale load", function () {
     assert.equal(session.settleSideAction(side), "stale");
     assert.equal(session.settleSideAction(session.beginSideAction()), "apply");
 });
+
+test("sideActionCompletion refreshes controls on stale but not detached", function () {
+    assert.deepEqual(ui.sideActionCompletion("stale"), {
+        clearInFlight: true,
+        syncControls: true,
+        paintStatus: false
+    });
+    assert.deepEqual(ui.sideActionCompletion("detached"), {
+        clearInFlight: true,
+        syncControls: false,
+        paintStatus: false
+    });
+    assert.deepEqual(ui.sideActionCompletion("apply"), {
+        clearInFlight: true,
+        syncControls: true,
+        paintStatus: true
+    });
+});
+
+test("stale test-send after locale apply re-enables Send test", function () {
+    var editor = fakeEditorRoot(true);
+    var testBtn = { disabled: true };
+    editor.setField("email-template-test-send", testBtn);
+    editor.setField("email-template-subject", { value: "Hi", dataset: { ro: "0" }, disabled: false });
+    editor.setField("email-template-body", { value: "<p>x</p>", dataset: { ro: "0" }, disabled: false });
+    editor.setField("email-template-locale", { value: "de", disabled: false, innerHTML: "" });
+
+    var session = ui.createScopedEditorSession(editor);
+    var sideTicket = session.beginSideAction();
+    var testSendInFlight = true;
+    var baseline = ui.baselineFromRow({
+        locale: "de",
+        subject: "Hi",
+        body: "<p>x</p>",
+        source: "db"
+    });
+
+    // Locale GET finishes first while SMTP is still in flight.
+    session.beginLocaleLoad();
+    ui.applyRowToFields({
+        subjectInput: editor.querySelector("#email-template-subject"),
+        bodyInput: editor.querySelector("#email-template-body"),
+        localeSelect: editor.querySelector("#email-template-locale")
+    }, baseline);
+    // Simulate applyLoadedRow unlock while in-flight flag is still true.
+    ui.setWriteControlsLocked({
+        testBtn: testBtn,
+        localeSelect: editor.querySelector("#email-template-locale"),
+        subjectInput: editor.querySelector("#email-template-subject"),
+        bodyInput: editor.querySelector("#email-template-body")
+    }, false);
+    ui.setTestSendEnabled(testBtn, !testSendInFlight);
+    assert.equal(testBtn.disabled, true);
+
+    // Late SMTP response: stale side settle must clear the flag and refresh.
+    var outcome = session.settleSideAction(sideTicket);
+    assert.equal(outcome, "stale");
+    var plan = ui.sideActionCompletion(outcome);
+    if (plan.clearInFlight) {
+        testSendInFlight = false;
+    }
+    if (plan.syncControls) {
+        var clean = ui.formMatchesBaseline("Hi", "<p>x</p>", "de", baseline);
+        ui.setTestSendEnabled(testBtn, clean && !testSendInFlight);
+    }
+    assert.equal(testSendInFlight, false);
+    assert.equal(testBtn.disabled, false);
+});
